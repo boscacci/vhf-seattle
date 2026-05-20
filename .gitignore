@@ -1,0 +1,12 @@
+.env
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.terraform/
+*.tfstate
+*.tfstate.*
+outputs/
+data/

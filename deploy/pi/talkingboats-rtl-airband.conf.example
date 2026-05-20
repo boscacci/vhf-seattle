@@ -1,0 +1,35 @@
+# Starter config sketch for RTLSDR-Airband.
+# Fill in device serials after running: rtl_test
+#
+# Keep Icecast/private stream endpoints on LAN or Tailscale only.
+
+devices:
+({
+  type = "rtlsdr";
+  index = 0;
+  gain = 28;
+  correction = 0;
+  mode = "multichannel";
+  centerfreq = 156562500;
+  channels:
+  (
+    {
+      freq = 156425000;
+      modulation = "nfm";
+      label = "vhf-68";
+      outputs:
+      (
+        { type = "icecast"; server = "127.0.0.1"; port = 8040; mountpoint = "vhf-68.mp3"; }
+      );
+    },
+    {
+      freq = 156700000;
+      modulation = "nfm";
+      label = "vhf-14";
+      outputs:
+      (
+        { type = "icecast"; server = "127.0.0.1"; port = 8040; mountpoint = "vhf-14.mp3"; }
+      );
+    }
+  );
+});

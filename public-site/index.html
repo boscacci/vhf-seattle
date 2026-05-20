@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Talking Boats</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Elliott Bay VHF + AIS</p>
+        <h1 id="site-title">Talking Boats</h1>
+      </div>
+      <p id="site-subtitle" class="subtitle">Reviewed marine-radio moments from Elliott Bay.</p>
+    </header>
+
+    <main class="layout">
+      <section class="overview-band" aria-labelledby="overview-title">
+        <div>
+          <h2 id="overview-title">Public Showcase</h2>
+          <p>
+            Sanitized highlights from VHF 68 and Seattle Traffic, paired with nearby AIS context.
+          </p>
+        </div>
+        <dl class="stats" id="stats"></dl>
+      </section>
+
+      <section class="content-grid">
+        <div class="map-panel" aria-labelledby="map-title">
+          <div class="section-heading">
+            <p class="eyebrow">Map</p>
+            <h2 id="map-title">Nearby Signals</h2>
+          </div>
+          <div class="bay-map" id="bay-map" aria-label="Approximate Elliott Bay activity map">
+            <span class="map-label downtown">Seattle</span>
+            <span class="map-label bay">Elliott Bay</span>
+          </div>
+        </div>
+
+        <div class="timeline-panel" aria-labelledby="timeline-title">
+          <div class="section-heading">
+            <p class="eyebrow">Timeline</p>
+            <h2 id="timeline-title">Reviewed Clips</h2>
+          </div>
+          <div id="clips" class="clip-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assets/app.js" type="module"></script>
+  </body>
+</html>

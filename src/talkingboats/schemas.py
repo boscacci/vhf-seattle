@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+Channel = Literal["68", "14"]
+
+
+class ClipPresignRequest(BaseModel):
+    channel: Channel
+    started_at: datetime
+    ended_at: datetime | None = None
+    content_type: str = Field(default="audio/mpeg", min_length=5, max_length=80)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    duration_seconds: float | None = Field(default=None, gt=0, le=3600)
+
+    @field_validator("content_type")
+    @classmethod
+    def validate_audio_type(cls, value: str) -> str:
+        allowed = {
+            "audio/aac",
+            "audio/flac",
+            "audio/m4a",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/ogg",
+            "audio/wav",
+            "audio/x-wav",
+        }
+        if value not in allowed:
+            raise ValueError("content_type must be a supported audio MIME type")
+        return value
+
+    @model_validator(mode="after")
+    def validate_times(self) -> ClipPresignRequest:
+        if self.ended_at is not None and self.ended_at <= self.started_at:
+            raise ValueError("ended_at must be after started_at")
+        return self
+
+
+class ClipPresignResponse(BaseModel):
+    bucket: str
+    key: str
+    upload_url: str
+    expires_in_seconds: int
+    required_headers: dict[str, str] = Field(default_factory=dict)
+
+
+class PlaybackUrlRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=1024)
+
+
+class PlaybackUrlResponse(BaseModel):
+    playback_url: str
+    expires_in_seconds: int
+
+
+class LiveChannelResponse(BaseModel):
+    channel: str
+    label: str
+    frequency_mhz: float
+    enabled: bool
+
+
+class LiveChannelsResponse(BaseModel):
+    channels: list[LiveChannelResponse]

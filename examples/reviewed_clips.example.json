@@ -1,0 +1,85 @@
+{
+  "generated_at": "2026-05-20T00:00:00Z",
+  "site": {
+    "title": "Talking Boats",
+    "subtitle": "Reviewed VHF marine-radio moments from Elliott Bay."
+  },
+  "stats": {
+    "channel_counts": {
+      "14": 1,
+      "68": 1
+    },
+    "vessel_type_counts": {
+      "Cargo": 1,
+      "Pleasure craft": 1
+    }
+  },
+  "clips": [
+    {
+      "id": "demo-fun-001",
+      "approved_public": true,
+      "public_title": "A very polite radio check",
+      "channel": "68",
+      "channel_label": "Fun Channel",
+      "started_at": "2026-05-20T19:12:00Z",
+      "duration_seconds": 18.4,
+      "transcript_public": "Radio check near the marina, answered with excellent deadpan courtesy.",
+      "interestingness_score": 0.72,
+      "tags": ["radio-check", "small-boats"],
+      "ais_context": {
+        "lat": 47.60621,
+        "lon": -122.37088,
+        "speed_knots": 4.2,
+        "course_degrees": 310,
+        "observed_at": "2026-05-20T19:12:05Z"
+      },
+      "vessel_context": [
+        {
+          "mmsi": "demo",
+          "name": "Unidentified pleasure craft",
+          "vessel_type": "Pleasure craft",
+          "distance_nm": 0.8,
+          "confidence": 0.31
+        }
+      ],
+      "private_s3_key": "raw/channel=68/date=2026-05-20/demo.mp3",
+      "receiver_id": "not-exported"
+    },
+    {
+      "id": "demo-business-001",
+      "approved_public": true,
+      "public_title": "Traffic coordination off Elliott Bay",
+      "channel": "14",
+      "channel_label": "Super Business Channel",
+      "started_at": "2026-05-20T20:03:00Z",
+      "duration_seconds": 31.0,
+      "transcript_public": "Reviewed summary of a Seattle Traffic exchange about commercial movement.",
+      "interestingness_score": 0.84,
+      "tags": ["vts", "commercial"],
+      "ais_context": {
+        "lat": 47.62341,
+        "lon": -122.39902,
+        "speed_knots": 8.6,
+        "course_degrees": 142,
+        "observed_at": "2026-05-20T20:03:05Z"
+      },
+      "vessel_context": [
+        {
+          "mmsi": "demo",
+          "name": "Demo cargo vessel",
+          "vessel_type": "Cargo",
+          "distance_nm": 1.4,
+          "confidence": 0.62
+        }
+      ]
+    },
+    {
+      "id": "private-only-demo",
+      "approved_public": false,
+      "public_title": "This should not export",
+      "channel": "68",
+      "started_at": "2026-05-20T21:00:00Z",
+      "transcript_public": "Unreviewed text should not appear in public output."
+    }
+  ]
+}

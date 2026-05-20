@@ -1,0 +1,15 @@
+[Unit]
+Description=Talking Boats private API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rob/repos/rpi-for-something
+EnvironmentFile=/home/rob/repos/rpi-for-something/.env
+ExecStart=/home/rob/miniforge3/condabin/conda run -n dell uvicorn talkingboats.api:app --host 0.0.0.0 --port 8034
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
