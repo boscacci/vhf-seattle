@@ -49,6 +49,8 @@ def test_public_map_popups_are_click_driven_and_explicit() -> None:
     assert "scrollIntoView" not in app_js
     assert "radio-clip-marker" in app_js
     assert "pointer-events: auto;" in styles_css
+    assert ".map-tooltip[hidden]" in styles_css
+    assert "display: none;" in styles_css
     assert "Reviewed radio clips" in index_html
     assert "AIS vessels" in index_html
     assert "Recent AIS trail" in index_html

@@ -464,6 +464,10 @@ h2 {
   pointer-events: auto;
 }
 
+.map-tooltip[hidden] {
+  display: none;
+}
+
 .map-popup-close {
   position: absolute;
   top: 7px;
