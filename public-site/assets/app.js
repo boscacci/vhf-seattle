@@ -22,16 +22,25 @@ const bounds = {
 };
 
 const baseBounds = { ...bounds };
-const oceanBasemap = {
+const chartBasemap = {
   originX: -20037508.342789244,
   originY: 20037508.342789244,
   worldSpanMeters: 40075016.68557849,
   tileSize: 256,
-  maxLevel: 16,
+  tileLevelOffset: 2,
+  maxLevel: 14,
   maxTiles: 220,
   url(level, row, col) {
-    return `https://services.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/${level}/${row}/${col}`;
+    return `https://gis.charttools.noaa.gov/arcgis/rest/services/MarineChart_Services/NOAACharts/MapServer/tile/${level}/${row}/${col}`;
   },
+};
+
+const aisPlayback = {
+  maxInterpolationGapMinutes: 10,
+  maxStaleMinutes: 10,
+  trailWindowMinutes: 30,
+  maxSegmentDistanceNm: 1.5,
+  maxSegmentSpeedKnots: 35,
 };
 
 let selectedClipId = null;
@@ -102,7 +111,6 @@ function renderMap() {
   const plottedClips = currentClips.filter((clip) => clip.ais_context?.lat && clip.ais_context?.lon);
   clearMapPreview();
   renderChartTiles(true);
-  renderTrackLayer(currentTracks);
   renderTrackPlayback(timelineIndex);
   map.querySelectorAll(".map-point").forEach((point) => point.remove());
 
@@ -202,27 +210,27 @@ function renderChartTiles(force = false) {
   ].join(":");
   if (!force && tileLayer.dataset.renderedFor === renderKey) return;
 
-  const matrixSize = 2 ** level;
-  const tileSpan = oceanBasemap.worldSpanMeters / matrixSize;
+  const matrixSize = tileMatrixSize(level);
+  const tileSpan = chartBasemap.worldSpanMeters / matrixSize;
   const minX = lonToMercatorX(visibleBounds.minLon);
   const maxX = lonToMercatorX(visibleBounds.maxLon);
   const minY = latToMercatorY(visibleBounds.minLat);
   const maxY = latToMercatorY(visibleBounds.maxLat);
-  const minCol = clampTile(Math.floor((minX - oceanBasemap.originX) / tileSpan), matrixSize);
-  const maxCol = clampTile(Math.floor((maxX - oceanBasemap.originX) / tileSpan), matrixSize);
-  const minRow = clampTile(Math.floor((oceanBasemap.originY - maxY) / tileSpan), matrixSize);
-  const maxRow = clampTile(Math.floor((oceanBasemap.originY - minY) / tileSpan), matrixSize);
+  const minCol = clampTile(Math.floor((minX - chartBasemap.originX) / tileSpan), matrixSize);
+  const maxCol = clampTile(Math.floor((maxX - chartBasemap.originX) / tileSpan), matrixSize);
+  const minRow = clampTile(Math.floor((chartBasemap.originY - maxY) / tileSpan), matrixSize);
+  const maxRow = clampTile(Math.floor((chartBasemap.originY - minY) / tileSpan), matrixSize);
 
   const tiles = [];
   for (let row = minRow; row <= maxRow; row += 1) {
     for (let col = minCol; col <= maxCol; col += 1) {
-      const tileMinX = oceanBasemap.originX + col * tileSpan;
-      const tileMaxX = oceanBasemap.originX + (col + 1) * tileSpan;
-      const tileMaxY = oceanBasemap.originY - row * tileSpan;
-      const tileMinY = oceanBasemap.originY - (row + 1) * tileSpan;
+      const tileMinX = chartBasemap.originX + col * tileSpan;
+      const tileMaxX = chartBasemap.originX + (col + 1) * tileSpan;
+      const tileMaxY = chartBasemap.originY - row * tileSpan;
+      const tileMinY = chartBasemap.originY - (row + 1) * tileSpan;
       tiles.push(`
         <img
-          src="${oceanBasemap.url(level, row, col)}"
+          src="${chartBasemap.url(level, row, col)}"
           alt=""
           loading="lazy"
           style="
@@ -266,7 +274,7 @@ function currentBounds() {
 
 function currentChartLevel(visibleBounds = currentBounds()) {
   const map = document.querySelector("#bay-map");
-  const mapWidth = Math.max(map?.clientWidth || oceanBasemap.tileSize, oceanBasemap.tileSize);
+  const mapWidth = Math.max(map?.clientWidth || chartBasemap.tileSize, chartBasemap.tileSize);
   const displayScale = Math.max(1.75, Math.min(window.devicePixelRatio || 1, 2));
   const minX = lonToMercatorX(visibleBounds.minLon);
   const maxX = lonToMercatorX(visibleBounds.maxLon);
@@ -274,11 +282,11 @@ function currentChartLevel(visibleBounds = currentBounds()) {
   const targetPixelWidth = mapWidth * displayScale;
   const targetMetersPerPixel = visibleWidthMeters / targetPixelWidth;
   const idealLevel = Math.ceil(
-    Math.log2(oceanBasemap.worldSpanMeters / (oceanBasemap.tileSize * targetMetersPerPixel)),
-  );
-  let level = Math.max(10, Math.min(16, idealLevel));
+    Math.log2(chartBasemap.worldSpanMeters / (chartBasemap.tileSize * targetMetersPerPixel)),
+  ) - chartBasemap.tileLevelOffset;
+  let level = Math.max(8, Math.min(chartBasemap.maxLevel, idealLevel));
 
-  while (level > 10 && estimatedTileCount(visibleBounds, level) > oceanBasemap.maxTiles) {
+  while (level > 8 && estimatedTileCount(visibleBounds, level) > chartBasemap.maxTiles) {
     level -= 1;
   }
 
@@ -286,18 +294,22 @@ function currentChartLevel(visibleBounds = currentBounds()) {
 }
 
 function estimatedTileCount(visibleBounds, level) {
-  const matrixSize = 2 ** level;
-  const tileSpan = oceanBasemap.worldSpanMeters / matrixSize;
+  const matrixSize = tileMatrixSize(level);
+  const tileSpan = chartBasemap.worldSpanMeters / matrixSize;
   const minX = lonToMercatorX(visibleBounds.minLon);
   const maxX = lonToMercatorX(visibleBounds.maxLon);
   const minY = latToMercatorY(visibleBounds.minLat);
   const maxY = latToMercatorY(visibleBounds.maxLat);
-  const minCol = clampTile(Math.floor((minX - oceanBasemap.originX) / tileSpan), matrixSize);
-  const maxCol = clampTile(Math.floor((maxX - oceanBasemap.originX) / tileSpan), matrixSize);
-  const minRow = clampTile(Math.floor((oceanBasemap.originY - maxY) / tileSpan), matrixSize);
-  const maxRow = clampTile(Math.floor((oceanBasemap.originY - minY) / tileSpan), matrixSize);
+  const minCol = clampTile(Math.floor((minX - chartBasemap.originX) / tileSpan), matrixSize);
+  const maxCol = clampTile(Math.floor((maxX - chartBasemap.originX) / tileSpan), matrixSize);
+  const minRow = clampTile(Math.floor((chartBasemap.originY - maxY) / tileSpan), matrixSize);
+  const maxRow = clampTile(Math.floor((chartBasemap.originY - minY) / tileSpan), matrixSize);
 
   return (maxCol - minCol + 1) * (maxRow - minRow + 1);
+}
+
+function tileMatrixSize(level) {
+  return 2 ** (level + chartBasemap.tileLevelOffset);
 }
 
 function setupControls() {
@@ -390,14 +402,16 @@ function collectTimelineFrames(tracks) {
   return Array.from(frames).sort();
 }
 
-function renderTrackLayer(tracks) {
+function renderTrackLayer(tracks, frameTime) {
   const trackLayer = document.querySelector("#track-layer");
   trackLayer.innerHTML = tracks
-    .map((track) => {
-      const points = (track.points || [])
+    .flatMap((track) =>
+      trailSegmentsAtTime(track.points || [], frameTime).map((segment) => ({ track, segment })),
+    )
+    .map(({ track, segment }) => {
+      const points = segment
         .map((point) => `${projectLon(point.lon).toFixed(2)},${projectLat(point.lat).toFixed(2)}`)
         .join(" ");
-      if (!points) return "";
       const className = track.channel_hint === "68" ? "track-line fun" : "track-line business";
       return `<polyline class="${className}" points="${points}" />`;
     })
@@ -407,6 +421,7 @@ function renderTrackLayer(tracks) {
 function renderTrackPlayback(frameIndex) {
   const vessels = document.querySelector("#playback-vessels");
   const frameTime = timelineFrames[frameIndex];
+  renderTrackLayer(currentTracks, frameTime);
   if (!frameTime) {
     vessels.innerHTML = "";
     updateTimeControls();
@@ -436,28 +451,83 @@ function renderTrackPlayback(frameIndex) {
 
 function positionAtTime(points, frameTime) {
   const target = Date.parse(frameTime);
-  const sorted = points
-    .filter((point) => point.observed_at)
-    .slice()
-    .sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
+  const sorted = normalizeTrackPoints(points);
   if (!sorted.length) return null;
-  if (target <= Date.parse(sorted[0].observed_at)) return sorted[0];
-  if (target >= Date.parse(sorted[sorted.length - 1].observed_at)) return sorted[sorted.length - 1];
+  const firstTime = Date.parse(sorted[0].observed_at);
+  const lastTime = Date.parse(sorted[sorted.length - 1].observed_at);
+  const maxStaleMs = aisPlayback.maxStaleMinutes * 60 * 1000;
+  const maxGapMs = aisPlayback.maxInterpolationGapMinutes * 60 * 1000;
+  if (target <= firstTime) return firstTime - target <= maxStaleMs ? sorted[0] : null;
+  if (target >= lastTime) return target - lastTime <= maxStaleMs ? sorted[sorted.length - 1] : null;
 
   for (let index = 1; index < sorted.length; index += 1) {
     const previous = sorted[index - 1];
     const next = sorted[index];
     const previousTime = Date.parse(previous.observed_at);
     const nextTime = Date.parse(next.observed_at);
+    if (target === previousTime) return previous;
+    if (target === nextTime) return next;
     if (target <= nextTime) {
+      const gapMs = nextTime - previousTime;
+      if (gapMs > maxGapMs || !segmentIsPlausible(previous, next)) {
+        const nearest = target - previousTime <= nextTime - target ? previous : next;
+        return Math.abs(Date.parse(nearest.observed_at) - target) <= maxStaleMs ? nearest : null;
+      }
       const fraction = (target - previousTime) / (nextTime - previousTime);
       return {
+        observed_at: frameTime,
         lat: Number(previous.lat) + (Number(next.lat) - Number(previous.lat)) * fraction,
         lon: Number(previous.lon) + (Number(next.lon) - Number(previous.lon)) * fraction,
+        interpolated: true,
       };
     }
   }
   return sorted[sorted.length - 1];
+}
+
+function trailSegmentsAtTime(points, frameTime) {
+  if (!frameTime) return [];
+  const target = Date.parse(frameTime);
+  const windowStart = target - aisPlayback.trailWindowMinutes * 60 * 1000;
+  const trail = normalizeTrackPoints(points).filter((point) => {
+    const observedAt = Date.parse(point.observed_at);
+    return observedAt >= windowStart && observedAt <= target;
+  });
+  const current = positionAtTime(points, frameTime);
+  if (current && !trail.some((point) => point.observed_at === current.observed_at)) {
+    trail.push(current);
+  }
+  trail.sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
+
+  const segments = [];
+  let currentSegment = [];
+  trail.forEach((point) => {
+    const previous = currentSegment[currentSegment.length - 1];
+    if (previous && !segmentIsPlausible(previous, point)) {
+      if (currentSegment.length > 1) segments.push(currentSegment);
+      currentSegment = [];
+    }
+    currentSegment.push(point);
+  });
+  if (currentSegment.length > 1) segments.push(currentSegment);
+  return segments;
+}
+
+function normalizeTrackPoints(points) {
+  return points
+    .filter((point) => point.observed_at && point.lat != null && point.lon != null)
+    .slice()
+    .sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
+}
+
+function segmentIsPlausible(previous, next) {
+  const previousTime = Date.parse(previous.observed_at);
+  const nextTime = Date.parse(next.observed_at);
+  const gapHours = (nextTime - previousTime) / (60 * 60 * 1000);
+  const distanceNm = haversineNm(previous, next);
+  if (distanceNm > aisPlayback.maxSegmentDistanceNm) return false;
+  if (gapHours <= 0) return false;
+  return distanceNm / gapHours <= aisPlayback.maxSegmentSpeedKnots;
 }
 
 function showMapPreview(clip, index, point, tooltip) {
@@ -533,6 +603,18 @@ function markerOffset(index) {
     { x: 0, y: -22 },
   ];
   return offsets[index % offsets.length];
+}
+
+function haversineNm(a, b) {
+  const radiusNm = 3440.065;
+  const lat1 = (Number(a.lat) * Math.PI) / 180;
+  const lat2 = (Number(b.lat) * Math.PI) / 180;
+  const dLat = lat2 - lat1;
+  const dLon = ((Number(b.lon) - Number(a.lon)) * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * radiusNm * Math.asin(Math.sqrt(h));
 }
 
 function lonToMercatorX(lon) {
