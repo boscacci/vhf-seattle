@@ -42,6 +42,7 @@ let timelineIndex = 0;
 let playbackTimer = null;
 let mapZoomStep = 2;
 let resizeTimer = null;
+let activePreviewClipId = null;
 
 async function loadManifest() {
   try {
@@ -64,6 +65,7 @@ function renderSite(manifest) {
   renderStats(manifest);
   renderClips(currentClips);
   setupControls();
+  setupMapPreviewDismissal();
   renderMap();
   window.addEventListener("resize", () => {
     window.clearTimeout(resizeTimer);
@@ -98,6 +100,7 @@ function renderMap() {
   const map = document.querySelector("#bay-map");
   const tooltip = document.querySelector("#map-tooltip");
   const plottedClips = currentClips.filter((clip) => clip.ais_context?.lat && clip.ais_context?.lon);
+  clearMapPreview();
   renderChartTiles(true);
   renderTrackLayer(currentTracks);
   renderTrackPlayback(timelineIndex);
@@ -117,9 +120,13 @@ function renderMap() {
     point.setAttribute("aria-label", `${clip.public_title}, VHF ${clip.channel}`);
     point.addEventListener("mouseenter", () => showMapPreview(clip, index, point, tooltip));
     point.addEventListener("focus", () => showMapPreview(clip, index, point, tooltip));
-    point.addEventListener("mouseleave", () => hideMapPreview(clip, tooltip));
-    point.addEventListener("blur", () => hideMapPreview(clip, tooltip));
-    point.addEventListener("click", () => selectClipFromMap(clip, index));
+    point.addEventListener("mouseleave", clearMapPreview);
+    point.addEventListener("blur", clearMapPreview);
+    point.addEventListener("click", () => {
+      selectClipFromMap(clip, index);
+      clearMapPreview();
+      point.blur();
+    });
     map.appendChild(point);
   });
 }
@@ -315,6 +322,25 @@ function setupControls() {
   updateTimeControls();
 }
 
+function setupMapPreviewDismissal() {
+  const map = document.querySelector("#bay-map");
+
+  map.addEventListener("pointerleave", clearMapPreview);
+  map.addEventListener("pointermove", (event) => {
+    if (!eventTargetMapPoint(event)) clearMapPreview();
+  });
+  map.addEventListener("pointerdown", (event) => {
+    if (!eventTargetMapPoint(event)) clearMapPreview();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") clearMapPreview();
+  });
+}
+
+function eventTargetMapPoint(event) {
+  return event.target instanceof Element ? event.target.closest(".map-point") : null;
+}
+
 function setMapZoom(nextStep) {
   mapZoomStep = Math.max(0, Math.min(4, nextStep));
   updateZoomControls();
@@ -435,6 +461,8 @@ function positionAtTime(points, frameTime) {
 }
 
 function showMapPreview(clip, index, point, tooltip) {
+  clearMapPreview();
+  activePreviewClipId = clip.id;
   setClipHover(clip.id, true);
   tooltip.hidden = false;
   tooltip.innerHTML = `
@@ -445,9 +473,11 @@ function showMapPreview(clip, index, point, tooltip) {
   placeTooltip(point, tooltip);
 }
 
-function hideMapPreview(clip, tooltip) {
-  setClipHover(clip.id, false);
-  tooltip.hidden = true;
+function clearMapPreview() {
+  const tooltip = document.querySelector("#map-tooltip");
+  if (activePreviewClipId) setClipHover(activePreviewClipId, false);
+  activePreviewClipId = null;
+  if (tooltip) tooltip.hidden = true;
 }
 
 function selectClipFromMap(clip, index) {

@@ -436,6 +436,7 @@ h2 {
   color: var(--ink);
   font-size: 0.82rem;
   line-height: 1.35;
+  pointer-events: none;
 }
 
 .map-tooltip strong {
