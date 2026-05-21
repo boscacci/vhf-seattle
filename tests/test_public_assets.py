@@ -31,18 +31,35 @@ def test_public_map_mutes_busy_noaa_chart_background() -> None:
     assert "opacity: 0.85;" in styles_css
 
 
-def test_public_map_preview_is_cleared_by_map_level_dismissal() -> None:
+def test_public_map_popups_are_click_driven_and_explicit() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
 
-    assert "activePreviewClipId" in app_js
-    assert "setupMapPreviewDismissal()" in app_js
-    assert 'map.addEventListener("pointerleave", clearMapPreview)' in app_js
-    assert 'map.addEventListener("pointermove"' in app_js
+    assert "activePopupClipId" in app_js
+    assert "showMapPopup" in app_js
+    assert "clearMapPopup" in app_js
+    assert "Reviewed radio clip" in app_js
+    assert 'aria-label="Close map detail"' in app_js
+    assert "addEventListener(\"mouseenter\"" not in app_js
+    assert "addEventListener(\"mouseleave\"" not in app_js
+    assert "showMapPreview" not in app_js
     assert 'document.addEventListener("keydown"' in app_js
-    assert "clearMapPreview();" in app_js
-    assert "point.blur();" in app_js
-    assert "pointer-events: none;" in styles_css
+    assert "clearMapPopup();" in app_js
+    assert "scrollIntoView" not in app_js
+    assert "radio-clip-marker" in app_js
+    assert "pointer-events: auto;" in styles_css
+    assert "Reviewed radio clips" in index_html
+    assert "AIS vessels" in index_html
+    assert "Recent AIS trail" in index_html
+
+
+def test_public_map_removes_duplicate_place_labels() -> None:
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "map-label" not in index_html
+    assert ".map-label" not in styles_css
 
 
 def test_public_map_uses_noaa_chart_display_tiles() -> None:

@@ -51,7 +51,7 @@ let timelineIndex = 0;
 let playbackTimer = null;
 let mapZoomStep = 2;
 let resizeTimer = null;
-let activePreviewClipId = null;
+let activePopupClipId = null;
 
 async function loadManifest() {
   try {
@@ -74,7 +74,7 @@ function renderSite(manifest) {
   renderStats(manifest);
   renderClips(currentClips);
   setupControls();
-  setupMapPreviewDismissal();
+  setupMapPopupDismissal();
   renderMap();
   window.addEventListener("resize", () => {
     window.clearTimeout(resizeTimer);
@@ -109,7 +109,7 @@ function renderMap() {
   const map = document.querySelector("#bay-map");
   const tooltip = document.querySelector("#map-tooltip");
   const plottedClips = currentClips.filter((clip) => clip.ais_context?.lat && clip.ais_context?.lon);
-  clearMapPreview();
+  clearMapPopup();
   renderChartTiles(true);
   renderTrackPlayback(timelineIndex);
   map.querySelectorAll(".map-point").forEach((point) => point.remove());
@@ -117,7 +117,7 @@ function renderMap() {
   plottedClips.forEach((clip, index) => {
     const point = document.createElement("button");
     point.type = "button";
-    point.className = `map-point ${clip.channel === "14" ? "business" : "fun"}`;
+    point.className = `map-point radio-clip-marker ${clip.channel === "14" ? "business" : "fun"}`;
     point.style.left = `${projectLon(clip.ais_context.lon)}%`;
     point.style.top = `${projectLat(clip.ais_context.lat)}%`;
     const offset = markerOffset(index);
@@ -125,15 +125,13 @@ function renderMap() {
     point.style.setProperty("--point-offset-y", `${offset.y}px`);
     point.textContent = String(index + 1);
     point.dataset.clipId = clip.id;
-    point.setAttribute("aria-label", `${clip.public_title}, VHF ${clip.channel}`);
-    point.addEventListener("mouseenter", () => showMapPreview(clip, index, point, tooltip));
-    point.addEventListener("focus", () => showMapPreview(clip, index, point, tooltip));
-    point.addEventListener("mouseleave", clearMapPreview);
-    point.addEventListener("blur", clearMapPreview);
+    point.setAttribute(
+      "aria-label",
+      `Reviewed radio clip ${index + 1}: ${clip.public_title}, VHF ${clip.channel}`,
+    );
     point.addEventListener("click", () => {
       selectClipFromMap(clip, index);
-      clearMapPreview();
-      point.blur();
+      showMapPopup(clip, index, point, tooltip);
     });
     map.appendChild(point);
   });
@@ -334,23 +332,16 @@ function setupControls() {
   updateTimeControls();
 }
 
-function setupMapPreviewDismissal() {
+function setupMapPopupDismissal() {
   const map = document.querySelector("#bay-map");
 
-  map.addEventListener("pointerleave", clearMapPreview);
-  map.addEventListener("pointermove", (event) => {
-    if (!eventTargetMapPoint(event)) clearMapPreview();
-  });
   map.addEventListener("pointerdown", (event) => {
-    if (!eventTargetMapPoint(event)) clearMapPreview();
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest(".map-point") && !target?.closest("#map-tooltip")) clearMapPopup();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") clearMapPreview();
+    if (event.key === "Escape") clearMapPopup();
   });
-}
-
-function eventTargetMapPoint(event) {
-  return event.target instanceof Element ? event.target.closest(".map-point") : null;
 }
 
 function setMapZoom(nextStep) {
@@ -532,23 +523,26 @@ function segmentIsPlausible(previous, next) {
   return distanceNm / gapHours <= aisPlayback.maxSegmentSpeedKnots;
 }
 
-function showMapPreview(clip, index, point, tooltip) {
-  clearMapPreview();
-  activePreviewClipId = clip.id;
+function showMapPopup(clip, index, point, tooltip) {
+  clearMapPopup();
+  activePopupClipId = clip.id;
   setClipHover(clip.id, true);
   tooltip.hidden = false;
   tooltip.innerHTML = `
+    <button type="button" class="map-popup-close" aria-label="Close map detail">×</button>
+    <span class="map-popup-kicker">Reviewed radio clip</span>
     <strong>Map ${index + 1}: ${escapeHtml(clip.public_title)}</strong>
     <span>VHF ${escapeHtml(clip.channel)} · ${escapeHtml(formatDate(clip.started_at))}</span>
-    ${renderTooltipVessel(clip)}
+    ${renderPopupVessel(clip)}
   `;
+  tooltip.querySelector(".map-popup-close")?.addEventListener("click", clearMapPopup);
   placeTooltip(point, tooltip);
 }
 
-function clearMapPreview() {
+function clearMapPopup() {
   const tooltip = document.querySelector("#map-tooltip");
-  if (activePreviewClipId) setClipHover(activePreviewClipId, false);
-  activePreviewClipId = null;
+  if (activePopupClipId) setClipHover(activePopupClipId, false);
+  activePopupClipId = null;
   if (tooltip) tooltip.hidden = true;
 }
 
@@ -567,8 +561,6 @@ function selectClipFromMap(clip, index) {
   point?.classList.add("is-selected");
   document.querySelector("#map-status").textContent =
     `Selected map point ${index + 1}: ${clip.public_title}`;
-  card?.scrollIntoView({ behavior: "smooth", block: "center" });
-  window.setTimeout(() => card?.focus({ preventScroll: true }), 280);
 }
 
 function setClipHover(clipId, enabled) {
@@ -587,7 +579,7 @@ function placeTooltip(point, tooltip) {
   tooltip.style.top = `${Math.max(top - 22, 12)}px`;
 }
 
-function renderTooltipVessel(clip) {
+function renderPopupVessel(clip) {
   const vessel = clip.vessel_context?.[0];
   if (!vessel) return "";
   const name = vessel.name || vessel.mmsi || "Nearby AIS";

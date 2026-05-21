@@ -140,6 +140,7 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
   padding: 12px;
   border: 1px solid var(--line);
@@ -148,7 +149,8 @@ h2 {
 }
 
 .zoom-controls,
-.time-controls {
+.time-controls,
+.map-legend {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -193,6 +195,54 @@ h2 {
 #zoom-label {
   min-width: 84px;
   text-align: center;
+}
+
+.map-legend {
+  flex: 1 1 360px;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.map-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.map-legend i {
+  flex: 0 0 auto;
+}
+
+.legend-radio {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--brick);
+  box-shadow: 0 0 0 2px rgba(168, 68, 47, 0.16);
+  color: #fff;
+  font-size: 0.62rem;
+  font-style: normal;
+  line-height: 1;
+}
+
+.legend-vessel {
+  width: 0;
+  height: 0;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 11px solid var(--teal);
+}
+
+.legend-trail {
+  width: 24px;
+  height: 0;
+  border-top: 2px dotted rgba(0, 108, 103, 0.58);
 }
 
 .time-controls input {
@@ -293,15 +343,15 @@ h2 {
 
 .track-line {
   fill: none;
-  stroke: rgba(168, 68, 47, 0.58);
+  stroke: rgba(168, 68, 47, 0.4);
   stroke-dasharray: 1.5 2;
   stroke-linecap: round;
-  stroke-width: 0.48;
+  stroke-width: 0.42;
   vector-effect: non-scaling-stroke;
 }
 
 .track-line.business {
-  stroke: rgba(0, 108, 103, 0.58);
+  stroke: rgba(0, 108, 103, 0.4);
 }
 
 .playback-vessels {
@@ -320,7 +370,7 @@ h2 {
   color: var(--ink);
   font-size: 0.68rem;
   font-weight: 760;
-  opacity: 0.9;
+  opacity: 0.74;
   transform: translate(-50%, -50%);
   transition:
     left 520ms ease,
@@ -343,39 +393,7 @@ h2 {
 }
 
 .playback-vessel span {
-  max-width: 145px;
-  overflow: hidden;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.78);
-  text-overflow: ellipsis;
-}
-
-.map-label {
-  position: absolute;
-  z-index: 3;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: rgba(30, 36, 40, 0.76);
-  font-size: 0.82rem;
-  font-weight: 700;
-  background: rgba(247, 244, 237, 0.65);
-  backdrop-filter: blur(2px);
-}
-
-.map-label.downtown {
-  top: 42%;
-  right: 9%;
-}
-
-.map-label.bay {
-  top: 17%;
-  left: 26%;
-}
-
-.map-label.west-seattle {
-  bottom: 18%;
-  left: 9%;
+  display: none;
 }
 
 .map-point {
@@ -443,10 +461,37 @@ h2 {
   color: var(--ink);
   font-size: 0.82rem;
   line-height: 1.35;
-  pointer-events: none;
+  pointer-events: auto;
+}
+
+.map-popup-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.map-popup-kicker {
+  padding-right: 26px;
+  color: var(--teal);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .map-tooltip strong {
+  padding-right: 26px;
   font-size: 0.9rem;
 }
 

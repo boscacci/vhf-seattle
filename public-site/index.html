@@ -38,6 +38,11 @@
               <span id="zoom-label">Zoom</span>
               <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
             </div>
+            <div class="map-legend" aria-label="Map legend">
+              <span><i class="legend-radio" aria-hidden="true">1</i> Reviewed radio clips</span>
+              <span><i class="legend-vessel" aria-hidden="true"></i> AIS vessels</span>
+              <span><i class="legend-trail" aria-hidden="true"></i> Recent AIS trail</span>
+            </div>
             <div class="time-controls">
               <button type="button" id="playback-toggle">Play AIS</button>
               <label for="time-slider">Replay time</label>
@@ -50,9 +55,6 @@
             <div class="chart-tile-layer" id="chart-tile-layer" aria-hidden="true"></div>
             <svg class="track-layer" id="track-layer" viewBox="0 0 100 100" aria-hidden="true"></svg>
             <div class="playback-vessels" id="playback-vessels" aria-hidden="true"></div>
-            <span class="map-label downtown">Seattle</span>
-            <span class="map-label bay">Elliott Bay</span>
-            <span class="map-label west-seattle">West Seattle</span>
             <div class="map-tooltip" id="map-tooltip" role="status" hidden></div>
             <p class="chart-attribution">NOAA ENC Chart Display, not for navigation</p>
           </div>
