@@ -52,6 +52,12 @@ let playbackTimer = null;
 let mapZoomStep = 2;
 let resizeTimer = null;
 let activePopupClipId = null;
+let mapCenterX = null;
+let mapCenterY = null;
+let activePanPointerId = null;
+let panLastPoint = null;
+let panPixelOffsetX = 0;
+let panPixelOffsetY = 0;
 
 async function loadManifest() {
   try {
@@ -75,6 +81,7 @@ function renderSite(manifest) {
   renderClips(currentClips);
   setupControls();
   setupMapPopupDismissal();
+  setupMapPanAndWheel();
   renderMap();
   window.addEventListener("resize", () => {
     window.clearTimeout(resizeTimer);
@@ -255,19 +262,26 @@ function currentBounds() {
   const maxX = lonToMercatorX(baseBounds.maxLon);
   const minY = latToMercatorY(baseBounds.minLat);
   const maxY = latToMercatorY(baseBounds.maxLat);
-  const centerX = (minX + maxX) / 2;
-  const centerY = (minY + maxY) / 2;
+  const center = currentMapCenter();
   const baseWidth = maxX - minX;
   const baseHeight = maxY - minY;
   const width = Math.max(baseWidth, baseHeight * aspectRatio) / zoomFactor;
   const height = Math.max(baseHeight, baseWidth / aspectRatio) / zoomFactor;
 
   return {
-    minLat: mercatorYToLat(centerY - height / 2),
-    maxLat: mercatorYToLat(centerY + height / 2),
-    minLon: mercatorXToLon(centerX - width / 2),
-    maxLon: mercatorXToLon(centerX + width / 2),
+    minLat: mercatorYToLat(center.y - height / 2),
+    maxLat: mercatorYToLat(center.y + height / 2),
+    minLon: mercatorXToLon(center.x - width / 2),
+    maxLon: mercatorXToLon(center.x + width / 2),
   };
+}
+
+function currentMapCenter() {
+  if (mapCenterX == null || mapCenterY == null) {
+    mapCenterX = (lonToMercatorX(baseBounds.minLon) + lonToMercatorX(baseBounds.maxLon)) / 2;
+    mapCenterY = (latToMercatorY(baseBounds.minLat) + latToMercatorY(baseBounds.maxLat)) / 2;
+  }
+  return { x: mapCenterX, y: mapCenterY };
 }
 
 function currentChartLevel(visibleBounds = currentBounds()) {
@@ -316,8 +330,8 @@ function setupControls() {
   const playButton = document.querySelector("#playback-toggle");
   const slider = document.querySelector("#time-slider");
 
-  zoomIn.addEventListener("click", () => setMapZoom(mapZoomStep + 1));
-  zoomOut.addEventListener("click", () => setMapZoom(mapZoomStep - 1));
+  zoomIn.addEventListener("click", () => zoomAtPoint(mapZoomStep + 1));
+  zoomOut.addEventListener("click", () => zoomAtPoint(mapZoomStep - 1));
   playButton.addEventListener("click", togglePlayback);
   slider.addEventListener("input", () => {
     stopPlayback();
@@ -334,20 +348,123 @@ function setupControls() {
 
 function setupMapPopupDismissal() {
   const map = document.querySelector("#bay-map");
+  const tooltip = document.querySelector("#map-tooltip");
 
   map.addEventListener("pointerdown", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target?.closest(".map-point") && !target?.closest("#map-tooltip")) clearMapPopup();
+  });
+  tooltip.addEventListener("pointerdown", (event) => event.stopPropagation());
+  tooltip.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(".map-popup-close")) {
+      event.stopPropagation();
+      clearMapPopup();
+    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") clearMapPopup();
   });
 }
 
-function setMapZoom(nextStep) {
-  mapZoomStep = Math.max(0, Math.min(4, nextStep));
+function setupMapPanAndWheel() {
+  const map = document.querySelector("#bay-map");
+
+  map.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      zoomAtPoint(mapZoomStep + (event.deltaY < 0 ? 1 : -1), event.clientX, event.clientY);
+    },
+    { passive: false },
+  );
+  map.addEventListener("pointerdown", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest("button, input, .map-point, #map-tooltip")) return;
+    activePanPointerId = event.pointerId;
+    panLastPoint = { x: event.clientX, y: event.clientY };
+    resetMapPanPreview();
+    map.classList.add("is-panning");
+  });
+  document.addEventListener("pointermove", (event) => {
+    if (event.pointerId !== activePanPointerId || !panLastPoint) return;
+    panMapByPixels(event.clientX - panLastPoint.x, event.clientY - panLastPoint.y);
+    panLastPoint = { x: event.clientX, y: event.clientY };
+  });
+  document.addEventListener("pointerup", endMapPan);
+  document.addEventListener("pointercancel", endMapPan);
+}
+
+function endMapPan(event) {
+  const map = document.querySelector("#bay-map");
+  if (event?.pointerId !== activePanPointerId) return;
+  commitMapPan();
+  activePanPointerId = null;
+  panLastPoint = null;
+  map.classList.remove("is-panning");
+}
+
+function zoomAtPoint(nextStep, clientX, clientY) {
+  const nextZoom = Math.max(0, Math.min(4, nextStep));
+  if (nextZoom === mapZoomStep) return;
+  const map = document.querySelector("#bay-map");
+  const rect = map.getBoundingClientRect();
+  const focusX = clientX ?? rect.left + rect.width / 2;
+  const focusY = clientY ?? rect.top + rect.height / 2;
+  const before = screenPointToMercator(focusX, focusY);
+  mapZoomStep = nextZoom;
+  const after = screenPointToMercator(focusX, focusY);
+  mapCenterX += before.x - after.x;
+  mapCenterY += before.y - after.y;
   updateZoomControls();
+  renderMapNow();
+}
+
+function panMapByPixels(deltaX, deltaY) {
+  panPixelOffsetX += deltaX;
+  panPixelOffsetY += deltaY;
+}
+
+function commitMapPan() {
+  if (!panPixelOffsetX && !panPixelOffsetY) return;
+  const map = document.querySelector("#bay-map");
+  const visibleBounds = currentBounds();
+  const minX = lonToMercatorX(visibleBounds.minLon);
+  const maxX = lonToMercatorX(visibleBounds.maxLon);
+  const minY = latToMercatorY(visibleBounds.minLat);
+  const maxY = latToMercatorY(visibleBounds.maxLat);
+  const metersPerPixelX = (maxX - minX) / Math.max(map.clientWidth, 1);
+  const metersPerPixelY = (maxY - minY) / Math.max(map.clientHeight, 1);
+  currentMapCenter();
+  mapCenterX -= panPixelOffsetX * metersPerPixelX;
+  mapCenterY += panPixelOffsetY * metersPerPixelY;
+  resetMapPanPreview();
+  renderMapNow();
+}
+
+function resetMapPanPreview() {
+  panPixelOffsetX = 0;
+  panPixelOffsetY = 0;
+}
+
+function renderMapNow() {
   renderMap();
+}
+
+function screenPointToMercator(clientX, clientY) {
+  const map = document.querySelector("#bay-map");
+  const rect = map.getBoundingClientRect();
+  const visibleBounds = currentBounds();
+  const minX = lonToMercatorX(visibleBounds.minLon);
+  const maxX = lonToMercatorX(visibleBounds.maxLon);
+  const minY = latToMercatorY(visibleBounds.minLat);
+  const maxY = latToMercatorY(visibleBounds.maxLat);
+  const xRatio = (clientX - rect.left) / Math.max(rect.width, 1);
+  const yRatio = (clientY - rect.top) / Math.max(rect.height, 1);
+  return {
+    x: minX + xRatio * (maxX - minX),
+    y: maxY - yRatio * (maxY - minY),
+  };
 }
 
 function updateZoomControls() {
@@ -398,9 +515,8 @@ function collectTimelineFrames(tracks) {
 function renderTrackLayer(tracks, frameTime) {
   const trackLayer = document.querySelector("#track-layer");
   trackLayer.innerHTML = tracks
-    .flatMap((track) =>
-      trailSegmentsAtTime(track.points || [], frameTime).map((segment) => ({ track, segment })),
-    )
+    .map((track) => ({ track, segment: motionTrailAtTime(track.points || [], frameTime) }))
+    .filter(({ segment }) => segment?.length > 1)
     .map(({ track, segment }) => {
       const points = segment
         .map((point) => `${projectLon(point.lon).toFixed(2)},${projectLat(point.lat).toFixed(2)}`)
@@ -430,7 +546,7 @@ function renderTrackPlayback(frameIndex) {
       if (left < -5 || left > 105 || top < -5 || top > 105) return "";
       return `
         <div
-          class="playback-vessel ${track.channel_hint === "68" ? "fun" : "business"}"
+          class="playback-vessel ${track.channel_hint === "68" ? "fun" : "business"} ${vesselTypeClass(track)}"
           style="left: ${left}%; top: ${top}%;"
           title="${escapeHtml(track.name)}"
         >
@@ -478,32 +594,62 @@ function positionAtTime(points, frameTime) {
   return sorted[sorted.length - 1];
 }
 
-function trailSegmentsAtTime(points, frameTime) {
-  if (!frameTime) return [];
+function motionTrailAtTime(points, frameTime) {
+  if (!frameTime) return null;
   const target = Date.parse(frameTime);
   const windowStart = target - aisPlayback.trailWindowMinutes * 60 * 1000;
+  const current = positionAtTime(points, frameTime);
+  if (!current) return null;
+
   const trail = normalizeTrackPoints(points).filter((point) => {
     const observedAt = Date.parse(point.observed_at);
     return observedAt >= windowStart && observedAt <= target;
   });
-  const current = positionAtTime(points, frameTime);
   if (current && !trail.some((point) => point.observed_at === current.observed_at)) {
     trail.push(current);
   }
   trail.sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
 
-  const segments = [];
   let currentSegment = [];
   trail.forEach((point) => {
     const previous = currentSegment[currentSegment.length - 1];
     if (previous && !segmentIsPlausible(previous, point)) {
-      if (currentSegment.length > 1) segments.push(currentSegment);
       currentSegment = [];
     }
     currentSegment.push(point);
   });
-  if (currentSegment.length > 1) segments.push(currentSegment);
-  return segments;
+  if (currentSegment.length > 1) return currentSegment;
+
+  const tailPoint = courseTailPoint(current);
+  return tailPoint ? [tailPoint, current] : null;
+}
+
+function courseTailPoint(point) {
+  const courseDegrees = Number(point.course_degrees);
+  if (!Number.isFinite(courseDegrees)) return null;
+  const speedKnots = Math.max(Number(point.speed_knots) || 0, 2);
+  const tailDistanceNm = Math.min(0.35, Math.max(0.08, speedKnots / 80));
+  const tailBearing = (courseDegrees + 180) % 360;
+  return destinationPoint(point, tailBearing, tailDistanceNm);
+}
+
+function destinationPoint(point, bearingDegrees, distanceNm) {
+  const bearingRadians = (bearingDegrees * Math.PI) / 180;
+  const lat = Number(point.lat);
+  const lon = Number(point.lon);
+  const latitudeCorrection = Math.max(Math.cos((lat * Math.PI) / 180), 0.1);
+  return {
+    lat: lat + (distanceNm / 60) * Math.cos(bearingRadians),
+    lon: lon + (distanceNm / (60 * latitudeCorrection)) * Math.sin(bearingRadians),
+    observed_at: point.observed_at,
+  };
+}
+
+function vesselTypeClass(track) {
+  return `vessel-${String(track.vessel_type || "unknown")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "unknown"}`;
 }
 
 function normalizeTrackPoints(points) {
@@ -535,7 +681,6 @@ function showMapPopup(clip, index, point, tooltip) {
     <span>VHF ${escapeHtml(clip.channel)} · ${escapeHtml(formatDate(clip.started_at))}</span>
     ${renderPopupVessel(clip)}
   `;
-  tooltip.querySelector(".map-popup-close")?.addEventListener("click", clearMapPopup);
   placeTooltip(point, tooltip);
 }
 
@@ -543,7 +688,11 @@ function clearMapPopup() {
   const tooltip = document.querySelector("#map-tooltip");
   if (activePopupClipId) setClipHover(activePopupClipId, false);
   activePopupClipId = null;
-  if (tooltip) tooltip.hidden = true;
+  if (tooltip) {
+    tooltip.hidden = true;
+    tooltip.replaceChildren();
+    tooltip.removeAttribute("style");
+  }
 }
 
 function selectClipFromMap(clip, index) {
@@ -638,6 +787,7 @@ function formatDate(value) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
+    year: "numeric",
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value));
@@ -648,6 +798,7 @@ function formatDateTime(value) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
+    year: "numeric",
     hour: "numeric",
     minute: "2-digit",
     second: "2-digit",

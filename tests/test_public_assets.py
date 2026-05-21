@@ -16,11 +16,25 @@ def test_public_map_selects_density_aware_chart_tiles() -> None:
 def test_public_map_controls_use_plain_zoom_language() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert '<span id="zoom-label">Zoom</span>' in index_html
     assert "Chart zoom" not in index_html
     assert "`Zoom ${mapZoomStep + 1} of 5`" in app_js
     assert "`Chart ${currentChartLevel()}`" not in app_js
+    assert "setupMapPanAndWheel()" in app_js
+    assert '"wheel"' in app_js
+    assert 'map.addEventListener("pointerdown"' in app_js
+    assert "zoomAtPoint" in app_js
+    assert "panMapByPixels" in app_js
+    assert "commitMapPan" in app_js
+    assert "--map-pan-x" not in styles_css
+
+
+def test_public_timestamps_include_year() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert 'year: "numeric"' in app_js
 
 
 def test_public_map_mutes_busy_noaa_chart_background() -> None:
@@ -29,6 +43,12 @@ def test_public_map_mutes_busy_noaa_chart_background() -> None:
     assert "filter: saturate(0.62) contrast(0.88) brightness(1.08);" in styles_css
     assert "rgba(247, 244, 237, 0.26)" in styles_css
     assert "opacity: 0.85;" in styles_css
+
+
+def test_public_stats_fit_one_row_on_desktop() -> None:
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "repeat(4, minmax(120px, 1fr))" in styles_css
 
 
 def test_public_map_popups_are_click_driven_and_explicit() -> None:
@@ -41,6 +61,9 @@ def test_public_map_popups_are_click_driven_and_explicit() -> None:
     assert "clearMapPopup" in app_js
     assert "Reviewed radio clip" in app_js
     assert 'aria-label="Close map detail"' in app_js
+    assert 'tooltip.addEventListener("click"' in app_js
+    assert "tooltip.replaceChildren()" in app_js
+    assert "event.stopPropagation()" in app_js
     assert "addEventListener(\"mouseenter\"" not in app_js
     assert "addEventListener(\"mouseleave\"" not in app_js
     assert "showMapPreview" not in app_js
@@ -78,11 +101,16 @@ def test_public_map_uses_noaa_chart_display_tiles() -> None:
 
 def test_public_ais_playback_does_not_draw_week_long_straight_lines() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert "aisPlayback" in app_js
     assert "maxInterpolationGapMinutes" in app_js
     assert "trailWindowMinutes" in app_js
     assert "maxSegmentDistanceNm" in app_js
-    assert "trailSegmentsAtTime" in app_js
+    assert "motionTrailAtTime" in app_js
     assert "segmentIsPlausible" in app_js
     assert "interpolated: true" in app_js
+    assert "courseTailPoint" in app_js
+    assert ".vessel-passenger::before" in styles_css
+    assert ".vessel-tug::before" in styles_css
+    assert ".vessel-cargo::before" in styles_css
