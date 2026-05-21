@@ -13,6 +13,24 @@ def test_public_map_selects_density_aware_chart_tiles() -> None:
     assert "Math.min(14, 10 + mapZoomStep)" not in app_js
 
 
+def test_public_map_controls_use_plain_zoom_language() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+
+    assert '<span id="zoom-label">Zoom</span>' in index_html
+    assert "Chart zoom" not in index_html
+    assert "`Zoom ${mapZoomStep + 1} of 5`" in app_js
+    assert "`Chart ${currentChartLevel()}`" not in app_js
+
+
+def test_public_map_mutes_busy_noaa_chart_background() -> None:
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "filter: saturate(0.62) contrast(0.88) brightness(1.08);" in styles_css
+    assert "rgba(247, 244, 237, 0.26)" in styles_css
+    assert "opacity: 0.85;" in styles_css
+
+
 def test_public_map_preview_is_cleared_by_map_level_dismissal() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")

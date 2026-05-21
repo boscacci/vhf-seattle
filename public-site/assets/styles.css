@@ -190,6 +190,11 @@ h2 {
   font-weight: 700;
 }
 
+#zoom-label {
+  min-width: 84px;
+  text-align: center;
+}
+
 .time-controls input {
   width: min(42vw, 420px);
   accent-color: var(--selected);
@@ -243,7 +248,7 @@ h2 {
 
 .chart-tile-layer {
   opacity: 1;
-  filter: saturate(1.02) contrast(1.04) brightness(1.02);
+  filter: saturate(0.62) contrast(0.88) brightness(1.08);
 }
 
 .chart-tile-layer::after {
@@ -252,9 +257,10 @@ h2 {
   content: "";
   pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.18), transparent 18% 82%, rgba(255, 255, 255, 0.12)),
-    radial-gradient(circle at 50% 52%, transparent 0 58%, rgba(30, 36, 40, 0.08) 100%);
-  opacity: 0.35;
+    linear-gradient(0deg, rgba(247, 244, 237, 0.26), rgba(247, 244, 237, 0.26)),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.2), transparent 18% 82%, rgba(255, 255, 255, 0.14)),
+    radial-gradient(circle at 50% 52%, transparent 0 58%, rgba(30, 36, 40, 0.05) 100%);
+  opacity: 0.85;
 }
 
 .chart-tile-layer img {
@@ -287,15 +293,15 @@ h2 {
 
 .track-line {
   fill: none;
-  stroke: rgba(168, 68, 47, 0.72);
+  stroke: rgba(168, 68, 47, 0.58);
   stroke-dasharray: 1.5 2;
   stroke-linecap: round;
-  stroke-width: 0.55;
+  stroke-width: 0.48;
   vector-effect: non-scaling-stroke;
 }
 
 .track-line.business {
-  stroke: rgba(0, 108, 103, 0.74);
+  stroke: rgba(0, 108, 103, 0.58);
 }
 
 .playback-vessels {
@@ -314,6 +320,7 @@ h2 {
   color: var(--ink);
   font-size: 0.68rem;
   font-weight: 760;
+  opacity: 0.9;
   transform: translate(-50%, -50%);
   transition:
     left 520ms ease,
@@ -338,9 +345,9 @@ h2 {
 .playback-vessel span {
   max-width: 145px;
   overflow: hidden;
-  padding: 2px 5px;
+  padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.84);
+  background: rgba(255, 255, 255, 0.78);
   text-overflow: ellipsis;
 }
 

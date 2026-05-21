@@ -362,7 +362,9 @@ function setMapZoom(nextStep) {
 function updateZoomControls() {
   document.querySelector("#zoom-out").disabled = mapZoomStep <= 0;
   document.querySelector("#zoom-in").disabled = mapZoomStep >= 4;
-  document.querySelector("#zoom-label").textContent = `Chart ${currentChartLevel()}`;
+  const zoomLabel = document.querySelector("#zoom-label");
+  zoomLabel.textContent = `Zoom ${mapZoomStep + 1} of 5`;
+  zoomLabel.title = `NOAA chart detail ${currentChartLevel()}`;
 }
 
 function togglePlayback() {
