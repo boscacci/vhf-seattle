@@ -16,6 +16,12 @@ variable "site_subdomain" {
   default     = "talkingboats"
 }
 
+variable "dev_site_subdomain" {
+  description = "Subdomain to publish the dev static site under."
+  type        = string
+  default     = "dev.talkingboats"
+}
+
 variable "project_name" {
   description = "Short name used in AWS resource names."
   type        = string
@@ -42,6 +48,18 @@ variable "public_site_bucket_name" {
 
 variable "raw_audio_bucket_name" {
   description = "Optional override for the private raw-audio bucket name."
+  type        = string
+  default     = null
+}
+
+variable "dev_public_site_bucket_name" {
+  description = "Optional override for the dev public static-site bucket name."
+  type        = string
+  default     = null
+}
+
+variable "dev_raw_audio_bucket_name" {
+  description = "Optional override for the dev private raw-audio bucket name."
   type        = string
   default     = null
 }

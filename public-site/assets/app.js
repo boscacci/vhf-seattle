@@ -38,6 +38,7 @@ let timelineFrames = [];
 let timelineIndex = 0;
 let playbackTimer = null;
 let mapZoomStep = 2;
+let resizeTimer = null;
 
 async function loadManifest() {
   try {
@@ -61,6 +62,10 @@ function renderSite(manifest) {
   renderClips(currentClips);
   setupControls();
   renderMap();
+  window.addEventListener("resize", () => {
+    window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(renderMap, 120);
+  });
 }
 
 function renderStats(manifest) {
@@ -219,15 +224,25 @@ function renderChartTiles(force = false) {
 
 function currentBounds() {
   const zoomFactor = 2 ** (mapZoomStep - 2);
-  const centerLat = (baseBounds.minLat + baseBounds.maxLat) / 2;
-  const centerLon = (baseBounds.minLon + baseBounds.maxLon) / 2;
-  const latSpan = (baseBounds.maxLat - baseBounds.minLat) / zoomFactor;
-  const lonSpan = (baseBounds.maxLon - baseBounds.minLon) / zoomFactor;
+  const map = document.querySelector("#bay-map");
+  const aspectRatio = map?.clientWidth && map?.clientHeight ? map.clientWidth / map.clientHeight : 16 / 9;
+
+  const minX = lonToMercatorX(baseBounds.minLon);
+  const maxX = lonToMercatorX(baseBounds.maxLon);
+  const minY = latToMercatorY(baseBounds.minLat);
+  const maxY = latToMercatorY(baseBounds.maxLat);
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  const baseWidth = maxX - minX;
+  const baseHeight = maxY - minY;
+  const width = Math.max(baseWidth, baseHeight * aspectRatio) / zoomFactor;
+  const height = Math.max(baseHeight, baseWidth / aspectRatio) / zoomFactor;
+
   return {
-    minLat: centerLat - latSpan / 2,
-    maxLat: centerLat + latSpan / 2,
-    minLon: centerLon - lonSpan / 2,
-    maxLon: centerLon + lonSpan / 2,
+    minLat: mercatorYToLat(centerY - height / 2),
+    maxLat: mercatorYToLat(centerY + height / 2),
+    minLon: mercatorXToLon(centerX - width / 2),
+    maxLon: mercatorXToLon(centerX + width / 2),
   };
 }
 
@@ -451,10 +466,18 @@ function lonToMercatorX(lon) {
   return 6378137 * (Number(lon) * Math.PI) / 180;
 }
 
+function mercatorXToLon(x) {
+  return (Number(x) / 6378137) * (180 / Math.PI);
+}
+
 function latToMercatorY(lat) {
   const boundedLat = Math.max(Math.min(Number(lat), 85.05112878), -85.05112878);
   const radians = (boundedLat * Math.PI) / 180;
   return 6378137 * Math.log(Math.tan(Math.PI / 4 + radians / 2));
+}
+
+function mercatorYToLat(y) {
+  return (Math.atan(Math.sinh(Number(y) / 6378137)) * 180) / Math.PI;
 }
 
 function clampTile(value, max) {

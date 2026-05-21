@@ -18,7 +18,10 @@ raw S3 bucket.
 - AIS receiver: local AIS messages for vessel context
 - Raw audio: private S3 bucket, `raw/` expires after 60 days
 - Hall of Fame: promoted clips retained indefinitely
-- Public site: static S3 origin behind CloudFront Origin Access Control
+- Prod public site: static S3 origin behind CloudFront Origin Access Control at
+  `talkingboats.robertboscacci.com`
+- Dev public site: separate static S3 origin and CloudFront distribution at
+  `dev.talkingboats.robertboscacci.com`
 
 ## Local Setup
 
@@ -159,8 +162,17 @@ conda run -n dell talkingboats-export-public \
   --output-dir outputs/public-site
 ```
 
-`outputs/public-site` can be synced to the public S3 website bucket created by the
-OpenTofu stack.
+Deploy dev first, then prod after the public checks look right:
+
+```bash
+scripts/deploy_public_site.sh dev outputs/public-site
+scripts/deploy_public_site.sh prod outputs/public-site
+```
+
+Public URLs:
+
+- Dev: `https://dev.talkingboats.robertboscacci.com`
+- Prod: `https://talkingboats.robertboscacci.com`
 
 ## AWS Infrastructure
 
@@ -173,14 +185,14 @@ tofu plan
 ```
 
 Do not run `tofu apply` until the bucket names, AWS profile, and Route 53 hosted
-zone are confirmed. The stack creates paid AWS resources: S3 buckets, CloudFront,
-ACM certificate validation records, Route 53 alias records, and an IAM policy for
-the private server.
+zone are confirmed. The stack creates paid AWS resources: separate dev/prod S3
+buckets, CloudFront distributions, ACM certificate validation records, Route 53
+alias records, and IAM policies for private server publishing.
 
 ## Security Rules
 
-- Raw audio bucket is private and has public access blocked.
-- Public bucket is private and readable only by CloudFront OAC.
+- Raw audio buckets are private and have public access blocked.
+- Public buckets are private and readable only by their matching CloudFront OAC.
 - The Pi does not get long-lived AWS credentials; it asks the private API for a
   short-lived presigned upload URL.
 - Private live radio is authenticated and never exported to the public site.

@@ -197,7 +197,9 @@ h2 {
 
 .bay-map {
   position: relative;
-  min-height: min(72vh, 760px);
+  aspect-ratio: 16 / 9;
+  max-height: 760px;
+  min-height: 420px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -584,6 +586,7 @@ audio {
   }
 
   .bay-map {
-    min-height: 430px;
+    aspect-ratio: 4 / 3;
+    min-height: 360px;
   }
 }
