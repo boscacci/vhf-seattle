@@ -22,24 +22,12 @@ const bounds = {
 };
 
 const baseBounds = { ...bounds };
-const chartLevels = {
-  10: { matrixWidth: 4097, matrixHeight: 3027 },
-  11: { matrixWidth: 8193, matrixHeight: 6053 },
-  12: { matrixWidth: 16385, matrixHeight: 12105 },
-  13: { matrixWidth: 32769, matrixHeight: 24209 },
-  14: { matrixWidth: 65537, matrixHeight: 48417 },
-};
-const noaaChart = {
-  tileSize: 256,
-  originX: -20037508.342787,
-  originY: 20037508.342787,
-  worldSpanMeters: 40075016.685574,
+const oceanBasemap = {
+  originX: -20037508.342789244,
+  originY: 20037508.342789244,
+  worldSpanMeters: 40075016.68557849,
   url(level, row, col) {
-    return [
-      "https://gis.charttools.noaa.gov/arcgis/rest/services",
-      "MarineChart_Services/NOAACharts/MapServer/WMTS/tile/1.0.0",
-      `MarineChart_Services_NOAACharts/default/default028mm/${level}/${row}/${col}.png`,
-    ].join("/");
+    return `https://services.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/${level}/${row}/${col}`;
   },
 };
 
@@ -190,28 +178,28 @@ function renderChartTiles(force = false) {
   if (!tileLayer) return;
   if (!force && tileLayer.dataset.renderedFor === String(level)) return;
 
-  const levelConfig = chartLevels[level];
   const visibleBounds = currentBounds();
-  const tileSpan = noaaChart.worldSpanMeters / levelConfig.matrixWidth;
+  const matrixSize = 2 ** level;
+  const tileSpan = oceanBasemap.worldSpanMeters / matrixSize;
   const minX = lonToMercatorX(visibleBounds.minLon);
   const maxX = lonToMercatorX(visibleBounds.maxLon);
   const minY = latToMercatorY(visibleBounds.minLat);
   const maxY = latToMercatorY(visibleBounds.maxLat);
-  const minCol = clampTile(Math.floor((minX - noaaChart.originX) / tileSpan), levelConfig.matrixWidth);
-  const maxCol = clampTile(Math.floor((maxX - noaaChart.originX) / tileSpan), levelConfig.matrixWidth);
-  const minRow = clampTile(Math.floor((noaaChart.originY - maxY) / tileSpan), levelConfig.matrixHeight);
-  const maxRow = clampTile(Math.floor((noaaChart.originY - minY) / tileSpan), levelConfig.matrixHeight);
+  const minCol = clampTile(Math.floor((minX - oceanBasemap.originX) / tileSpan), matrixSize);
+  const maxCol = clampTile(Math.floor((maxX - oceanBasemap.originX) / tileSpan), matrixSize);
+  const minRow = clampTile(Math.floor((oceanBasemap.originY - maxY) / tileSpan), matrixSize);
+  const maxRow = clampTile(Math.floor((oceanBasemap.originY - minY) / tileSpan), matrixSize);
 
   const tiles = [];
   for (let row = minRow; row <= maxRow; row += 1) {
     for (let col = minCol; col <= maxCol; col += 1) {
-      const tileMinX = noaaChart.originX + col * tileSpan;
-      const tileMaxX = noaaChart.originX + (col + 1) * tileSpan;
-      const tileMaxY = noaaChart.originY - row * tileSpan;
-      const tileMinY = noaaChart.originY - (row + 1) * tileSpan;
+      const tileMinX = oceanBasemap.originX + col * tileSpan;
+      const tileMaxX = oceanBasemap.originX + (col + 1) * tileSpan;
+      const tileMaxY = oceanBasemap.originY - row * tileSpan;
+      const tileMinY = oceanBasemap.originY - (row + 1) * tileSpan;
       tiles.push(`
         <img
-          src="${noaaChart.url(level, row, col)}"
+          src="${oceanBasemap.url(level, row, col)}"
           alt=""
           loading="lazy"
           style="
