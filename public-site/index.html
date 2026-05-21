@@ -33,9 +33,15 @@
             <h2 id="map-title">Nearby Signals</h2>
           </div>
           <div class="bay-map" id="bay-map" aria-label="Approximate Elliott Bay activity map">
+            <div class="chart-fallback" aria-hidden="true"></div>
+            <div class="chart-tile-layer" id="chart-tile-layer" aria-hidden="true"></div>
             <span class="map-label downtown">Seattle</span>
             <span class="map-label bay">Elliott Bay</span>
+            <span class="map-label west-seattle">West Seattle</span>
+            <div class="map-tooltip" id="map-tooltip" role="status" hidden></div>
+            <p class="chart-attribution">NOAA ENC display, not for navigation</p>
           </div>
+          <p class="sr-only" id="map-status" aria-live="polite"></p>
         </div>
 
         <div class="timeline-panel" aria-labelledby="timeline-title">
