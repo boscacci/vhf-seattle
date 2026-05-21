@@ -46,6 +46,14 @@ ALLOWED_AIS_FIELDS = {
     "observed_at",
 }
 
+ALLOWED_AIS_TRACK_FIELDS = {
+    "track_id",
+    "name",
+    "vessel_type",
+    "channel_hint",
+    "points",
+}
+
 
 class PublicExportError(ValueError):
     pass
@@ -71,6 +79,7 @@ def sanitize_public_manifest(private_manifest: Mapping[str, Any]) -> dict[str, A
         },
         "stats": _copy_allowed(private_manifest.get("stats", {}), ALLOWED_STATS_FIELDS),
         "clips": clips,
+        "ais_tracks": _sanitize_ais_tracks(private_manifest.get("ais_tracks", [])),
     }
     public_manifest["stats"]["clip_count"] = len(clips)
     assert_public_safe(public_manifest)
@@ -127,6 +136,29 @@ def _sanitize_clip(clip: Mapping[str, Any]) -> dict[str, Any]:
         raise PublicExportError(f"approved clip is missing public fields: {', '.join(missing)}")
 
     return sanitized
+
+
+def _sanitize_ais_tracks(tracks: Any) -> list[dict[str, Any]]:
+    if not tracks:
+        return []
+    if not isinstance(tracks, list):
+        raise PublicExportError("ais_tracks must be a list")
+
+    sanitized_tracks = []
+    for track in tracks:
+        if not isinstance(track, Mapping):
+            raise PublicExportError("ais_tracks must contain objects")
+        sanitized = _copy_allowed(track, ALLOWED_AIS_TRACK_FIELDS)
+        points = sanitized.get("points")
+        if not isinstance(points, list):
+            raise PublicExportError("ais_tracks points must be a list")
+        sanitized["points"] = [
+            _round_location(_copy_allowed(point, ALLOWED_AIS_FIELDS)) for point in points
+        ]
+        if not sanitized.get("track_id") or not sanitized["points"]:
+            raise PublicExportError("ais_tracks require track_id and at least one point")
+        sanitized_tracks.append(sanitized)
+    return sanitized_tracks
 
 
 def _copy_allowed(source: Any, allowed_fields: set[str]) -> dict[str, Any]:

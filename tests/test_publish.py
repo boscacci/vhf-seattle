@@ -11,6 +11,24 @@ def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
         "generated_at": "2026-05-20T00:00:00Z",
         "site": {"title": "Talking Boats"},
         "stats": {"channel_counts": {"68": 1}, "internal_url": "http://127.0.0.1:8034"},
+        "ais_tracks": [
+            {
+                "track_id": "track-1",
+                "name": "Mock vessel",
+                "vessel_type": "recreational",
+                "private_s3_key": "raw/channel=68/date=2026-05-20/secret.mp3",
+                "points": [
+                    {
+                        "observed_at": "2026-05-20T19:10:00Z",
+                        "lat": 47.6062123,
+                        "lon": -122.3708844,
+                        "speed_knots": 4.2,
+                        "course_degrees": 212.2,
+                        "receiver_id": "rtl-secret",
+                    }
+                ],
+            }
+        ],
         "clips": [
             {
                 "id": "approved",
@@ -39,6 +57,8 @@ def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
     rendered = json.dumps(public_manifest)
 
     assert public_manifest["stats"]["clip_count"] == 1
+    assert public_manifest["ais_tracks"][0]["points"][0]["lat"] == 47.606
+    assert public_manifest["ais_tracks"][0]["points"][0]["lon"] == -122.371
     assert [clip["id"] for clip in public_manifest["clips"]] == ["approved"]
     assert public_manifest["clips"][0]["ais_context"]["lat"] == 47.606
     assert public_manifest["clips"][0]["ais_context"]["lon"] == -122.371
@@ -113,3 +133,8 @@ def test_public_export_rejects_nested_audio_filename() -> None:
                 ]
             }
         )
+
+
+def test_public_manifest_rejects_bad_ais_tracks() -> None:
+    with pytest.raises(PublicExportError, match="ais_tracks"):
+        sanitize_public_manifest({"ais_tracks": [{"track_id": "bad", "points": "not-a-list"}]})

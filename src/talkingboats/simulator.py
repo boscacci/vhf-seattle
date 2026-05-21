@@ -162,6 +162,7 @@ def generate_radio_fixture(config: RadioSimulationConfig) -> dict[str, Any]:
             "vessel_type_counts": vessel_type_counts,
             "generated_at": _format_utc(config.started_at.astimezone(UTC)),
         },
+        "ais_tracks": _fake_ais_tracks(config.started_at.astimezone(UTC), config.clip_count),
         "clips": clips,
     }
     (output_dir / "private_manifest.json").write_text(
@@ -196,6 +197,109 @@ def _fake_vessel_context(
         "vessel_type": script.vessel_type,
         "distance_nm": round(rng.uniform(0.2, 4.8), 2),
         "confidence": round(rng.uniform(0.42, 0.9), 2),
+    }
+
+
+def _fake_ais_tracks(started_at: datetime, track_count: int) -> list[dict[str, Any]]:
+    routes = [
+        {
+            "track_id": "mock-ais-recreational-1",
+            "name": "SIM HARBOR HERON",
+            "vessel_type": "recreational",
+            "channel_hint": "68",
+            "start": (47.594, -122.405),
+            "end": (47.622, -122.352),
+            "speed": 7.2,
+            "course": 48.0,
+        },
+        {
+            "track_id": "mock-ais-cargo-1",
+            "name": "SIM SOUND TRADER",
+            "vessel_type": "cargo",
+            "channel_hint": "14",
+            "start": (47.635, -122.405),
+            "end": (47.590, -122.337),
+            "speed": 11.4,
+            "course": 139.0,
+        },
+        {
+            "track_id": "mock-ais-workboat-1",
+            "name": "SIM PIER RUNNER",
+            "vessel_type": "workboat",
+            "channel_hint": "14",
+            "start": (47.602, -122.362),
+            "end": (47.617, -122.388),
+            "speed": 5.1,
+            "course": 315.0,
+        },
+        {
+            "track_id": "mock-ais-recreational-2",
+            "name": "SIM MARINA WANDERER",
+            "vessel_type": "recreational",
+            "channel_hint": "68",
+            "start": (47.610, -122.395),
+            "end": (47.599, -122.351),
+            "speed": 6.0,
+            "course": 108.0,
+        },
+        {
+            "track_id": "mock-ais-ferry-1",
+            "name": "SIM BAY CROSSING",
+            "vessel_type": "passenger",
+            "channel_hint": "14",
+            "start": (47.603, -122.34),
+            "end": (47.623, -122.43),
+            "speed": 13.0,
+            "course": 288.0,
+        },
+        {
+            "track_id": "mock-ais-tug-1",
+            "name": "SIM ASSIST TUG",
+            "vessel_type": "tug",
+            "channel_hint": "14",
+            "start": (47.583, -122.348),
+            "end": (47.607, -122.385),
+            "speed": 8.4,
+            "course": 318.0,
+        },
+    ]
+    visible_count = max(1, min(track_count, len(routes)))
+    return [
+        _build_track(route, started_at, index)
+        for index, route in enumerate(routes[:visible_count])
+    ]
+
+
+def _build_track(route: dict[str, Any], started_at: datetime, index: int) -> dict[str, Any]:
+    point_count = 9
+    offset = timedelta(minutes=index * 3)
+    points = []
+    start_lat, start_lon = route["start"]
+    end_lat, end_lon = route["end"]
+    for point_index in range(point_count):
+        fraction = point_index / (point_count - 1)
+        wiggle = math.sin(fraction * math.pi * 2 + index) * 0.002
+        points.append(
+            {
+                "observed_at": _format_utc(
+                    started_at + offset + timedelta(minutes=point_index * 4)
+                ),
+                "lat": start_lat + (end_lat - start_lat) * fraction + wiggle,
+                "lon": start_lon + (end_lon - start_lon) * fraction - wiggle / 2,
+                "speed_knots": route["speed"],
+                "course_degrees": route["course"],
+                "receiver_id": "simulated-private-receiver",
+                "private_s3_key": "raw/channel=68/date=2026-05-20/private.wav",
+            }
+        )
+
+    return {
+        "track_id": route["track_id"],
+        "name": route["name"],
+        "vessel_type": route["vessel_type"],
+        "channel_hint": route["channel_hint"],
+        "points": points,
+        "receiver_id": "simulated-private-receiver",
     }
 
 

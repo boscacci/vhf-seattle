@@ -11,6 +11,7 @@ const fallbackManifest = {
     vessel_type_counts: {},
   },
   clips: [],
+  ais_tracks: [],
 };
 
 const bounds = {
@@ -20,14 +21,19 @@ const bounds = {
   maxLon: -122.315,
 };
 
+const baseBounds = { ...bounds };
+const chartLevels = {
+  10: { matrixWidth: 4097, matrixHeight: 3027 },
+  11: { matrixWidth: 8193, matrixHeight: 6053 },
+  12: { matrixWidth: 16385, matrixHeight: 12105 },
+  13: { matrixWidth: 32769, matrixHeight: 24209 },
+  14: { matrixWidth: 65537, matrixHeight: 48417 },
+};
 const noaaChart = {
-  level: 12,
   tileSize: 256,
   originX: -20037508.342787,
   originY: 20037508.342787,
   worldSpanMeters: 40075016.685574,
-  matrixWidth: 16385,
-  matrixHeight: 12105,
   url(level, row, col) {
     return [
       "https://gis.charttools.noaa.gov/arcgis/rest/services",
@@ -38,6 +44,12 @@ const noaaChart = {
 };
 
 let selectedClipId = null;
+let currentClips = [];
+let currentTracks = [];
+let timelineFrames = [];
+let timelineIndex = 0;
+let playbackTimer = null;
+let mapZoomStep = 2;
 
 async function loadManifest() {
   try {
@@ -50,13 +62,17 @@ async function loadManifest() {
 }
 
 function renderSite(manifest) {
+  currentClips = manifest.clips || [];
+  currentTracks = manifest.ais_tracks || [];
+  timelineFrames = collectTimelineFrames(currentTracks);
   document.title = manifest.site?.title || "Talking Boats";
   document.querySelector("#site-title").textContent = manifest.site?.title || "Talking Boats";
   document.querySelector("#site-subtitle").textContent =
     manifest.site?.subtitle || "Reviewed marine-radio moments from Elliott Bay.";
   renderStats(manifest);
-  renderClips(manifest.clips || []);
-  renderMap(manifest.clips || []);
+  renderClips(currentClips);
+  setupControls();
+  renderMap();
 }
 
 function renderStats(manifest) {
@@ -82,11 +98,13 @@ function renderStats(manifest) {
     .join("");
 }
 
-function renderMap(clips) {
+function renderMap() {
   const map = document.querySelector("#bay-map");
   const tooltip = document.querySelector("#map-tooltip");
-  const plottedClips = clips.filter((clip) => clip.ais_context?.lat && clip.ais_context?.lon);
-  renderChartTiles();
+  const plottedClips = currentClips.filter((clip) => clip.ais_context?.lat && clip.ais_context?.lon);
+  renderChartTiles(true);
+  renderTrackLayer(currentTracks);
+  renderTrackPlayback(timelineIndex);
   map.querySelectorAll(".map-point").forEach((point) => point.remove());
 
   plottedClips.forEach((clip, index) => {
@@ -153,31 +171,36 @@ function renderVessels(vessels) {
 }
 
 function projectLon(lon) {
-  const minX = lonToMercatorX(bounds.minLon);
-  const maxX = lonToMercatorX(bounds.maxLon);
+  const visibleBounds = currentBounds();
+  const minX = lonToMercatorX(visibleBounds.minLon);
+  const maxX = lonToMercatorX(visibleBounds.maxLon);
   return ((lonToMercatorX(Number(lon)) - minX) / (maxX - minX)) * 100;
 }
 
 function projectLat(lat) {
-  const minY = latToMercatorY(bounds.minLat);
-  const maxY = latToMercatorY(bounds.maxLat);
+  const visibleBounds = currentBounds();
+  const minY = latToMercatorY(visibleBounds.minLat);
+  const maxY = latToMercatorY(visibleBounds.maxLat);
   return ((maxY - latToMercatorY(Number(lat))) / (maxY - minY)) * 100;
 }
 
-function renderChartTiles() {
+function renderChartTiles(force = false) {
   const tileLayer = document.querySelector("#chart-tile-layer");
-  if (!tileLayer || tileLayer.dataset.rendered === "true") return;
+  const level = currentChartLevel();
+  if (!tileLayer) return;
+  if (!force && tileLayer.dataset.renderedFor === String(level)) return;
 
-  const level = noaaChart.level;
-  const tileSpan = noaaChart.worldSpanMeters / noaaChart.matrixWidth;
-  const minX = lonToMercatorX(bounds.minLon);
-  const maxX = lonToMercatorX(bounds.maxLon);
-  const minY = latToMercatorY(bounds.minLat);
-  const maxY = latToMercatorY(bounds.maxLat);
-  const minCol = clampTile(Math.floor((minX - noaaChart.originX) / tileSpan), noaaChart.matrixWidth);
-  const maxCol = clampTile(Math.floor((maxX - noaaChart.originX) / tileSpan), noaaChart.matrixWidth);
-  const minRow = clampTile(Math.floor((noaaChart.originY - maxY) / tileSpan), noaaChart.matrixHeight);
-  const maxRow = clampTile(Math.floor((noaaChart.originY - minY) / tileSpan), noaaChart.matrixHeight);
+  const levelConfig = chartLevels[level];
+  const visibleBounds = currentBounds();
+  const tileSpan = noaaChart.worldSpanMeters / levelConfig.matrixWidth;
+  const minX = lonToMercatorX(visibleBounds.minLon);
+  const maxX = lonToMercatorX(visibleBounds.maxLon);
+  const minY = latToMercatorY(visibleBounds.minLat);
+  const maxY = latToMercatorY(visibleBounds.maxLat);
+  const minCol = clampTile(Math.floor((minX - noaaChart.originX) / tileSpan), levelConfig.matrixWidth);
+  const maxCol = clampTile(Math.floor((maxX - noaaChart.originX) / tileSpan), levelConfig.matrixWidth);
+  const minRow = clampTile(Math.floor((noaaChart.originY - maxY) / tileSpan), levelConfig.matrixHeight);
+  const maxRow = clampTile(Math.floor((noaaChart.originY - minY) / tileSpan), levelConfig.matrixHeight);
 
   const tiles = [];
   for (let row = minRow; row <= maxRow; row += 1) {
@@ -203,7 +226,166 @@ function renderChartTiles() {
   }
 
   tileLayer.innerHTML = tiles.join("");
-  tileLayer.dataset.rendered = "true";
+  tileLayer.dataset.renderedFor = String(level);
+}
+
+function currentBounds() {
+  const zoomFactor = 2 ** (mapZoomStep - 2);
+  const centerLat = (baseBounds.minLat + baseBounds.maxLat) / 2;
+  const centerLon = (baseBounds.minLon + baseBounds.maxLon) / 2;
+  const latSpan = (baseBounds.maxLat - baseBounds.minLat) / zoomFactor;
+  const lonSpan = (baseBounds.maxLon - baseBounds.minLon) / zoomFactor;
+  return {
+    minLat: centerLat - latSpan / 2,
+    maxLat: centerLat + latSpan / 2,
+    minLon: centerLon - lonSpan / 2,
+    maxLon: centerLon + lonSpan / 2,
+  };
+}
+
+function currentChartLevel() {
+  return Math.max(10, Math.min(14, 10 + mapZoomStep));
+}
+
+function setupControls() {
+  const zoomIn = document.querySelector("#zoom-in");
+  const zoomOut = document.querySelector("#zoom-out");
+  const playButton = document.querySelector("#playback-toggle");
+  const slider = document.querySelector("#time-slider");
+
+  zoomIn.addEventListener("click", () => setMapZoom(mapZoomStep + 1));
+  zoomOut.addEventListener("click", () => setMapZoom(mapZoomStep - 1));
+  playButton.addEventListener("click", togglePlayback);
+  slider.addEventListener("input", () => {
+    stopPlayback();
+    timelineIndex = Number(slider.value);
+    renderTrackPlayback(timelineIndex);
+  });
+
+  slider.max = String(Math.max(timelineFrames.length - 1, 0));
+  slider.disabled = timelineFrames.length === 0;
+  playButton.disabled = timelineFrames.length === 0;
+  updateZoomControls();
+  updateTimeControls();
+}
+
+function setMapZoom(nextStep) {
+  mapZoomStep = Math.max(0, Math.min(4, nextStep));
+  updateZoomControls();
+  renderMap();
+}
+
+function updateZoomControls() {
+  document.querySelector("#zoom-out").disabled = mapZoomStep <= 0;
+  document.querySelector("#zoom-in").disabled = mapZoomStep >= 4;
+  document.querySelector("#zoom-label").textContent = `Chart ${currentChartLevel()}`;
+}
+
+function togglePlayback() {
+  if (playbackTimer) {
+    stopPlayback();
+    return;
+  }
+  document.querySelector("#playback-toggle").textContent = "Pause AIS";
+  playbackTimer = window.setInterval(() => {
+    timelineIndex = (timelineIndex + 1) % Math.max(timelineFrames.length, 1);
+    renderTrackPlayback(timelineIndex);
+  }, 850);
+}
+
+function stopPlayback() {
+  if (playbackTimer) window.clearInterval(playbackTimer);
+  playbackTimer = null;
+  document.querySelector("#playback-toggle").textContent = "Play AIS";
+}
+
+function updateTimeControls() {
+  const slider = document.querySelector("#time-slider");
+  const label = document.querySelector("#time-label");
+  slider.value = String(timelineIndex);
+  label.textContent = timelineFrames[timelineIndex]
+    ? formatDateTime(timelineFrames[timelineIndex])
+    : "No AIS track";
+}
+
+function collectTimelineFrames(tracks) {
+  const frames = new Set();
+  tracks.forEach((track) => {
+    (track.points || []).forEach((point) => {
+      if (point.observed_at) frames.add(point.observed_at);
+    });
+  });
+  return Array.from(frames).sort();
+}
+
+function renderTrackLayer(tracks) {
+  const trackLayer = document.querySelector("#track-layer");
+  trackLayer.innerHTML = tracks
+    .map((track) => {
+      const points = (track.points || [])
+        .map((point) => `${projectLon(point.lon).toFixed(2)},${projectLat(point.lat).toFixed(2)}`)
+        .join(" ");
+      if (!points) return "";
+      const className = track.channel_hint === "68" ? "track-line fun" : "track-line business";
+      return `<polyline class="${className}" points="${points}" />`;
+    })
+    .join("");
+}
+
+function renderTrackPlayback(frameIndex) {
+  const vessels = document.querySelector("#playback-vessels");
+  const frameTime = timelineFrames[frameIndex];
+  if (!frameTime) {
+    vessels.innerHTML = "";
+    updateTimeControls();
+    return;
+  }
+
+  vessels.innerHTML = currentTracks
+    .map((track) => {
+      const point = positionAtTime(track.points || [], frameTime);
+      if (!point) return "";
+      const left = projectLon(point.lon);
+      const top = projectLat(point.lat);
+      if (left < -5 || left > 105 || top < -5 || top > 105) return "";
+      return `
+        <div
+          class="playback-vessel ${track.channel_hint === "68" ? "fun" : "business"}"
+          style="left: ${left}%; top: ${top}%;"
+          title="${escapeHtml(track.name)}"
+        >
+          <span>${escapeHtml(track.name)}</span>
+        </div>
+      `;
+    })
+    .join("");
+  updateTimeControls();
+}
+
+function positionAtTime(points, frameTime) {
+  const target = Date.parse(frameTime);
+  const sorted = points
+    .filter((point) => point.observed_at)
+    .slice()
+    .sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
+  if (!sorted.length) return null;
+  if (target <= Date.parse(sorted[0].observed_at)) return sorted[0];
+  if (target >= Date.parse(sorted[sorted.length - 1].observed_at)) return sorted[sorted.length - 1];
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const next = sorted[index];
+    const previousTime = Date.parse(previous.observed_at);
+    const nextTime = Date.parse(next.observed_at);
+    if (target <= nextTime) {
+      const fraction = (target - previousTime) / (nextTime - previousTime);
+      return {
+        lat: Number(previous.lat) + (Number(next.lat) - Number(previous.lat)) * fraction,
+        lon: Number(previous.lon) + (Number(next.lon) - Number(previous.lon)) * fraction,
+      };
+    }
+  }
+  return sorted[sorted.length - 1];
 }
 
 function showMapPreview(clip, index, point, tooltip) {
@@ -219,7 +401,7 @@ function showMapPreview(clip, index, point, tooltip) {
 
 function hideMapPreview(clip, tooltip) {
   setClipHover(clip.id, false);
-  if (selectedClipId !== clip.id) tooltip.hidden = true;
+  tooltip.hidden = true;
 }
 
 function selectClipFromMap(clip, index) {
@@ -298,6 +480,17 @@ function formatDate(value) {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatDateTime(value) {
+  if (!value) return "Unknown time";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
   }).format(new Date(value));
 }
 

@@ -23,6 +23,8 @@ def test_simulator_writes_deterministic_audio_and_private_manifest(tmp_path):
     assert (tmp_path / "private_manifest.json").exists()
     assert json.loads((tmp_path / "private_manifest.json").read_text(encoding="utf-8")) == manifest
     assert manifest["stats"]["channel_counts"] == {"68": 2, "14": 2}
+    assert len(manifest["ais_tracks"]) == 4
+    assert len(manifest["ais_tracks"][0]["points"]) >= 5
 
     first_audio = tmp_path / "audio" / manifest["clips"][0]["audio_public_filename"]
     assert first_audio.exists()
@@ -46,6 +48,11 @@ def test_simulator_fixture_can_drive_public_export_without_private_leaks(tmp_pat
     rendered = json.dumps(public_manifest)
 
     assert public_manifest["stats"]["clip_count"] == 4
+    assert len(public_manifest["ais_tracks"]) == 6
+    assert public_manifest["ais_tracks"][0]["points"][0]["lat"] == round(
+        public_manifest["ais_tracks"][0]["points"][0]["lat"],
+        3,
+    )
     assert "private_s3_key" not in rendered
     assert "receiver_id" not in rendered
     assert "raw/channel=" not in rendered

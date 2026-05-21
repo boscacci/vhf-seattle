@@ -117,8 +117,8 @@ h2 {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
-  gap: 22px;
+  grid-template-columns: 1fr;
+  gap: 26px;
   align-items: start;
 }
 
@@ -127,13 +127,77 @@ h2 {
   min-width: 0;
 }
 
+.map-panel {
+  grid-column: 1 / -1;
+}
+
 .section-heading {
   margin-bottom: 12px;
 }
 
+.map-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.zoom-controls,
+.time-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.zoom-controls button,
+.time-controls button {
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.time-controls button {
+  min-width: 86px;
+  padding: 0 12px;
+  color: #fff;
+  background: var(--selected);
+}
+
+.zoom-controls button:disabled,
+.time-controls button:disabled,
+.time-controls input:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+#zoom-label,
+.time-controls label,
+#time-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.time-controls input {
+  width: min(42vw, 420px);
+  accent-color: var(--selected);
+}
+
 .bay-map {
   position: relative;
-  min-height: 520px;
+  min-height: min(72vh, 760px);
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -209,6 +273,74 @@ h2 {
   opacity: 0.18;
 }
 
+.track-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.track-line {
+  fill: none;
+  stroke: rgba(168, 68, 47, 0.72);
+  stroke-dasharray: 1.5 2;
+  stroke-linecap: round;
+  stroke-width: 0.55;
+  vector-effect: non-scaling-stroke;
+}
+
+.track-line.business {
+  stroke: rgba(0, 108, 103, 0.74);
+}
+
+.playback-vessels {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.playback-vessel {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.68rem;
+  font-weight: 760;
+  transform: translate(-50%, -50%);
+  transition:
+    left 520ms ease,
+    top 520ms ease;
+  white-space: nowrap;
+}
+
+.playback-vessel::before {
+  width: 0;
+  height: 0;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 13px solid var(--brick);
+  filter: drop-shadow(0 2px 4px rgba(30, 36, 40, 0.35));
+  content: "";
+}
+
+.playback-vessel.business::before {
+  border-left-color: var(--teal);
+}
+
+.playback-vessel span {
+  max-width: 145px;
+  overflow: hidden;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.84);
+  text-overflow: ellipsis;
+}
+
 .map-label {
   position: absolute;
   z-index: 3;
@@ -238,7 +370,7 @@ h2 {
 
 .map-point {
   position: absolute;
-  z-index: 5;
+  z-index: 8;
   display: grid;
   width: 28px;
   height: 28px;
@@ -270,7 +402,7 @@ h2 {
 .map-point:hover,
 .map-point:focus-visible,
 .map-point.is-selected {
-  z-index: 6;
+  z-index: 9;
   outline: none;
   transform: translate(
       calc(-50% + var(--point-offset-x, 0px)),
@@ -289,7 +421,7 @@ h2 {
 
 .map-tooltip {
   position: absolute;
-  z-index: 7;
+  z-index: 10;
   display: grid;
   width: min(250px, calc(100% - 24px));
   gap: 4px;
@@ -336,6 +468,7 @@ h2 {
 
 .clip-list {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -423,7 +556,8 @@ audio {
 @media (max-width: 860px) {
   .topbar,
   .overview-band,
-  .content-grid {
+  .content-grid,
+  .clip-list {
     grid-template-columns: 1fr;
   }
 
@@ -435,7 +569,21 @@ audio {
     grid-template-columns: 1fr;
   }
 
+  .map-toolbar,
+  .time-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .zoom-controls {
+    justify-content: space-between;
+  }
+
+  .time-controls input {
+    width: 100%;
+  }
+
   .bay-map {
-    min-height: 380px;
+    min-height: 430px;
   }
 }

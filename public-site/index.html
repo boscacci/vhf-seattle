@@ -32,9 +32,24 @@
             <p class="eyebrow">Map</p>
             <h2 id="map-title">Nearby Signals</h2>
           </div>
+          <div class="map-toolbar" aria-label="Map and AIS playback controls">
+            <div class="zoom-controls" aria-label="Map zoom controls">
+              <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+              <span id="zoom-label">Chart zoom</span>
+              <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+            </div>
+            <div class="time-controls">
+              <button type="button" id="playback-toggle">Play AIS</button>
+              <label for="time-slider">Replay time</label>
+              <input id="time-slider" type="range" min="0" max="0" value="0" />
+              <output id="time-label" for="time-slider">No AIS track</output>
+            </div>
+          </div>
           <div class="bay-map" id="bay-map" aria-label="Approximate Elliott Bay activity map">
             <div class="chart-fallback" aria-hidden="true"></div>
             <div class="chart-tile-layer" id="chart-tile-layer" aria-hidden="true"></div>
+            <svg class="track-layer" id="track-layer" viewBox="0 0 100 100" aria-hidden="true"></svg>
+            <div class="playback-vessels" id="playback-vessels" aria-hidden="true"></div>
             <span class="map-label downtown">Seattle</span>
             <span class="map-label bay">Elliott Bay</span>
             <span class="map-label west-seattle">West Seattle</span>
