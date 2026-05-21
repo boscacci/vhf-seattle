@@ -48,6 +48,7 @@ ALLOWED_AIS_FIELDS = {
 
 ALLOWED_AIS_TRACK_FIELDS = {
     "track_id",
+    "mmsi",
     "name",
     "vessel_type",
     "channel_hint",

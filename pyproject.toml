@@ -19,6 +19,7 @@ dev = [
 
 [project.scripts]
 talkingboats-api = "talkingboats.api:main"
+talkingboats-fetch-ais-history = "talkingboats.ais_history:main"
 talkingboats-simulate-radio = "talkingboats.simulator:main"
 talkingboats-upload-clip = "talkingboats.capture_uploader:main"
 talkingboats-export-public = "talkingboats.publish:main"

@@ -72,6 +72,26 @@ conda run -n dell talkingboats-export-public \
   --audio-source-dir outputs/simulated-radio/audio
 ```
 
+## Historical AIS Slice
+
+NOAA/BOEM MarineCadastre AIS point data can be queried through NOAA PMEL ERDDAP
+by year, time range, and bounding box. This keeps the local download small enough
+for experimentation.
+
+```bash
+conda run -n dell talkingboats-fetch-ais-history \
+  --start 2024-07-01T00:00:00Z \
+  --end 2024-07-08T00:00:00Z \
+  --raw-csv data/ais/elliott-bay-2024-07-01_2024-07-08.raw.csv \
+  --tracks-json outputs/ais/elliott-bay-2024-07-01_2024-07-08.tracks.json \
+  --private-manifest outputs/simulated-radio/private_manifest.json \
+  --max-tracks 16
+```
+
+The raw CSV stays under `data/`, which is git-ignored. The generated tracks are
+public-export candidates only after the sanitizer rounds positions and removes
+private fields.
+
 ## Manual Clip Upload
 
 The Pi-side uploader can be tested with any local audio file before the SDR
