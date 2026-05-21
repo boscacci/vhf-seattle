@@ -26,6 +26,9 @@ const oceanBasemap = {
   originX: -20037508.342789244,
   originY: 20037508.342789244,
   worldSpanMeters: 40075016.68557849,
+  tileSize: 256,
+  maxLevel: 16,
+  maxTiles: 220,
   url(level, row, col) {
     return `https://services.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/${level}/${row}/${col}`;
   },
@@ -179,11 +182,19 @@ function projectLat(lat) {
 
 function renderChartTiles(force = false) {
   const tileLayer = document.querySelector("#chart-tile-layer");
-  const level = currentChartLevel();
   if (!tileLayer) return;
-  if (!force && tileLayer.dataset.renderedFor === String(level)) return;
 
   const visibleBounds = currentBounds();
+  const level = currentChartLevel(visibleBounds);
+  const renderKey = [
+    level,
+    visibleBounds.minLat.toFixed(5),
+    visibleBounds.maxLat.toFixed(5),
+    visibleBounds.minLon.toFixed(5),
+    visibleBounds.maxLon.toFixed(5),
+  ].join(":");
+  if (!force && tileLayer.dataset.renderedFor === renderKey) return;
+
   const matrixSize = 2 ** level;
   const tileSpan = oceanBasemap.worldSpanMeters / matrixSize;
   const minX = lonToMercatorX(visibleBounds.minLon);
@@ -219,7 +230,7 @@ function renderChartTiles(force = false) {
   }
 
   tileLayer.innerHTML = tiles.join("");
-  tileLayer.dataset.renderedFor = String(level);
+  tileLayer.dataset.renderedFor = renderKey;
 }
 
 function currentBounds() {
@@ -246,8 +257,40 @@ function currentBounds() {
   };
 }
 
-function currentChartLevel() {
-  return Math.max(10, Math.min(14, 10 + mapZoomStep));
+function currentChartLevel(visibleBounds = currentBounds()) {
+  const map = document.querySelector("#bay-map");
+  const mapWidth = Math.max(map?.clientWidth || oceanBasemap.tileSize, oceanBasemap.tileSize);
+  const displayScale = Math.max(1.75, Math.min(window.devicePixelRatio || 1, 2));
+  const minX = lonToMercatorX(visibleBounds.minLon);
+  const maxX = lonToMercatorX(visibleBounds.maxLon);
+  const visibleWidthMeters = Math.max(maxX - minX, 1);
+  const targetPixelWidth = mapWidth * displayScale;
+  const targetMetersPerPixel = visibleWidthMeters / targetPixelWidth;
+  const idealLevel = Math.ceil(
+    Math.log2(oceanBasemap.worldSpanMeters / (oceanBasemap.tileSize * targetMetersPerPixel)),
+  );
+  let level = Math.max(10, Math.min(16, idealLevel));
+
+  while (level > 10 && estimatedTileCount(visibleBounds, level) > oceanBasemap.maxTiles) {
+    level -= 1;
+  }
+
+  return level;
+}
+
+function estimatedTileCount(visibleBounds, level) {
+  const matrixSize = 2 ** level;
+  const tileSpan = oceanBasemap.worldSpanMeters / matrixSize;
+  const minX = lonToMercatorX(visibleBounds.minLon);
+  const maxX = lonToMercatorX(visibleBounds.maxLon);
+  const minY = latToMercatorY(visibleBounds.minLat);
+  const maxY = latToMercatorY(visibleBounds.maxLat);
+  const minCol = clampTile(Math.floor((minX - oceanBasemap.originX) / tileSpan), matrixSize);
+  const maxCol = clampTile(Math.floor((maxX - oceanBasemap.originX) / tileSpan), matrixSize);
+  const minRow = clampTile(Math.floor((oceanBasemap.originY - maxY) / tileSpan), matrixSize);
+  const maxRow = clampTile(Math.floor((oceanBasemap.originY - minY) / tileSpan), matrixSize);
+
+  return (maxCol - minCol + 1) * (maxRow - minRow + 1);
 }
 
 function setupControls() {

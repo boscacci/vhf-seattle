@@ -242,8 +242,8 @@ h2 {
 }
 
 .chart-tile-layer {
-  opacity: 0.93;
-  filter: saturate(0.88) contrast(0.96) brightness(1.04);
+  opacity: 1;
+  filter: saturate(1.02) contrast(1.04) brightness(1.02);
 }
 
 .chart-tile-layer::after {
@@ -254,6 +254,7 @@ h2 {
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.18), transparent 18% 82%, rgba(255, 255, 255, 0.12)),
     radial-gradient(circle at 50% 52%, transparent 0 58%, rgba(30, 36, 40, 0.08) 100%);
+  opacity: 0.35;
 }
 
 .chart-tile-layer img {
