@@ -153,7 +153,7 @@ def generate_radio_fixture(config: RadioSimulationConfig) -> dict[str, Any]:
     manifest = {
         "generated_at": _format_utc(config.started_at.astimezone(UTC)),
         "site": {
-            "title": "Talking Boats",
+            "title": "Seattle Marine Radio",
             "subtitle": "Synthetic private fixture data for local Elliott Bay radio testing.",
         },
         "stats": {

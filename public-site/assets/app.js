@@ -1,10 +1,11 @@
 const liveClipUrl = "/api/clips/recent?limit=30";
 const manifestUrl = "/public_manifest.json";
+const tailnetLiveBase = "https://optiplex.tailbea63b.ts.net:10000";
 
 const fallbackManifest = {
   site: {
-    title: "Talking Boats",
-    subtitle: "Fresh transcribed marine-radio audio from the receiver.",
+    title: "Seattle Marine Radio",
+    subtitle: "Elliott Bay VHF receiver clips and tailnet live audio.",
   },
   stats: {
     clip_count: 0,
@@ -18,9 +19,48 @@ const clipList = document.querySelector("#clips");
 const clipStatus = document.querySelector("#clip-status");
 const refreshButton = document.querySelector("#refresh-clips");
 const stats = document.querySelector("#stats");
+const tabs = [...document.querySelectorAll(".tab")];
+const panels = {
+  clips: document.querySelector("#panel-clips"),
+  live: document.querySelector("#panel-live"),
+};
+const liveAudio = document.querySelector("#live-audio");
+const liveStatus = document.querySelector("#live-status");
+const connectLiveButton = document.querySelector("#connect-live");
+const openLiveLink = document.querySelector("#open-live");
+
+let liveRetryTimer = null;
 
 refreshButton.addEventListener("click", () => {
   loadAndRender();
+});
+
+tabs.forEach((tab) => {
+  tab.addEventListener("click", () => {
+    activateTab(tab.dataset.tab);
+  });
+});
+
+connectLiveButton.addEventListener("click", () => {
+  connectLive();
+});
+
+liveAudio.addEventListener("playing", () => {
+  liveStatus.textContent = "Streaming";
+});
+
+liveAudio.addEventListener("waiting", () => {
+  liveStatus.textContent = "Buffering";
+});
+
+liveAudio.addEventListener("error", () => {
+  liveStatus.textContent = "Reconnecting";
+  scheduleLiveReconnect();
+});
+
+liveAudio.addEventListener("ended", () => {
+  liveStatus.textContent = "Reconnecting";
+  scheduleLiveReconnect();
 });
 
 async function loadAndRender() {
@@ -111,12 +151,13 @@ function renderSite(payload) {
 function renderStats(payload) {
   const clips = payload.clips || [];
   const channelCounts = countBy(clips, (clip) => clip.channel || "?");
-  const latest = clips[0]?.started_at ? formatDateTime(clips[0].started_at) : "None yet";
+  const channelTotal = Object.keys(payload.stats?.channel_counts || channelCounts).length;
+  const latest = clips[0]?.started_at ? shortTime(clips[0].started_at) : "None";
   const statItems = [
     ["Clips", payload.stats?.clip_count ?? clips.length],
-    ["Channels", Object.keys(payload.stats?.channel_counts || channelCounts).length],
+    ["Channels", channelTotal],
     ["Latest", latest],
-    ["Source", payload.source === "live" ? "Live DB" : "Static"],
+    ["Mode", payload.source === "live" ? "Live DB" : "Static"],
   ];
 
   stats.replaceChildren(
@@ -150,7 +191,7 @@ function renderClipCard(clip) {
 
   const meta = document.createElement("div");
   meta.className = "clip-meta";
-  meta.append(renderPill(`VHF ${clip.channel || "?"}`), renderPill(formatDateTime(clip.started_at)));
+  meta.append(renderPill(channelLabel(clip.channel)), renderPill(formatDateTime(clip.started_at)));
   if (clip.duration_seconds) {
     meta.append(renderPill(`${Math.round(Number(clip.duration_seconds))}s`));
   }
@@ -180,6 +221,61 @@ function renderPill(text) {
   return pill;
 }
 
+function activateTab(name) {
+  tabs.forEach((tab) => {
+    tab.classList.toggle("is-active", tab.dataset.tab === name);
+  });
+  Object.entries(panels).forEach(([panelName, panel]) => {
+    const active = panelName === name;
+    panel.classList.toggle("is-active", active);
+    panel.hidden = !active;
+  });
+  refreshButton.hidden = name !== "clips";
+  if (name === "live" && !liveAudio.src) {
+    prepareLiveAudio();
+  }
+}
+
+function prepareLiveAudio() {
+  const url = liveStreamUrl();
+  openLiveLink.href = url;
+  liveStatus.textContent = "Ready";
+}
+
+function connectLive() {
+  clearTimeout(liveRetryTimer);
+  const url = withCacheBust(liveStreamUrl());
+  liveAudio.src = url;
+  openLiveLink.href = url;
+  liveAudio.load();
+  liveAudio.play().catch(() => {
+    liveStatus.textContent = "Press play";
+  });
+}
+
+function scheduleLiveReconnect() {
+  clearTimeout(liveRetryTimer);
+  liveRetryTimer = setTimeout(() => {
+    if (!panels.live.hidden) {
+      connectLive();
+    }
+  }, 5000);
+}
+
+function liveStreamUrl() {
+  const host = window.location.hostname;
+  const isTailnet = host.endsWith(".tailbea63b.ts.net") || host === "100.124.5.39";
+  if (isTailnet || window.location.port === "10000") {
+    return "/api/live/current.mp3";
+  }
+  return `${tailnetLiveBase}/api/live/current.mp3`;
+}
+
+function withCacheBust(url) {
+  const joiner = url.includes("?") ? "&" : "?";
+  return `${url}${joiner}t=${Date.now()}`;
+}
+
 function audioUrlForClip(clip) {
   if (clip.playback_url) {
     return clip.playback_url;
@@ -191,9 +287,13 @@ function audioUrlForClip(clip) {
 }
 
 function titleForClip(clip) {
-  const channel = clip.channel || "?";
+  const channel = channelLabel(clip.channel);
   const date = formatDateTime(clip.started_at);
-  return `VHF ${channel} - ${date}`;
+  return `${channel} · ${date}`;
+}
+
+function channelLabel(channel) {
+  return channel === "WX" ? "NOAA WX" : `VHF ${channel || "?"}`;
 }
 
 function statusText(payload, clips) {
@@ -201,9 +301,9 @@ function statusText(payload, clips) {
     return "No clips yet";
   }
   if (payload.source === "live") {
-    return `${clips.length} recent live clips`;
+    return `${clips.length} clips from the live DB`;
   }
-  const generated = payload.generated_at ? `, exported ${formatDateTime(payload.generated_at)}` : "";
+  const generated = payload.generated_at ? ` · exported ${formatDateTime(payload.generated_at)}` : "";
   return `${clips.length} static clips${generated}`;
 }
 
@@ -224,7 +324,6 @@ function formatDateTime(value) {
     return "Unknown time";
   }
   return new Intl.DateTimeFormat([], {
-    year: "numeric",
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -232,4 +331,19 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function shortTime(value) {
+  if (!value) {
+    return "None";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "None";
+  }
+  return new Intl.DateTimeFormat([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+prepareLiveAudio();
 loadAndRender();

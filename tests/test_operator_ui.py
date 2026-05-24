@@ -7,9 +7,9 @@ def test_repo_has_one_shared_browser_ui_root() -> None:
 
     assert not Path("private-ui").exists()
     assert "/api/clips/recent" in app_js
+    assert "/api/live/current.mp3" in app_js
     assert "/api/operator/session" not in app_js
     assert "/api/live/channels" not in app_js
-    assert "/api/live/" not in app_js
-    assert "live-audio" not in index_html
+    assert "live-audio" in index_html
     assert "Operator token" not in index_html
     assert 'type="password"' not in index_html

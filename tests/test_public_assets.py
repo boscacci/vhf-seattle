@@ -7,9 +7,14 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert "/api/clips/recent?limit=30" in app_js
+    assert "/api/live/current.mp3" in app_js
     assert "/public_manifest.json" in app_js
-    assert "Recent Real Clips" in index_html
+    assert "Seattle Marine Radio" in index_html
+    assert "Clip Review" in index_html
+    assert "Live Monitor" in index_html
     assert "clip-list" in index_html
+    assert "color-scheme: dark" in styles_css
+    assert ".live-card" in styles_css
     assert "bay-map" not in index_html
     assert "Nearby Signals" not in index_html
     assert "Play AIS" not in index_html
@@ -26,4 +31,4 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert "transcript" in app_js
     assert "transcript_public" in app_js
     assert "formatDateTime" in app_js
-    assert 'year: "numeric"' in app_js
+    assert "channelLabel" in app_js

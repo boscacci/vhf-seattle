@@ -616,6 +616,8 @@ def _is_likely_static_hallucination(text: str) -> bool:
         "lets go",
         "thank you",
         "thanks for watching",
+        "we ll be right back",
+        "well be right back",
     }
 
 

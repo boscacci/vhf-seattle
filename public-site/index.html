@@ -3,34 +3,87 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Talking Boats</title>
+    <title>Seattle Marine Radio</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
     <main class="shell">
-      <header class="topbar">
-        <div>
+      <header class="hero">
+        <div class="hero-copy">
           <p class="eyebrow">Elliott Bay VHF</p>
-          <h1 id="site-title">Talking Boats</h1>
-        </div>
-        <button id="refresh-clips" class="secondary" type="button">Refresh</button>
-      </header>
-
-      <section class="summary" aria-labelledby="summary-title">
-        <div>
-          <h2 id="summary-title">Recent Real Clips</h2>
-          <p id="site-subtitle">Fresh transcribed marine-radio audio from the receiver.</p>
+          <h1 id="site-title">Seattle Marine Radio</h1>
+          <p id="site-subtitle">Recent receiver clips and tailnet live audio.</p>
         </div>
         <dl class="stats" id="stats"></dl>
-      </section>
+      </header>
 
-      <section class="clips-panel" aria-labelledby="clips-title">
+      <nav class="tabs" aria-label="Radio views">
+        <button class="tab is-active" id="tab-clips" type="button" data-tab="clips">
+          Clip Review
+        </button>
+        <button class="tab" id="tab-live" type="button" data-tab="live">
+          Live Monitor
+        </button>
+        <button id="refresh-clips" class="refresh" type="button">Refresh</button>
+      </nav>
+
+      <section
+        class="tab-panel is-active"
+        id="panel-clips"
+        aria-labelledby="tab-clips"
+      >
         <div class="section-heading">
-          <p class="eyebrow">Audio</p>
-          <h2 id="clips-title">Latest Transcripts</h2>
+          <div>
+            <p class="eyebrow">Transcripts</p>
+            <h2 id="clips-title">Recent Clips</h2>
+          </div>
           <p id="clip-status" class="status-text" aria-live="polite">Loading clips...</p>
         </div>
         <div id="clips" class="clip-list"></div>
+      </section>
+
+      <section class="tab-panel" id="panel-live" aria-labelledby="tab-live" hidden>
+        <div class="live-grid">
+          <article class="live-card">
+            <div class="section-heading live-heading">
+              <div>
+                <p class="eyebrow">Receiver</p>
+                <h2>Live Audio</h2>
+              </div>
+              <p id="live-status" class="status-text" aria-live="polite">Ready</p>
+            </div>
+            <div class="tuner-display">
+              <span class="signal-dot" aria-hidden="true"></span>
+              <span>Current SDR feed</span>
+            </div>
+            <div class="meter" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <audio id="live-audio" controls preload="none"></audio>
+            <div class="live-actions">
+              <button id="connect-live" class="primary" type="button">Connect</button>
+              <a id="open-live" class="ghost-link" href="#" target="_blank" rel="noreferrer">
+                Open stream
+              </a>
+            </div>
+          </article>
+
+          <aside class="notes-card">
+            <p class="eyebrow">Access</p>
+            <h2>Tailnet Protected</h2>
+            <p>
+              The monitor uses the OptiPlex proxy over Tailscale. The public export
+              keeps recent clips available without exposing LAN services.
+            </p>
+          </aside>
+        </div>
       </section>
     </main>
 

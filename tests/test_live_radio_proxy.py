@@ -24,9 +24,42 @@ def test_proxy_root_serves_clip_console() -> None:
     response = TestClient(create_app(ProxySettings())).get("/")
 
     assert response.status_code == 200
-    assert "Recent Real Clips" in response.text
-    assert "live-player" not in response.text
+    assert "Seattle Marine Radio" in response.text
+    assert "live-audio" in response.text
     assert "bay-map" not in response.text
+
+
+def test_proxy_current_live_stream_uses_first_available_mount() -> None:
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if str(request.url) == "http://pi.test/talkingboats-WX.mp3":
+            return httpx.Response(404)
+        if str(request.url) == "http://pi.test/talkingboats-14.mp3":
+            return httpx.Response(200, content=b"mp3-data")
+        raise AssertionError(f"unexpected URL: {request.url}")
+
+    app = create_app(
+        ProxySettings(
+            stream_urls=(
+                "http://pi.test/talkingboats-WX.mp3",
+                "http://pi.test/talkingboats-14.mp3",
+            )
+        ),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = TestClient(app).get("/api/live/current.mp3")
+
+    assert response.status_code == 200
+    assert response.content == b"mp3-data"
+    assert response.headers["cache-control"] == "no-store"
+    assert requests == [
+        "http://pi.test/talkingboats-WX.mp3",
+        "http://pi.test/talkingboats-14.mp3",
+        "http://pi.test/talkingboats-14.mp3",
+    ]
 
 
 def test_proxy_transcript_endpoint_forwards_json() -> None:

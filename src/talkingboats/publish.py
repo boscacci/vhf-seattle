@@ -71,10 +71,10 @@ def sanitize_public_manifest(private_manifest: Mapping[str, Any]) -> dict[str, A
     public_manifest = {
         "generated_at": private_manifest.get("generated_at"),
         "site": {
-            "title": private_manifest.get("site", {}).get("title", "Talking Boats"),
+            "title": private_manifest.get("site", {}).get("title", "Seattle Marine Radio"),
             "subtitle": private_manifest.get("site", {}).get(
                 "subtitle",
-                "Reviewed VHF marine-radio moments from Elliott Bay.",
+                "Elliott Bay VHF receiver clips and tailnet live audio.",
             ),
         },
         "stats": _copy_allowed(private_manifest.get("stats", {}), ALLOWED_STATS_FIELDS),
@@ -216,8 +216,8 @@ def _recent_clip_manifest(clips: list[RecentTranscribedClip]) -> dict[str, Any]:
     public_manifest = {
         "generated_at": generated_at,
         "site": {
-            "title": "Talking Boats",
-            "subtitle": "Recent transcribed marine VHF clips from the live receiver.",
+            "title": "Seattle Marine Radio",
+            "subtitle": "Elliott Bay VHF receiver clips and tailnet live audio.",
         },
         "stats": {
             "generated_at": generated_at,
@@ -292,7 +292,7 @@ def _format_utc(value: datetime) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build the sanitized Talking Boats public site.")
+    parser = argparse.ArgumentParser(description="Build the sanitized Seattle Marine Radio site.")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--private-manifest", type=Path)
     source.add_argument("--clip-db-path", type=Path)

@@ -116,6 +116,11 @@ DEFAULT_CHANNELS = (
 @dataclass(frozen=True)
 class ProxySettings:
     stream_url: str = "http://192.168.1.114:8000/talkingboats-live.mp3"
+    stream_urls: tuple[str, ...] = (
+        "http://192.168.1.114:8000/talkingboats-live.mp3",
+        "http://192.168.1.114:8000/talkingboats-WX.mp3",
+        "http://192.168.1.114:8000/talkingboats-14.mp3",
+    )
     transcript_url: str = "http://127.0.0.1:8055/api/live-transcript"
     private_api_url: str = "http://192.168.1.247:8034"
     active_channel_id: str = "noaa_seattle"
@@ -126,11 +131,11 @@ class ProxySettings:
 
     @classmethod
     def from_env(cls) -> ProxySettings:
+        stream_url = os.environ.get("TALKINGBOATS_PROXY_STREAM_URL", cls.stream_url)
+        stream_urls = _env_csv("TALKINGBOATS_PROXY_STREAM_URLS") or (stream_url, *cls.stream_urls)
         return cls(
-            stream_url=os.environ.get(
-                "TALKINGBOATS_PROXY_STREAM_URL",
-                cls.stream_url,
-            ),
+            stream_url=stream_url,
+            stream_urls=_dedupe(stream_urls),
             transcript_url=os.environ.get(
                 "TALKINGBOATS_PROXY_TRANSCRIPT_URL",
                 cls.transcript_url,
@@ -197,6 +202,15 @@ def create_app(
     async def recent_clips(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/clips/recent", settings, client_factory)
 
+    @app.get("/api/live/current.mp3")
+    async def current_live_stream() -> StreamingResponse:
+        stream_url = await _select_live_stream(settings.stream_urls, client_factory)
+        return StreamingResponse(
+            _iter_upstream_audio(stream_url, client_factory),
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+
     if settings.enable_debug_endpoints:
 
         @app.get("/api/live-transcript")
@@ -232,8 +246,9 @@ def create_app(
 
         @app.get("/talkingboats-live.mp3")
         async def live_stream() -> StreamingResponse:
+            stream_url = await _select_live_stream(settings.stream_urls, client_factory)
             return StreamingResponse(
-                _iter_upstream_audio(settings.stream_url, client_factory),
+                _iter_upstream_audio(stream_url, client_factory),
                 media_type="audio/mpeg",
                 headers={"Cache-Control": "no-store"},
             )
@@ -340,6 +355,23 @@ async def _iter_upstream_audio(
                 yield chunk
 
 
+async def _select_live_stream(
+    stream_urls: tuple[str, ...],
+    client_factory: ClientFactory,
+) -> str:
+    last_error = "no live stream candidates configured"
+    async with client_factory() as client:
+        for url in stream_urls:
+            try:
+                async with client.stream("GET", url) as response:
+                    if response.status_code < 400:
+                        return url
+                    last_error = f"{url} returned HTTP {response.status_code}"
+            except httpx.HTTPError as exc:
+                last_error = f"{url} failed: {type(exc).__name__}"
+    raise HTTPException(status_code=502, detail=last_error)
+
+
 async def _proxy_private_api(
     request: Request,
     path: str,
@@ -385,6 +417,23 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_csv(name: str) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def _dedupe(values: tuple[str, ...]) -> tuple[str, ...]:
+    seen = set()
+    deduped = []
+    for value in values:
+        if value not in seen:
+            deduped.append(value)
+            seen.add(value)
+    return tuple(deduped)
 
 
 def main() -> None:

@@ -1,17 +1,41 @@
-# Talking Boats
+# Seattle Marine Radio
 
-Talking Boats captures Elliott Bay marine VHF radio, transcribes useful chunks,
-and publishes recent clips without exposing the home network.
+Seattle Marine Radio captures Elliott Bay marine VHF, transcribes useful chunks,
+publishes recent clips, and exposes live receiver audio only through Tailscale.
 
 - **Private side:** Raspberry Pi capture, raw audio, ingest API, transcription
   workers, and the clip SQLite database.
-- **Public side:** one clip-focused browser UI in `public-site/`, deployed at
-  `vhf.robertboscacci.com` and optionally served through Tailscale for fresh DB
-  reads.
+- **Public side:** one dark browser UI in `public-site/`, deployed at
+  `vhf.robertboscacci.com` for static clips and served through Tailscale for
+  fresh DB reads plus live receiver audio.
 
 The public static deploy contains copied clip audio and sanitized transcript
 metadata. It never exposes the Pi, private API, Icecast stream, database, raw S3
 keys, or presigned URLs.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    antenna["Elliott Bay VHF antenna"] -->|"RF audio"| pi["Raspberry Pi SDR capture"]
+    pi -->|"Presigned clip uploads"| api["OptiPlex private API"]
+    pi -->|"Current MP3 stream"| proxy["Tailnet live proxy"]
+    api -->|"Raw clip objects"| raw["Private raw-audio S3"]
+    worker["Uploaded clip transcriber"] -->|"Downloads audio"| raw
+    worker -->|"Writes transcripts"| db["SQLite clip DB"]
+    api -->|"Reads recent clips"| db
+    exporter["Public site exporter"] -->|"Reads reviewed clips"| db
+    exporter -->|"Copies sanitized audio and manifest"| publicS3["Private public-site S3"]
+    publicS3 -->|"Origin access only"| cdn["CloudFront"]
+    dns["Route53"] -->|"vhf / vhf-dev aliases"| cdn
+    browser["Public browser"] -->|"Static clip review"| cdn
+    tailnet["Tailscale browser"] -->|"Live monitor and fresh clips"| proxy
+    proxy -->|"Read-only clip API"| api
+```
+
+I attempted to generate the same diagram in FigJam through the Figma connector,
+but the connector token was expired in this session. The Mermaid source above is
+kept in-repo so GitHub renders it without relying on a separate design tool.
 
 ## First Build Target
 
@@ -40,16 +64,18 @@ cp config/examples/private-api.env.example .env
 conda run -n dell uvicorn talkingboats.api:app --reload --host 0.0.0.0 --port 8034
 ```
 
-Shared clip UI through the private API:
+Shared radio UI through the private API:
 
 ```text
 http://localhost:8034/operator/
 ```
 
-The browser UI shows recent transcribed clips. When served through the tailnet
-proxy it reads `/api/clips/recent`; when deployed statically it reads
-`public_manifest.json` and copied public audio files. It has no manual password
-or token step.
+The browser UI shows recent transcribed clips and a separate live-monitor tab.
+When served through the tailnet proxy it reads `/api/clips/recent` and
+`/api/live/current.mp3`; when deployed statically it reads `public_manifest.json`
+and copied public audio files. The live monitor in the public static page points
+at the Tailscale HTTPS endpoint, so it works for authenticated tailnet devices
+without exposing LAN services.
 
 ## Fake Radio Simulator
 
@@ -185,7 +211,7 @@ Keep heavier or stateful work on the OptiPlex:
 The edge stream service uses one SDR pipeline:
 
 ```text
-rtl_fm -> talkingboats-edge-capture --tee-stdout -> ffmpeg -> Icecast
+rtl_fm -> ffmpeg cleanup -> talkingboats-edge-capture --tee-stdout -> ffmpeg -> Icecast
 ```
 
 The systemd unit also sets `Nice=5`, lower I/O priority, and `CPUQuota=85%`.
@@ -313,10 +339,19 @@ conda run -n dell talkingboats-live-radio-proxy \
 tailscale serve --bg --https=10000 http://100.124.5.39:8095
 ```
 
-The proxy serves the same `public-site/` clip UI and forwards only the read-only
-recent-clip API call to the private API from one origin. Debug live stream,
-caption, and retune endpoints are off by default; enable them explicitly with
-`TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS=true` on a Tailscale-only service.
+The proxy serves the same `public-site/` UI, forwards only the read-only
+recent-clip API call to the private API, and exposes a read-only current receiver
+stream at:
+
+```text
+https://optiplex.tailbea63b.ts.net:10000/api/live/current.mp3
+```
+
+`/api/live/current.mp3` probes the known Pi Icecast mounts and connects to the
+first active one, which is useful while the debug profile alternates between
+NOAA and VHF 14. Caption and retune endpoints remain off by default; enable them
+explicitly with `TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS=true` on a
+Tailscale-only service.
 
 The simple `talkingboats-live-radio-stream.service` remains installed as an
 escape hatch, but the installer disables it so only one process owns the SDR.
@@ -369,6 +404,7 @@ alias records, and IAM policies for private server publishing.
 - Public buckets are private and readable only by their matching CloudFront OAC.
 - The Pi does not get long-lived AWS credentials; it asks the private API for a
   short-lived presigned upload URL.
-- Private live radio is authenticated and never exported to the public site.
+- Live radio is available through Tailscale Serve only; public static hosting
+  never exposes a LAN Icecast URL.
 - Public exports reject private URLs, raw S3 keys, receiver IDs, AWS account IDs,
   and unreviewed transcripts.
