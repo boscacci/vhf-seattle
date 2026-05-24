@@ -9,8 +9,8 @@ gain="${TALKINGBOATS_LIVE_GAIN:-28}"
 squelch="${TALKINGBOATS_LIVE_SQUELCH:-20}"
 sample_rate="${TALKINGBOATS_LIVE_SAMPLE_RATE:-24000}"
 bitrate="${TALKINGBOATS_LIVE_BITRATE:-64k}"
-audio_filter_enabled="${TALKINGBOATS_AUDIO_FILTER_ENABLED:-false}"
-audio_filter="${TALKINGBOATS_AUDIO_FILTER:-highpass=f=250,lowpass=f=3200,afftdn=nf=-28,dynaudnorm=f=150:g=12}"
+audio_filter_enabled="${TALKINGBOATS_AUDIO_FILTER_ENABLED:-true}"
+audio_filter="${TALKINGBOATS_AUDIO_FILTER:-highpass=f=250,lowpass=f=3200,afftdn=nf=-28}"
 icecast_host="${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}"
 icecast_port="${TALKINGBOATS_ICECAST_PORT:-8000}"
 mount="${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}"
@@ -66,10 +66,23 @@ if [[ "${mount}" != /* ]]; then
   mount="/${mount}"
 fi
 
-ffmpeg_filter_args=()
+pcm_source_command=(cat)
 case "${audio_filter_enabled,,}" in
   1|true|yes|on)
-    ffmpeg_filter_args=(-af "${audio_filter}")
+    pcm_source_command=(
+      ffmpeg
+      -hide_banner
+      -loglevel warning
+      -f s16le
+      -ar "${sample_rate}"
+      -ac 1
+      -i pipe:0
+      -af "${audio_filter}"
+      -ac 1
+      -ar "${sample_rate}"
+      -f s16le
+      pipe:1
+    )
     ;;
   0|false|no|off)
     ;;
@@ -171,6 +184,8 @@ rtl_fm \
   -F 9 \
   - \
   2> >(sed 's/^/[rtl_fm] /' >&2) \
+  | "${pcm_source_command[@]}" \
+    2> >(sed 's/^/[ffmpeg-pcm] /' >&2) \
   | python3 -m talkingboats.edge_capture \
     --channel "${channel}" \
     --output-dir "${spool_dir}" \
@@ -193,7 +208,6 @@ rtl_fm \
     -ar "${sample_rate}" \
     -ac 1 \
     -i pipe:0 \
-    "${ffmpeg_filter_args[@]}" \
     -codec:a libmp3lame \
     -b:a "${bitrate}" \
     -content_type audio/mpeg \

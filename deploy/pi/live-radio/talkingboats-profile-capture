@@ -12,6 +12,9 @@ run_sequential_slot() {
   local label="$3"
   local seconds="$4"
   local threshold_rms="$5"
+  local min_clip_seconds="$6"
+  local post_roll_seconds="$7"
+  local max_clip_seconds="$8"
 
   echo "event=capture_profile_slot_start profile=${profile} channel=${channel} frequency_hz=${frequency_hz} seconds=${seconds}" >&2
   set +e
@@ -20,6 +23,9 @@ run_sequential_slot() {
     TALKINGBOATS_LIVE_LABEL="${label}" \
     TALKINGBOATS_ICECAST_MOUNT="/talkingboats-${channel}.mp3" \
     TALKINGBOATS_EDGE_THRESHOLD_RMS="${threshold_rms}" \
+    TALKINGBOATS_EDGE_MIN_CLIP_SECONDS="${min_clip_seconds}" \
+    TALKINGBOATS_EDGE_POST_ROLL_SECONDS="${post_roll_seconds}" \
+    TALKINGBOATS_EDGE_MAX_CLIP_SECONDS="${max_clip_seconds}" \
     timeout --kill-after=10s "${seconds}s" \
       /opt/talkingboats/bin/talkingboats-edge-live-radio-stream
   local status="$?"
@@ -39,10 +45,32 @@ run_debug_profile() {
   local vts_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-480}"
   local wx_threshold="${TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS:-2200}"
   local vts_threshold="${TALKINGBOATS_EDGE_THRESHOLD_RMS:-8000}"
+  local wx_min_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS:-4}"
+  local wx_post_roll_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS:-4.5}"
+  local wx_max_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS:-30}"
+  local vts_min_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS:-1.2}"
+  local vts_post_roll_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS:-2.5}"
+  local vts_max_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS:-45}"
 
   while true; do
-    run_sequential_slot "WX" "162550000" "NOAA Weather 162.550" "${wx_seconds}" "${wx_threshold}"
-    run_sequential_slot "14" "156700000" "VTS / Seattle Traffic" "${vts_seconds}" "${vts_threshold}"
+    run_sequential_slot \
+      "WX" \
+      "162550000" \
+      "NOAA Weather 162.550" \
+      "${wx_seconds}" \
+      "${wx_threshold}" \
+      "${wx_min_clip_seconds}" \
+      "${wx_post_roll_seconds}" \
+      "${wx_max_clip_seconds}"
+    run_sequential_slot \
+      "14" \
+      "156700000" \
+      "VTS / Seattle Traffic" \
+      "${vts_seconds}" \
+      "${vts_threshold}" \
+      "${vts_min_clip_seconds}" \
+      "${vts_post_roll_seconds}" \
+      "${vts_max_clip_seconds}"
   done
 }
 

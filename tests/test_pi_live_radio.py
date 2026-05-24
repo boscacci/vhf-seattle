@@ -55,7 +55,7 @@ def test_live_radio_systemd_units_restart_and_stay_lan_scoped() -> None:
     assert "EnvironmentFile=/etc/talkingboats/live-radio.env" in uploader_unit
 
 
-def test_edge_live_radio_stream_tees_pcm_through_detector_before_icecast() -> None:
+def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None:
     wrapper = Path("deploy/pi/live-radio/talkingboats-edge-live-radio-stream").read_text(
         encoding="utf-8"
     )
@@ -63,12 +63,16 @@ def test_edge_live_radio_stream_tees_pcm_through_detector_before_icecast() -> No
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
     assert "rtl_fm" in wrapper
+    assert "pcm_source_command=(" in wrapper
+    assert "ffmpeg" in wrapper
+    assert '"${pcm_source_command[@]}"' in wrapper
+    assert 'sed \'s/^/[ffmpeg-pcm] /' in wrapper
     assert "python3 -m talkingboats.edge_capture" in wrapper
     assert "--tee-stdout" in wrapper
     assert "python3 -m talkingboats.icecast_source" in wrapper
     assert "--netrc-file" in wrapper
     assert "icecast://source:" not in wrapper
-    assert "ffmpeg" in wrapper
+    assert "-f s16le" in wrapper
     assert "TALKINGBOATS_EDGE_MAX_TEMP_C" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_ENABLED" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED" in wrapper
@@ -101,6 +105,9 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert "162550000" in wrapper
     assert "156700000" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS:-2200" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS:-4.5" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS:-4" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS:-30" in wrapper
     assert "run_elliott_bay_profile" in wrapper
     assert "rtl_airband" in wrapper
     assert "rtl_airband-elliott-bay.conf" in wrapper
@@ -109,12 +116,18 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert "TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS:-5" in wrapper
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_PROFILE "debug"' in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS "2200"' in installer
+    assert (
+        'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS "4.5"'
+        in installer
+    )
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS "4"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS "30"' in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS "5"' in installer
     assert "talkingboats.capture_profiles" in installer
     assert 'talkingboats-upload-spooled-clips = "talkingboats.spool_uploader:main"' in pyproject
 
 
-def test_live_radio_audio_filter_is_flagged_and_default_off() -> None:
+def test_live_radio_audio_filter_is_flagged_and_default_on() -> None:
     stream_wrapper = Path("deploy/pi/live-radio/talkingboats-live-radio-stream").read_text(
         encoding="utf-8"
     )
@@ -127,10 +140,9 @@ def test_live_radio_audio_filter_is_flagged_and_default_off() -> None:
     for wrapper in (stream_wrapper, edge_wrapper):
         assert "TALKINGBOATS_AUDIO_FILTER_ENABLED" in wrapper
         assert "TALKINGBOATS_AUDIO_FILTER" in wrapper
-        assert "ffmpeg_filter_args=(-af" in wrapper
-        assert '"${ffmpeg_filter_args[@]}"' in wrapper
+        assert "audio_filter" in wrapper
 
     assert "TALKINGBOATS_AUDIO_FILTER_ENABLED" in installer
-    assert 'append_env_if_missing TALKINGBOATS_AUDIO_FILTER_ENABLED "false"' in installer
-    assert "highpass=f=250,lowpass=f=3200,afftdn=nf=-28,dynaudnorm=f=150:g=12" in installer
+    assert 'append_env_if_missing TALKINGBOATS_AUDIO_FILTER_ENABLED "true"' in installer
+    assert "highpass=f=250,lowpass=f=3200,afftdn=nf=-28" in installer
     assert "TALKINGBOATS_AUDIO_FILTER_ENABLED=true" in readme

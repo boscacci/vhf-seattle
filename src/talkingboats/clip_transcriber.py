@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import time
@@ -417,6 +418,8 @@ def process_pending_uploads_once(
     model: Any,
     limit: int,
     retry_errors: bool = False,
+    vad_filter: bool = False,
+    min_segment_avg_logprob: float | None = -0.6,
 ) -> ProcessSummary:
     summary = ProcessSummary()
     for record in store.pending_uploads(limit=limit, retry_errors=retry_errors):
@@ -427,7 +430,13 @@ def process_pending_uploads_once(
             audio_path = Path(handle.name)
         try:
             clip_reader.download(record.key, audio_path)
-            segments = transcribe_audio_file(model=model, audio_path=audio_path, record=record)
+            segments = transcribe_audio_file(
+                model=model,
+                audio_path=audio_path,
+                record=record,
+                vad_filter=vad_filter,
+                min_segment_avg_logprob=min_segment_avg_logprob,
+            )
             if segments:
                 store.mark_transcribed(record.key, segments)
                 summary.transcribed += 1
@@ -450,12 +459,14 @@ def transcribe_audio_file(
     model: Any,
     audio_path: Path,
     record: UploadedClipRecord,
+    vad_filter: bool = False,
+    min_segment_avg_logprob: float | None = -0.6,
 ) -> list[UploadedClipSegment]:
     segments, _ = model.transcribe(
         str(audio_path),
         language="en",
         beam_size=1,
-        vad_filter=True,
+        vad_filter=vad_filter,
         condition_on_previous_text=False,
     )
     clip_started = _parse_utc(record.started_at)
@@ -463,6 +474,13 @@ def transcribe_audio_file(
     for segment in segments:
         text = " ".join(str(getattr(segment, "text", "")).split())
         if not text:
+            continue
+        avg_logprob = getattr(segment, "avg_logprob", None)
+        if (
+            min_segment_avg_logprob is not None
+            and avg_logprob is not None
+            and float(avg_logprob) < min_segment_avg_logprob
+        ):
             continue
         relative_start = float(getattr(segment, "start", 0.0))
         relative_end = float(getattr(segment, "end", relative_start))
@@ -475,6 +493,10 @@ def transcribe_audio_file(
                 relative_end_seconds=relative_end,
             )
         )
+    if rendered and _is_likely_static_hallucination(
+        " ".join(segment.text for segment in rendered)
+    ):
+        return []
     return rendered
 
 
@@ -495,6 +517,21 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=5)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--retry-errors", action="store_true")
+    parser.add_argument(
+        "--vad-filter",
+        action="store_true",
+        default=_env_bool("TALKINGBOATS_TRANSCRIBE_VAD_FILTER", False),
+        help="Enable faster-whisper VAD. Off by default because clips are already RF-gated.",
+    )
+    parser.add_argument(
+        "--min-segment-avg-logprob",
+        type=float,
+        default=_env_float("TALKINGBOATS_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB", -0.6),
+        help=(
+            "Drop individual Whisper segments below this average log probability. "
+            "Set very low, such as -10, to keep all segments."
+        ),
+    )
     args = parser.parse_args()
 
     if args.db_path is None:
@@ -520,6 +557,8 @@ def main() -> None:
             model=model,
             limit=args.limit,
             retry_errors=args.retry_errors,
+            vad_filter=args.vad_filter,
+            min_segment_avg_logprob=args.min_segment_avg_logprob,
         )
         _log_event("uploaded_clip_transcriber_poll", **asdict(summary))
         if args.once:
@@ -556,6 +595,28 @@ def _load_faster_whisper_model(*, model_size: str, device: str, compute_type: st
             'conda run -n dell python -m pip install -e ".[transcribe]"'
         ) from exc
     return WhisperModel(model_size, device=device, compute_type=compute_type)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    return float(value) if value is not None else default
+
+
+def _is_likely_static_hallucination(text: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    return normalized in {
+        "i love you",
+        "lets go",
+        "thank you",
+        "thanks for watching",
+    }
 
 
 def _suffix_for_content_type(content_type: str) -> str:

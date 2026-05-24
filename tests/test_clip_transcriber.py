@@ -38,6 +38,7 @@ def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
             "ended_at": "2026-05-24T21:00:03Z",
         }
     ]
+    assert FakeSpeechModel.last_kwargs["vad_filter"] is False
 
 
 def test_uploaded_clip_transcriber_leaves_missing_objects_retryable(tmp_path) -> None:
@@ -58,6 +59,49 @@ def test_uploaded_clip_transcriber_leaves_missing_objects_retryable(tmp_path) ->
     assert clip is not None
     assert clip.status == "waiting_upload"
     assert "not available" in (clip.error or "")
+
+
+def test_uploaded_clip_transcriber_marks_low_confidence_segments_empty(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-24/20260524T210000Z-static.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request(channel="14"))
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=WritingClipReader(expected_channel="14"),
+        model=LowConfidenceSpeechModel(),
+        limit=10,
+        min_segment_avg_logprob=-0.6,
+    )
+
+    clip = store.get_clip(key)
+    assert summary.empty == 1
+    assert clip is not None
+    assert clip.status == "empty"
+    assert clip.transcript == ""
+    assert store.segments_for_clip(clip.key) == []
+
+
+def test_uploaded_clip_transcriber_marks_known_static_hallucinations_empty(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-24/20260524T210000Z-static.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request(channel="14"))
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=WritingClipReader(expected_channel="14"),
+        model=KnownStaticHallucinationSpeechModel(),
+        limit=10,
+    )
+
+    clip = store.get_clip(key)
+    assert summary.empty == 1
+    assert clip is not None
+    assert clip.status == "empty"
+    assert clip.transcript == ""
+    assert store.segments_for_clip(clip.key) == []
 
 
 def test_uploaded_clip_transcriber_retries_interrupted_processing_rows(tmp_path) -> None:
@@ -145,8 +189,11 @@ def _segment(text: str, started_at: str, ended_at: str):
 
 
 class WritingClipReader:
+    def __init__(self, *, expected_channel: str = "68") -> None:
+        self.expected_channel = expected_channel
+
     def download(self, key: str, output_path) -> None:
-        assert key.startswith("raw/channel=68/")
+        assert key.startswith(f"raw/channel={self.expected_channel}/")
         output_path.write_bytes(b"fake mp3")
 
 
@@ -156,13 +203,46 @@ class MissingClipReader:
 
 
 class FakeSpeechModel:
+    last_kwargs = {}
+
     def transcribe(self, path: str, **kwargs):
+        FakeSpeechModel.last_kwargs = kwargs
         return (
             [
                 SimpleNamespace(
                     start=0.0,
                     end=3.0,
                     text=" Seattle traffic inbound for the locks ",
+                )
+            ],
+            None,
+        )
+
+
+class LowConfidenceSpeechModel:
+    def transcribe(self, path: str, **kwargs):
+        return (
+            [
+                SimpleNamespace(
+                    start=0.0,
+                    end=30.0,
+                    text=" Thank you. ",
+                    avg_logprob=-0.95,
+                )
+            ],
+            None,
+        )
+
+
+class KnownStaticHallucinationSpeechModel:
+    def transcribe(self, path: str, **kwargs):
+        return (
+            [
+                SimpleNamespace(
+                    start=0.0,
+                    end=30.0,
+                    text=" Thank you. ",
+                    avg_logprob=-0.2,
                 )
             ],
             None,

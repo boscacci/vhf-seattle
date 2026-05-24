@@ -193,6 +193,9 @@ Tune thresholds in `/etc/talkingboats/live-radio.env`:
 
 ```bash
 TALKINGBOATS_EDGE_THRESHOLD_RMS=8000
+TALKINGBOATS_EDGE_MIN_CLIP_SECONDS=0.7
+TALKINGBOATS_EDGE_POST_ROLL_SECONDS=1.2
+TALKINGBOATS_EDGE_MAX_CLIP_SECONDS=45
 TALKINGBOATS_EDGE_RECORD_ENABLED=true
 TALKINGBOATS_EDGE_RECORD_SEGMENT_SECONDS=300
 TALKINGBOATS_EDGE_RECORD_RETENTION_SECONDS=86400
@@ -203,6 +206,14 @@ TALKINGBOATS_LIVE_SQUELCH=20
 TALKINGBOATS_EDGE_MAX_TEMP_C=72
 TALKINGBOATS_EDGE_RESUME_TEMP_C=66
 TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU=0.85
+```
+
+The debug profile overrides NOAA to reduce tiny forecast fragments:
+
+```bash
+TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS=4
+TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS=4.5
+TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS=30
 ```
 
 The default local rolling buffer is five-minute WAV segments with 24-hour
@@ -237,11 +248,19 @@ SQLite file used by live captions. Missing S3 objects stay in `waiting_upload`
 and are retried later, so API presign success and actual object upload can remain
 eventually consistent.
 
-Optional NOAA/speech cleanup is wired but off by default. Turn it on for an A/B
-test:
+The uploaded-clip transcriber keeps VAD off by default so it can hear through
+short NOAA pauses, then drops individual Whisper segments below
+`TALKINGBOATS_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB=-0.6` so static-only clips do
+not get promoted as stock phrases like "Thank you." Set the value much lower,
+such as `-10`, when deliberately auditing weak-signal audio.
+
+NOAA/speech cleanup is on by default and runs before the edge detector, so
+uploaded clips and live debug audio use the same filtered PCM. The default chain
+does not include dynamic normalization because that can raise static before the
+activity gate. Turn cleanup off only for an A/B test:
 
 ```bash
-sudo sed -i 's/^TALKINGBOATS_AUDIO_FILTER_ENABLED=.*/TALKINGBOATS_AUDIO_FILTER_ENABLED=true/' \
+sudo sed -i 's/^TALKINGBOATS_AUDIO_FILTER_ENABLED=.*/TALKINGBOATS_AUDIO_FILTER_ENABLED=false/' \
   /etc/talkingboats/live-radio.env
 sudo systemctl restart talkingboats-edge-live-radio-stream.service
 ```
@@ -249,7 +268,8 @@ sudo systemctl restart talkingboats-edge-live-radio-stream.service
 Default filter chain:
 
 ```bash
-TALKINGBOATS_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28,dynaudnorm=f=150:g=12
+TALKINGBOATS_AUDIO_FILTER_ENABLED=true
+TALKINGBOATS_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28
 ```
 
 ## Live Transcription

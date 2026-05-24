@@ -166,7 +166,7 @@ function renderClipCard(clip) {
   if (audioUrl) {
     const audio = document.createElement("audio");
     audio.controls = true;
-    audio.preload = "none";
+    audio.preload = "metadata";
     audio.src = audioUrl;
     article.append(audio);
   }
