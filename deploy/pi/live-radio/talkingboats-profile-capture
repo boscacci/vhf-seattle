@@ -42,7 +42,7 @@ run_sequential_slot() {
 
 run_debug_profile() {
   local wx_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS:-120}"
-  local vts_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-480}"
+  local vts_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-90}"
   local wx_threshold="${TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS:-2200}"
   local vts_threshold="${TALKINGBOATS_EDGE_THRESHOLD_RMS:-8000}"
   local wx_min_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS:-4}"

@@ -278,6 +278,10 @@ audio {
   color-scheme: dark;
 }
 
+#live-audio {
+  display: none;
+}
+
 .empty {
   grid-column: 1 / -1;
   padding: 18px;

@@ -31,8 +31,7 @@ const liveFrequency = document.querySelector("#live-frequency");
 const liveSignalDot = document.querySelector("#live-signal-dot");
 const waveformPanel = document.querySelector("#waveform-panel");
 const waveformCanvas = document.querySelector("#waveform-canvas");
-const connectLiveButton = document.querySelector("#connect-live");
-const openLiveLink = document.querySelector("#open-live");
+const playLiveButton = document.querySelector("#play-live");
 
 let liveRetryTimer = null;
 let audioContext = null;
@@ -52,16 +51,22 @@ tabs.forEach((tab) => {
   });
 });
 
-connectLiveButton.addEventListener("click", () => {
-  connectLive();
+playLiveButton.addEventListener("click", () => {
+  toggleLivePlayback();
 });
 
 liveAudio.addEventListener("playing", () => {
   liveStatus.textContent = "Streaming";
+  playLiveButton.textContent = "Pause";
 });
 
 liveAudio.addEventListener("waiting", () => {
   liveStatus.textContent = "Buffering";
+});
+
+liveAudio.addEventListener("pause", () => {
+  playLiveButton.textContent = "Play";
+  liveStatus.textContent = "Paused";
 });
 
 liveAudio.addEventListener("error", () => {
@@ -256,18 +261,27 @@ function activateTab(name) {
 function prepareLiveAudio() {
   const url = liveStreamUrl();
   liveAudio.crossOrigin = "anonymous";
-  openLiveLink.href = url;
+  liveAudio.src = url;
   liveStatus.textContent = "Ready";
   drawWaitingFrame();
 }
 
+function toggleLivePlayback() {
+  if (!liveAudio.paused) {
+    liveAudio.pause();
+    return;
+  }
+  connectLive();
+}
+
 async function connectLive() {
   clearTimeout(liveRetryTimer);
-  const url = withCacheBust(liveStreamUrl());
+  const url = liveAudio.src || withCacheBust(liveStreamUrl());
   liveAudio.crossOrigin = "anonymous";
-  liveAudio.src = url;
-  openLiveLink.href = url;
-  liveAudio.load();
+  if (liveAudio.src !== url) {
+    liveAudio.src = url;
+    liveAudio.load();
+  }
   try {
     ensureAudioAnalyser();
     if (audioContext?.state === "suspended") {

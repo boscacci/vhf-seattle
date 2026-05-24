@@ -225,8 +225,9 @@ def create_app(
         )
 
     @app.get("/api/live/status")
-    def live_status() -> dict[str, object]:
-        preset = _find_channel(settings.active_channel_id)
+    async def live_status() -> dict[str, object]:
+        stream_url = await _select_live_stream(settings.stream_urls, client_factory)
+        preset = _preset_for_stream_url(stream_url) or _find_channel(settings.active_channel_id)
         return {
             "activeChannelId": preset.id,
             "channel": preset.channel,
@@ -286,6 +287,19 @@ def _find_channel(channel_id: str) -> ChannelPreset:
         if channel.id == channel_id:
             return channel
     raise HTTPException(status_code=404, detail="unknown channel")
+
+
+def _preset_for_stream_url(stream_url: str) -> ChannelPreset | None:
+    normalized = stream_url.lower()
+    stream_channel_markers = {
+        "noaa_seattle": ("-wx.", "/wx.", "channel=wx"),
+        "vts_14": ("-14.", "/14.", "channel=14"),
+        "recreation_68": ("-68.", "/68.", "channel=68"),
+    }
+    for channel_id, markers in stream_channel_markers.items():
+        if any(marker in normalized for marker in markers):
+            return _find_channel(channel_id)
+    return None
 
 
 def retune_pi(preset: ChannelPreset, settings: ProxySettings) -> RetuneResult:

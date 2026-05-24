@@ -14,6 +14,9 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert "Live Monitor" in index_html
     assert "live-channel" in index_html
     assert "waveform-canvas" in index_html
+    assert 'id="play-live"' in index_html
+    assert "Open stream" not in index_html
+    assert "connect-live" not in index_html
     assert "clip-list" in index_html
     assert "color-scheme: dark" in styles_css
     assert ".live-card" in styles_css

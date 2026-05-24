@@ -62,13 +62,18 @@ def test_proxy_current_live_stream_uses_first_available_mount() -> None:
     ]
 
 
-def test_proxy_live_status_reports_active_channel_and_allows_public_ui_origin() -> None:
+def test_proxy_live_status_reports_selected_stream_channel_and_allows_public_ui_origin() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://pi.test/talkingboats-WX.mp3"
+        return httpx.Response(200, content=b"mp3-data")
+
     client = TestClient(
         create_app(
             ProxySettings(
-                active_channel_id="recreation_68",
+                stream_urls=("http://pi.test/talkingboats-WX.mp3",),
                 cors_origins=("https://vhf.robertboscacci.com",),
-            )
+            ),
+            client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
     )
 
@@ -80,10 +85,10 @@ def test_proxy_live_status_reports_active_channel_and_allows_public_ui_origin() 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://vhf.robertboscacci.com"
     assert response.json() == {
-        "activeChannelId": "recreation_68",
-        "channel": "68",
-        "label": "Recreational",
-        "frequencyMhz": "156.425",
+        "activeChannelId": "noaa_seattle",
+        "channel": "WX",
+        "label": "NOAA Weather 162.550",
+        "frequencyMhz": "162.550",
         "streamDelaySeconds": {"minimum": 30, "maximum": 90},
     }
 

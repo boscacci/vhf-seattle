@@ -108,6 +108,7 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert "162550000" in wrapper
     assert "156700000" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS:-2200" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-90" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS:-4.5" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS:-4" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS:-30" in wrapper
@@ -118,6 +119,7 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert "timeout --kill-after=10s" in wrapper
     assert "TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS:-5" in wrapper
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_PROFILE "debug"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS "90"' in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS "2200"' in installer
     assert (
         'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS "4.5"'

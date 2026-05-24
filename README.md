@@ -241,6 +241,7 @@ The debug profile overrides NOAA to reduce tiny forecast fragments:
 TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS=4
 TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS=4.5
 TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS=30
+TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS=90
 ```
 
 The default local rolling buffer is five-minute WAV segments with 24-hour
