@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+profile="${TALKINGBOATS_CAPTURE_PROFILE:-debug}"
+airband_binary="${TALKINGBOATS_AIRBAND_BINARY:-/usr/local/bin/rtl_airband}"
+airband_config_dir="${TALKINGBOATS_AIRBAND_CONFIG_DIR:-/etc/talkingboats}"
+slot_cooldown_seconds="${TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS:-5}"
+
+run_sequential_slot() {
+  local channel="$1"
+  local frequency_hz="$2"
+  local label="$3"
+  local seconds="$4"
+  local threshold_rms="$5"
+
+  echo "event=capture_profile_slot_start profile=${profile} channel=${channel} frequency_hz=${frequency_hz} seconds=${seconds}" >&2
+  set +e
+  TALKINGBOATS_LIVE_CHANNEL="${channel}" \
+    TALKINGBOATS_LIVE_FREQUENCY_HZ="${frequency_hz}" \
+    TALKINGBOATS_LIVE_LABEL="${label}" \
+    TALKINGBOATS_ICECAST_MOUNT="/talkingboats-${channel}.mp3" \
+    TALKINGBOATS_EDGE_THRESHOLD_RMS="${threshold_rms}" \
+    timeout --kill-after=10s "${seconds}s" \
+      /opt/talkingboats/bin/talkingboats-edge-live-radio-stream
+  local status="$?"
+  set -e
+  case "${status}" in
+    0|124|137|143)
+      ;;
+    *)
+      echo "event=capture_profile_slot_failed profile=${profile} channel=${channel} status=${status}" >&2
+      ;;
+  esac
+  sleep "${slot_cooldown_seconds}"
+}
+
+run_debug_profile() {
+  local wx_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS:-120}"
+  local vts_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-480}"
+  local wx_threshold="${TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS:-2200}"
+  local vts_threshold="${TALKINGBOATS_EDGE_THRESHOLD_RMS:-8000}"
+
+  while true; do
+    run_sequential_slot "WX" "162550000" "NOAA Weather 162.550" "${wx_seconds}" "${wx_threshold}"
+    run_sequential_slot "14" "156700000" "VTS / Seattle Traffic" "${vts_seconds}" "${vts_threshold}"
+  done
+}
+
+run_elliott_bay_profile() {
+  local config_path="${airband_config_dir}/rtl_airband-elliott-bay.conf"
+  if [[ ! -x "${airband_binary}" ]]; then
+    echo "RTLSDR-Airband is not installed or executable: ${airband_binary}" >&2
+    echo "Run scripts/install_rtlsdr_airband_pi.sh on the Pi, then restart this service." >&2
+    exit 127
+  fi
+  if [[ ! -r "${config_path}" ]]; then
+    echo "RTLSDR-Airband config is not readable: ${config_path}" >&2
+    exit 2
+  fi
+  echo "event=capture_profile_airband_start profile=${profile} config=${config_path}" >&2
+  exec "${airband_binary}" -c "${config_path}"
+}
+
+case "${profile}" in
+  debug)
+    run_debug_profile
+    ;;
+  elliott_bay)
+    run_elliott_bay_profile
+    ;;
+  *)
+    echo "Unsupported TALKINGBOATS_CAPTURE_PROFILE: ${profile}" >&2
+    exit 2
+    ;;
+esac

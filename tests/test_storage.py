@@ -22,6 +22,7 @@ def test_raw_clip_key_is_stable_and_does_not_include_receiver_details() -> None:
 
 def test_playback_key_validation_allows_only_audio_prefixes() -> None:
     assert is_allowed_audio_key("raw/channel=14/date=2026-05-20/file.mp3")
+    assert is_allowed_audio_key("raw/channel=66A/date=2026-05-20/file.wav")
     assert is_allowed_audio_key("hall-of-fame/channel=68/file.ogg")
 
     assert not is_allowed_audio_key("../raw/channel=14/file.mp3")

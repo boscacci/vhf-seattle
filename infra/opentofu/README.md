@@ -12,8 +12,8 @@ Pi. The Pi should ask the private API for presigned S3 upload URLs.
 - Separate dev/prod CloudFront distributions with Origin Access Control
 - ACM certificates in `us-east-1`
 - Route 53 `A` and `AAAA` aliases for:
-  - `talkingboats.robertboscacci.com`
-  - `dev.talkingboats.robertboscacci.com`
+  - `vhf.robertboscacci.com`
+  - `vhf-dev.robertboscacci.com`
 - Separate dev/prod private raw-audio S3 buckets with `raw/` lifecycle expiry
 - Separate dev/prod IAM policies for the private server to presign audio,
   publish reviewed static files, and invalidate CloudFront

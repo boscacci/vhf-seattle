@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+device="${TALKINGBOATS_LIVE_DEVICE:-0}"
+frequency_hz="${TALKINGBOATS_LIVE_FREQUENCY_HZ:-156425000}"
+label="${TALKINGBOATS_LIVE_LABEL:-VHF 68}"
+gain="${TALKINGBOATS_LIVE_GAIN:-28}"
+squelch="${TALKINGBOATS_LIVE_SQUELCH:-20}"
+sample_rate="${TALKINGBOATS_LIVE_SAMPLE_RATE:-24000}"
+bitrate="${TALKINGBOATS_LIVE_BITRATE:-64k}"
+audio_filter_enabled="${TALKINGBOATS_AUDIO_FILTER_ENABLED:-false}"
+audio_filter="${TALKINGBOATS_AUDIO_FILTER:-highpass=f=250,lowpass=f=3200,afftdn=nf=-28,dynaudnorm=f=150:g=12}"
+icecast_host="${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}"
+icecast_port="${TALKINGBOATS_ICECAST_PORT:-8000}"
+mount="${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}"
+netrc_file="${TALKINGBOATS_ICECAST_NETRC:-/etc/talkingboats/icecast.netrc}"
+unset TALKINGBOATS_ICECAST_SOURCE_PASSWORD
+unset TALKINGBOATS_ICECAST_RELAY_PASSWORD
+unset TALKINGBOATS_ICECAST_ADMIN_PASSWORD
+
+if [[ ! -r "${netrc_file}" ]]; then
+  echo "Icecast netrc is not readable: ${netrc_file}" >&2
+  exit 1
+fi
+
+case "${frequency_hz}" in
+  ''|*[!0-9]*)
+    echo "frequency_hz must be numeric: ${frequency_hz}" >&2
+    exit 2
+    ;;
+esac
+
+case "${sample_rate}" in
+  ''|*[!0-9]*)
+    echo "sample_rate must be numeric: ${sample_rate}" >&2
+    exit 2
+    ;;
+esac
+
+case "${icecast_port}" in
+  ''|*[!0-9]*)
+    echo "icecast_port must be numeric: ${icecast_port}" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "${mount}" != /* ]]; then
+  mount="/${mount}"
+fi
+
+ffmpeg_filter_args=()
+case "${audio_filter_enabled,,}" in
+  1|true|yes|on)
+    ffmpeg_filter_args=(-af "${audio_filter}")
+    ;;
+  0|false|no|off)
+    ;;
+  *)
+    echo "TALKINGBOATS_AUDIO_FILTER_ENABLED must be true or false: ${audio_filter_enabled}" >&2
+    exit 2
+    ;;
+esac
+
+echo "event=live_radio_start device=${device} frequency_hz=${frequency_hz} label=${label} mount=${mount} audio_filter_enabled=${audio_filter_enabled,,}" >&2
+
+rtl_fm \
+  -d "${device}" \
+  -M fm \
+  -f "${frequency_hz}" \
+  -s "${sample_rate}" \
+  -r "${sample_rate}" \
+  -g "${gain}" \
+  -l "${squelch}" \
+  -E deemp \
+  -F 9 \
+  - \
+  2> >(sed 's/^/[rtl_fm] /' >&2) \
+  | ffmpeg \
+    -hide_banner \
+    -loglevel warning \
+    -f s16le \
+    -ar "${sample_rate}" \
+    -ac 1 \
+    -i pipe:0 \
+    "${ffmpeg_filter_args[@]}" \
+    -codec:a libmp3lame \
+    -b:a "${bitrate}" \
+    -content_type audio/mpeg \
+    -ice_name "Talking Boats ${label}" \
+    -f mp3 \
+    pipe:1 \
+  | python3 -m talkingboats.icecast_source \
+    --host "${icecast_host}" \
+    --port "${icecast_port}" \
+    --mount "${mount}" \
+    --netrc-file "${netrc_file}" \
+    --ice-name "Talking Boats ${label}" \
+    --ice-public "0"

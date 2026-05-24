@@ -13,7 +13,7 @@ flowchart LR
   pi["Raspberry Pi<br/>AC-to-USB power<br/>Wi-Fi"]
   optiplex["OptiPlex private server<br/>API, Postgres, transcription, UI"]
   s3raw["Private S3 raw audio<br/>raw/ expires, hall-of-fame/ retained"]
-  public["CloudFront public site<br/>talkingboats.robertboscacci.com"]
+  public["CloudFront public site<br/>vhf.robertboscacci.com"]
 
   antenna --> splitter
   splitter --> voice

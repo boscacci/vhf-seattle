@@ -4,37 +4,28 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Talking Boats Operator</title>
-    <link rel="stylesheet" href="/operator/styles.css" />
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="shell">
       <section class="panel">
         <div class="heading">
-          <p>Private Operator Console</p>
+          <p>Private Clip Console</p>
           <h1>Talking Boats</h1>
         </div>
 
-        <form id="session-form" class="session-form">
-          <label for="token">Operator token</label>
-          <div class="token-row">
-            <input id="token" name="token" type="password" autocomplete="current-password" />
-            <button type="submit">Start Session</button>
-          </div>
-        </form>
-
-        <div class="live-layout">
+        <div class="clip-toolbar">
           <div>
-            <p class="label">Live Radio</p>
-            <div id="channels" class="channels"></div>
+            <p class="label">Recent transcribed clips</p>
+            <p id="clip-status" class="status-text">Loading clips...</p>
           </div>
-          <div class="player">
-            <p id="now-playing" class="label">No channel selected</p>
-            <audio id="live-audio" controls preload="none"></audio>
-          </div>
+          <button id="refresh-clips" class="secondary" type="button">Refresh</button>
         </div>
+
+        <section id="clip-list" class="clip-list" aria-live="polite"></section>
       </section>
     </main>
 
-    <script src="/operator/main.js" type="module"></script>
+    <script src="main.js" type="module"></script>
   </body>
 </html>

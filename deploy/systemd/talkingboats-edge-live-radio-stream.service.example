@@ -1,0 +1,26 @@
+[Unit]
+Description=Talking Boats edge SDR processor and live radio stream
+After=network-online.target icecast2.service
+Wants=network-online.target
+Requires=icecast2.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/talkingboats/live-radio.env
+Environment=PYTHONPATH=/opt/talkingboats/app/src
+ExecStart=/opt/talkingboats/bin/talkingboats-edge-live-radio-stream
+Restart=always
+RestartSec=5
+User=rob
+Group=audio
+SupplementaryGroups=dialout plugdev
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+CPUAccounting=true
+CPUQuota=85%
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

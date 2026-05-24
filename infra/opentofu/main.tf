@@ -16,8 +16,8 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
 locals {
   site_fqdn            = "${var.site_subdomain}.${var.root_domain}"
   dev_site_fqdn        = "${var.dev_site_subdomain}.${var.root_domain}"
-  bucket_base          = replace("${var.project_name}-${var.site_subdomain}", ".", "-")
-  dev_bucket_base      = replace("${var.project_name}-${var.dev_site_subdomain}", ".", "-")
+  bucket_base          = replace("${var.project_name}-${var.resource_site_subdomain}", ".", "-")
+  dev_bucket_base      = replace("${var.project_name}-${var.dev_resource_site_subdomain}", ".", "-")
   public_bucket        = coalesce(var.public_site_bucket_name, "${local.bucket_base}-${data.aws_caller_identity.current.account_id}-public")
   raw_audio_bucket     = coalesce(var.raw_audio_bucket_name, "${local.bucket_base}-${data.aws_caller_identity.current.account_id}-raw")
   dev_public_bucket    = coalesce(var.dev_public_site_bucket_name, "${local.dev_bucket_base}-${data.aws_caller_identity.current.account_id}-public")

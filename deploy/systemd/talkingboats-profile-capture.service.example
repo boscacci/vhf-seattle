@@ -1,0 +1,20 @@
+[Unit]
+Description=Talking Boats profile-driven SDR capture
+After=network-online.target icecast2.service
+Wants=network-online.target
+Requires=icecast2.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/talkingboats/live-radio.env
+Environment=PYTHONPATH=/opt/talkingboats/app/src
+ExecStart=/opt/talkingboats/bin/talkingboats-profile-capture
+Restart=always
+RestartSec=5
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+CPUQuota=85%
+
+[Install]
+WantedBy=multi-user.target

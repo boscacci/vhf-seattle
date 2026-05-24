@@ -1,56 +1,23 @@
-const form = document.querySelector("#session-form");
-const channels = document.querySelector("#channels");
-const audio = document.querySelector("#live-audio");
-const nowPlaying = document.querySelector("#now-playing");
+const clipList = document.querySelector("#clip-list");
+const clipStatus = document.querySelector("#clip-status");
+const refreshButton = document.querySelector("#refresh-clips");
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const token = new FormData(form).get("token");
-  const response = await fetch("/api/operator/session", {
-    method: "POST",
-    headers: { "X-TalkingBoats-Operator-Token": token },
-  });
-  if (!response.ok) {
-    nowPlaying.textContent = "Session rejected";
-    return;
-  }
-  form.reset();
-  await loadChannels();
+refreshButton.addEventListener("click", () => {
+  loadClips();
 });
 
-async function loadChannels() {
-  const response = await fetch("/api/live/channels", { cache: "no-store" });
+async function loadClips() {
+  clipStatus.textContent = "Loading clips...";
+  const response = await fetch("/api/clips/recent?limit=30", { cache: "no-store" });
   if (!response.ok) {
-    nowPlaying.textContent = "Start a private operator session";
+    clipStatus.textContent = "Clip feed unavailable";
+    clipList.replaceChildren();
     return;
   }
   const payload = await response.json();
-  channels.innerHTML = payload.channels.map(renderChannel).join("");
-  channels.querySelectorAll("button[data-channel]").forEach((button) => {
-    button.addEventListener("click", () => tune(button.dataset.channel, button.dataset.label));
-  });
-}
-
-function renderChannel(channel) {
-  return `
-    <button
-      class="channel-button"
-      type="button"
-      data-channel="${escapeHtml(channel.channel)}"
-      data-label="${escapeHtml(channel.label)}"
-      ${channel.enabled ? "" : "disabled"}
-    >
-      VHF ${escapeHtml(channel.channel)} · ${escapeHtml(channel.label)} · ${escapeHtml(
-        String(channel.frequency_mhz),
-      )} MHz
-    </button>
-  `;
-}
-
-function tune(channel, label) {
-  audio.src = `/api/live/${encodeURIComponent(channel)}/stream`;
-  audio.play();
-  nowPlaying.textContent = `VHF ${channel} · ${label}`;
+  const clips = Array.isArray(payload.clips) ? payload.clips : [];
+  clipStatus.textContent = clips.length ? `${clips.length} clips` : "No transcribed clips yet";
+  clipList.replaceChildren(...clips.map(renderClipCard));
 }
 
 function escapeHtml(value) {
@@ -60,4 +27,53 @@ function escapeHtml(value) {
   });
 }
 
-loadChannels();
+function renderClipCard(clip) {
+  const article = document.createElement("article");
+  article.className = "clip-card";
+
+  const meta = document.createElement("div");
+  meta.className = "clip-meta";
+  meta.append(
+    renderPill(`VHF ${clip.channel || "?"}`),
+    renderPill(formatDateTime(clip.started_at)),
+  );
+  if (clip.duration_seconds) {
+    meta.append(renderPill(`${Math.round(clip.duration_seconds)}s`));
+  }
+
+  const transcript = document.createElement("blockquote");
+  transcript.textContent = clip.transcript || "";
+
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.preload = "none";
+  audio.src = clip.playback_url || "";
+
+  article.append(meta, transcript, audio);
+  return article;
+}
+
+function renderPill(text) {
+  const pill = document.createElement("span");
+  pill.className = "pill";
+  pill.textContent = text;
+  return pill;
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "Unknown time";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Unknown time";
+  }
+  return new Intl.DateTimeFormat([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+loadClips();

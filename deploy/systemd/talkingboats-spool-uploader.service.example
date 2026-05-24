@@ -1,0 +1,18 @@
+[Unit]
+Description=Talking Boats multichannel spool uploader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/talkingboats/live-radio.env
+Environment=PYTHONPATH=/opt/talkingboats/app/src
+ExecStart=/usr/bin/python3 -m talkingboats.spool_uploader --spool-root /opt/talkingboats/spool/airband --poll-seconds 20 --min-age-seconds 10 --delete-after-upload
+Restart=always
+RestartSec=10
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=multi-user.target

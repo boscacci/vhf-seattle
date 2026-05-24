@@ -29,6 +29,7 @@ class Settings:
     public_site_dir: Path
     public_base_url: str
     live_channels: dict[str, LiveChannel]
+    clip_db_path: Path | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -43,8 +44,11 @@ class Settings:
             public_site_dir=Path(os.getenv("TALKINGBOATS_PUBLIC_SITE_DIR", "outputs/public-site")),
             public_base_url=os.getenv(
                 "TALKINGBOATS_PUBLIC_BASE_URL",
-                "https://talkingboats.robertboscacci.com",
+                "https://vhf.robertboscacci.com",
             ),
+            clip_db_path=Path(os.environ["TALKINGBOATS_CLIP_DB_PATH"])
+            if os.getenv("TALKINGBOATS_CLIP_DB_PATH")
+            else None,
             live_channels={
                 "68": LiveChannel(
                     channel="68",

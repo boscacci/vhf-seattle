@@ -13,11 +13,23 @@ variable "root_domain" {
 variable "site_subdomain" {
   description = "Subdomain to publish the static site under."
   type        = string
-  default     = "talkingboats"
+  default     = "vhf"
 }
 
 variable "dev_site_subdomain" {
   description = "Subdomain to publish the dev static site under."
+  type        = string
+  default     = "vhf-dev"
+}
+
+variable "resource_site_subdomain" {
+  description = "Legacy subdomain stem used in bucket names. Keep stable when changing public DNS."
+  type        = string
+  default     = "talkingboats"
+}
+
+variable "dev_resource_site_subdomain" {
+  description = "Legacy dev subdomain stem used in bucket names. Keep stable when changing public DNS."
   type        = string
   default     = "dev.talkingboats"
 }

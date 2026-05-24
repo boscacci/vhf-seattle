@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+device="${TALKINGBOATS_LIVE_DEVICE:-0}"
+channel="${TALKINGBOATS_LIVE_CHANNEL:-68}"
+frequency_hz="${TALKINGBOATS_LIVE_FREQUENCY_HZ:-156425000}"
+label="${TALKINGBOATS_LIVE_LABEL:-VHF 68}"
+gain="${TALKINGBOATS_LIVE_GAIN:-28}"
+squelch="${TALKINGBOATS_LIVE_SQUELCH:-20}"
+sample_rate="${TALKINGBOATS_LIVE_SAMPLE_RATE:-24000}"
+bitrate="${TALKINGBOATS_LIVE_BITRATE:-64k}"
+audio_filter_enabled="${TALKINGBOATS_AUDIO_FILTER_ENABLED:-false}"
+audio_filter="${TALKINGBOATS_AUDIO_FILTER:-highpass=f=250,lowpass=f=3200,afftdn=nf=-28,dynaudnorm=f=150:g=12}"
+icecast_host="${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}"
+icecast_port="${TALKINGBOATS_ICECAST_PORT:-8000}"
+mount="${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}"
+netrc_file="${TALKINGBOATS_ICECAST_NETRC:-/etc/talkingboats/icecast.netrc}"
+private_api="${TALKINGBOATS_PRIVATE_API:-}"
+ingest_token="${TALKINGBOATS_INGEST_TOKEN:-}"
+unset TALKINGBOATS_ICECAST_SOURCE_PASSWORD
+unset TALKINGBOATS_ICECAST_RELAY_PASSWORD
+unset TALKINGBOATS_ICECAST_ADMIN_PASSWORD
+
+if [[ ! -r "${netrc_file}" ]]; then
+  echo "Icecast netrc is not readable: ${netrc_file}" >&2
+  exit 1
+fi
+spool_dir="${TALKINGBOATS_EDGE_SPOOL_DIR:-/opt/talkingboats/spool/clips}"
+record_enabled="${TALKINGBOATS_EDGE_RECORD_ENABLED:-true}"
+record_dir="${TALKINGBOATS_EDGE_RECORD_DIR:-/opt/talkingboats/spool/continuous}"
+record_segment_seconds="${TALKINGBOATS_EDGE_RECORD_SEGMENT_SECONDS:-300}"
+record_retention_seconds="${TALKINGBOATS_EDGE_RECORD_RETENTION_SECONDS:-86400}"
+record_upload_enabled="${TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED:-false}"
+record_upload_queue_size="${TALKINGBOATS_EDGE_RECORD_UPLOAD_QUEUE_SIZE:-4}"
+activity_upload_enabled="${TALKINGBOATS_EDGE_UPLOAD_ENABLED:-false}"
+activity_upload_encode_mp3="${TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3:-true}"
+activity_upload_delete_after="${TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD:-false}"
+threshold_rms="${TALKINGBOATS_EDGE_THRESHOLD_RMS:-8000}"
+min_clip_seconds="${TALKINGBOATS_EDGE_MIN_CLIP_SECONDS:-0.7}"
+max_clip_seconds="${TALKINGBOATS_EDGE_MAX_CLIP_SECONDS:-45}"
+pre_roll_seconds="${TALKINGBOATS_EDGE_PRE_ROLL_SECONDS:-0.7}"
+post_roll_seconds="${TALKINGBOATS_EDGE_POST_ROLL_SECONDS:-1.2}"
+max_temp_c="${TALKINGBOATS_EDGE_MAX_TEMP_C:-72}"
+resume_temp_c="${TALKINGBOATS_EDGE_RESUME_TEMP_C:-66}"
+max_load_per_cpu="${TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU:-0.85}"
+
+case "${channel}" in
+  WX|05A|13|14|16|22A|66A|68|69|71|72|74) ;;
+  *)
+    echo "unsupported channel preset: ${channel}" >&2
+    exit 2
+    ;;
+esac
+
+for numeric_value in frequency_hz sample_rate icecast_port threshold_rms; do
+  value="${!numeric_value}"
+  case "${value}" in
+    ''|*[!0-9]*)
+      echo "${numeric_value} must be numeric: ${value}" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "${mount}" != /* ]]; then
+  mount="/${mount}"
+fi
+
+ffmpeg_filter_args=()
+case "${audio_filter_enabled,,}" in
+  1|true|yes|on)
+    ffmpeg_filter_args=(-af "${audio_filter}")
+    ;;
+  0|false|no|off)
+    ;;
+  *)
+    echo "TALKINGBOATS_AUDIO_FILTER_ENABLED must be true or false: ${audio_filter_enabled}" >&2
+    exit 2
+    ;;
+esac
+
+mkdir -p "${spool_dir}"
+activity_upload_args=()
+case "${activity_upload_enabled,,}" in
+  1|true|yes|on)
+    if [[ -z "${private_api}" || -z "${ingest_token}" ]]; then
+      echo "TALKINGBOATS_PRIVATE_API and TALKINGBOATS_INGEST_TOKEN are required for activity upload" >&2
+      exit 2
+    fi
+    activity_upload_args=(
+      --upload
+      --api-url "${private_api}"
+    )
+    case "${activity_upload_encode_mp3,,}" in
+      1|true|yes|on)
+        activity_upload_args+=(--encode-mp3)
+        ;;
+      0|false|no|off)
+        ;;
+      *)
+        echo "TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3 must be true or false: ${activity_upload_encode_mp3}" >&2
+        exit 2
+        ;;
+    esac
+    case "${activity_upload_delete_after,,}" in
+      1|true|yes|on)
+        activity_upload_args+=(--delete-after-upload)
+        ;;
+      0|false|no|off)
+        ;;
+      *)
+        echo "TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD must be true or false: ${activity_upload_delete_after}" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  0|false|no|off)
+    ;;
+  *)
+    echo "TALKINGBOATS_EDGE_UPLOAD_ENABLED must be true or false: ${activity_upload_enabled}" >&2
+    exit 2
+    ;;
+esac
+record_args=()
+case "${record_enabled,,}" in
+  1|true|yes|on)
+    mkdir -p "${record_dir}"
+    record_args=(
+      --record-dir "${record_dir}"
+      --record-segment-seconds "${record_segment_seconds}"
+      --record-retention-seconds "${record_retention_seconds}"
+    )
+    case "${record_upload_enabled,,}" in
+      1|true|yes|on)
+        if [[ -z "${private_api}" || -z "${ingest_token}" ]]; then
+          echo "TALKINGBOATS_PRIVATE_API and TALKINGBOATS_INGEST_TOKEN are required for recording upload" >&2
+          exit 2
+        fi
+        record_args+=(
+          --record-upload
+          --api-url "${private_api}"
+          --record-upload-queue-size "${record_upload_queue_size}"
+        )
+        ;;
+      0|false|no|off)
+        ;;
+      *)
+        echo "TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED must be true or false: ${record_upload_enabled}" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  0|false|no|off)
+    ;;
+  *)
+    echo "TALKINGBOATS_EDGE_RECORD_ENABLED must be true or false: ${record_enabled}" >&2
+    exit 2
+    ;;
+esac
+echo "event=edge_live_radio_start device=${device} channel=${channel} frequency_hz=${frequency_hz} label=${label} mount=${mount} spool_dir=${spool_dir} activity_upload_enabled=${activity_upload_enabled,,} record_enabled=${record_enabled,,} record_dir=${record_dir} record_segment_seconds=${record_segment_seconds} record_retention_seconds=${record_retention_seconds} record_upload_enabled=${record_upload_enabled,,} audio_filter_enabled=${audio_filter_enabled,,}" >&2
+
+rtl_fm \
+  -d "${device}" \
+  -M fm \
+  -f "${frequency_hz}" \
+  -s "${sample_rate}" \
+  -r "${sample_rate}" \
+  -g "${gain}" \
+  -l "${squelch}" \
+  -E deemp \
+  -F 9 \
+  - \
+  2> >(sed 's/^/[rtl_fm] /' >&2) \
+  | python3 -m talkingboats.edge_capture \
+    --channel "${channel}" \
+    --output-dir "${spool_dir}" \
+    --sample-rate-hz "${sample_rate}" \
+    --threshold-rms "${threshold_rms}" \
+    --min-clip-seconds "${min_clip_seconds}" \
+    --max-clip-seconds "${max_clip_seconds}" \
+    --pre-roll-seconds "${pre_roll_seconds}" \
+    --post-roll-seconds "${post_roll_seconds}" \
+    "${activity_upload_args[@]}" \
+    "${record_args[@]}" \
+    --max-temp-c "${max_temp_c}" \
+    --resume-temp-c "${resume_temp_c}" \
+    --max-load-per-cpu "${max_load_per_cpu}" \
+    --tee-stdout \
+  | ffmpeg \
+    -hide_banner \
+    -loglevel warning \
+    -f s16le \
+    -ar "${sample_rate}" \
+    -ac 1 \
+    -i pipe:0 \
+    "${ffmpeg_filter_args[@]}" \
+    -codec:a libmp3lame \
+    -b:a "${bitrate}" \
+    -content_type audio/mpeg \
+    -ice_name "Talking Boats ${label}" \
+    -f mp3 \
+    pipe:1 \
+  | python3 -m talkingboats.icecast_source \
+    --host "${icecast_host}" \
+    --port "${icecast_port}" \
+    --mount "${mount}" \
+    --netrc-file "${netrc_file}" \
+    --ice-name "Talking Boats ${label}" \
+    --ice-public "0"

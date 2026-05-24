@@ -4,9 +4,11 @@
   --muted: #66717b;
   --line: #d8dee2;
   --panel: #fff;
-  --bg: #f4f0e7;
+  --bg: #eef2f4;
   --teal: #006c67;
   --brick: #9d3f2c;
+  --blue: #174c7c;
+  --gold: #b7791f;
 }
 
 * {
@@ -30,7 +32,7 @@ body {
 }
 
 .panel {
-  width: min(920px, 100%);
+  width: min(980px, 100%);
   padding: clamp(18px, 4vw, 34px);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -54,34 +56,11 @@ h1 {
   letter-spacing: 0;
 }
 
-.session-form {
-  margin-bottom: 26px;
-}
-
-label {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--muted);
-  font-size: 0.92rem;
-}
-
-.token-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-input,
 button {
   min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 6px;
   font: inherit;
-}
-
-input {
-  width: 100%;
-  padding: 8px 10px;
 }
 
 button {
@@ -93,40 +72,63 @@ button {
 }
 
 button.secondary {
-  background: var(--brick);
+  background: var(--blue);
 }
 
-.live-layout {
+.clip-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.status-text {
+  margin: 0;
+  color: var(--muted);
+}
+
+.clip-list {
   display: grid;
-  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
-  gap: 22px;
-  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.channels {
+.clip-card {
   display: grid;
-  gap: 10px;
-}
-
-.channel-button {
-  width: 100%;
-  justify-content: start;
-  background: #f9f7f1;
-  color: var(--ink);
-  text-align: left;
-}
-
-.channel-button[disabled] {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.player {
+  gap: 12px;
   min-width: 0;
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfaf7;
+  background: #fbfcfd;
+}
+
+.clip-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--blue);
+  background: #f6f9fb;
+  font-size: 0.82rem;
+  font-weight: 720;
+}
+
+blockquote {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--gold);
+  color: #2f383d;
+  line-height: 1.5;
 }
 
 audio {
@@ -135,8 +137,12 @@ audio {
 }
 
 @media (max-width: 720px) {
-  .token-row,
-  .live-layout {
+  .clip-list {
     grid-template-columns: 1fr;
+  }
+
+  .clip-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

@@ -1,0 +1,20 @@
+[Unit]
+Description=Talking Boats live SDR radio stream
+After=network-online.target icecast2.service
+Wants=network-online.target
+Requires=icecast2.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/talkingboats/live-radio.env
+ExecStart=/opt/talkingboats/bin/talkingboats-live-radio-stream
+Restart=always
+RestartSec=5
+User=rob
+Group=audio
+SupplementaryGroups=dialout plugdev
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

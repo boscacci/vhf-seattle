@@ -16,12 +16,22 @@ dev = [
     "pytest>=8,<9",
     "ruff>=0.8,<1",
 ]
+transcribe = [
+    "faster-whisper>=1.1,<2",
+]
 
 [project.scripts]
 talkingboats-api = "talkingboats.api:main"
 talkingboats-fetch-ais-history = "talkingboats.ais_history:main"
 talkingboats-simulate-radio = "talkingboats.simulator:main"
 talkingboats-upload-clip = "talkingboats.capture_uploader:main"
+talkingboats-edge-capture = "talkingboats.edge_capture:main"
+talkingboats-icecast-source = "talkingboats.icecast_source:main"
+talkingboats-live-transcriber = "talkingboats.live_transcriber:main"
+talkingboats-live-radio-proxy = "talkingboats.live_radio_proxy:main"
+talkingboats-transcribe-uploaded-clips = "talkingboats.clip_transcriber:main"
+talkingboats-capture-profiles = "talkingboats.capture_profiles:main"
+talkingboats-upload-spooled-clips = "talkingboats.spool_uploader:main"
 talkingboats-export-public = "talkingboats.publish:main"
 
 [tool.pytest.ini_options]

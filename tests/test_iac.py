@@ -26,8 +26,13 @@ def test_opentofu_has_distinct_dev_and_prod_outputs() -> None:
     outputs_tf = Path("infra/opentofu/outputs.tf").read_text(encoding="utf-8")
     variables_tf = Path("infra/opentofu/variables.tf").read_text(encoding="utf-8")
 
+    assert 'default     = "vhf"' in variables_tf
+    assert 'default     = "vhf-dev"' in variables_tf
     assert 'default     = "talkingboats"' in variables_tf
     assert 'default     = "dev.talkingboats"' in variables_tf
+    assert "var.resource_site_subdomain" in Path("infra/opentofu/main.tf").read_text(
+        encoding="utf-8"
+    )
     assert 'output "site_fqdn"' in outputs_tf
     assert 'output "dev_site_fqdn"' in outputs_tf
     assert 'output "public_site_bucket"' in outputs_tf

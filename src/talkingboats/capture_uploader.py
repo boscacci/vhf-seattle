@@ -13,6 +13,8 @@ import httpx
 
 from talkingboats.schemas import Channel, ClipPresignRequest, ClipPresignResponse
 
+ALLOWED_CHANNELS = ("WX", "05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74")
+
 CONTENT_TYPES_BY_SUFFIX = {
     ".aac": "audio/aac",
     ".flac": "audio/flac",
@@ -34,8 +36,8 @@ class ClipUploadRequest:
     idempotency_key: str | None = None
 
     def __post_init__(self) -> None:
-        if self.channel not in ("68", "14"):
-            raise ValueError("channel must be 68 or 14")
+        if self.channel not in ALLOWED_CHANNELS:
+            raise ValueError(f"channel must be one of {', '.join(ALLOWED_CHANNELS)}")
         if self.started_at.tzinfo is None:
             raise ValueError("started_at must include a timezone")
         if self.ended_at is not None and self.ended_at.tzinfo is None:
@@ -165,7 +167,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Upload a captured Talking Boats audio clip.")
     parser.add_argument("--api-url", default=os.getenv("TALKINGBOATS_PRIVATE_API"))
     parser.add_argument("--ingest-token", default=os.getenv("TALKINGBOATS_INGEST_TOKEN"))
-    parser.add_argument("--channel", choices=["68", "14"], required=True)
+    parser.add_argument("--channel", choices=ALLOWED_CHANNELS, required=True)
     parser.add_argument("--audio-path", type=Path, required=True)
     parser.add_argument("--started-at", type=_parse_datetime)
     parser.add_argument("--ended-at", type=_parse_datetime)

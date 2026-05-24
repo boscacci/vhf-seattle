@@ -7,10 +7,11 @@ from typing import Annotated
 
 import httpx
 import uvicorn
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Path, Response, status
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Path, Query, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import Settings
 from talkingboats.schemas import (
     ClipPresignRequest,
@@ -30,6 +31,14 @@ def get_settings() -> Settings:
 
 def get_storage(settings: Annotated[Settings, Depends(get_settings)]) -> S3AudioStorage:
     return S3AudioStorage(settings)
+
+
+def get_clip_store(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> UploadedClipStore | None:
+    if settings.clip_db_path is None:
+        return None
+    return UploadedClipStore(settings.clip_db_path)
 
 
 def require_ingest_token(
@@ -109,6 +118,7 @@ def presign_clip_upload(
     request: ClipPresignRequest,
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
+    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
 ) -> ClipPresignResponse:
     try:
         key, upload_url = storage.presign_raw_upload(request)
@@ -117,6 +127,8 @@ def presign_clip_upload(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
+    if clip_store is not None:
+        clip_store.record_presigned_upload(key=key, request=request)
     return ClipPresignResponse(
         bucket=settings.raw_bucket,
         key=key,
@@ -124,6 +136,55 @@ def presign_clip_upload(
         expires_in_seconds=settings.raw_presign_seconds,
         required_headers={"Content-Type": request.content_type},
     )
+
+
+@app.get(
+    "/api/ingest/clips/stats",
+    dependencies=[Depends(require_operator_token)],
+)
+def ingest_clip_stats(
+    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+) -> dict[str, object]:
+    if clip_store is None:
+        return {"persisted": False, "counts": {}, "recent": []}
+    return {"persisted": True, **clip_store.stats()}
+
+
+@app.get(
+    "/api/clips/recent",
+)
+def recent_clips(
+    settings: Annotated[Settings, Depends(get_settings)],
+    storage: Annotated[S3AudioStorage, Depends(get_storage)],
+    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 30,
+) -> dict[str, object]:
+    if clip_store is None:
+        return {"clips": []}
+    clips = []
+    for clip in clip_store.recent_transcribed(limit=limit):
+        try:
+            playback_url = storage.presign_playback(clip.key)
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        clips.append(
+            {
+                "key": clip.key,
+                "channel": clip.channel,
+                "started_at": clip.started_at,
+                "ended_at": clip.ended_at,
+                "duration_seconds": clip.duration_seconds,
+                "content_type": clip.content_type,
+                "transcript": clip.transcript,
+                "segments": clip.segments,
+                "playback_url": playback_url,
+                "playback_expires_in_seconds": settings.playback_presign_seconds,
+            }
+        )
+    return {"clips": clips}
 
 
 @app.post(

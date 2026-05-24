@@ -1,0 +1,18 @@
+[Unit]
+Description=Talking Boats live radio web app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/talkingboats/live-radio
+ExecStart=/usr/bin/python3 -m http.server 8050 --bind 0.0.0.0
+Restart=always
+RestartSec=5
+User=rob
+Group=rob
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

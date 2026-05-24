@@ -10,16 +10,21 @@ devices:
   gain = 28;
   correction = 0;
   mode = "multichannel";
-  centerfreq = 156562500;
+  centerfreq = 156675000;
   channels:
   (
     {
-      freq = 156425000;
+      freq = 156650000;
       modulation = "nfm";
-      label = "vhf-68";
+      label = "vhf-13";
       outputs:
       (
-        { type = "icecast"; server = "127.0.0.1"; port = 8040; mountpoint = "vhf-68.mp3"; }
+        {
+          type = "rawfile";
+          directory = "/opt/talkingboats/spool/airband/13";
+          filename_template = "vhf-13";
+          split_on_transmission = true;
+        }
       );
     },
     {
@@ -28,7 +33,12 @@ devices:
       label = "vhf-14";
       outputs:
       (
-        { type = "icecast"; server = "127.0.0.1"; port = 8040; mountpoint = "vhf-14.mp3"; }
+        {
+          type = "rawfile";
+          directory = "/opt/talkingboats/spool/airband/14";
+          filename_template = "vhf-14";
+          split_on_transmission = true;
+        }
       );
     }
   );
