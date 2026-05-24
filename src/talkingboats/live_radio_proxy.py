@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -123,11 +124,15 @@ class ProxySettings:
     )
     transcript_url: str = "http://127.0.0.1:8055/api/live-transcript"
     private_api_url: str = "http://192.168.1.247:8034"
-    active_channel_id: str = "noaa_seattle"
+    active_channel_id: str = "recreation_68"
     retune_ssh_target: str = "talkingboats-pi"
     pi_env_path: str = "/etc/talkingboats/live-radio.env"
     restart_transcriber_service: bool = True
     enable_debug_endpoints: bool = False
+    cors_origins: tuple[str, ...] = (
+        "https://vhf.robertboscacci.com",
+        "https://vhf-dev.robertboscacci.com",
+    )
 
     @classmethod
     def from_env(cls) -> ProxySettings:
@@ -154,6 +159,7 @@ class ProxySettings:
             ),
             restart_transcriber_service=_env_bool("TALKINGBOATS_PROXY_RESTART_TRANSCRIBER", True),
             enable_debug_endpoints=_env_bool("TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS", False),
+            cors_origins=_env_csv("TALKINGBOATS_PROXY_CORS_ORIGINS") or cls.cors_origins,
         )
 
 
@@ -181,6 +187,13 @@ def create_app(
     retuner = retuner or retune_pi
     retune_lock = asyncio.Lock()
     app = FastAPI(title="Talking Boats Tailnet Radio Proxy", version="0.1.0")
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_origins),
+            allow_methods=["GET"],
+            allow_headers=["*"],
+        )
 
     @app.middleware("http")
     async def no_store_shell_assets(
@@ -210,6 +223,17 @@ def create_app(
             media_type="audio/mpeg",
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.get("/api/live/status")
+    def live_status() -> dict[str, object]:
+        preset = _find_channel(settings.active_channel_id)
+        return {
+            "activeChannelId": preset.id,
+            "channel": preset.channel,
+            "label": preset.label,
+            "frequencyMhz": preset.frequency_mhz,
+            "streamDelaySeconds": {"minimum": 30, "maximum": 90},
+        }
 
     if settings.enable_debug_endpoints:
 

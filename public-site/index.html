@@ -53,18 +53,23 @@
               <p id="live-status" class="status-text" aria-live="polite">Ready</p>
             </div>
             <div class="tuner-display">
-              <span class="signal-dot" aria-hidden="true"></span>
-              <span>Current SDR feed</span>
+              <span id="live-signal-dot" class="signal-dot" aria-hidden="true"></span>
+              <span class="tuner-copy">
+                <span id="live-channel">Current SDR feed</span>
+                <span id="live-frequency">Checking receiver status</span>
+              </span>
             </div>
-            <div class="meter" aria-hidden="true">
-              <span></span>
-              <span></span>
-              <span></span>
-              <span></span>
-              <span></span>
-              <span></span>
-              <span></span>
-              <span></span>
+            <div id="waveform-panel" class="waveform-panel is-waiting">
+              <canvas
+                id="waveform-canvas"
+                width="960"
+                height="240"
+                aria-label="Live audio waveform"
+              ></canvas>
+              <div id="waiting-indicator" class="waiting-indicator" aria-hidden="true">
+                <span></span>
+                <p>Waiting for transmission</p>
+              </div>
             </div>
             <audio id="live-audio" controls preload="none"></audio>
             <div class="live-actions">

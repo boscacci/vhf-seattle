@@ -71,11 +71,11 @@ http://localhost:8034/operator/
 ```
 
 The browser UI shows recent transcribed clips and a separate live-monitor tab.
-When served through the tailnet proxy it reads `/api/clips/recent` and
-`/api/live/current.mp3`; when deployed statically it reads `public_manifest.json`
-and copied public audio files. The live monitor in the public static page points
-at the Tailscale HTTPS endpoint, so it works for authenticated tailnet devices
-without exposing LAN services.
+When served through the tailnet proxy it reads `/api/clips/recent`,
+`/api/live/current.mp3`, and `/api/live/status`; when deployed statically it
+reads `public_manifest.json` and copied public audio files. The live monitor in
+the public static page points at the Tailscale HTTPS endpoint, so it works for
+authenticated tailnet devices without exposing LAN services.
 
 ## Fake Radio Simulator
 
@@ -361,6 +361,13 @@ first active one, which is useful while the debug profile alternates between
 NOAA and VHF 14. Caption and retune endpoints remain off by default; enable them
 explicitly with `TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS=true` on a
 Tailscale-only service.
+
+`/api/live/status` exposes only the active channel label/frequency and an
+expected 30-90 second stream-delay budget for the browser UI. It does not expose
+LAN hostnames, upstream stream URLs, tokens, or raw receiver configuration. The
+live waveform is rendered client-side from the audio element via Web Audio; when
+the squelched stream is quiet it switches to a waiting state until the next
+transmission comes through.
 
 The simple `talkingboats-live-radio-stream.service` remains installed as an
 escape hatch, but the installer disables it so only one process owns the SDR.

@@ -62,6 +62,32 @@ def test_proxy_current_live_stream_uses_first_available_mount() -> None:
     ]
 
 
+def test_proxy_live_status_reports_active_channel_and_allows_public_ui_origin() -> None:
+    client = TestClient(
+        create_app(
+            ProxySettings(
+                active_channel_id="recreation_68",
+                cors_origins=("https://vhf.robertboscacci.com",),
+            )
+        )
+    )
+
+    response = client.get(
+        "/api/live/status",
+        headers={"Origin": "https://vhf.robertboscacci.com"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://vhf.robertboscacci.com"
+    assert response.json() == {
+        "activeChannelId": "recreation_68",
+        "channel": "68",
+        "label": "Recreational",
+        "frequencyMhz": "156.425",
+        "streamDelaySeconds": {"minimum": 30, "maximum": 90},
+    }
+
+
 def test_proxy_transcript_endpoint_forwards_json() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "http://transcriber.test/api/live-transcript"

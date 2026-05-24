@@ -26,10 +26,21 @@ const panels = {
 };
 const liveAudio = document.querySelector("#live-audio");
 const liveStatus = document.querySelector("#live-status");
+const liveChannel = document.querySelector("#live-channel");
+const liveFrequency = document.querySelector("#live-frequency");
+const liveSignalDot = document.querySelector("#live-signal-dot");
+const waveformPanel = document.querySelector("#waveform-panel");
+const waveformCanvas = document.querySelector("#waveform-canvas");
 const connectLiveButton = document.querySelector("#connect-live");
 const openLiveLink = document.querySelector("#open-live");
 
 let liveRetryTimer = null;
+let audioContext = null;
+let analyser = null;
+let analyserSource = null;
+let waveformData = null;
+let waveformAnimationId = null;
+let quietSince = null;
 
 refreshButton.addEventListener("click", () => {
   loadAndRender();
@@ -234,23 +245,39 @@ function activateTab(name) {
   if (name === "live" && !liveAudio.src) {
     prepareLiveAudio();
   }
+  if (name === "live") {
+    loadLiveStatus();
+    startWaveform();
+  } else {
+    stopWaveform();
+  }
 }
 
 function prepareLiveAudio() {
   const url = liveStreamUrl();
+  liveAudio.crossOrigin = "anonymous";
   openLiveLink.href = url;
   liveStatus.textContent = "Ready";
+  drawWaitingFrame();
 }
 
-function connectLive() {
+async function connectLive() {
   clearTimeout(liveRetryTimer);
   const url = withCacheBust(liveStreamUrl());
+  liveAudio.crossOrigin = "anonymous";
   liveAudio.src = url;
   openLiveLink.href = url;
   liveAudio.load();
-  liveAudio.play().catch(() => {
+  try {
+    ensureAudioAnalyser();
+    if (audioContext?.state === "suspended") {
+      await audioContext.resume();
+    }
+    startWaveform();
+    await liveAudio.play();
+  } catch {
     liveStatus.textContent = "Press play";
-  });
+  }
 }
 
 function scheduleLiveReconnect() {
@@ -271,9 +298,157 @@ function liveStreamUrl() {
   return `${tailnetLiveBase}/api/live/current.mp3`;
 }
 
+function liveStatusUrl() {
+  const host = window.location.hostname;
+  const isTailnet = host.endsWith(".tailbea63b.ts.net") || host === "100.124.5.39";
+  if (isTailnet || window.location.port === "10000") {
+    return "/api/live/status";
+  }
+  return `${tailnetLiveBase}/api/live/status`;
+}
+
+async function loadLiveStatus() {
+  try {
+    const response = await fetch(liveStatusUrl(), { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`live status HTTP ${response.status}`);
+    }
+    renderLiveStatus(await response.json());
+  } catch {
+    liveChannel.textContent = "Current SDR feed";
+    liveFrequency.textContent = "Channel status unavailable";
+  }
+}
+
+function renderLiveStatus(status) {
+  const label = status?.label || channelLabel(status?.channel);
+  const channel = status?.channel ? channelLabel(status.channel) : "Current SDR feed";
+  liveChannel.textContent = `${channel} · ${label}`;
+  liveFrequency.textContent = status?.frequencyMhz ? `${status.frequencyMhz} MHz` : "";
+}
+
 function withCacheBust(url) {
   const joiner = url.includes("?") ? "&" : "?";
   return `${url}${joiner}t=${Date.now()}`;
+}
+
+function ensureAudioAnalyser() {
+  if (analyser) {
+    return;
+  }
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) {
+    liveStatus.textContent = "Audio visualizer unavailable";
+    return;
+  }
+  audioContext = new AudioContextConstructor();
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.35;
+  waveformData = new Uint8Array(analyser.fftSize);
+  analyserSource = audioContext.createMediaElementSource(liveAudio);
+  analyserSource.connect(analyser);
+  analyser.connect(audioContext.destination);
+}
+
+function startWaveform() {
+  if (waveformAnimationId) {
+    return;
+  }
+  drawWaveform();
+}
+
+function stopWaveform() {
+  if (waveformAnimationId) {
+    cancelAnimationFrame(waveformAnimationId);
+    waveformAnimationId = null;
+  }
+}
+
+function drawWaveform() {
+  waveformAnimationId = requestAnimationFrame(drawWaveform);
+  if (!analyser || !waveformData) {
+    drawWaitingFrame();
+    return;
+  }
+
+  analyser.getByteTimeDomainData(waveformData);
+  const rms = waveformRms(waveformData);
+  const now = performance.now();
+  const isReceiving = rms > 0.018;
+  if (isReceiving) {
+    quietSince = null;
+    liveStatus.textContent = "Receiving transmission";
+  } else {
+    quietSince ||= now;
+    if (now - quietSince > 1200 && !liveAudio.paused) {
+      liveStatus.textContent = "Waiting for transmission";
+    }
+  }
+  waveformPanel.classList.toggle("is-waiting", !isReceiving);
+  liveSignalDot.classList.toggle("is-active", isReceiving);
+  renderWaveform(waveformData, { isReceiving, rms });
+}
+
+function drawWaitingFrame() {
+  const midpoint = new Uint8Array(128).fill(128);
+  waveformPanel.classList.add("is-waiting");
+  liveSignalDot.classList.remove("is-active");
+  renderWaveform(midpoint, { isReceiving: false, rms: 0 });
+}
+
+function waveformRms(data) {
+  let sum = 0;
+  for (const value of data) {
+    const centered = (value - 128) / 128;
+    sum += centered * centered;
+  }
+  return Math.sqrt(sum / data.length);
+}
+
+function renderWaveform(data, { isReceiving, rms }) {
+  const context = waveformCanvas.getContext("2d");
+  const rect = waveformCanvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.floor(rect.width * ratio));
+  const height = Math.max(1, Math.floor(rect.height * ratio));
+  if (waveformCanvas.width !== width || waveformCanvas.height !== height) {
+    waveformCanvas.width = width;
+    waveformCanvas.height = height;
+  }
+
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#091411";
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = "rgba(117, 137, 131, 0.18)";
+  context.lineWidth = ratio;
+  for (let y = height * 0.25; y < height; y += height * 0.25) {
+    context.beginPath();
+    context.moveTo(0, y);
+    context.lineTo(width, y);
+    context.stroke();
+  }
+
+  const centerY = height / 2;
+  const amplitude = Math.max(0.08, Math.min(1, rms * 7));
+  context.lineWidth = isReceiving ? 2.5 * ratio : 1.6 * ratio;
+  context.strokeStyle = isReceiving ? "#40e0bf" : "rgba(244, 179, 80, 0.72)";
+  context.shadowColor = isReceiving ? "rgba(64, 224, 191, 0.7)" : "rgba(244, 179, 80, 0.35)";
+  context.shadowBlur = isReceiving ? 12 * ratio : 8 * ratio;
+  context.beginPath();
+  for (let index = 0; index < data.length; index += 1) {
+    const x = (index / (data.length - 1)) * width;
+    const normalized = (data[index] - 128) / 128;
+    const idleSweep = Math.sin(index / 18 + performance.now() / 420) * 0.045;
+    const y = centerY + (isReceiving ? normalized * height * 0.42 : idleSweep * amplitude * height);
+    if (index === 0) {
+      context.moveTo(x, y);
+    } else {
+      context.lineTo(x, y);
+    }
+  }
+  context.stroke();
+  context.shadowBlur = 0;
 }
 
 function audioUrlForClip(clip) {
