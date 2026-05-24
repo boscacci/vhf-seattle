@@ -28,7 +28,6 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 env_file="/etc/talkingboats/live-radio.env"
-web_root="/opt/talkingboats/live-radio"
 app_root="/opt/talkingboats/app"
 spool_root="/opt/talkingboats/spool/clips"
 record_root="/opt/talkingboats/spool/continuous"
@@ -37,7 +36,6 @@ service_user="${TALKINGBOATS_SERVICE_USER:-rob}"
 
 install -d -m 0755 \
   /opt/talkingboats/bin \
-  "${web_root}" \
   "${app_root}/src" \
   "${spool_root}" \
   "${record_root}" \
@@ -57,9 +55,6 @@ install -m 0755 \
 install -m 0755 \
   "${repo_root}/deploy/pi/live-radio/talkingboats-profile-capture" \
   /opt/talkingboats/bin/talkingboats-profile-capture
-install -m 0644 "${repo_root}/deploy/pi/live-radio/index.html" "${web_root}/index.html"
-install -m 0644 "${repo_root}/deploy/pi/live-radio/app.js" "${web_root}/app.js"
-install -m 0644 "${repo_root}/deploy/pi/live-radio/styles.css" "${web_root}/styles.css"
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-live-radio-stream.service.example" \
   /etc/systemd/system/talkingboats-live-radio-stream.service
@@ -72,10 +67,6 @@ install -m 0644 \
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-spool-uploader.service.example" \
   /etc/systemd/system/talkingboats-spool-uploader.service
-install -m 0644 \
-  "${repo_root}/deploy/systemd/talkingboats-live-radio-web.service.example" \
-  /etc/systemd/system/talkingboats-live-radio-web.service
-
 generate_password() {
   openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_'
 }
@@ -94,7 +85,6 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_AUDIO_FILTER_ENABLED=%q\n' "false"
     printf 'TALKINGBOATS_AUDIO_FILTER=%q\n' \
       "highpass=f=250,lowpass=f=3200,afftdn=nf=-28,dynaudnorm=f=150:g=12"
-    printf 'TALKINGBOATS_TRANSCRIPT_URL=%q\n' ""
     printf 'TALKINGBOATS_ICECAST_HOST=%q\n' "127.0.0.1"
     printf 'TALKINGBOATS_ICECAST_PORT=%q\n' "8000"
     printf 'TALKINGBOATS_ICECAST_MOUNT=%q\n' "/talkingboats-live.mp3"
@@ -139,7 +129,6 @@ append_env_if_missing TALKINGBOATS_LIVE_CHANNEL "68"
 append_env_if_missing TALKINGBOATS_AUDIO_FILTER_ENABLED "false"
 append_env_if_missing TALKINGBOATS_AUDIO_FILTER \
   "highpass=f=250,lowpass=f=3200,afftdn=nf=-28,dynaudnorm=f=150:g=12"
-append_env_if_missing TALKINGBOATS_TRANSCRIPT_URL ""
 append_env_if_missing TALKINGBOATS_EDGE_SPOOL_DIR "${spool_root}"
 append_env_if_missing TALKINGBOATS_EDGE_RECORD_ENABLED "true"
 append_env_if_missing TALKINGBOATS_EDGE_RECORD_DIR "${record_root}"
@@ -199,28 +188,6 @@ PYTHONPATH="${app_root}/src" python3 -m talkingboats.capture_profiles \
   --output-root "${airband_spool_root}" \
   > /etc/talkingboats/rtl_airband-elliott-bay.conf
 chmod 0644 /etc/talkingboats/rtl_airband-elliott-bay.conf
-
-python3 - <<'PY' > "${web_root}/config.js"
-import json
-import os
-
-frequency_hz = int(os.environ.get("TALKINGBOATS_LIVE_FREQUENCY_HZ", "156425000"))
-mount_path = os.environ.get("TALKINGBOATS_ICECAST_MOUNT", "/talkingboats-live.mp3")
-if not mount_path.startswith("/"):
-    mount_path = f"/{mount_path}"
-
-config = {
-    "label": os.environ.get("TALKINGBOATS_LIVE_LABEL", "VHF 68"),
-    "frequencyMhz": f"{frequency_hz / 1_000_000:.3f}",
-    "streamPort": int(os.environ.get("TALKINGBOATS_ICECAST_PORT", "8000")),
-    "mountPath": mount_path,
-    "transcriptUrl": os.environ.get("TALKINGBOATS_TRANSCRIPT_URL", ""),
-}
-print("window.TALKINGBOATS_LIVE_RADIO = ")
-print(json.dumps(config, indent=2, sort_keys=True))
-print(";")
-PY
-chmod 0644 "${web_root}/config.js"
 
 if [[ -f /etc/icecast2/icecast.xml && ! -f /etc/icecast2/icecast.xml.talkingboats.bak ]]; then
   cp -a /etc/icecast2/icecast.xml /etc/icecast2/icecast.xml.talkingboats.bak
@@ -300,7 +267,6 @@ systemctl disable --now talkingboats-live-radio-stream.service 2>/dev/null || tr
 systemctl disable --now talkingboats-edge-live-radio-stream.service 2>/dev/null || true
 systemctl enable --now talkingboats-spool-uploader.service
 systemctl enable --now talkingboats-profile-capture.service
-systemctl enable --now talkingboats-live-radio-web.service
 
 echo "Talking Boats capture profile installed."
-echo "Open http://$(hostname -I | awk '{print $1}'):8050/ from a phone on the same LAN."
+echo "The single browser UI is served by the OptiPlex/public-site clip app."

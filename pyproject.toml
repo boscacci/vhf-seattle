@@ -1,7 +1,7 @@
 [project]
 name = "talkingboats"
 version = "0.1.0"
-description = "Private VHF/AIS capture and public static showcase for Elliott Bay radio monitoring."
+description = "Private VHF capture and public recent-clip showcase for Elliott Bay radio monitoring."
 requires-python = ">=3.11"
 dependencies = [
     "boto3>=1.34,<2",

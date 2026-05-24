@@ -3,7 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from talkingboats.publish import PublicExportError, export_public_site, sanitize_public_manifest
+from talkingboats.clip_transcriber import UploadedClipStore
+from talkingboats.publish import (
+    PublicExportError,
+    export_public_site,
+    export_recent_clip_site,
+    sanitize_public_manifest,
+)
+from talkingboats.schemas import ClipPresignRequest
 
 
 def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
@@ -11,24 +18,7 @@ def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
         "generated_at": "2026-05-20T00:00:00Z",
         "site": {"title": "Talking Boats"},
         "stats": {"channel_counts": {"68": 1}, "internal_url": "http://127.0.0.1:8034"},
-        "ais_tracks": [
-            {
-                "track_id": "track-1",
-                "name": "Mock vessel",
-                "vessel_type": "recreational",
-                "private_s3_key": "raw/channel=68/date=2026-05-20/secret.mp3",
-                "points": [
-                    {
-                        "observed_at": "2026-05-20T19:10:00Z",
-                        "lat": 47.6062123,
-                        "lon": -122.3708844,
-                        "speed_knots": 4.2,
-                        "course_degrees": 212.2,
-                        "receiver_id": "rtl-secret",
-                    }
-                ],
-            }
-        ],
+        "ais_tracks": [{"track_id": "track-1", "private_s3_key": "raw/secret.mp3"}],
         "clips": [
             {
                 "id": "approved",
@@ -41,6 +31,7 @@ def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
                 "private_s3_key": "raw/channel=68/date=2026-05-20/secret.mp3",
                 "receiver_id": "rtl-serial",
                 "ais_context": {"lat": 47.6062123, "lon": -122.3708844, "speed_knots": 3.2},
+                "vessel_context": [{"name": "Private vessel", "private_note": "do not export"}],
             },
             {
                 "id": "private",
@@ -57,13 +48,14 @@ def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
     rendered = json.dumps(public_manifest)
 
     assert public_manifest["stats"]["clip_count"] == 1
-    assert public_manifest["ais_tracks"][0]["points"][0]["lat"] == 47.606
-    assert public_manifest["ais_tracks"][0]["points"][0]["lon"] == -122.371
     assert [clip["id"] for clip in public_manifest["clips"]] == ["approved"]
     assert public_manifest["clips"][0]["ais_context"]["lat"] == 47.606
     assert public_manifest["clips"][0]["ais_context"]["lon"] == -122.371
+    assert public_manifest["clips"][0]["vessel_context"] == [{"name": "Private vessel"}]
+    assert "ais_tracks" not in public_manifest
     assert "private_s3_key" not in rendered
     assert "receiver_id" not in rendered
+    assert "private_note" not in rendered
     assert "127.0.0.1" not in rendered
     assert "unreviewed text" not in rendered
 
@@ -135,6 +127,67 @@ def test_public_export_rejects_nested_audio_filename() -> None:
         )
 
 
-def test_public_manifest_rejects_bad_ais_tracks() -> None:
-    with pytest.raises(PublicExportError, match="ais_tracks"):
-        sanitize_public_manifest({"ais_tracks": [{"track_id": "bad", "points": "not-a-list"}]})
+def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    db_path = tmp_path / "clips.sqlite3"
+    store = UploadedClipStore(db_path)
+    request = ClipPresignRequest(
+        channel="14",
+        started_at="2026-05-24T22:08:41Z",
+        ended_at="2026-05-24T22:08:49Z",
+        duration_seconds=8.1,
+        content_type="audio/mpeg",
+        idempotency_key="real-clip",
+    )
+    key = "raw/channel=14/date=2026-05-24/real.mp3"
+    store.record_presigned_upload(key=key, request=request)
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Southwest wind increasing after midnight.",
+                started_at="2026-05-24T22:08:41Z",
+                ended_at="2026-05-24T22:08:49Z",
+            )
+        ],
+    )
+    reader = FakeClipReader({"raw/channel=14/date=2026-05-24/real.mp3": b"real audio"})
+
+    manifest = export_recent_clip_site(
+        clip_db_path=db_path,
+        site_source_dir=site_source,
+        output_dir=tmp_path / "output",
+        clip_reader=reader,
+        limit=10,
+    )
+
+    clip = manifest["clips"][0]
+    assert clip["channel"] == "14"
+    assert clip["transcript_public"] == "Southwest wind increasing after midnight."
+    assert clip["public_title"] == "VHF 14 - May 24, 2026 10:08 PM"
+    assert clip["audio_public_filename"].endswith(".mp3")
+    exported_audio = tmp_path / "output" / "clips" / clip["audio_public_filename"]
+    assert exported_audio.read_bytes() == b"real audio"
+    assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
+
+
+class FakeClipReader:
+    def __init__(self, objects: dict[str, bytes]) -> None:
+        self.objects = objects
+
+    def download(self, key: str, output_path: Path) -> None:
+        output_path.write_bytes(self.objects[key])
+
+
+def _segment(*, text: str, started_at: str, ended_at: str) -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        text=text,
+        started_at=started_at,
+        ended_at=ended_at,
+        relative_start_seconds=0.0,
+        relative_end_seconds=8.0,
+    )

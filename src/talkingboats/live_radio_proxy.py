@@ -17,9 +17,15 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-CLIP_CONSOLE_DIR = Path(__file__).resolve().parents[2] / "private-ui"
+CLIP_CONSOLE_DIR = Path(__file__).resolve().parents[2] / "public-site"
 NO_STORE_PATHS = frozenset(
-    ("/", "/index.html", "/app.js", "/main.js", "/styles.css", "/config.js")
+    (
+        "/",
+        "/index.html",
+        "/assets/app.js",
+        "/assets/styles.css",
+        "/public_manifest.json",
+    )
 )
 
 
@@ -115,7 +121,6 @@ class ProxySettings:
     active_channel_id: str = "noaa_seattle"
     retune_ssh_target: str = "talkingboats-pi"
     pi_env_path: str = "/etc/talkingboats/live-radio.env"
-    pi_web_config_path: str = "/opt/talkingboats/live-radio/config.js"
     restart_transcriber_service: bool = True
     enable_debug_endpoints: bool = False
 
@@ -169,7 +174,6 @@ def create_app(
     settings = settings or ProxySettings.from_env()
     client_factory = client_factory or _default_client
     retuner = retuner or retune_pi
-    active_channel_id = settings.active_channel_id
     retune_lock = asyncio.Lock()
     app = FastAPI(title="Talking Boats Tailnet Radio Proxy", version="0.1.0")
 
@@ -189,27 +193,6 @@ def create_app(
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/config.js")
-    def config_js() -> Response:
-        active_channel = _find_channel(active_channel_id)
-        config = {
-            "activeChannelId": active_channel.id,
-            "channels": [channel.to_config() for channel in DEFAULT_CHANNELS],
-            "frequencyMhz": active_channel.frequency_mhz,
-            "label": active_channel.label,
-            "mountPath": "/talkingboats-live.mp3",
-            "retuneUrl": "/api/channel",
-            "streamPort": 0,
-            "streamUrl": "/talkingboats-live.mp3",
-            "transcriptUrl": "/api/live-transcript",
-        }
-        body = "window.TALKINGBOATS_LIVE_RADIO = \n" + json.dumps(
-            config,
-            indent=2,
-            sort_keys=True,
-        )
-        return Response(f"{body}\n;\n", media_type="application/javascript")
-
     @app.get("/api/clips/recent")
     async def recent_clips(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/clips/recent", settings, client_factory)
@@ -228,7 +211,6 @@ def create_app(
 
         @app.post("/api/channel")
         async def retune_channel(request: RetuneRequest) -> dict[str, Any]:
-            nonlocal active_channel_id
             if retune_lock.locked():
                 raise HTTPException(status_code=409, detail="retune already in progress")
             preset = _find_channel(request.id)
@@ -240,7 +222,6 @@ def create_app(
                     raise HTTPException(status_code=502, detail=detail or "retune failed") from exc
                 except subprocess.TimeoutExpired as exc:
                     raise HTTPException(status_code=504, detail="retune timed out") from exc
-                active_channel_id = preset.id
             return {
                 "activeChannelId": preset.id,
                 "channel": preset.channel,
@@ -304,20 +285,12 @@ def retune_pi(preset: ChannelPreset, settings: ProxySettings) -> RetuneResult:
 def _build_pi_retune_script(preset: ChannelPreset, settings: ProxySettings) -> str:
     payload = {
         "env_path": settings.pi_env_path,
-        "web_config_path": settings.pi_web_config_path,
         "updates": {
             "TALKINGBOATS_LIVE_CHANNEL": preset.channel,
             "TALKINGBOATS_LIVE_FREQUENCY_HZ": str(preset.frequency_hz),
             "TALKINGBOATS_LIVE_LABEL": preset.label,
             "TALKINGBOATS_LIVE_SQUELCH": str(preset.squelch),
             "TALKINGBOATS_AUDIO_FILTER_ENABLED": str(preset.audio_filter_enabled).lower(),
-        },
-        "web_config": {
-            "frequencyMhz": preset.frequency_mhz,
-            "label": preset.label,
-            "mountPath": "/talkingboats-live.mp3",
-            "streamPort": 8000,
-            "transcriptUrl": "http://192.168.1.247:8055/api/live-transcript",
         },
     }
     return f"""
@@ -352,15 +325,7 @@ for key, value in updates.items():
 
 env_path.write_text("\\n".join(out) + "\\n")
 env_path.chmod(0o600)
-config_path = Path(payload["web_config_path"])
-config_path.write_text(
-    "window.TALKINGBOATS_LIVE_RADIO = \\n"
-    + json.dumps(payload["web_config"], indent=2, sort_keys=True)
-    + "\\n;\\n"
-)
-config_path.chmod(0o644)
 subprocess.run(["systemctl", "restart", "talkingboats-edge-live-radio-stream.service"], check=True)
-subprocess.run(["systemctl", "restart", "talkingboats-live-radio-web.service"], check=True)
 """
 
 

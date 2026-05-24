@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import concurrent.futures
-import json
 import subprocess
 import threading
 
@@ -11,33 +10,8 @@ from fastapi.testclient import TestClient
 from talkingboats.live_radio_proxy import ChannelPreset, ProxySettings, RetuneResult, create_app
 
 
-def test_proxy_config_serves_same_origin_stream_and_transcript_urls() -> None:
-    app = create_app(
-        ProxySettings(
-            stream_url="http://pi.test:8000/talkingboats-live.mp3",
-            transcript_url="http://transcriber.test/api/live-transcript",
-        )
-    )
-
-    response = TestClient(app).get("/config.js")
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("application/javascript")
-    payload = response.text.removeprefix("window.TALKINGBOATS_LIVE_RADIO = \n")
-    payload = payload.removesuffix("\n;\n")
-    config = json.loads(payload)
-    assert config["label"] == "NOAA Weather 162.550"
-    assert config["frequencyMhz"] == "162.550"
-    assert config["streamUrl"] == "/talkingboats-live.mp3"
-    assert config["transcriptUrl"] == "/api/live-transcript"
-    assert config["retuneUrl"] == "/api/channel"
-    assert config["activeChannelId"] == "noaa_seattle"
-    assert any(channel["id"] == "vts_14" for channel in config["channels"])
-    assert response.headers["cache-control"] == "no-store"
-
-
 def test_proxy_static_shell_assets_are_not_cached() -> None:
-    response = TestClient(create_app(ProxySettings())).get("/main.js")
+    response = TestClient(create_app(ProxySettings())).get("/assets/app.js")
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -50,8 +24,9 @@ def test_proxy_root_serves_clip_console() -> None:
     response = TestClient(create_app(ProxySettings())).get("/")
 
     assert response.status_code == 200
-    assert "Private Clip Console" in response.text
+    assert "Recent Real Clips" in response.text
     assert "live-player" not in response.text
+    assert "bay-map" not in response.text
 
 
 def test_proxy_transcript_endpoint_forwards_json() -> None:

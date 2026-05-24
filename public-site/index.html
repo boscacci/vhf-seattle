@@ -7,67 +7,30 @@
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">Elliott Bay VHF + AIS</p>
-        <h1 id="site-title">Talking Boats</h1>
-      </div>
-      <p id="site-subtitle" class="subtitle">Reviewed marine-radio moments from Elliott Bay.</p>
-    </header>
-
-    <main class="layout">
-      <section class="overview-band" aria-labelledby="overview-title">
+    <main class="shell">
+      <header class="topbar">
         <div>
-          <h2 id="overview-title">Public Showcase</h2>
-          <p>
-            Sanitized highlights from VHF 68 and Seattle Traffic, paired with nearby AIS context.
-          </p>
+          <p class="eyebrow">Elliott Bay VHF</p>
+          <h1 id="site-title">Talking Boats</h1>
+        </div>
+        <button id="refresh-clips" class="secondary" type="button">Refresh</button>
+      </header>
+
+      <section class="summary" aria-labelledby="summary-title">
+        <div>
+          <h2 id="summary-title">Recent Real Clips</h2>
+          <p id="site-subtitle">Fresh transcribed marine-radio audio from the receiver.</p>
         </div>
         <dl class="stats" id="stats"></dl>
       </section>
 
-      <section class="content-grid">
-        <div class="map-panel" aria-labelledby="map-title">
-          <div class="section-heading">
-            <p class="eyebrow">Map</p>
-            <h2 id="map-title">Nearby Signals</h2>
-          </div>
-          <div class="map-toolbar" aria-label="Map and AIS playback controls">
-            <div class="zoom-controls" aria-label="Map zoom controls">
-              <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
-              <span id="zoom-label">Zoom</span>
-              <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
-            </div>
-            <div class="map-legend" aria-label="Map legend">
-              <span><i class="legend-radio" aria-hidden="true">1</i> Reviewed radio clips</span>
-              <span><i class="legend-vessel" aria-hidden="true"></i> AIS vessels</span>
-              <span><i class="legend-trail" aria-hidden="true"></i> Recent AIS trail</span>
-            </div>
-            <div class="time-controls">
-              <button type="button" id="playback-toggle">Play AIS</button>
-              <label for="time-slider">Replay time</label>
-              <input id="time-slider" type="range" min="0" max="0" value="0" />
-              <output id="time-label" for="time-slider">No AIS track</output>
-            </div>
-          </div>
-          <div class="bay-map" id="bay-map" aria-label="NOAA chart view of Elliott Bay activity">
-            <div class="chart-fallback" aria-hidden="true"></div>
-            <div class="chart-tile-layer" id="chart-tile-layer" aria-hidden="true"></div>
-            <svg class="track-layer" id="track-layer" viewBox="0 0 100 100" aria-hidden="true"></svg>
-            <div class="playback-vessels" id="playback-vessels" aria-hidden="true"></div>
-            <div class="map-tooltip" id="map-tooltip" role="status" hidden></div>
-            <p class="chart-attribution">NOAA ENC Chart Display, not for navigation</p>
-          </div>
-          <p class="sr-only" id="map-status" aria-live="polite"></p>
+      <section class="clips-panel" aria-labelledby="clips-title">
+        <div class="section-heading">
+          <p class="eyebrow">Audio</p>
+          <h2 id="clips-title">Latest Transcripts</h2>
+          <p id="clip-status" class="status-text" aria-live="polite">Loading clips...</p>
         </div>
-
-        <div class="timeline-panel" aria-labelledby="timeline-title">
-          <div class="section-heading">
-            <p class="eyebrow">Timeline</p>
-            <h2 id="timeline-title">Reviewed Clips</h2>
-          </div>
-          <div id="clips" class="clip-list"></div>
-        </div>
+        <div id="clips" class="clip-list"></div>
       </section>
     </main>
 

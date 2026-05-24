@@ -70,9 +70,9 @@ app = FastAPI(
     description="Private ingest, playback, and live-radio proxy for Talking Boats.",
 )
 
-PRIVATE_UI_DIR = FilePath(__file__).resolve().parents[2] / "private-ui"
-if PRIVATE_UI_DIR.exists():
-    app.mount("/operator", StaticFiles(directory=PRIVATE_UI_DIR, html=True), name="operator")
+SHARED_UI_DIR = FilePath(__file__).resolve().parents[2] / "public-site"
+if SHARED_UI_DIR.exists():
+    app.mount("/operator", StaticFiles(directory=SHARED_UI_DIR, html=True), name="operator")
 
 
 @app.get("/healthz")

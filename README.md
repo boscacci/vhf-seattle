@@ -1,23 +1,23 @@
 # Talking Boats
 
-Talking Boats is a public/private split for an Elliott Bay VHF marine-radio and AIS
-project.
+Talking Boats captures Elliott Bay marine VHF radio, transcribes useful chunks,
+and publishes recent clips without exposing the home network.
 
-- **Private side:** Raspberry Pi capture, raw audio, live radio, ingest API,
-  transcription workers, Postgres/PostGIS, review tools.
-- **Public side:** static CloudFront site at `vhf.robertboscacci.com`
-  generated only from reviewed/sanitized data.
+- **Private side:** Raspberry Pi capture, raw audio, ingest API, transcription
+  workers, and the clip SQLite database.
+- **Public side:** one clip-focused browser UI in `public-site/`, deployed at
+  `vhf.robertboscacci.com` and optionally served through Tailscale for fresh DB
+  reads.
 
-The public site never connects to the Pi, private API, Icecast stream, database, or
-raw S3 bucket.
+The public static deploy contains copied clip audio and sanitized transcript
+metadata. It never exposes the Pi, private API, Icecast stream, database, raw S3
+keys, or presigned URLs.
 
 ## First Build Target
 
 - Fun channel: VHF 68, `156.425 MHz`
 - Business channel: VHF 14, `156.700 MHz` Seattle Traffic / Puget Sound VTS
-- AIS receiver: local AIS messages for vessel context
 - Raw audio: private S3 bucket, `raw/` expires after 60 days
-- Hall of Fame: promoted clips retained indefinitely
 - Prod public site: static S3 origin behind CloudFront Origin Access Control at
   `vhf.robertboscacci.com`
 - Dev public site: separate static S3 origin and CloudFront distribution at
@@ -40,21 +40,21 @@ cp config/examples/private-api.env.example .env
 conda run -n dell uvicorn talkingboats.api:app --reload --host 0.0.0.0 --port 8034
 ```
 
-Private operator UI:
+Shared clip UI through the private API:
 
 ```text
 http://localhost:8034/operator/
 ```
 
-The operator UI shows recent transcribed clips from the upload database with
-short-lived playback URLs. It has no manual password or token step. Keep write
-paths and home-network resources private; the read-only clip feed can be served
-publicly or through Tailscale Serve.
+The browser UI shows recent transcribed clips. When served through the tailnet
+proxy it reads `/api/clips/recent`; when deployed statically it reads
+`public_manifest.json` and copied public audio files. It has no manual password
+or token step.
 
 ## Fake Radio Simulator
 
-Use the simulator while the SDR hardware is still in the mail. It creates small
-synthetic WAV clips plus a private manifest shaped like reviewed VHF/AIS data.
+Use the simulator for local exporter tests. It creates small synthetic WAV clips
+plus a private manifest shaped like public clip data.
 
 ```bash
 conda run -n dell talkingboats-simulate-radio \
@@ -75,26 +75,6 @@ conda run -n dell talkingboats-export-public \
   --output-dir outputs/public-site \
   --audio-source-dir outputs/simulated-radio/audio
 ```
-
-## Historical AIS Slice
-
-NOAA/BOEM MarineCadastre AIS point data can be queried through NOAA PMEL ERDDAP
-by year, time range, and bounding box. This keeps the local download small enough
-for experimentation.
-
-```bash
-conda run -n dell talkingboats-fetch-ais-history \
-  --start 2024-07-01T00:00:00Z \
-  --end 2024-07-08T00:00:00Z \
-  --raw-csv data/ais/elliott-bay-2024-07-01_2024-07-08.raw.csv \
-  --tracks-json outputs/ais/elliott-bay-2024-07-01_2024-07-08.tracks.json \
-  --private-manifest outputs/simulated-radio/private_manifest.json \
-  --max-tracks 16
-```
-
-The raw CSV stays under `data/`, which is git-ignored. The generated tracks are
-public-export candidates only after the sanitizer rounds positions and removes
-private fields.
 
 ## Manual Clip Upload
 
@@ -160,7 +140,7 @@ After an RTL-SDR and antenna are plugged into the Pi, verify the dongle:
 ssh rob@talkingboats-pi.local rtl_test -t
 ```
 
-Install the LAN-only listener app from a repo checkout on the Pi:
+Install the capture services from a repo checkout on the Pi:
 
 ```bash
 sudo deploy/pi/install_live_radio.sh
@@ -171,13 +151,10 @@ Icecast with generated local source credentials, and starts:
 
 - `talkingboats-edge-live-radio-stream.service`: one `rtl_fm` process teed
   through the Pi edge detector and then to Icecast MP3.
-- `talkingboats-live-radio-web.service`: phone-friendly web player on port `8050`.
-
-Open the Pi's LAN URL from a phone on the same network:
-
-```text
-http://talkingboats-pi.local:8050/
-```
+- `talkingboats-profile-capture.service`: default debug profile that alternates
+  NOAA and VHF 14 for fast transcription feedback.
+- `talkingboats-spool-uploader.service`: uploads completed multichannel spool
+  files when durable upload env vars are present.
 
 For a continuous signal check, override the frequency before the first install,
 for example a local NOAA weather channel:
@@ -193,17 +170,16 @@ sudo env TALKINGBOATS_LIVE_FREQUENCY_HZ=162550000 \
 Keep the cheap, real-time radio work on the Pi:
 
 - SDR demodulation with `rtl_fm`.
-- Live mono MP3 encoding for the LAN phone player.
+- Live mono MP3 encoding for debug streaming.
 - RMS activity detection on raw PCM before encoding.
 - Bounded clip spooling under `/opt/talkingboats/spool/clips`.
-- Continuous rolling WAV recording under `/opt/talkingboats/spool/continuous`,
-  independent of whether the phone app is open.
+- Continuous rolling WAV recording under `/opt/talkingboats/spool/continuous`.
 - Clip sidecar metadata: channel, UTC timestamps, duration, sample rate, RMS, peak.
 - Thermal/load guardrails before optional heavier work.
 
 Keep heavier or stateful work on the OptiPlex:
 
-- Private API, S3 presigning, database, review UI, transcription, publishing.
+- Private API, S3 presigning, database, transcription, publishing.
 - Backfills and reprocessing of already-spooled clips.
 
 The edge stream service uses one SDR pipeline:
@@ -278,10 +254,6 @@ TALKINGBOATS_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28,dynaudnorm
 
 ## Live Transcription
 
-The phone app can show basic live captions when `TALKINGBOATS_TRANSCRIPT_URL` is
-set in `/etc/talkingboats/live-radio.env`. Leave it blank unless a caption server
-is running.
-
 Install the optional open-source transcriber dependencies on the OptiPlex:
 
 ```bash
@@ -311,16 +283,8 @@ chunks from Icecast and decoding them through PyAV/faster-whisper. It serves:
 http://optiplex.local:8055/api/live-transcript
 ```
 
-Point the Pi web app at that endpoint:
-
-```bash
-sudo sed -i 's#^TALKINGBOATS_TRANSCRIPT_URL=.*#TALKINGBOATS_TRANSCRIPT_URL=http://optiplex.local:8055/api/live-transcript#' \
-  /etc/talkingboats/live-radio.env
-sudo systemctl restart talkingboats-live-radio-web.service
-```
-
-For a single tailnet-authenticated operator origin, run the OptiPlex proxy and
-point Tailscale Serve or Route 53 at the OptiPlex Tailscale IP:
+For a single tailnet-authenticated browser origin, run the OptiPlex proxy and
+point Tailscale Serve at it:
 
 ```bash
 conda run -n dell talkingboats-live-radio-proxy \
@@ -329,7 +293,7 @@ conda run -n dell talkingboats-live-radio-proxy \
 tailscale serve --bg --https=10000 http://100.124.5.39:8095
 ```
 
-The proxy serves the private clip console and forwards only the read-only
+The proxy serves the same `public-site/` clip UI and forwards only the read-only
 recent-clip API call to the private API from one origin. Debug live stream,
 caption, and retune endpoints are off by default; enable them explicitly with
 `TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS=true` on a Tailscale-only service.
@@ -339,14 +303,18 @@ escape hatch, but the installer disables it so only one process owns the SDR.
 
 ## Public Export
 
-The exporter turns reviewed private metadata into static files.
+The primary exporter turns the recent transcribed clip DB into a static site with
+copied public audio files.
 
 ```bash
 conda run -n dell talkingboats-export-public \
-  --private-manifest examples/reviewed_clips.example.json \
+  --clip-db-path /home/rob/.local/share/talkingboats/live-transcripts.sqlite3 \
+  --raw-bucket "$(cd infra/opentofu && tofu output -raw raw_audio_bucket)" \
   --site-source public-site \
   --output-dir outputs/public-site
 ```
+
+The older private-manifest mode remains for local simulator tests only.
 
 Deploy dev first, then prod after the public checks look right:
 

@@ -1,55 +1,16 @@
 from pathlib import Path
 
 
-def test_live_radio_app_builds_stream_url_from_current_host() -> None:
-    app_js = Path("deploy/pi/live-radio/app.js").read_text(encoding="utf-8")
-    index_html = Path("deploy/pi/live-radio/index.html").read_text(encoding="utf-8")
+def test_pi_deploy_no_longer_installs_a_separate_web_gui() -> None:
+    installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
 
-    assert "config.streamUrl" in app_js
-    assert "window.location.hostname" in app_js
-    assert "192.168." not in app_js
-    assert "talkingboats-live.mp3" in app_js
-    assert '<audio id="live-player"' in index_html
-
-
-def test_live_radio_app_can_poll_optional_transcript_url() -> None:
-    app_js = Path("deploy/pi/live-radio/app.js").read_text(encoding="utf-8")
-    index_html = Path("deploy/pi/live-radio/index.html").read_text(encoding="utf-8")
-    styles_css = Path("deploy/pi/live-radio/styles.css").read_text(encoding="utf-8")
-
-    assert "transcriptUrl" in app_js
-    assert "fetch(config.transcriptUrl" in app_js
-    assert "renderTranscript" in app_js
-    assert "caption-panel" in index_html
-    assert "caption-list" in index_html
-    assert ".caption-panel" in styles_css
-    assert "TALKINGBOATS_TRANSCRIPT_URL" in Path("deploy/pi/install_live_radio.sh").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_live_radio_app_can_render_channel_menu_and_retune() -> None:
-    app_js = Path("deploy/pi/live-radio/app.js").read_text(encoding="utf-8")
-    index_html = Path("deploy/pi/live-radio/index.html").read_text(encoding="utf-8")
-    styles_css = Path("deploy/pi/live-radio/styles.css").read_text(encoding="utf-8")
-
-    assert "channels" in app_js
-    assert "retuneUrl" in app_js
-    assert "retuneChannel" in app_js
-    assert 'channelSelect.addEventListener("change"' in app_js
-    assert "player.load()" in app_js
-    assert "reloadAndPlay" in app_js
-    assert "playCurrentStream" in app_js
-    assert "cacheBustStreamUrl" in app_js
-    assert '<select id="channel-select"' in index_html
-    assert "tune-button" not in index_html
-    assert "tuneButton" not in app_js
-    assert "play-button" not in index_html
-    assert "reload-button" not in index_html
-    assert "stream-url" not in index_html
-    assert "channel-menu" in styles_css
-    assert "overflow-x: hidden" in styles_css
-    assert "asset-version=20260524-channel-ui" in index_html
+    assert not Path("deploy/pi/live-radio/index.html").exists()
+    assert not Path("deploy/pi/live-radio/app.js").exists()
+    assert not Path("deploy/pi/live-radio/styles.css").exists()
+    assert not Path("deploy/systemd/talkingboats-live-radio-web.service.example").exists()
+    assert "talkingboats-live-radio-web.service" not in installer
+    assert "/opt/talkingboats/live-radio" not in installer
+    assert "config.js" not in installer
 
 
 def test_live_radio_stream_script_requires_generated_source_password() -> None:
@@ -74,9 +35,6 @@ def test_live_radio_systemd_units_restart_and_stay_lan_scoped() -> None:
     edge_unit = Path(
         "deploy/systemd/talkingboats-edge-live-radio-stream.service.example"
     ).read_text(encoding="utf-8")
-    web_unit = Path("deploy/systemd/talkingboats-live-radio-web.service.example").read_text(
-        encoding="utf-8"
-    )
     profile_unit = Path("deploy/systemd/talkingboats-profile-capture.service.example").read_text(
         encoding="utf-8"
     )
@@ -91,9 +49,6 @@ def test_live_radio_systemd_units_restart_and_stay_lan_scoped() -> None:
     assert "Nice=5" in edge_unit
     assert "PYTHONPATH=/opt/talkingboats/app/src" in edge_unit
     assert "EnvironmentFile=/etc/talkingboats/live-radio.env" in stream_unit
-    assert "Restart=always" in web_unit
-    assert "--bind 0.0.0.0" in web_unit
-    assert "8050" in web_unit
     assert "talkingboats-profile-capture" in profile_unit
     assert "CPUQuota=85%" in profile_unit
     assert "talkingboats.spool_uploader" in uploader_unit

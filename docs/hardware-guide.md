@@ -6,31 +6,24 @@ Keep the radio gear near the window and move data over Wi-Fi.
 
 ```mermaid
 flowchart LR
-  antenna["Window VHF/AIS antenna"]
-  splitter["Optional 50-ohm splitter"]
-  voice["RTL-SDR #1<br/>VHF 68 + 14 voice"]
-  ais["RTL-SDR #2<br/>AIS ship positions"]
+  antenna["Window VHF antenna"]
+  voice["RTL-SDR<br/>marine VHF voice"]
   pi["Raspberry Pi<br/>AC-to-USB power<br/>Wi-Fi"]
-  optiplex["OptiPlex private server<br/>API, Postgres, transcription, UI"]
+  optiplex["OptiPlex private server<br/>API, SQLite, transcription, UI"]
   s3raw["Private S3 raw audio<br/>raw/ expires, hall-of-fame/ retained"]
   public["CloudFront public site<br/>vhf.robertboscacci.com"]
 
-  antenna --> splitter
-  splitter --> voice
-  splitter --> ais
+  antenna --> voice
   voice --> pi
-  ais --> pi
   pi -->|private Wi-Fi uploads| optiplex
   optiplex -->|presigned raw uploads| s3raw
-  optiplex -->|sanitized static export| public
+  optiplex -->|recent clip static export| public
 ```
 
 ## First Parts List
 
-- Two RTL-SDR-class receivers with TCXO and SMA connectors.
-- One window-friendly VHF antenna to start. Add a second antenna only if splitting
-  one antenna hurts voice or AIS reception.
-- Optional 50-ohm splitter for sharing the antenna between SDRs.
+- One RTL-SDR-class receiver with TCXO and SMA connector.
+- One window-friendly VHF antenna to start.
 - Quality Pi power supply. For Pi 3-class hardware, use a 5.1V / 2.5A micro-USB
   supply.
 - Optional powered USB hub if the Pi reports undervoltage with two SDRs attached.
@@ -43,7 +36,7 @@ Buy **two** receivers that match all of these:
 
 - `RTL2832U` chipset.
 - Tuner is one of: `R820T2`, `R860`, or `R828D`.
-- Frequency coverage includes both `156 MHz` marine VHF and `162 MHz` AIS.
+- Frequency coverage includes `156 MHz` marine VHF.
 - Has a `TCXO` clock, ideally `0.5 ppm` or `1 ppm`.
 - Antenna connector is real `SMA female`, not MCX.
 - Metal case preferred.
@@ -75,18 +68,6 @@ Better marine antenna if placement is easy:
 - Common connector is `PL-259`/`SO-239`, so budget for an adapter or short jumper
   to SMA.
 
-### Splitter Or Two Antennas
-
-Start without a splitter if you can place two small antennas near the window.
-
-If using one antenna for both SDRs, buy:
-
-- Passive `2-way` RF splitter/combiner.
-- `50 ohm`, not TV/cable `75 ohm`.
-- Frequency range must include at least `156-162 MHz`; examples like `5-500 MHz`,
-  `10-500 MHz`, or `1-750 MHz` are fine.
-- Expect about `3.5 dB` signal loss from splitting.
-
 ### Power And USB
 
 - Pi 3-class board: use a `5.1V 2.5A` micro-USB power supply.
@@ -111,11 +92,11 @@ If using one antenna for both SDRs, buy:
 - VHF 68, `156.425 MHz`: Fun Channel for pleasure-craft working traffic.
 - VHF 14, `156.700 MHz`: Super Business Channel for Seattle Traffic / Puget Sound
   VTS.
-- AIS 1/2, `161.975 MHz` and `162.025 MHz`: vessel identity and position packets.
+AIS can come back later, but it is not part of the current browser UI.
 
 ## Blog/Figma Diagram Notes
 
 The Mermaid diagram above is the source of truth for a polished Figma/FigJam
-diagram. Keep the public/private boundary visible: public viewers can see only the
-static site and reviewed clips, never the Pi, live stream, private API, database,
-or raw S3 archive.
+diagram. Keep the public/private boundary visible: public viewers can see only
+the static site and exported clips, never the Pi, live stream, private API,
+database, or raw S3 archive.
