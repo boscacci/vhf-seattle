@@ -69,6 +69,8 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert 'sed \'s/^/[ffmpeg-pcm] /' in wrapper
     assert "python3 -m talkingboats.edge_capture" in wrapper
     assert "--tee-stdout" in wrapper
+    assert "--squelch-stdout" in wrapper
+    assert "TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED" in wrapper
     assert "python3 -m talkingboats.icecast_source" in wrapper
     assert "--netrc-file" in wrapper
     assert "icecast://source:" not in wrapper
@@ -83,6 +85,7 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "--ingest-token" not in wrapper
     assert "--record-retention-seconds" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_ENABLED" in installer
+    assert 'append_env_if_missing TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED "true"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_ENABLED "true"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED "false"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENABLED "false"' in installer

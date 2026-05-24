@@ -592,11 +592,68 @@ def stdin_chunks(chunk_size: int) -> Iterator[bytes]:
         yield chunk
 
 
-def tee_chunks(chunks: Iterable[bytes]) -> Iterator[bytes]:
+def tee_chunks(
+    chunks: Iterable[bytes],
+    *,
+    config: EdgeCaptureConfig | None = None,
+) -> Iterator[bytes]:
+    if config is not None:
+        for original, rendered in _squelched_pcm_chunk_stream(chunks, config=config):
+            sys.stdout.buffer.write(rendered)
+            sys.stdout.buffer.flush()
+            yield original
+        return
     for chunk in chunks:
         sys.stdout.buffer.write(chunk)
         sys.stdout.buffer.flush()
         yield chunk
+
+
+def squelched_pcm_chunks(
+    chunks: Iterable[bytes],
+    *,
+    config: EdgeCaptureConfig,
+) -> Iterator[bytes]:
+    for _, rendered in _squelched_pcm_chunk_stream(chunks, config=config):
+        yield rendered
+
+
+def _squelched_pcm_chunk_stream(
+    chunks: Iterable[bytes],
+    *,
+    config: EdgeCaptureConfig,
+) -> Iterator[tuple[bytes, bytes]]:
+    frame_bytes = config.frame_bytes
+    leftover = b""
+    hangover_frames = 0
+
+    for chunk in chunks:
+        if not chunk:
+            continue
+        data = leftover + chunk
+        complete_bytes = len(data) - (len(data) % frame_bytes)
+        rendered = bytearray()
+        for offset in range(0, complete_bytes, frame_bytes):
+            frame = data[offset : offset + frame_bytes]
+            metrics = pcm_metrics_i16le(frame)
+            if metrics.rms >= config.threshold_rms:
+                hangover_frames = config.post_roll_frames
+                rendered.extend(frame)
+            elif hangover_frames > 0:
+                hangover_frames -= 1
+                rendered.extend(frame)
+            else:
+                rendered.extend(b"\0" * len(frame))
+        leftover = data[complete_bytes:]
+        if rendered:
+            yield chunk, bytes(rendered)
+
+    if leftover:
+        metrics = pcm_metrics_i16le(leftover)
+        if metrics.rms >= config.threshold_rms or hangover_frames > 0:
+            yield leftover, leftover
+        else:
+            yield leftover, b"\0" * len(leftover)
 
 
 def record_chunks(
@@ -626,6 +683,7 @@ def main() -> None:
     parser.add_argument("--post-roll-seconds", type=float, default=1.2)
     parser.add_argument("--chunk-size", type=int, default=24_000)
     parser.add_argument("--tee-stdout", action="store_true")
+    parser.add_argument("--squelch-stdout", action="store_true")
     parser.add_argument("--record-dir", type=Path)
     parser.add_argument("--record-segment-seconds", type=float, default=300.0)
     parser.add_argument("--record-retention-seconds", type=float, default=86_400.0)
@@ -697,7 +755,7 @@ def main() -> None:
         )
         chunks = record_chunks(chunks, recorder)
     if args.tee_stdout:
-        chunks = tee_chunks(chunks)
+        chunks = tee_chunks(chunks, config=config if args.squelch_stdout else None)
 
     paused = False
     clips_written = 0
@@ -712,6 +770,7 @@ def main() -> None:
         record_segment_seconds=args.record_segment_seconds if args.record_dir else None,
         record_upload=args.record_upload,
         tee_stdout=args.tee_stdout,
+        squelch_stdout=args.squelch_stdout,
         upload=args.upload,
     )
 

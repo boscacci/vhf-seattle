@@ -11,6 +11,7 @@ sample_rate="${TALKINGBOATS_LIVE_SAMPLE_RATE:-24000}"
 bitrate="${TALKINGBOATS_LIVE_BITRATE:-64k}"
 audio_filter_enabled="${TALKINGBOATS_AUDIO_FILTER_ENABLED:-true}"
 audio_filter="${TALKINGBOATS_AUDIO_FILTER:-highpass=f=250,lowpass=f=3200,afftdn=nf=-28}"
+live_audio_squelch_enabled="${TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED:-true}"
 icecast_host="${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}"
 icecast_port="${TALKINGBOATS_ICECAST_PORT:-8000}"
 mount="${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}"
@@ -43,6 +44,7 @@ post_roll_seconds="${TALKINGBOATS_EDGE_POST_ROLL_SECONDS:-1.2}"
 max_temp_c="${TALKINGBOATS_EDGE_MAX_TEMP_C:-72}"
 resume_temp_c="${TALKINGBOATS_EDGE_RESUME_TEMP_C:-66}"
 max_load_per_cpu="${TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU:-0.85}"
+live_audio_squelch_args=()
 
 case "${channel}" in
   WX|05A|13|14|16|22A|66A|68|69|71|72|74) ;;
@@ -88,6 +90,18 @@ case "${audio_filter_enabled,,}" in
     ;;
   *)
     echo "TALKINGBOATS_AUDIO_FILTER_ENABLED must be true or false: ${audio_filter_enabled}" >&2
+    exit 2
+    ;;
+esac
+
+case "${live_audio_squelch_enabled,,}" in
+  1|true|yes|on)
+    live_audio_squelch_args=(--squelch-stdout)
+    ;;
+  0|false|no|off)
+    ;;
+  *)
+    echo "TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED must be true or false: ${live_audio_squelch_enabled}" >&2
     exit 2
     ;;
 esac
@@ -197,6 +211,7 @@ rtl_fm \
     --post-roll-seconds "${post_roll_seconds}" \
     "${activity_upload_args[@]}" \
     "${record_args[@]}" \
+    "${live_audio_squelch_args[@]}" \
     --max-temp-c "${max_temp_c}" \
     --resume-temp-c "${resume_temp_c}" \
     --max-load-per-cpu "${max_load_per_cpu}" \

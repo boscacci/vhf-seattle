@@ -85,6 +85,7 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_AUDIO_FILTER_ENABLED=%q\n' "true"
     printf 'TALKINGBOATS_AUDIO_FILTER=%q\n' \
       "highpass=f=250,lowpass=f=3200,afftdn=nf=-28"
+    printf 'TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED=%q\n' "true"
     printf 'TALKINGBOATS_ICECAST_HOST=%q\n' "127.0.0.1"
     printf 'TALKINGBOATS_ICECAST_PORT=%q\n' "8000"
     printf 'TALKINGBOATS_ICECAST_MOUNT=%q\n' "/talkingboats-live.mp3"
@@ -135,6 +136,7 @@ append_env_if_missing TALKINGBOATS_LIVE_CHANNEL "68"
 append_env_if_missing TALKINGBOATS_AUDIO_FILTER_ENABLED "true"
 append_env_if_missing TALKINGBOATS_AUDIO_FILTER \
   "highpass=f=250,lowpass=f=3200,afftdn=nf=-28"
+append_env_if_missing TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED "true"
 append_env_if_missing TALKINGBOATS_EDGE_SPOOL_DIR "${spool_root}"
 append_env_if_missing TALKINGBOATS_EDGE_RECORD_ENABLED "true"
 append_env_if_missing TALKINGBOATS_EDGE_RECORD_DIR "${record_root}"

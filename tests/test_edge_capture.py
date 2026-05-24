@@ -17,6 +17,7 @@ from talkingboats.edge_capture import (
     detect_activity_clips,
     infer_audio_content_type,
     should_pause_processing,
+    squelched_pcm_chunks,
     write_spooled_clip,
 )
 
@@ -75,6 +76,30 @@ def test_detect_activity_splits_long_transmissions_at_max_clip_seconds() -> None
 
     assert len(clips) >= 2
     assert all(clip.duration_seconds <= config.max_clip_seconds for clip in clips)
+
+
+def test_squelched_pcm_chunks_mutes_inactive_frames_but_preserves_active_audio() -> None:
+    config = EdgeCaptureConfig(
+        channel="14",
+        sample_rate_hz=1_000,
+        frame_ms=100,
+        threshold_rms=1_000,
+        post_roll_seconds=0.1,
+    )
+    silent_frame = _pcm(amplitude=0, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
+    active_frame = _pcm(amplitude=4_000, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
+    quiet_frame = _pcm(amplitude=100, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
+
+    rendered = b"".join(
+        squelched_pcm_chunks(
+            [silent_frame + active_frame + quiet_frame + silent_frame],
+            config=config,
+        )
+    )
+
+    assert rendered == (b"\0" * len(silent_frame)) + active_frame + quiet_frame + (
+        b"\0" * len(silent_frame)
+    )
 
 
 def test_thermal_policy_uses_hysteresis_for_cooling_down() -> None:

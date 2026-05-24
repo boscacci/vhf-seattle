@@ -232,6 +232,7 @@ TALKINGBOATS_LIVE_SQUELCH=20
 TALKINGBOATS_EDGE_MAX_TEMP_C=72
 TALKINGBOATS_EDGE_RESUME_TEMP_C=66
 TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU=0.85
+TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED=true
 ```
 
 The debug profile overrides NOAA to reduce tiny forecast fragments:
@@ -296,6 +297,14 @@ Default filter chain:
 ```bash
 TALKINGBOATS_AUDIO_FILTER_ENABLED=true
 TALKINGBOATS_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28
+```
+
+The live Icecast feed also applies an audio gate by default. Frames below the
+same RMS activity threshold used for clip capture are written as silence to the
+browser stream while the detector and recorder still see the original PCM:
+
+```bash
+TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED=true
 ```
 
 ## Live Transcription
