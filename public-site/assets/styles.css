@@ -290,6 +290,46 @@ button {
   font-weight: 800;
 }
 
+.pill.channel-pill {
+  color: var(--channel-color);
+  border-color: color-mix(in srgb, var(--channel-color), transparent 44%);
+  background: color-mix(in srgb, var(--channel-color), transparent 88%);
+}
+
+.clip-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  margin-top: 18px;
+}
+
+.clip-pagination[hidden] {
+  display: none;
+}
+
+.pagination-button {
+  min-width: 104px;
+  padding: 8px 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+}
+
+.pagination-button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.clip-page-status {
+  min-width: 112px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-align: center;
+}
+
 blockquote {
   margin: 0;
   padding-left: 12px;

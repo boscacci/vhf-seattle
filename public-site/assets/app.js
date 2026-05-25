@@ -1,4 +1,5 @@
-const liveClipUrl = "/api/clips/recent?limit=100";
+const clipPageSize = 6;
+const liveClipUrl = `/api/clips/recent?limit=${clipPageSize}`;
 const manifestUrl = "/public_manifest.json";
 const liveChannelsUrl = "/api/live/channels";
 const defaultLiveStreamUrl = "/api/live/current.mp3";
@@ -49,8 +50,22 @@ const fallbackManifest = {
   },
   clips: [],
 };
+const channelColors = {
+  "05A": "#78dcca",
+  "13": "#6ab8ff",
+  "14": "#40e0bf",
+  "16": "#ff7777",
+  "22A": "#f0b85a",
+  "66A": "#c084fc",
+  "68": "#8bd867",
+  "69": "#f58fb2",
+  "71": "#a5b4fc",
+  "72": "#f7cf5d",
+  "74": "#5eead4",
+};
 
 const clipList = document.querySelector("#clips");
+const clipPagination = document.querySelector("#clip-pagination");
 const clipStatus = document.querySelector("#clip-status");
 const channelFilter = document.querySelector("#channel-filter");
 const refreshButton = document.querySelector("#refresh-clips");
@@ -81,6 +96,7 @@ let waveformData = null;
 let waveformAnimationId = null;
 let quietSince = null;
 let selectedChannel = "all";
+let selectedClipPage = 1;
 let selectedLiveChannel = "14";
 let liveChannels = [
   {
@@ -106,6 +122,7 @@ refreshButton.addEventListener("click", () => {
 
 channelFilter.addEventListener("change", () => {
   selectedChannel = channelFilter.value;
+  selectedClipPage = 1;
   loadAndRender();
 });
 
@@ -163,10 +180,11 @@ async function loadClipPayload() {
 }
 
 function clipRequestUrl() {
+  const offset = `offset=${clipOffset()}`;
   if (selectedChannel === "all") {
-    return liveClipUrl;
+    return `${liveClipUrl}&${offset}`;
   }
-  return `${liveClipUrl}&channel=${encodeURIComponent(selectedChannel)}`;
+  return `${liveClipUrl}&${offset}&channel=${encodeURIComponent(selectedChannel)}`;
 }
 
 async function loadPublishedManifest() {
@@ -187,7 +205,12 @@ function normalizeLivePayload(payload) {
     source: "live",
     site: fallbackManifest.site,
     stats: {
-      clip_count: clips.length,
+      clip_count: Number(
+        payload.clip_count ?? totalAvailableClipsFromCounts(payload.channel_counts) ?? clips.length,
+      ),
+      filtered_clip_count: Number(payload.filtered_clip_count ?? clips.length),
+      limit: Number(payload.limit ?? clipPageSize),
+      offset: Number(payload.offset ?? clipOffset()),
       channel_counts: payload.channel_counts || countBy(clips, (clip) => clip.channel || "?"),
       channel_labels: payload.channel_labels || {},
     },
@@ -239,18 +262,22 @@ function renderSite(payload) {
   document.querySelector("#site-subtitle").textContent =
     payload.site?.subtitle || fallbackManifest.site.subtitle;
   renderChannelFilter(payload);
-  const visibleClips = filterClipsByChannel(clips);
+  const filteredClips = filterClipsByChannel(clips);
+  const visibleClips = payload.source === "live" ? filteredClips : paginateClips(filteredClips);
+  const filteredTotal = filteredClipCount(payload, filteredClips);
   renderStats(payload, visibleClips);
   renderClips(visibleClips);
-  clipStatus.textContent = statusText(payload, visibleClips, totalAvailableClips(payload, clips));
+  renderClipPagination(filteredTotal);
+  clipStatus.textContent = statusText(payload, visibleClips, filteredTotal);
 }
 
 function renderStats(payload, clips) {
-  const channelCounts = countBy(clips, (clip) => clip.channel || "?");
+  const channelCounts = payload.stats?.channel_counts || countBy(clips, (clip) => clip.channel || "?");
   const channelTotal = Object.keys(channelCounts).length;
+  const clipTotal = totalDatabaseClips(payload, clips);
   const latest = clips[0]?.started_at ? shortTime(clips[0].started_at) : "None";
   const statItems = [
-    ["Clips", clips.length],
+    ["Clips", clipTotal],
     ["Channels", channelTotal],
     ["Latest", latest],
     ["Feed", payload.source === "live" ? "Live DB" : "Published export"],
@@ -313,6 +340,15 @@ function filterClipsByChannel(clips) {
   return clips.filter((clip) => clip.channel === selectedChannel);
 }
 
+function paginateClips(clips) {
+  const start = clipOffset();
+  return clips.slice(start, start + clipPageSize);
+}
+
+function clipOffset() {
+  return (selectedClipPage - 1) * clipPageSize;
+}
+
 function renderClips(clips) {
   if (!clips.length) {
     const empty = document.createElement("div");
@@ -324,13 +360,49 @@ function renderClips(clips) {
   clipList.replaceChildren(...clips.map(renderClipCard));
 }
 
+function renderClipPagination(totalClips) {
+  if (!clipPagination) {
+    return;
+  }
+  const totalPages = Math.max(1, Math.ceil(totalClips / clipPageSize));
+  if (totalClips <= clipPageSize) {
+    clipPagination.hidden = true;
+    clipPagination.replaceChildren();
+    return;
+  }
+  selectedClipPage = Math.min(Math.max(selectedClipPage, 1), totalPages);
+  const previous = paginationButton("Previous", selectedClipPage <= 1, () => {
+    selectedClipPage -= 1;
+    loadAndRender();
+  });
+  const next = paginationButton("Next", selectedClipPage >= totalPages, () => {
+    selectedClipPage += 1;
+    loadAndRender();
+  });
+  const pageStatus = document.createElement("span");
+  pageStatus.className = "clip-page-status";
+  pageStatus.textContent = `Page ${selectedClipPage} of ${totalPages}`;
+  clipPagination.hidden = false;
+  clipPagination.replaceChildren(previous, pageStatus, next);
+}
+
+function paginationButton(label, disabled, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "pagination-button";
+  button.disabled = disabled;
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
 function renderClipCard(clip) {
   const article = document.createElement("article");
   article.className = "clip-card";
 
   const meta = document.createElement("div");
   meta.className = "clip-meta";
-  meta.append(renderPill(channelLabel(clip.channel)), renderPill(formatDateTime(clip.started_at)));
+  meta.append(renderChannelPill(clip.channel), renderPill(formatDateTime(clip.started_at)));
   if (clip.duration_seconds) {
     meta.append(renderPill(`${Math.round(Number(clip.duration_seconds))}s`));
   }
@@ -357,6 +429,13 @@ function renderPill(text) {
   const pill = document.createElement("span");
   pill.className = "pill";
   pill.textContent = text;
+  return pill;
+}
+
+function renderChannelPill(channel) {
+  const pill = renderPill(channelLabel(channel));
+  pill.classList.add("channel-pill", channelClassName(channel));
+  pill.style.setProperty("--channel-color", channelColorForChannel(channel));
   return pill;
 }
 
@@ -743,6 +822,24 @@ function channelLabel(channel) {
   return label ? `${channelText} · ${label}` : channelText;
 }
 
+function channelClassName(channel) {
+  return `channel-${String(channel || "unknown")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function channelColorForChannel(channel) {
+  const key = String(channel || "?").toUpperCase();
+  if (channelColors[key]) {
+    return channelColors[key];
+  }
+  let hash = 0;
+  for (const character of key) {
+    hash = (hash * 31 + character.charCodeAt(0)) % 360;
+  }
+  return `hsl(${hash} 72% 66%)`;
+}
+
 function channelLabelsForPayload(payload) {
   const labels = {
     ...defaultChannelLabels,
@@ -757,25 +854,38 @@ function channelLabelsForPayload(payload) {
   return labels;
 }
 
-function statusText(payload, clips, totalAvailable) {
-  if (!clips.length) {
+function statusText(payload, clips, filteredTotal) {
+  if (!filteredTotal) {
     return selectedChannel === "all" ? "No clips yet" : `No clips for ${channelLabel(selectedChannel)} yet`;
   }
   const selectedLabel = selectedChannel === "all" ? "" : `${channelLabel(selectedChannel)} `;
-  const availableText =
-    selectedChannel === "all" && totalAvailable !== clips.length ? ` of ${totalAvailable}` : "";
-  const clipNoun = clips.length === 1 ? "clip" : "clips";
+  const pageText =
+    clips.length === filteredTotal ? `${clips.length}` : `${clips.length} of ${filteredTotal}`;
+  const clipNoun = filteredTotal === 1 ? "clip" : "clips";
   if (payload.source === "live") {
-    return `${clips.length}${availableText} ${selectedLabel}${clipNoun} from the live DB`;
+    return `${pageText} ${selectedLabel}${clipNoun} from the live DB`;
   }
   const generated = payload.generated_at ? ` · exported ${formatDateTime(payload.generated_at)}` : "";
-  return `${clips.length}${availableText} ${selectedLabel}published ${clipNoun}${generated}`;
+  return `${pageText} ${selectedLabel}published ${clipNoun}${generated}`;
 }
 
-function totalAvailableClips(payload, clips) {
-  const channelCounts = payload.stats?.channel_counts;
+function filteredClipCount(payload, clips) {
+  if (selectedChannel !== "all") {
+    const channelCounts = payload.stats?.channel_counts;
+    return Number(channelCounts?.[selectedChannel] ?? payload.stats?.filtered_clip_count ?? clips.length);
+  }
+  return Number(payload.stats?.filtered_clip_count ?? totalDatabaseClips(payload, clips));
+}
+
+function totalDatabaseClips(payload, clips) {
+  return Number(
+    payload.stats?.clip_count ?? totalAvailableClipsFromCounts(payload.stats?.channel_counts) ?? clips.length,
+  );
+}
+
+function totalAvailableClipsFromCounts(channelCounts) {
   if (!channelCounts) {
-    return clips.length;
+    return null;
   }
   return Object.values(channelCounts).reduce((total, count) => total + Number(count || 0), 0);
 }

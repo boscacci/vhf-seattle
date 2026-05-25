@@ -6,14 +6,23 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert "limit=100" in app_js
+    assert "limit=${clipPageSize}" in app_js
     assert "channel-filter" in index_html
     assert "renderChannelFilter" in app_js
     assert "selectedChannel" in app_js
+    assert "clipPageSize = 6" in app_js
+    assert "selectedClipPage" in app_js
+    assert "offset=${clipOffset()}" in app_js
+    assert "renderClipPagination" in app_js
+    assert "clip-pagination" in index_html
+    assert ".clip-pagination" in styles_css
     assert 'optionForChannel("all", "All channels")' in app_js
     assert "configuredChannels" in app_js
     assert "Bridge-to-bridge" in app_js
     assert "channel_label" in app_js
+    assert "channelClassName" in app_js
+    assert "channelColorForChannel" in app_js
+    assert ".pill.channel-pill" in styles_css
     assert "VTS / Seattle Traffic" in app_js
     assert "tailnetLiveBase" not in app_js
     assert "tailbea63b.ts.net" not in app_js

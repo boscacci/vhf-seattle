@@ -255,11 +255,14 @@ class UploadedClipStore:
         self,
         *,
         limit: int,
+        offset: int = 0,
         channel: str | None = None,
         excluded_channels: tuple[str, ...] = (),
     ) -> list[RecentTranscribedClip]:
         if limit <= 0:
             raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
         filters = [
             "status = 'transcribed'",
             "transcript IS NOT NULL",
@@ -273,7 +276,7 @@ class UploadedClipStore:
             placeholders = ", ".join("?" for _ in excluded_channels)
             filters.append(f"channel NOT IN ({placeholders})")
             params.extend(excluded_channels)
-        params.append(limit)
+        params.extend([limit, offset])
         where_clause = "\n                    AND ".join(filters)
         with sqlite3.connect(self.path) as connection:
             rows = connection.execute(
@@ -289,7 +292,7 @@ class UploadedClipStore:
                 FROM uploaded_clips
                 WHERE {where_clause}
                 ORDER BY started_at DESC, id DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
                 tuple(params),
             ).fetchall()
