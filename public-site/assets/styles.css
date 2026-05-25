@@ -35,7 +35,8 @@ body {
 }
 
 button,
-audio {
+audio,
+select {
   font: inherit;
 }
 
@@ -217,6 +218,34 @@ button {
 .status-text {
   margin-bottom: 0;
   text-align: right;
+}
+
+.clip-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: -4px 0 16px;
+}
+
+.channel-filter-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.channel-filter {
+  min-height: 42px;
+  min-width: min(260px, 100%);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 8px 36px 8px 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  font-weight: 800;
 }
 
 .clip-list {
@@ -435,6 +464,15 @@ audio {
 
   .status-text {
     text-align: left;
+  }
+
+  .clip-controls {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .channel-filter {
+    width: 100%;
   }
 
   .stats {

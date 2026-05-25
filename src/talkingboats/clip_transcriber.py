@@ -251,12 +251,19 @@ class UploadedClipStore:
             for text, started_at, ended_at in rows
         ]
 
-    def recent_transcribed(self, *, limit: int) -> list[RecentTranscribedClip]:
+    def recent_transcribed(
+        self,
+        *,
+        limit: int,
+        channel: str | None = None,
+    ) -> list[RecentTranscribedClip]:
         if limit <= 0:
             raise ValueError("limit must be positive")
+        channel_filter = "AND channel = ?" if channel else ""
+        params: tuple[object, ...] = (channel, limit) if channel else (limit,)
         with sqlite3.connect(self.path) as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT
                     key,
                     channel,
@@ -269,10 +276,11 @@ class UploadedClipStore:
                 WHERE status = 'transcribed'
                     AND transcript IS NOT NULL
                     AND trim(transcript) != ''
+                    {channel_filter}
                 ORDER BY started_at DESC, id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                params,
             ).fetchall()
         clips = []
         for key, channel, started_at, ended_at, duration_seconds, content_type, transcript in rows:
@@ -289,6 +297,21 @@ class UploadedClipStore:
                 )
             )
         return clips
+
+    def transcribed_channel_counts(self) -> dict[str, int]:
+        with sqlite3.connect(self.path) as connection:
+            rows = connection.execute(
+                """
+                SELECT channel, count(*)
+                FROM uploaded_clips
+                WHERE status = 'transcribed'
+                    AND transcript IS NOT NULL
+                    AND trim(transcript) != ''
+                GROUP BY channel
+                ORDER BY channel
+                """
+            ).fetchall()
+        return {channel: count for channel, count in rows}
 
     def stats(self) -> dict[str, Any]:
         with sqlite3.connect(self.path) as connection:
@@ -370,6 +393,12 @@ class UploadedClipStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_uploaded_clips_status_created
                 ON uploaded_clips(status, created_at)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_uploaded_clips_status_channel_started
+                ON uploaded_clips(status, channel, started_at DESC)
                 """
             )
             connection.execute(

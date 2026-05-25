@@ -6,7 +6,12 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert "/api/clips/recent?limit=30" in app_js
+    assert "limit=100" in app_js
+    assert "channel-filter" in index_html
+    assert "renderChannelFilter" in app_js
+    assert "selectedChannel" in app_js
+    assert "America/Los_Angeles" in app_js
+    assert "timeZoneName" in app_js
     assert "/api/live/current.mp3" in app_js
     assert "/public_manifest.json" in app_js
     assert "Seattle Marine Radio" in index_html

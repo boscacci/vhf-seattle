@@ -168,7 +168,7 @@ def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) 
     clip = manifest["clips"][0]
     assert clip["channel"] == "14"
     assert clip["transcript_public"] == "Southwest wind increasing after midnight."
-    assert clip["public_title"] == "VHF 14 - May 24, 2026 10:08 PM"
+    assert clip["public_title"] == "VHF 14 - May 24, 2026 3:08 PM PDT"
     assert clip["audio_public_filename"].endswith(".mp3")
     exported_audio = tmp_path / "output" / "clips" / clip["audio_public_filename"]
     assert exported_audio.read_bytes() == b"real audio"

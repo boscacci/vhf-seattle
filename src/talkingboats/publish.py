@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from talkingboats.clip_transcriber import (
     ClipReader,
@@ -16,6 +17,8 @@ from talkingboats.clip_transcriber import (
     UploadedClipStore,
 )
 from talkingboats.security import assert_public_safe
+
+PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 
 ALLOWED_CLIP_FIELDS = {
     "id",
@@ -116,7 +119,7 @@ def export_recent_clip_site(
     site_source_dir: Path,
     output_dir: Path,
     clip_reader: ClipReader,
-    limit: int = 30,
+    limit: int = 100,
 ) -> dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
@@ -245,13 +248,14 @@ def _public_clip_from_recent(clip: RecentTranscribedClip) -> dict[str, Any]:
 
 
 def _public_clip_title(clip: RecentTranscribedClip) -> str:
-    started_at = _parse_utc(clip.started_at)
+    started_at = _parse_utc(clip.started_at).astimezone(PACIFIC_TZ)
     hour = started_at.hour % 12 or 12
     minute = f"{started_at.minute:02d}"
     meridian = "AM" if started_at.hour < 12 else "PM"
+    time_zone = started_at.tzname() or "PT"
     return (
         f"VHF {clip.channel} - {started_at.strftime('%b')} {started_at.day}, "
-        f"{started_at.year} {hour}:{minute} {meridian}"
+        f"{started_at.year} {hour}:{minute} {meridian} {time_zone}"
     )
 
 
@@ -301,7 +305,7 @@ def main() -> None:
     parser.add_argument("--audio-source-dir", type=Path)
     parser.add_argument("--raw-bucket")
     parser.add_argument("--aws-region", default="us-west-2")
-    parser.add_argument("--limit", type=int, default=30)
+    parser.add_argument("--limit", type=int, default=100)
     args = parser.parse_args()
 
     if args.clip_db_path is not None:

@@ -112,6 +112,44 @@ def test_recent_clips_are_public_read_only_with_playback_urls(tmp_path) -> None:
     assert body["clips"][0]["segments"][0]["text"] == "Seattle Traffic inbound for Elliott Bay"
     assert body["clips"][0]["playback_url"] == "https://s3.example.test/playback"
     assert body["clips"][0]["playback_expires_in_seconds"] == 300
+    assert body["channel_counts"] == {"14": 1}
+
+
+def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    wx_key = "raw/channel=WX/date=2026-05-20/noaa.mp3"
+    channel_14_key = "raw/channel=14/date=2026-05-20/traffic.mp3"
+    store.record_presigned_upload(key=wx_key, request=_clip_presign(channel="WX"))
+    store.record_presigned_upload(key=channel_14_key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        wx_key,
+        [
+            _segment(
+                text="Weather radio forecast",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+    store.mark_transcribed(
+        channel_14_key,
+        [
+            _segment(
+                text="Wait for your call",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    response = client.get("/api/clips/recent?limit=5&channel=14")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [clip["key"] for clip in body["clips"]] == [channel_14_key]
+    assert body["channel_counts"] == {"14": 1, "WX": 1}
 
 
 def test_operator_live_channels_do_not_expose_upstream_urls() -> None:

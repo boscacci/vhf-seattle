@@ -158,11 +158,12 @@ def recent_clips(
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
     clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
+    channel: Annotated[str | None, Query(min_length=1, max_length=8)] = None,
 ) -> dict[str, object]:
     if clip_store is None:
-        return {"clips": []}
+        return {"clips": [], "channel_counts": {}}
     clips = []
-    for clip in clip_store.recent_transcribed(limit=limit):
+    for clip in clip_store.recent_transcribed(limit=limit, channel=channel):
         try:
             playback_url = storage.presign_playback(clip.key)
         except RuntimeError as exc:
@@ -184,7 +185,7 @@ def recent_clips(
                 "playback_expires_in_seconds": settings.playback_presign_seconds,
             }
         )
-    return {"clips": clips}
+    return {"clips": clips, "channel_counts": clip_store.transcribed_channel_counts()}
 
 
 @app.post(

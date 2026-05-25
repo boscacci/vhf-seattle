@@ -160,6 +160,10 @@ def test_recent_transcribed_clips_returns_newest_with_segments(tmp_path) -> None
     assert clips[0].transcript == "First segment Second segment"
     assert [segment["text"] for segment in clips[0].segments] == ["First segment", "Second segment"]
 
+    channel_14_clips = store.recent_transcribed(limit=10, channel="14")
+
+    assert [clip.key for clip in channel_14_clips] == [older_key]
+
 
 def _clip_request(
     *,

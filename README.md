@@ -383,7 +383,9 @@ escape hatch, but the installer disables it so only one process owns the SDR.
 ## Public Export
 
 The primary exporter turns the recent transcribed clip DB into a static site with
-copied public audio files.
+copied public audio files. The browser UI shows timestamps in Pacific time and
+the clip review list can filter by channel; the live API fetches filtered channel
+views directly so sparse non-NOAA clips are not hidden behind busier channels.
 
 ```bash
 conda run -n dell talkingboats-export-public \

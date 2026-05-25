@@ -1,8 +1,26 @@
-const liveClipUrl = "/api/clips/recent?limit=30";
+const liveClipUrl = "/api/clips/recent?limit=100";
 const manifestUrl = "/public_manifest.json";
 const tailnetLiveBase = "https://optiplex.tailbea63b.ts.net:10000";
 const liveStatusPollMs = 2000;
 const quietTransmissionDelayMs = 5000;
+const pacificTimeZone = "America/Los_Angeles";
+const pacificDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: pacificTimeZone,
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short",
+});
+const pacificShortTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: pacificTimeZone,
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short",
+});
 
 const fallbackManifest = {
   site: {
@@ -19,6 +37,7 @@ const fallbackManifest = {
 
 const clipList = document.querySelector("#clips");
 const clipStatus = document.querySelector("#clip-status");
+const channelFilter = document.querySelector("#channel-filter");
 const refreshButton = document.querySelector("#refresh-clips");
 const stats = document.querySelector("#stats");
 const tabs = [...document.querySelectorAll(".tab")];
@@ -45,8 +64,14 @@ let analyserSource = null;
 let waveformData = null;
 let waveformAnimationId = null;
 let quietSince = null;
+let selectedChannel = "all";
 
 refreshButton.addEventListener("click", () => {
+  loadAndRender();
+});
+
+channelFilter.addEventListener("change", () => {
+  selectedChannel = channelFilter.value;
   loadAndRender();
 });
 
@@ -92,7 +117,7 @@ async function loadAndRender() {
 
 async function loadClipPayload() {
   try {
-    const response = await fetch(liveClipUrl, { cache: "no-store" });
+    const response = await fetch(clipRequestUrl(), { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`live clip HTTP ${response.status}`);
     }
@@ -101,6 +126,13 @@ async function loadClipPayload() {
   } catch {
     return loadStaticManifest();
   }
+}
+
+function clipRequestUrl() {
+  if (selectedChannel === "all") {
+    return liveClipUrl;
+  }
+  return `${liveClipUrl}&channel=${encodeURIComponent(selectedChannel)}`;
 }
 
 async function loadStaticManifest() {
@@ -120,6 +152,10 @@ function normalizeLivePayload(payload) {
   return {
     source: "live",
     site: fallbackManifest.site,
+    stats: {
+      clip_count: clips.length,
+      channel_counts: payload.channel_counts || countBy(clips, (clip) => clip.channel || "?"),
+    },
     generated_at: new Date().toISOString(),
     clips: clips.map((clip) => ({
       id: clip.key || `${clip.channel}-${clip.started_at}`,
@@ -164,18 +200,19 @@ function renderSite(payload) {
   document.querySelector("#site-title").textContent = payload.site?.title || fallbackManifest.site.title;
   document.querySelector("#site-subtitle").textContent =
     payload.site?.subtitle || fallbackManifest.site.subtitle;
-  renderStats(payload);
-  renderClips(clips);
-  clipStatus.textContent = statusText(payload, clips);
+  renderChannelFilter(payload);
+  const visibleClips = filterClipsByChannel(clips);
+  renderStats(payload, visibleClips);
+  renderClips(visibleClips);
+  clipStatus.textContent = statusText(payload, visibleClips, totalAvailableClips(payload, clips));
 }
 
-function renderStats(payload) {
-  const clips = payload.clips || [];
+function renderStats(payload, clips) {
   const channelCounts = countBy(clips, (clip) => clip.channel || "?");
-  const channelTotal = Object.keys(payload.stats?.channel_counts || channelCounts).length;
+  const channelTotal = Object.keys(channelCounts).length;
   const latest = clips[0]?.started_at ? shortTime(clips[0].started_at) : "None";
   const statItems = [
-    ["Clips", payload.stats?.clip_count ?? clips.length],
+    ["Clips", clips.length],
     ["Channels", channelTotal],
     ["Latest", latest],
     ["Mode", payload.source === "live" ? "Live DB" : "Static"],
@@ -193,6 +230,40 @@ function renderStats(payload) {
       return item;
     }),
   );
+}
+
+function renderChannelFilter(payload) {
+  const channelCounts = payload.stats?.channel_counts || countBy(payload.clips || [], (clip) => clip.channel || "?");
+  const channels = Object.keys(channelCounts).sort(compareChannels);
+  if (selectedChannel !== "all" && !channels.includes(selectedChannel)) {
+    channels.push(selectedChannel);
+  }
+  const totalCount = Object.values(channelCounts).reduce((total, count) => total + Number(count || 0), 0);
+  const options = [
+    optionForChannel("all", `All channels${totalCount ? ` (${totalCount})` : ""}`),
+    ...channels.map((channel) =>
+      optionForChannel(
+        channel,
+        `${channelLabel(channel)}${channelCounts[channel] ? ` (${channelCounts[channel]})` : ""}`,
+      ),
+    ),
+  ];
+  channelFilter.replaceChildren(...options);
+  channelFilter.value = selectedChannel;
+}
+
+function optionForChannel(value, label) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  return option;
+}
+
+function filterClipsByChannel(clips) {
+  if (selectedChannel === "all") {
+    return clips;
+  }
+  return clips.filter((clip) => clip.channel === selectedChannel);
 }
 
 function renderClips(clips) {
@@ -218,7 +289,7 @@ function renderClipCard(clip) {
   }
 
   const title = document.createElement("h3");
-  title.textContent = clip.public_title || titleForClip(clip);
+  title.textContent = titleForClip(clip);
 
   const transcript = document.createElement("blockquote");
   transcript.textContent = clip.transcript_public || "";
@@ -532,15 +603,37 @@ function channelLabel(channel) {
   return channel === "WX" ? "NOAA WX" : `VHF ${channel || "?"}`;
 }
 
-function statusText(payload, clips) {
+function statusText(payload, clips, totalAvailable) {
   if (!clips.length) {
-    return "No clips yet";
+    return selectedChannel === "all" ? "No clips yet" : `No clips for ${channelLabel(selectedChannel)} yet`;
   }
+  const selectedLabel = selectedChannel === "all" ? "" : `${channelLabel(selectedChannel)} `;
+  const availableText =
+    selectedChannel === "all" && totalAvailable !== clips.length ? ` of ${totalAvailable}` : "";
+  const clipNoun = clips.length === 1 ? "clip" : "clips";
   if (payload.source === "live") {
-    return `${clips.length} clips from the live DB`;
+    return `${clips.length}${availableText} ${selectedLabel}${clipNoun} from the live DB`;
   }
   const generated = payload.generated_at ? ` · exported ${formatDateTime(payload.generated_at)}` : "";
-  return `${clips.length} static clips${generated}`;
+  return `${clips.length}${availableText} ${selectedLabel}static ${clipNoun}${generated}`;
+}
+
+function totalAvailableClips(payload, clips) {
+  const channelCounts = payload.stats?.channel_counts;
+  if (!channelCounts) {
+    return clips.length;
+  }
+  return Object.values(channelCounts).reduce((total, count) => total + Number(count || 0), 0);
+}
+
+function compareChannels(left, right) {
+  if (left === "WX") {
+    return -1;
+  }
+  if (right === "WX") {
+    return 1;
+  }
+  return left.localeCompare(right, undefined, { numeric: true });
 }
 
 function countBy(values, keyFunc) {
@@ -559,12 +652,7 @@ function formatDateTime(value) {
   if (Number.isNaN(date.getTime())) {
     return "Unknown time";
   }
-  return new Intl.DateTimeFormat([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  return pacificDateTimeFormatter.format(date);
 }
 
 function shortTime(value) {
@@ -575,10 +663,7 @@ function shortTime(value) {
   if (Number.isNaN(date.getTime())) {
     return "None";
   }
-  return new Intl.DateTimeFormat([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  return pacificShortTimeFormatter.format(date);
 }
 
 prepareLiveAudio();
