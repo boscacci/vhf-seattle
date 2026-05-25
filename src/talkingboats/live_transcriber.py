@@ -21,7 +21,13 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-DEFAULT_AUDIO_FILTER = "highpass=f=250,lowpass=f=3200,afftdn=nf=-28,dynaudnorm=f=150:g=12"
+from talkingboats.audio_processing import (
+    DEFAULT_SPEECH_AUDIO_FILTER,
+    DEFAULT_TRANSCRIBE_BEAM_SIZE,
+    DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ,
+)
+
+DEFAULT_AUDIO_FILTER = DEFAULT_SPEECH_AUDIO_FILTER
 
 
 class TranscriptStore:
@@ -287,6 +293,8 @@ def run_transcription_loop(
     sample_rate_hz: int,
     chunk_seconds: float,
     audio_filter: str | None,
+    beam_size: int,
+    hotwords: str | None,
 ) -> None:
     model = _load_faster_whisper_model(
         model_size=model_size,
@@ -316,12 +324,12 @@ def run_transcription_loop(
                         write_pcm_wav(audio_path, audio_bytes, sample_rate_hz=sample_rate_hz)
                     else:
                         audio_path.write_bytes(audio_bytes)
-                    segments, _ = model.transcribe(
-                        str(audio_path),
-                        language="en",
-                        beam_size=1,
+                    segments = transcribe_audio_file(
+                        model=model,
+                        audio_path=audio_path,
+                        beam_size=beam_size,
                         vad_filter=True,
-                        condition_on_previous_text=False,
+                        hotwords=hotwords,
                     )
                     append_transcript_segments(state, segments, chunk_started=chunk_started)
                 except Exception as exc:  # noqa: BLE001 - keep service alive and expose state.
@@ -343,6 +351,28 @@ def write_pcm_wav(path: Path, pcm: bytes, *, sample_rate_hz: int) -> None:
         wav.writeframes(pcm)
 
 
+def transcribe_audio_file(
+    *,
+    model: Any,
+    audio_path: Path,
+    beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE,
+    vad_filter: bool = True,
+    hotwords: str | None = None,
+) -> Iterable[Any]:
+    if beam_size <= 0:
+        raise ValueError("beam_size must be positive")
+    kwargs: dict[str, Any] = {
+        "language": "en",
+        "beam_size": beam_size,
+        "vad_filter": vad_filter,
+        "condition_on_previous_text": False,
+    }
+    if hotwords:
+        kwargs["hotwords"] = hotwords
+    segments, _ = model.transcribe(str(audio_path), **kwargs)
+    return segments
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run live open-source captions for Talking Boats.")
     parser.add_argument("--stream-url", default=os.getenv("TALKINGBOATS_TRANSCRIBE_STREAM_URL"))
@@ -354,11 +384,17 @@ def main() -> None:
         "--compute-type",
         default=os.getenv("TALKINGBOATS_TRANSCRIBE_COMPUTE_TYPE", "int8"),
     )
-    parser.add_argument("--sample-rate-hz", type=int, default=16_000)
+    parser.add_argument("--sample-rate-hz", type=int, default=DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ)
     parser.add_argument("--chunk-seconds", type=float, default=12.0)
     parser.add_argument("--max-entries", type=int, default=30)
     parser.add_argument("--audio-filter", default=os.getenv("TALKINGBOATS_TRANSCRIBE_AUDIO_FILTER"))
     parser.add_argument("--no-audio-filter", action="store_true")
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        default=int(os.getenv("TALKINGBOATS_TRANSCRIBE_BEAM_SIZE", DEFAULT_TRANSCRIBE_BEAM_SIZE)),
+    )
+    parser.add_argument("--hotwords", default=os.getenv("TALKINGBOATS_TRANSCRIBE_HOTWORDS"))
     parser.add_argument(
         "--sqlite-path",
         type=Path,
@@ -370,6 +406,8 @@ def main() -> None:
 
     if not args.stream_url:
         parser.error("--stream-url or TALKINGBOATS_TRANSCRIBE_STREAM_URL is required")
+    if args.beam_size <= 0:
+        parser.error("--beam-size must be positive")
 
     state = TranscriptState(
         max_entries=args.max_entries,
@@ -387,6 +425,8 @@ def main() -> None:
             "sample_rate_hz": args.sample_rate_hz,
             "chunk_seconds": args.chunk_seconds,
             "audio_filter": audio_filter,
+            "beam_size": args.beam_size,
+            "hotwords": args.hotwords,
         },
         daemon=True,
     )

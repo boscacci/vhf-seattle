@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 from talkingboats.clip_transcriber import (
@@ -24,6 +25,7 @@ def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
         clip_reader=WritingClipReader(),
         model=FakeSpeechModel(),
         limit=10,
+        audio_filter=None,
     )
 
     clip = store.get_clip("raw/channel=68/date=2026-05-24/20260524T210000Z-test.mp3")
@@ -39,6 +41,45 @@ def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
         }
     ]
     assert FakeSpeechModel.last_kwargs["vad_filter"] is False
+    assert FakeSpeechModel.last_kwargs["beam_size"] == 5
+
+
+def test_uploaded_clip_transcriber_prepares_audio_before_model_transcription(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=68/date=2026-05-24/20260524T210000Z-test.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request())
+    model = FakeSpeechModel()
+    ffmpeg_calls = []
+
+    def fake_ffmpeg(command, *, check):
+        ffmpeg_calls.append((command, check))
+        output_path = command[-1]
+        assert output_path.endswith(".wav")
+        Path(output_path).write_bytes(b"RIFFprepared wav")
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=WritingClipReader(),
+        model=model,
+        limit=10,
+        audio_filter="highpass=f=250,lowpass=f=3200,afftdn=nf=-28",
+        sample_rate_hz=16_000,
+        beam_size=5,
+        hotwords="Seattle Traffic, Elliott Bay, VTS",
+        ffmpeg_path="ffmpeg",
+        ffmpeg_runner=fake_ffmpeg,
+    )
+
+    assert summary.transcribed == 1
+    assert ffmpeg_calls
+    assert ffmpeg_calls[0][1] is True
+    assert "-af" in ffmpeg_calls[0][0]
+    assert FakeSpeechModel.last_path.endswith(".wav")
+    assert FakeSpeechModel.last_path != ffmpeg_calls[0][0][ffmpeg_calls[0][0].index("-i") + 1]
+    assert not Path(FakeSpeechModel.last_path).exists()
+    assert FakeSpeechModel.last_kwargs["beam_size"] == 5
+    assert FakeSpeechModel.last_kwargs["hotwords"] == "Seattle Traffic, Elliott Bay, VTS"
 
 
 def test_uploaded_clip_transcriber_leaves_missing_objects_retryable(tmp_path) -> None:
@@ -73,6 +114,7 @@ def test_uploaded_clip_transcriber_marks_low_confidence_segments_empty(tmp_path)
         model=LowConfidenceSpeechModel(),
         limit=10,
         min_segment_avg_logprob=-0.6,
+        audio_filter=None,
     )
 
     clip = store.get_clip(key)
@@ -94,6 +136,7 @@ def test_uploaded_clip_transcriber_marks_known_static_hallucinations_empty(tmp_p
         clip_reader=WritingClipReader(expected_channel="14"),
         model=KnownStaticHallucinationSpeechModel(),
         limit=10,
+        audio_filter=None,
     )
 
     clip = store.get_clip(key)
@@ -116,6 +159,7 @@ def test_uploaded_clip_transcriber_retries_interrupted_processing_rows(tmp_path)
         clip_reader=WritingClipReader(),
         model=FakeSpeechModel(),
         limit=10,
+        audio_filter=None,
     )
 
     clip = store.get_clip(key)
@@ -208,8 +252,10 @@ class MissingClipReader:
 
 class FakeSpeechModel:
     last_kwargs = {}
+    last_path = ""
 
     def transcribe(self, path: str, **kwargs):
+        FakeSpeechModel.last_path = path
         FakeSpeechModel.last_kwargs = kwargs
         return (
             [

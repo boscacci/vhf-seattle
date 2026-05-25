@@ -287,10 +287,12 @@ short radio pauses, then drops individual Whisper segments below
 not get promoted as stock phrases like "Thank you." Set the value much lower,
 such as `-10`, when deliberately auditing weak-signal audio.
 
-Speech cleanup is on by default and runs before the edge detector, so
-uploaded clips and live debug audio use the same filtered PCM. The default chain
-does not include dynamic normalization because that can raise static before the
-activity gate. Turn cleanup off only for an A/B test:
+Speech cleanup is on by default and runs before the edge detector, so uploaded
+clips and live debug audio use the same filtered PCM. The uploaded-clip and live
+caption transcribers also use the same pre-transcription cleanup before Whisper:
+16 kHz mono WAV plus the shared speech filter. The default chain does not include
+dynamic normalization because that can raise static before or around the activity
+gate. Turn cleanup off only for an A/B test:
 
 ```bash
 sudo sed -i 's/^TALKINGBOATS_AUDIO_FILTER_ENABLED=.*/TALKINGBOATS_AUDIO_FILTER_ENABLED=false/' \
@@ -303,6 +305,7 @@ Default filter chain:
 ```bash
 TALKINGBOATS_AUDIO_FILTER_ENABLED=true
 TALKINGBOATS_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28
+TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ=16000
 ```
 
 The live Icecast feed also applies an audio gate by default. Frames below the
@@ -336,14 +339,20 @@ conda run -n dell talkingboats-live-transcriber \
   --host 0.0.0.0 \
   --port 8055 \
   --model-size turbo \
+  --beam-size 5 \
   --device cpu \
   --compute-type int8
 ```
 
 The transcriber uses `faster-whisper` with Whisper `turbo` by default because it
-is a practical open-source CPU path for this hardware. If an `ffmpeg` binary is
-available it downsamples live audio to 16 kHz mono and applies the same speech
-cleanup filter before transcription; otherwise it falls back to pulling short MP3
+is a practical open-source CPU path for this hardware. It uses local beam search
+with `TALKINGBOATS_TRANSCRIBE_BEAM_SIZE=5` by default for better accuracy without
+paying for an API. For slower offline experiments, set
+`TALKINGBOATS_TRANSCRIBE_MODEL=large-v3` or `distil-large-v3`; for local jargon,
+set `TALKINGBOATS_TRANSCRIBE_HOTWORDS` to phrases such as
+`Seattle Traffic, Elliott Bay, VTS`. If an `ffmpeg` binary is available it
+downsamples live audio to 16 kHz mono and applies the same speech cleanup filter
+before transcription; otherwise live captions fall back to pulling short MP3
 chunks from Icecast and decoding them through PyAV/faster-whisper. It serves:
 
 ```text

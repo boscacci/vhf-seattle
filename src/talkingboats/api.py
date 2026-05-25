@@ -160,26 +160,38 @@ async def recent_clips(
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
     clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
+    offset: Annotated[int, Query(ge=0)] = 0,
     channel: Annotated[str | None, Query(min_length=1, max_length=8)] = None,
 ) -> dict[str, object]:
     if clip_store is None:
         return {
             "clips": [],
+            "clip_count": 0,
+            "filtered_clip_count": 0,
+            "limit": limit,
+            "offset": offset,
             "channel_counts": {},
             "channel_labels": public_monitored_channel_labels(),
         }
     channel_counts = clip_store.transcribed_channel_counts(
         excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
     )
+    clip_count = sum(channel_counts.values())
+    filtered_clip_count = channel_counts.get(channel, clip_count) if channel else clip_count
     if channel and channel.upper() in PUBLIC_EXCLUDED_CHANNELS:
         return {
             "clips": [],
+            "clip_count": clip_count,
+            "filtered_clip_count": 0,
+            "limit": limit,
+            "offset": offset,
             "channel_counts": channel_counts,
             "channel_labels": public_monitored_channel_labels(channel_counts),
         }
     clips = []
     for clip in clip_store.recent_transcribed(
         limit=limit,
+        offset=offset,
         channel=channel,
         excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
     ):
@@ -206,6 +218,10 @@ async def recent_clips(
         )
     return {
         "clips": clips,
+        "clip_count": clip_count,
+        "filtered_clip_count": filtered_clip_count,
+        "limit": limit,
+        "offset": offset,
         "channel_counts": channel_counts,
         "channel_labels": public_monitored_channel_labels(channel_counts),
     }

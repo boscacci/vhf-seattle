@@ -9,6 +9,7 @@ from talkingboats.live_transcriber import (
     append_transcript_segments,
     build_ffmpeg_pcm_command,
     iter_encoded_audio_chunks,
+    transcribe_audio_file,
 )
 
 
@@ -101,6 +102,32 @@ def test_ffmpeg_command_downsamples_stream_and_applies_optional_filter() -> None
     assert command[-3:] == ["-f", "s16le", "pipe:1"]
 
 
+def test_live_transcriber_uses_stronger_local_decode_defaults(tmp_path) -> None:
+    audio_path = tmp_path / "prepared.wav"
+    audio_path.write_bytes(b"RIFFfake wav")
+    model = FakeTranscribeModel()
+
+    segments = transcribe_audio_file(
+        model=model,
+        audio_path=audio_path,
+        beam_size=5,
+        vad_filter=True,
+        hotwords="Seattle Traffic, Elliott Bay, VTS",
+    )
+
+    assert [segment.text for segment in segments] == [" Seattle Traffic inbound "]
+    assert model.calls == [
+        {
+            "path": str(audio_path),
+            "language": "en",
+            "beam_size": 5,
+            "vad_filter": True,
+            "condition_on_previous_text": False,
+            "hotwords": "Seattle Traffic, Elliott Bay, VTS",
+        }
+    ]
+
+
 def test_encoded_audio_chunking_requires_positive_window() -> None:
     try:
         next(iter_encoded_audio_chunks("http://example.test/stream.mp3", chunk_seconds=0))
@@ -108,3 +135,12 @@ def test_encoded_audio_chunking_requires_positive_window() -> None:
         assert "chunk_seconds must be positive" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+class FakeTranscribeModel:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def transcribe(self, path: str, **kwargs):
+        self.calls.append({"path": path, **kwargs})
+        return ([SimpleNamespace(start=0.0, end=1.0, text=" Seattle Traffic inbound ")], None)

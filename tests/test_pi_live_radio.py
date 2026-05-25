@@ -185,3 +185,7 @@ def test_live_radio_audio_filter_is_flagged_and_default_on() -> None:
     assert 'append_env_if_missing TALKINGBOATS_AUDIO_FILTER_ENABLED "true"' in installer
     assert "highpass=f=250,lowpass=f=3200,afftdn=nf=-28" in installer
     assert "TALKINGBOATS_AUDIO_FILTER_ENABLED=true" in readme
+    assert "TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ=16000" in readme
+    assert "TALKINGBOATS_TRANSCRIBE_BEAM_SIZE=5" in readme
+    assert "TALKINGBOATS_TRANSCRIBE_HOTWORDS" in readme
+    assert "dynaudnorm" not in readme

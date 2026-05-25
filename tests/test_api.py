@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -116,8 +117,50 @@ def test_recent_clips_are_public_read_only_with_playback_urls(tmp_path) -> None:
     assert body["clips"][0]["playback_url"] == "https://s3.example.test/playback"
     assert body["clips"][0]["playback_expires_in_seconds"] == 300
     assert body["channel_counts"] == {"14": 1}
+    assert body["clip_count"] == 1
+    assert body["filtered_clip_count"] == 1
     assert body["channel_labels"]["13"] == "Bridge-to-bridge"
     assert body["channel_labels"]["14"] == "VTS / Seattle Traffic"
+
+
+def test_recent_clips_reports_total_counts_and_supports_offsets(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    for index in range(8):
+        channel = "14" if index % 2 else "68"
+        started_at = datetime(2026, 5, 20, 19, index, tzinfo=UTC)
+        key = f"raw/channel={channel}/date=2026-05-20/fake-{index}.mp3"
+        request = _clip_presign(channel=channel).model_copy(
+            update={
+                "started_at": started_at,
+                "ended_at": started_at + timedelta(seconds=5),
+                "idempotency_key": f"radio-event-{index}",
+            }
+        )
+        store.record_presigned_upload(key=key, request=request)
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"Clip {index}",
+                    started_at=f"2026-05-20T19:{index:02d}:00Z",
+                    ended_at=f"2026-05-20T19:{index:02d}:04Z",
+                )
+            ],
+        )
+
+    response = client.get("/api/clips/recent?limit=6&offset=6")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["clips"]) == 2
+    assert [clip["transcript"] for clip in body["clips"]] == ["Clip 1", "Clip 0"]
+    assert body["clip_count"] == 8
+    assert body["filtered_clip_count"] == 8
+    assert body["limit"] == 6
+    assert body["offset"] == 6
+    assert body["channel_counts"] == {"14": 4, "68": 4}
 
 
 def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
@@ -168,6 +211,10 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
     assert wx_response.status_code == 200
     assert wx_response.json() == {
         "clips": [],
+        "clip_count": 1,
+        "filtered_clip_count": 0,
+        "limit": 5,
+        "offset": 0,
         "channel_counts": {"14": 1},
         "channel_labels": {"13": "Bridge-to-bridge", "14": "VTS / Seattle Traffic"},
     }
