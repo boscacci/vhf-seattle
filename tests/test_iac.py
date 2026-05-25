@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -19,7 +20,25 @@ def test_opentofu_expires_only_raw_audio_prefix() -> None:
     assert 'resource "aws_s3_bucket_lifecycle_configuration" "raw_audio"' in main_tf
     assert 'prefix = "raw/"' in main_tf
     assert "days = var.raw_retention_days" in main_tf
+    assert "noncurrent_version_expiration" not in main_tf
     assert "hall-of-fame" not in _lifecycle_block(main_tf)
+
+
+def test_opentofu_keeps_s3_bucket_versioning_suspended() -> None:
+    main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+
+    assert main_tf.count('resource "aws_s3_bucket_versioning"') == 4
+    versioning_blocks = [
+        match.group(0)
+        for match in re.finditer(
+            r'resource "aws_s3_bucket_versioning" "[^"]+" \{.*?\n\}',
+            main_tf,
+            flags=re.DOTALL,
+        )
+    ]
+    assert len(versioning_blocks) == 4
+    assert all('status = "Suspended"' in block for block in versioning_blocks)
+    assert all('status = "Enabled"' not in block for block in versioning_blocks)
 
 
 def test_opentofu_has_distinct_dev_and_prod_outputs() -> None:

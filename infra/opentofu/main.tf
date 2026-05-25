@@ -86,7 +86,7 @@ resource "aws_s3_bucket_versioning" "public_site" {
   bucket = aws_s3_bucket.public_site.id
 
   versioning_configuration {
-    status = "Enabled"
+    status = "Suspended"
   }
 }
 
@@ -94,7 +94,7 @@ resource "aws_s3_bucket_versioning" "raw_audio" {
   bucket = aws_s3_bucket.raw_audio.id
 
   versioning_configuration {
-    status = "Enabled"
+    status = "Suspended"
   }
 }
 
@@ -113,9 +113,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "raw_audio" {
       days = var.raw_retention_days
     }
 
-    noncurrent_version_expiration {
-      noncurrent_days = var.raw_retention_days
-    }
   }
 }
 
@@ -374,7 +371,7 @@ resource "aws_s3_bucket_versioning" "dev_public_site" {
   bucket = aws_s3_bucket.dev_public_site.id
 
   versioning_configuration {
-    status = "Enabled"
+    status = "Suspended"
   }
 }
 
@@ -382,7 +379,7 @@ resource "aws_s3_bucket_versioning" "dev_raw_audio" {
   bucket = aws_s3_bucket.dev_raw_audio.id
 
   versioning_configuration {
-    status = "Enabled"
+    status = "Suspended"
   }
 }
 
@@ -401,9 +398,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "dev_raw_audio" {
       days = var.raw_retention_days
     }
 
-    noncurrent_version_expiration {
-      noncurrent_days = var.raw_retention_days
-    }
   }
 }
 
