@@ -1,6 +1,8 @@
 const liveClipUrl = "/api/clips/recent?limit=30";
 const manifestUrl = "/public_manifest.json";
 const tailnetLiveBase = "https://optiplex.tailbea63b.ts.net:10000";
+const liveStatusPollMs = 2000;
+const quietTransmissionDelayMs = 5000;
 
 const fallbackManifest = {
   site: {
@@ -34,6 +36,9 @@ const waveformCanvas = document.querySelector("#waveform-canvas");
 const playLiveButton = document.querySelector("#play-live");
 
 let liveRetryTimer = null;
+let liveStatusTimer = null;
+let liveStatusAbortController = null;
+let lastLiveStatusId = null;
 let audioContext = null;
 let analyser = null;
 let analyserSource = null;
@@ -251,9 +256,10 @@ function activateTab(name) {
     prepareLiveAudio();
   }
   if (name === "live") {
-    loadLiveStatus();
+    startLiveStatusPolling();
     startWaveform();
   } else {
+    stopLiveStatusPolling();
     stopWaveform();
   }
 }
@@ -263,7 +269,7 @@ function prepareLiveAudio() {
   liveAudio.crossOrigin = "anonymous";
   liveAudio.src = url;
   liveStatus.textContent = "Ready";
-  drawWaitingFrame();
+  drawWaitingFrame({ showWaiting: false });
 }
 
 function toggleLivePlayback() {
@@ -298,9 +304,21 @@ function scheduleLiveReconnect() {
   clearTimeout(liveRetryTimer);
   liveRetryTimer = setTimeout(() => {
     if (!panels.live.hidden) {
-      connectLive();
+      reconnectLiveStream();
     }
   }, 5000);
+}
+
+function startLiveStatusPolling() {
+  clearTimeout(liveStatusTimer);
+  pollLiveStatus();
+}
+
+function stopLiveStatusPolling() {
+  clearTimeout(liveStatusTimer);
+  liveStatusTimer = null;
+  liveStatusAbortController?.abort();
+  liveStatusAbortController = null;
 }
 
 function liveStreamUrl() {
@@ -321,16 +339,34 @@ function liveStatusUrl() {
   return `${tailnetLiveBase}/api/live/status`;
 }
 
-async function loadLiveStatus() {
+async function pollLiveStatus() {
+  if (panels.live.hidden) {
+    return;
+  }
+  liveStatusAbortController?.abort();
+  liveStatusAbortController = new AbortController();
   try {
-    const response = await fetch(liveStatusUrl(), { cache: "no-store" });
+    const response = await fetch(liveStatusUrl(), {
+      cache: "no-store",
+      signal: liveStatusAbortController.signal,
+    });
     if (!response.ok) {
       throw new Error(`live status HTTP ${response.status}`);
     }
-    renderLiveStatus(await response.json());
-  } catch {
-    liveChannel.textContent = "Current SDR feed";
-    liveFrequency.textContent = "Channel status unavailable";
+    const status = await response.json();
+    renderLiveStatus(status);
+    if (lastLiveStatusId && status?.activeChannelId !== lastLiveStatusId && !liveAudio.paused) {
+      reconnectLiveStream();
+    }
+    lastLiveStatusId = status?.activeChannelId || null;
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      liveFrequency.textContent = "Receiver status reconnecting";
+    }
+  } finally {
+    if (!panels.live.hidden) {
+      liveStatusTimer = setTimeout(pollLiveStatus, liveStatusPollMs);
+    }
   }
 }
 
@@ -344,6 +380,12 @@ function renderLiveStatus(status) {
 function withCacheBust(url) {
   const joiner = url.includes("?") ? "&" : "?";
   return `${url}${joiner}t=${Date.now()}`;
+}
+
+function reconnectLiveStream() {
+  liveAudio.src = withCacheBust(liveStreamUrl());
+  liveAudio.load();
+  connectLive();
 }
 
 function ensureAudioAnalyser() {
@@ -382,7 +424,7 @@ function stopWaveform() {
 function drawWaveform() {
   waveformAnimationId = requestAnimationFrame(drawWaveform);
   if (!analyser || !waveformData) {
-    drawWaitingFrame();
+    drawWaitingFrame({ showWaiting: false });
     return;
   }
 
@@ -395,18 +437,23 @@ function drawWaveform() {
     liveStatus.textContent = "Receiving transmission";
   } else {
     quietSince ||= now;
-    if (now - quietSince > 1200 && !liveAudio.paused) {
+    const quietDurationMs = now - quietSince;
+    if (quietDurationMs >= quietTransmissionDelayMs && !liveAudio.paused) {
       liveStatus.textContent = "Waiting for transmission";
+    } else if (!liveAudio.paused && liveAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      liveStatus.textContent = "Monitoring";
     }
   }
-  waveformPanel.classList.toggle("is-waiting", !isReceiving);
+  const waitedThroughQuiet =
+    !isReceiving && quietSince !== null && now - quietSince >= quietTransmissionDelayMs;
+  waveformPanel.classList.toggle("is-waiting", waitedThroughQuiet);
   liveSignalDot.classList.toggle("is-active", isReceiving);
   renderWaveform(waveformData, { isReceiving, rms });
 }
 
-function drawWaitingFrame() {
+function drawWaitingFrame({ showWaiting } = { showWaiting: true }) {
   const midpoint = new Uint8Array(128).fill(128);
-  waveformPanel.classList.add("is-waiting");
+  waveformPanel.classList.toggle("is-waiting", showWaiting);
   liveSignalDot.classList.remove("is-active");
   renderWaveform(midpoint, { isReceiving: false, rms: 0 });
 }

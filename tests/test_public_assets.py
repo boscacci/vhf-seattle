@@ -14,6 +14,7 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert "Live Monitor" in index_html
     assert "live-channel" in index_html
     assert "waveform-canvas" in index_html
+    assert 'id="waveform-panel" class="waveform-panel"' in index_html
     assert 'id="play-live"' in index_html
     assert "Open stream" not in index_html
     assert "connect-live" not in index_html
@@ -24,6 +25,10 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert "AudioContext" in app_js
     assert "getByteTimeDomainData" in app_js
     assert "/api/live/status" in app_js
+    assert "liveStatusPollMs = 2000" in app_js
+    assert "quietTransmissionDelayMs = 5000" in app_js
+    assert "startLiveStatusPolling" in app_js
+    assert "setTimeout(pollLiveStatus, liveStatusPollMs)" in app_js
     assert "Waiting for transmission" in app_js
     assert "bay-map" not in index_html
     assert "Nearby Signals" not in index_html
