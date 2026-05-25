@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Seattle Marine Radio</title>
+    <title>Elliott Bay VHF</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
@@ -11,8 +11,8 @@
       <header class="hero">
         <div class="hero-copy">
           <p class="eyebrow">Elliott Bay VHF</p>
-          <h1 id="site-title">Seattle Marine Radio</h1>
-          <p id="site-subtitle">Recent receiver clips and tailnet live audio.</p>
+          <h1 id="site-title">Elliott Bay VHF</h1>
+          <p id="site-subtitle">Live Elliott Bay marine VHF audio and recent receiver clips.</p>
         </div>
         <dl class="stats" id="stats"></dl>
       </header>
@@ -65,6 +65,7 @@
                 <span id="live-frequency">Checking receiver status</span>
               </span>
             </div>
+            <div id="live-channel-picker" class="live-channel-picker" role="group" aria-label="Live channel"></div>
             <div id="waveform-panel" class="waveform-panel">
               <canvas
                 id="waveform-canvas"
@@ -82,15 +83,6 @@
               <button id="play-live" class="primary" type="button">Play</button>
             </div>
           </article>
-
-          <aside class="notes-card">
-            <p class="eyebrow">Access</p>
-            <h2>Tailnet Protected</h2>
-            <p>
-              The monitor uses the OptiPlex proxy over Tailscale. The public export
-              keeps recent clips available without exposing LAN services.
-            </p>
-          </aside>
         </div>
       </section>
     </main>

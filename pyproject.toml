@@ -13,8 +13,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "numpy>=1.26,<3",
     "pytest>=8,<9",
     "ruff>=0.8,<1",
+]
+analysis = [
+    "numpy>=1.26,<3",
 ]
 transcribe = [
     "faster-whisper>=1.1,<2",
@@ -33,6 +37,7 @@ talkingboats-transcribe-uploaded-clips = "talkingboats.clip_transcriber:main"
 talkingboats-capture-profiles = "talkingboats.capture_profiles:main"
 talkingboats-upload-spooled-clips = "talkingboats.spool_uploader:main"
 talkingboats-export-public = "talkingboats.publish:main"
+talkingboats-analyze-audio = "talkingboats.audio_analysis:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -24,6 +24,16 @@ locals {
   dev_raw_audio_bucket = coalesce(var.dev_raw_audio_bucket_name, "${local.dev_bucket_base}-${data.aws_caller_identity.current.account_id}-raw")
   origin_id            = "s3-public-site"
   dev_origin_id        = "s3-dev-public-site"
+  live_origin_id       = "live-radio-proxy"
+  dev_live_origin_id   = "dev-live-radio-proxy"
+  dev_live_origin_domain_name = coalesce(
+    var.dev_live_origin_domain_name,
+    var.live_origin_domain_name,
+  )
+  dev_live_origin_https_port = coalesce(
+    var.dev_live_origin_https_port,
+    var.live_origin_https_port,
+  )
 }
 
 resource "aws_s3_bucket" "public_site" {
@@ -162,6 +172,23 @@ resource "aws_cloudfront_origin_access_control" "public_site" {
   signing_protocol                  = "sigv4"
 }
 
+resource "aws_cloudfront_origin_request_policy" "live_api" {
+  name    = "${var.project_name}-live-api-origin-request"
+  comment = "Forward query strings to the read-only Elliott Bay VHF live API origin"
+
+  cookies_config {
+    cookie_behavior = "none"
+  }
+
+  headers_config {
+    header_behavior = "none"
+  }
+
+  query_strings_config {
+    query_string_behavior = "all"
+  }
+}
+
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
   comment             = "Talking Boats public static site"
@@ -176,6 +203,19 @@ resource "aws_cloudfront_distribution" "site" {
     origin_access_control_id = aws_cloudfront_origin_access_control.public_site.id
   }
 
+  origin {
+    domain_name = var.live_origin_domain_name
+    origin_id   = local.live_origin_id
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = var.live_origin_https_port
+      origin_protocol_policy = "https-only"
+      origin_read_timeout    = 60
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
   default_cache_behavior {
     target_origin_id       = local.origin_id
     viewer_protocol_policy = "redirect-to-https"
@@ -183,6 +223,28 @@ resource "aws_cloudfront_distribution" "site" {
     cached_methods         = ["GET", "HEAD"]
     compress               = true
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/live/*"
+    target_origin_id         = local.live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = false
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/clips/recent"
+    target_origin_id         = local.live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
   }
 
   ordered_cache_behavior {
@@ -462,6 +524,19 @@ resource "aws_cloudfront_distribution" "dev_site" {
     origin_access_control_id = aws_cloudfront_origin_access_control.dev_public_site.id
   }
 
+  origin {
+    domain_name = local.dev_live_origin_domain_name
+    origin_id   = local.dev_live_origin_id
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = local.dev_live_origin_https_port
+      origin_protocol_policy = "https-only"
+      origin_read_timeout    = 60
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
   default_cache_behavior {
     target_origin_id       = local.dev_origin_id
     viewer_protocol_policy = "redirect-to-https"
@@ -469,6 +544,28 @@ resource "aws_cloudfront_distribution" "dev_site" {
     cached_methods         = ["GET", "HEAD"]
     compress               = true
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/live/*"
+    target_origin_id         = local.dev_live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = false
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/clips/recent"
+    target_origin_id         = local.dev_live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
   }
 
   ordered_cache_behavior {

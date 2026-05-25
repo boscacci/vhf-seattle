@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
+
+from talkingboats.channel_metadata import CHANNEL_METADATA
 
 
 @dataclass(frozen=True)
@@ -20,21 +23,28 @@ class CaptureProfile:
     center_frequency_hz: int | None = None
 
 
+@dataclass(frozen=True)
+class AirbandIcecastOutput:
+    channel: str
+    server: str
+    port: int
+    mountpoint: str
+    name: str
+    password: str
+    username: str = "source"
+    genre: str = "Marine VHF"
+    continuous: bool = True
+
+
 CAPTURE_PROFILES = {
     "debug": CaptureProfile(
         name="debug",
         mode="sequential",
         channels=(
             CaptureChannel(
-                channel="WX",
-                label="NOAA Weather 162.550",
-                frequency_hz=162_550_000,
-                slot_seconds=120,
-            ),
-            CaptureChannel(
                 channel="14",
-                label="VTS / Seattle Traffic",
-                frequency_hz=156_700_000,
+                label=CHANNEL_METADATA["14"].label,
+                frequency_hz=CHANNEL_METADATA["14"].frequency_hz,
                 slot_seconds=480,
             ),
         ),
@@ -46,23 +56,32 @@ CAPTURE_PROFILES = {
         channels=(
             CaptureChannel(
                 channel="13",
-                label="Bridge-to-bridge",
-                frequency_hz=156_650_000,
+                label=CHANNEL_METADATA["13"].label,
+                frequency_hz=CHANNEL_METADATA["13"].frequency_hz,
             ),
             CaptureChannel(
                 channel="14",
-                label="VTS / Seattle Traffic",
-                frequency_hz=156_700_000,
+                label=CHANNEL_METADATA["14"].label,
+                frequency_hz=CHANNEL_METADATA["14"].frequency_hz,
             ),
         ),
     ),
 }
 
 
-def render_rtlsdr_airband_config(profile: CaptureProfile, *, output_root: str) -> str:
+def render_rtlsdr_airband_config(
+    profile: CaptureProfile,
+    *,
+    output_root: str,
+    icecast_output: AirbandIcecastOutput | None = None,
+    icecast_outputs: tuple[AirbandIcecastOutput, ...] = (),
+) -> str:
     if profile.mode != "multichannel" or profile.center_frequency_hz is None:
         raise ValueError("only multichannel profiles can be rendered as RTLSDR-Airband config")
     cleaned_output_root = output_root.rstrip("/")
+    selected_icecast_outputs = tuple(icecast_outputs)
+    if icecast_output is not None:
+        selected_icecast_outputs = (icecast_output, *selected_icecast_outputs)
     channels = ",\n".join(
         f"""    {{
       freq = {channel.frequency_hz};
@@ -70,12 +89,7 @@ def render_rtlsdr_airband_config(profile: CaptureProfile, *, output_root: str) -
       label = "vhf-{channel.channel.lower()}";
       outputs:
       (
-        {{
-          type = "rawfile";
-          directory = "{cleaned_output_root}/{channel.channel}";
-          filename_template = "vhf-{channel.channel.lower()}";
-          split_on_transmission = true;
-        }}
+{_render_channel_outputs(channel, cleaned_output_root, selected_icecast_outputs)}
       );
     }}"""
         for channel in profile.channels
@@ -99,17 +113,113 @@ devices:
 """
 
 
+def _render_channel_outputs(
+    channel: CaptureChannel,
+    output_root: str,
+    icecast_outputs: tuple[AirbandIcecastOutput, ...],
+) -> str:
+    outputs = [
+        f"""        {{
+          type = "file";
+          directory = {_config_string(f"{output_root}/{channel.channel}")};
+          filename_template = "vhf-{channel.channel.lower()}";
+          split_on_transmission = true;
+        }}"""
+    ]
+    for icecast_output in icecast_outputs:
+        if channel.channel != icecast_output.channel:
+            continue
+        outputs.append(
+            f"""        {{
+          type = "icecast";
+          server = {_config_string(icecast_output.server)};
+          port = {icecast_output.port};
+          mountpoint = {_config_string(icecast_output.mountpoint.lstrip("/"))};
+          name = {_config_string(icecast_output.name)};
+          genre = {_config_string(icecast_output.genre)};
+          username = {_config_string(icecast_output.username)};
+          password = {_config_string(icecast_output.password)};
+          continuous = {_config_bool(icecast_output.continuous)};
+        }}"""
+        )
+    return ",\n".join(outputs)
+
+
+def _config_string(value: str) -> str:
+    return json.dumps(value)
+
+
+def _config_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render Talking Boats capture profile configs.")
     parser.add_argument("--profile", choices=sorted(CAPTURE_PROFILES), required=True)
     parser.add_argument("--output-root", default="/opt/talkingboats/spool/airband")
+    parser.add_argument("--icecast-channel")
+    parser.add_argument("--icecast-host", default="127.0.0.1")
+    parser.add_argument("--icecast-port", type=int, default=8000)
+    parser.add_argument("--icecast-mount", default="/talkingboats-live.mp3")
+    parser.add_argument("--icecast-name", default="Talking Boats VHF 14")
+    parser.add_argument(
+        "--icecast-output",
+        action="append",
+        default=[],
+        metavar="CHANNEL:MOUNT:NAME",
+        help="Add one Icecast output using the shared Icecast host, port, and source password.",
+    )
+    parser.add_argument("--icecast-source-password")
     args = parser.parse_args()
+    icecast_outputs = []
+    if args.icecast_output:
+        if not args.icecast_source_password:
+            parser.error("--icecast-output requires --icecast-source-password")
+        for spec in args.icecast_output:
+            channel, mountpoint, name = _parse_icecast_output_spec(spec, parser)
+            icecast_outputs.append(
+                AirbandIcecastOutput(
+                    channel=channel,
+                    server=args.icecast_host,
+                    port=args.icecast_port,
+                    mountpoint=mountpoint,
+                    name=name,
+                    password=args.icecast_source_password,
+                )
+            )
+    icecast_output = None
+    if args.icecast_channel or args.icecast_source_password:
+        if args.icecast_output and not args.icecast_channel:
+            icecast_output = None
+        elif not args.icecast_channel or not args.icecast_source_password:
+            parser.error("--icecast-channel and --icecast-source-password must be used together")
+        else:
+            icecast_output = AirbandIcecastOutput(
+                channel=args.icecast_channel,
+                server=args.icecast_host,
+                port=args.icecast_port,
+                mountpoint=args.icecast_mount,
+                name=args.icecast_name,
+                password=args.icecast_source_password,
+            )
     print(
         render_rtlsdr_airband_config(
             CAPTURE_PROFILES[args.profile],
             output_root=args.output_root,
+            icecast_output=icecast_output,
+            icecast_outputs=tuple(icecast_outputs),
         )
     )
+
+
+def _parse_icecast_output_spec(
+    value: str,
+    parser: argparse.ArgumentParser,
+) -> tuple[str, str, str]:
+    parts = value.split(":", 2)
+    if len(parts) != 3 or not all(parts):
+        parser.error("--icecast-output must be CHANNEL:MOUNT:NAME")
+    return parts[0], parts[1], parts[2]
 
 
 if __name__ == "__main__":

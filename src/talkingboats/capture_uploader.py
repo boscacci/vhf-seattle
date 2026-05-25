@@ -13,7 +13,7 @@ import httpx
 
 from talkingboats.schemas import Channel, ClipPresignRequest, ClipPresignResponse
 
-ALLOWED_CHANNELS = ("WX", "05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74")
+ALLOWED_CHANNELS = ("05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74")
 
 CONTENT_TYPES_BY_SUFFIX = {
     ".aac": "audio/aac",

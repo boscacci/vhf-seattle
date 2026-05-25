@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
-ALLOWED_CHANNELS = {"WX", "05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74"}
+ALLOWED_CHANNELS = {"05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74"}
 CONTENT_TYPES = {
     ".aac": "audio/aac",
     ".flac": "audio/flac",
@@ -20,7 +20,7 @@ CONTENT_TYPES = {
     ".ogg": "audio/ogg",
     ".wav": "audio/wav",
 }
-Channel = Literal["WX", "05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74"]
+Channel = Literal["05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74"]
 
 
 class StatResult(Protocol):

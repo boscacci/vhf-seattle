@@ -256,11 +256,25 @@ class UploadedClipStore:
         *,
         limit: int,
         channel: str | None = None,
+        excluded_channels: tuple[str, ...] = (),
     ) -> list[RecentTranscribedClip]:
         if limit <= 0:
             raise ValueError("limit must be positive")
-        channel_filter = "AND channel = ?" if channel else ""
-        params: tuple[object, ...] = (channel, limit) if channel else (limit,)
+        filters = [
+            "status = 'transcribed'",
+            "transcript IS NOT NULL",
+            "trim(transcript) != ''",
+        ]
+        params: list[object] = []
+        if channel:
+            filters.append("channel = ?")
+            params.append(channel)
+        if excluded_channels:
+            placeholders = ", ".join("?" for _ in excluded_channels)
+            filters.append(f"channel NOT IN ({placeholders})")
+            params.extend(excluded_channels)
+        params.append(limit)
+        where_clause = "\n                    AND ".join(filters)
         with sqlite3.connect(self.path) as connection:
             rows = connection.execute(
                 f"""
@@ -273,14 +287,11 @@ class UploadedClipStore:
                     content_type,
                     transcript
                 FROM uploaded_clips
-                WHERE status = 'transcribed'
-                    AND transcript IS NOT NULL
-                    AND trim(transcript) != ''
-                    {channel_filter}
+                WHERE {where_clause}
                 ORDER BY started_at DESC, id DESC
                 LIMIT ?
                 """,
-                params,
+                tuple(params),
             ).fetchall()
         clips = []
         for key, channel, started_at, ended_at, duration_seconds, content_type, transcript in rows:
@@ -298,18 +309,30 @@ class UploadedClipStore:
             )
         return clips
 
-    def transcribed_channel_counts(self) -> dict[str, int]:
+    def transcribed_channel_counts(
+        self,
+        *,
+        excluded_channels: tuple[str, ...] = (),
+    ) -> dict[str, int]:
+        channel_filter = ""
+        params: tuple[object, ...] = ()
+        if excluded_channels:
+            placeholders = ", ".join("?" for _ in excluded_channels)
+            channel_filter = f"AND channel NOT IN ({placeholders})"
+            params = tuple(excluded_channels)
         with sqlite3.connect(self.path) as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT channel, count(*)
                 FROM uploaded_clips
                 WHERE status = 'transcribed'
                     AND transcript IS NOT NULL
                     AND trim(transcript) != ''
+                    {channel_filter}
                 GROUP BY channel
                 ORDER BY channel
-                """
+                """,
+                params,
             ).fetchall()
         return {channel: count for channel, count in rows}
 

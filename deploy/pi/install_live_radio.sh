@@ -86,6 +86,7 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_AUDIO_FILTER=%q\n' \
       "highpass=f=250,lowpass=f=3200,afftdn=nf=-28"
     printf 'TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED=%q\n' "true"
+    printf 'TALKINGBOATS_LIVE_SQUELCH_LOOKAHEAD_SECONDS=%q\n' "1.0"
     printf 'TALKINGBOATS_LIVE_OUTPUT_FILTER=%q\n' "alimiter=limit=0.55"
     printf 'TALKINGBOATS_ICECAST_HOST=%q\n' "127.0.0.1"
     printf 'TALKINGBOATS_ICECAST_PORT=%q\n' "8000"
@@ -102,20 +103,18 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3=%q\n' "true"
     printf 'TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD=%q\n' "false"
     printf 'TALKINGBOATS_EDGE_THRESHOLD_RMS=%q\n' "8000"
+    printf 'TALKINGBOATS_EDGE_MIN_CLIP_SECONDS=%q\n' "1.0"
+    printf 'TALKINGBOATS_EDGE_PRE_ROLL_SECONDS=%q\n' "0"
+    printf 'TALKINGBOATS_EDGE_POST_ROLL_SECONDS=%q\n' "0.3"
     printf 'TALKINGBOATS_EDGE_MAX_TEMP_C=%q\n' "72"
     printf 'TALKINGBOATS_EDGE_RESUME_TEMP_C=%q\n' "66"
     printf 'TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU=%q\n' "0.85"
     printf 'TALKINGBOATS_CAPTURE_PROFILE=%q\n' "debug"
-    printf 'TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS=%q\n' "45"
     printf 'TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS=%q\n' "180"
-    printf 'TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS=%q\n' "2200"
-    printf 'TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS=%q\n' "3600"
-    printf 'TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS=%q\n' "4"
-    printf 'TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS=%q\n' "4.5"
-    printf 'TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS=%q\n' "30"
-    printf 'TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS=%q\n' "1.2"
-    printf 'TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS=%q\n' "2.5"
-    printf 'TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS=%q\n' "45"
+    printf 'TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS=%q\n' "5000"
+    printf 'TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS=%q\n' "2.0"
+    printf 'TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS=%q\n' "0.4"
+    printf 'TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS=%q\n' "30"
     printf 'TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS=%q\n' "5"
     printf 'TALKINGBOATS_AIRBAND_BINARY=%q\n' "/usr/local/bin/rtl_airband"
     printf 'TALKINGBOATS_AIRBAND_CONFIG_DIR=%q\n' "/etc/talkingboats"
@@ -134,11 +133,25 @@ append_env_if_missing() {
   fi
 }
 
+replace_env_if_value() {
+  local key="$1"
+  local old_value="$2"
+  local new_value="$3"
+  local quoted_new_value
+  printf -v quoted_new_value '%q' "${new_value}"
+  if grep -qx "${key}=${old_value}" "${env_file}"; then
+    sed -i "s|^${key}=.*|${key}=${quoted_new_value}|" "${env_file}"
+  fi
+}
+
+sed -i '/^TALKINGBOATS_CAPTURE_DEBUG_[W]X_/d' "${env_file}"
+
 append_env_if_missing TALKINGBOATS_LIVE_CHANNEL "68"
 append_env_if_missing TALKINGBOATS_AUDIO_FILTER_ENABLED "true"
 append_env_if_missing TALKINGBOATS_AUDIO_FILTER \
   "highpass=f=250,lowpass=f=3200,afftdn=nf=-28"
 append_env_if_missing TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED "true"
+append_env_if_missing TALKINGBOATS_LIVE_SQUELCH_LOOKAHEAD_SECONDS "1.0"
 append_env_if_missing TALKINGBOATS_LIVE_OUTPUT_FILTER "alimiter=limit=0.55"
 append_env_if_missing TALKINGBOATS_EDGE_SPOOL_DIR "${spool_root}"
 append_env_if_missing TALKINGBOATS_EDGE_RECORD_ENABLED "true"
@@ -151,20 +164,18 @@ append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENABLED "false"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3 "true"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD "false"
 append_env_if_missing TALKINGBOATS_EDGE_THRESHOLD_RMS "8000"
+append_env_if_missing TALKINGBOATS_EDGE_MIN_CLIP_SECONDS "1.0"
+append_env_if_missing TALKINGBOATS_EDGE_PRE_ROLL_SECONDS "0"
+append_env_if_missing TALKINGBOATS_EDGE_POST_ROLL_SECONDS "0.3"
 append_env_if_missing TALKINGBOATS_EDGE_MAX_TEMP_C "72"
 append_env_if_missing TALKINGBOATS_EDGE_RESUME_TEMP_C "66"
 append_env_if_missing TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU "0.85"
 append_env_if_missing TALKINGBOATS_CAPTURE_PROFILE "debug"
-append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS "45"
 append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS "180"
-append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS "2200"
-append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600"
-append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS "4"
-append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS "4.5"
-append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS "30"
-append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS "1.2"
-append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS "2.5"
-append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS "45"
+append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "5000"
+append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS "2.0"
+append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS "0.4"
+append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS "30"
 append_env_if_missing TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS "5"
 append_env_if_missing TALKINGBOATS_AIRBAND_BINARY "/usr/local/bin/rtl_airband"
 append_env_if_missing TALKINGBOATS_AIRBAND_CONFIG_DIR "/etc/talkingboats"
@@ -173,6 +184,13 @@ append_env_if_missing TALKINGBOATS_ICECAST_NETRC "/etc/talkingboats/icecast.netr
 append_env_if_missing TALKINGBOATS_ICECAST_SOURCE_PASSWORD "$(generate_password)"
 append_env_if_missing TALKINGBOATS_ICECAST_RELAY_PASSWORD "$(generate_password)"
 append_env_if_missing TALKINGBOATS_ICECAST_ADMIN_PASSWORD "$(generate_password)"
+replace_env_if_value TALKINGBOATS_EDGE_MIN_CLIP_SECONDS "0.7" "1.0"
+replace_env_if_value TALKINGBOATS_EDGE_PRE_ROLL_SECONDS "0.7" "0"
+replace_env_if_value TALKINGBOATS_EDGE_POST_ROLL_SECONDS "1.2" "0.3"
+replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600" "5000"
+replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS "1.2" "2.0"
+replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS "2.5" "0.4"
+replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS "45" "30"
 chmod 0600 "${env_file}"
 
 set -a
@@ -183,6 +201,10 @@ set +a
 : "${TALKINGBOATS_ICECAST_SOURCE_PASSWORD:?missing source password}"
 : "${TALKINGBOATS_ICECAST_RELAY_PASSWORD:?missing relay password}"
 : "${TALKINGBOATS_ICECAST_ADMIN_PASSWORD:?missing admin password}"
+
+if [[ -x "${TALKINGBOATS_AIRBAND_BINARY:-/usr/local/bin/rtl_airband}" ]]; then
+  replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "debug" "elliott_bay"
+fi
 
 icecast_netrc="${TALKINGBOATS_ICECAST_NETRC:-/etc/talkingboats/icecast.netrc}"
 umask 077
@@ -204,8 +226,13 @@ fi
 PYTHONPATH="${app_root}/src" python3 -m talkingboats.capture_profiles \
   --profile elliott_bay \
   --output-root "${airband_spool_root}" \
+  --icecast-host "${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}" \
+  --icecast-port "${TALKINGBOATS_ICECAST_PORT:-8000}" \
+  --icecast-output "13:/talkingboats-13.mp3:Talking Boats Bridge-to-bridge" \
+  --icecast-output "14:${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}:Talking Boats VTS / Seattle Traffic" \
+  --icecast-source-password "${TALKINGBOATS_ICECAST_SOURCE_PASSWORD}" \
   > /etc/talkingboats/rtl_airband-elliott-bay.conf
-chmod 0644 /etc/talkingboats/rtl_airband-elliott-bay.conf
+chmod 0600 /etc/talkingboats/rtl_airband-elliott-bay.conf
 
 if [[ -f /etc/icecast2/icecast.xml && ! -f /etc/icecast2/icecast.xml.talkingboats.bak ]]; then
   cp -a /etc/icecast2/icecast.xml /etc/icecast2/icecast.xml.talkingboats.bak
@@ -238,6 +265,11 @@ cat > /etc/icecast2/icecast.xml <<EOF
   <http-headers>
     <header name="Access-Control-Allow-Origin" value="*" />
   </http-headers>
+  <mount type="normal">
+    <mount-name>/talkingboats-13.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
   <mount type="normal">
     <mount-name>${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}</mount-name>
     <public>0</public>

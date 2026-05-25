@@ -71,6 +71,8 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "--tee-stdout" in wrapper
     assert "--squelch-stdout" in wrapper
     assert "TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED" in wrapper
+    assert "TALKINGBOATS_LIVE_SQUELCH_LOOKAHEAD_SECONDS" in wrapper
+    assert "--live-squelch-lookahead-seconds" in wrapper
     assert "TALKINGBOATS_LIVE_OUTPUT_FILTER" in wrapper
     assert "alimiter=limit=0.55" in wrapper
     assert "python3 -m talkingboats.icecast_source" in wrapper
@@ -78,6 +80,8 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "icecast://source:" not in wrapper
     assert "-f s16le" in wrapper
     assert "TALKINGBOATS_EDGE_MAX_TEMP_C" in wrapper
+    assert "TALKINGBOATS_EDGE_PRE_ROLL_SECONDS:-0" in wrapper
+    assert "TALKINGBOATS_EDGE_POST_ROLL_SECONDS:-0.3" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_ENABLED" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED" in wrapper
     assert "TALKINGBOATS_EDGE_UPLOAD_ENABLED" in wrapper
@@ -88,6 +92,7 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "--record-retention-seconds" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_ENABLED" in installer
     assert 'append_env_if_missing TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED "true"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_LIVE_SQUELCH_LOOKAHEAD_SECONDS "1.0"' in installer
     assert (
         'append_env_if_missing TALKINGBOATS_LIVE_OUTPUT_FILTER "alimiter=limit=0.55"'
         in installer
@@ -95,6 +100,8 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_ENABLED "true"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED "false"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENABLED "false"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_EDGE_PRE_ROLL_SECONDS "0"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_EDGE_POST_ROLL_SECONDS "0.3"' in installer
     assert "talkingboats-profile-capture.service" in installer
     assert "talkingboats-spool-uploader.service" in installer
     assert "systemctl disable --now talkingboats-live-radio-stream.service" in installer
@@ -111,36 +118,51 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
 
     assert "TALKINGBOATS_CAPTURE_PROFILE" in wrapper
     assert "run_debug_profile" in wrapper
-    assert "162550000" in wrapper
+    assert "162550000" not in wrapper
     assert "156700000" in wrapper
     assert "current-status.json" in wrapper
     assert "TALKINGBOATS_CAPTURE_LIVE_MOUNT:-/talkingboats-live.mp3" in wrapper
-    assert "TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS:-45" in wrapper
-    assert "TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS:-2200" in wrapper
-    assert "TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS:-3600" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS:-5000" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-180" in wrapper
-    assert "TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS:-4.5" in wrapper
-    assert "TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS:-4" in wrapper
-    assert "TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS:-30" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS:-2.0" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS:-0.4" in wrapper
     assert "run_elliott_bay_profile" in wrapper
     assert "rtl_airband" in wrapper
+    assert '-F -e -c "${config_path}"' in wrapper
     assert "rtl_airband-elliott-bay.conf" in wrapper
     assert "timeout --foreground" not in wrapper
     assert "timeout --kill-after=10s" in wrapper
     assert "TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS:-5" in wrapper
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_PROFILE "debug"' in installer
-    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS "45"' in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS "180"' in installer
-    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS "2200"' in installer
-    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "5000"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS "2.0"' in installer
     assert (
-        'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS "4.5"'
+        'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS "0.4"'
         in installer
     )
-    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS "4"' in installer
-    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS "30"' in installer
+    assert (
+        'replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600" "5000"'
+        in installer
+    )
+    assert 'replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "debug" "elliott_bay"' in installer
+    assert "TALKINGBOATS_CAPTURE_DEBUG_WX" not in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS "5"' in installer
     assert "talkingboats.capture_profiles" in installer
+    assert '--icecast-output "13:/talkingboats-13.mp3:Talking Boats Bridge-to-bridge"' in installer
+    assert (
+        '--icecast-output "14:${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}:'
+        'Talking Boats VTS / Seattle Traffic"'
+        in installer
+    )
+    assert "--icecast-source-password" in installer
+    assert "<sources>2</sources>" in installer
+    assert "<mount-name>/talkingboats-13.mp3</mount-name>" in installer
+    assert (
+        "<mount-name>${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}</mount-name>"
+        in installer
+    )
+    assert "chmod 0600 /etc/talkingboats/rtl_airband-elliott-bay.conf" in installer
     assert 'talkingboats-upload-spooled-clips = "talkingboats.spool_uploader:main"' in pyproject
 
 

@@ -1,17 +1,17 @@
-# Seattle Marine Radio
+# Elliott Bay VHF
 
-Seattle Marine Radio captures Elliott Bay marine VHF, transcribes useful chunks,
-publishes recent clips, and exposes live receiver audio only through Tailscale.
+Elliott Bay VHF captures Elliott Bay marine VHF, transcribes useful chunks,
+publishes recent clips, and serves a public read-only live radio monitor.
 
 - **Private side:** Raspberry Pi capture, raw audio, ingest API, transcription
   workers, and the clip SQLite database.
 - **Public side:** one dark browser UI in `public-site/`, deployed at
-  `vhf.robertboscacci.com` for static clips and served through Tailscale for
-  fresh DB reads plus live receiver audio.
+  `vhf.robertboscacci.com` with CloudFront static assets plus read-only live API
+  routes to the OptiPlex proxy.
 
-The public static deploy contains copied clip audio and sanitized transcript
-metadata. It never exposes the Pi, private API, Icecast stream, database, raw S3
-keys, or presigned URLs.
+The public app can read live audio/status and recent clip data, but it never
+exposes radio controls, ingest endpoints, the Pi, raw Icecast URLs, database
+access, raw S3 keys, or long-lived credentials.
 
 ## Architecture
 
@@ -28,8 +28,8 @@ flowchart LR
     exporter -->|"Copies sanitized audio and manifest"| publicS3["Private public-site S3"]
     publicS3 -->|"Origin access only"| cdn["CloudFront"]
     dns["Route53"] -->|"vhf / vhf-dev aliases"| cdn
-    browser["Public browser"] -->|"Static clip review"| cdn
-    tailnet["Tailscale browser"] -->|"Live monitor and fresh clips"| proxy
+    browser["Public browser"] -->|"Live app"| cdn
+    cdn -->|"Read-only live API routes"| proxy
     proxy -->|"Read-only clip API"| api
 ```
 
@@ -42,10 +42,10 @@ kept in-repo so GitHub renders it without relying on a separate design tool.
 - Fun channel: VHF 68, `156.425 MHz`
 - Business channel: VHF 14, `156.700 MHz` Seattle Traffic / Puget Sound VTS
 - Raw audio: private S3 bucket, `raw/` expires after 60 days
-- Prod public site: static S3 origin behind CloudFront Origin Access Control at
-  `vhf.robertboscacci.com`
+- Prod public site: static S3 origin plus read-only live API behaviors behind
+  CloudFront at `vhf.robertboscacci.com`
 - Dev public site: separate static S3 origin and CloudFront distribution at
-  `vhf-dev.robertboscacci.com`
+  `vhf-dev.robertboscacci.com`, using the same live origin unless overridden
 
 ## Local Setup
 
@@ -71,11 +71,11 @@ http://localhost:8034/operator/
 ```
 
 The browser UI shows recent transcribed clips and a separate live-monitor tab.
-When served through the tailnet proxy it reads `/api/clips/recent`,
-`/api/live/current.mp3`, and `/api/live/status`; when deployed statically it
-reads `public_manifest.json` and copied public audio files. The live monitor in
-the public static page points at the Tailscale HTTPS endpoint, so it works for
-authenticated tailnet devices without exposing LAN services.
+At `vhf.robertboscacci.com` it reads `/api/clips/recent`,
+`/api/live/current.mp3`, `/api/live/{channel}/current.mp3`,
+`/api/live/{channel}/status`, and `/api/live/channels` from the same origin. If
+the live clip API is unavailable, it falls back to `public_manifest.json` and
+copied public audio files.
 
 ## Fake Radio Simulator
 
@@ -177,17 +177,17 @@ Icecast with generated local source credentials, and starts:
 
 - `talkingboats-edge-live-radio-stream.service`: one `rtl_fm` process teed
   through the Pi edge detector and then to Icecast MP3.
-- `talkingboats-profile-capture.service`: default debug profile that alternates
-  NOAA and VHF 14 for fast transcription feedback.
+- `talkingboats-profile-capture.service`: default debug profile that records
+  VHF 14 for fast transcription feedback.
 - `talkingboats-spool-uploader.service`: uploads completed multichannel spool
   files when durable upload env vars are present.
 
 For a continuous signal check, override the frequency before the first install,
-for example a local NOAA weather channel:
+for example VHF 14:
 
 ```bash
-sudo env TALKINGBOATS_LIVE_FREQUENCY_HZ=162550000 \
-  TALKINGBOATS_LIVE_LABEL="NOAA Weather" \
+sudo env TALKINGBOATS_LIVE_FREQUENCY_HZ=156700000 \
+  TALKINGBOATS_LIVE_LABEL="VTS / Seattle Traffic" \
   deploy/pi/install_live_radio.sh
 ```
 
@@ -219,8 +219,9 @@ Tune thresholds in `/etc/talkingboats/live-radio.env`:
 
 ```bash
 TALKINGBOATS_EDGE_THRESHOLD_RMS=8000
-TALKINGBOATS_EDGE_MIN_CLIP_SECONDS=0.7
-TALKINGBOATS_EDGE_POST_ROLL_SECONDS=1.2
+TALKINGBOATS_EDGE_MIN_CLIP_SECONDS=1.0
+TALKINGBOATS_EDGE_PRE_ROLL_SECONDS=0
+TALKINGBOATS_EDGE_POST_ROLL_SECONDS=0.3
 TALKINGBOATS_EDGE_MAX_CLIP_SECONDS=45
 TALKINGBOATS_EDGE_RECORD_ENABLED=true
 TALKINGBOATS_EDGE_RECORD_SEGMENT_SECONDS=300
@@ -233,17 +234,17 @@ TALKINGBOATS_EDGE_MAX_TEMP_C=72
 TALKINGBOATS_EDGE_RESUME_TEMP_C=66
 TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU=0.85
 TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED=true
+TALKINGBOATS_LIVE_SQUELCH_LOOKAHEAD_SECONDS=1.0
 ```
 
-The debug profile overrides NOAA to reduce tiny forecast fragments:
+The debug profile uses VHF 14 with tighter thresholds for fast feedback:
 
 ```bash
-TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS=4
-TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS=4.5
-TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS=30
-TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS=45
 TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS=180
-TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS=3600
+TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS=5000
+TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS=2.0
+TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS=0.4
+TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS=30
 TALKINGBOATS_CAPTURE_LIVE_MOUNT=/talkingboats-live.mp3
 TALKINGBOATS_CAPTURE_STATUS_PATH=/opt/talkingboats/live-radio/current-status.json
 ```
@@ -281,12 +282,12 @@ and are retried later, so API presign success and actual object upload can remai
 eventually consistent.
 
 The uploaded-clip transcriber keeps VAD off by default so it can hear through
-short NOAA pauses, then drops individual Whisper segments below
+short radio pauses, then drops individual Whisper segments below
 `TALKINGBOATS_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB=-0.6` so static-only clips do
 not get promoted as stock phrases like "Thank you." Set the value much lower,
 such as `-10`, when deliberately auditing weak-signal audio.
 
-NOAA/speech cleanup is on by default and runs before the edge detector, so
+Speech cleanup is on by default and runs before the edge detector, so
 uploaded clips and live debug audio use the same filtered PCM. The default chain
 does not include dynamic normalization because that can raise static before the
 activity gate. Turn cleanup off only for an A/B test:
@@ -307,11 +308,14 @@ TALKINGBOATS_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28
 The live Icecast feed also applies an audio gate by default. Frames below the
 same RMS activity threshold used for clip capture are written as silence to the
 browser stream while the detector and recorder still see the original PCM. Loud
-noise-like static bursts are muted on the browser stream, and the final MP3 feed
-has a safety limiter so monitor audio cannot jump to full scale:
+noise-like static bursts are muted on the browser stream. The live output holds
+about one second of lookahead by default so a wall of static can be detected and
+silenced before it reaches the browser, and the final MP3 feed has a safety
+limiter so monitor audio cannot jump to full scale:
 
 ```bash
 TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED=true
+TALKINGBOATS_LIVE_SQUELCH_LOOKAHEAD_SECONDS=1.0
 TALKINGBOATS_LIVE_OUTPUT_FILTER=alimiter=limit=0.55
 ```
 
@@ -346,36 +350,60 @@ chunks from Icecast and decoding them through PyAV/faster-whisper. It serves:
 http://optiplex.local:8055/api/live-transcript
 ```
 
-For a single tailnet-authenticated browser origin, run the OptiPlex proxy and
-point Tailscale Serve at it:
+For the public read-only browser origin, run the OptiPlex proxy locally and
+point Tailscale Funnel at it:
 
 ```bash
-conda run -n dell talkingboats-live-radio-proxy \
-  --host 100.124.5.39 \
-  --port 8095
-tailscale serve --bg --https=10000 http://100.124.5.39:8095
+sudo install -m 0644 deploy/systemd/talkingboats-live-radio-proxy.service.example \
+  /etc/systemd/system/talkingboats-live-radio-proxy.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now talkingboats-live-radio-proxy.service
+tailscale funnel --bg --https=10000 http://127.0.0.1:8095
 ```
 
-The proxy serves the same `public-site/` UI, forwards only the read-only
-recent-clip API call to the private API, and exposes a read-only current receiver
-stream at:
+The proxy serves the same `public-site/` UI for direct origin checks, forwards
+only the read-only recent-clip API call to the private API, and exposes a
+read-only current receiver stream plus per-channel streams for the continuously
+monitored VHF channels. CloudFront routes the public app to:
 
 ```text
-https://optiplex.tailbea63b.ts.net:10000/api/live/current.mp3
+https://vhf.robertboscacci.com/api/live/current.mp3
+https://vhf.robertboscacci.com/api/live/13/current.mp3
+https://vhf.robertboscacci.com/api/live/14/current.mp3
 ```
 
-`/api/live/current.mp3` probes the known Pi Icecast mounts and connects to the
-first active one, which is useful while the debug profile alternates between
-NOAA and VHF 14. Caption and retune endpoints remain off by default; enable them
-explicitly with `TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS=true` on a
-Tailscale-only service.
+The CloudFront live origin is configurable with `live_origin_domain_name` and
+`live_origin_https_port`; by default it points at
+`optiplex.tailbea63b.ts.net:10000`.
 
-`/api/live/status` exposes only the active channel label/frequency and an
-expected 30-90 second stream-delay budget for the browser UI. It does not expose
-LAN hostnames, upstream stream URLs, tokens, or raw receiver configuration. The
-live waveform is rendered client-side from the audio element via Web Audio; when
-the squelched stream is quiet it switches to a waiting state until the next
-transmission comes through.
+`/api/live/current.mp3` keeps the stable default VHF 14 behavior. The channel
+paths proxy only their configured Icecast mounts, and `/api/live/channels`
+returns browser-safe labels and same-origin paths without exposing LAN hostnames
+or upstream stream URLs. RTLSDR-Airband writes those live Icecast outputs
+continuously so the browser receives silence while the squelch is closed instead
+of waiting for a new burst before playback can start. Caption and retune
+endpoints remain off by default. Do not set
+`TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS=true` on the Funnel-backed public
+origin.
+
+Dev previews can request the experimental warm voice chain with
+`?dsp=warm_voice`; the checked-in browser UI only adds that query on
+`vhf-dev.robertboscacci.com`. The proxy keeps prod raw unless the client
+explicitly asks for a DSP profile. Set `TALKINGBOATS_PROXY_FFMPEG_PATH` if the
+service should use a non-default `ffmpeg` binary.
+
+Use the local analysis helper to compare clips before and after a filter change:
+
+```bash
+conda run -n dell talkingboats-analyze-audio clip.mp3 filtered-clip.mp3
+```
+
+`/api/live/status` and `/api/live/{channel}/status` expose only channel
+label/frequency and an expected 1-5 second stream-delay budget for the browser
+UI. They do not expose LAN hostnames, upstream stream URLs, tokens, or raw
+receiver configuration. The live waveform is rendered client-side from the
+audio element via Web Audio; when the squelched stream is quiet it switches to a
+waiting state until the next transmission comes through.
 
 The simple `talkingboats-live-radio-stream.service` remains installed as an
 escape hatch, but the installer disables it so only one process owns the SDR.
@@ -385,7 +413,7 @@ escape hatch, but the installer disables it so only one process owns the SDR.
 The primary exporter turns the recent transcribed clip DB into a static site with
 copied public audio files. The browser UI shows timestamps in Pacific time and
 the clip review list can filter by channel; the live API fetches filtered channel
-views directly so sparse non-NOAA clips are not hidden behind busier channels.
+views directly so sparse channels are not hidden behind busier channels.
 
 ```bash
 conda run -n dell talkingboats-export-public \
@@ -430,7 +458,8 @@ alias records, and IAM policies for private server publishing.
 - Public buckets are private and readable only by their matching CloudFront OAC.
 - The Pi does not get long-lived AWS credentials; it asks the private API for a
   short-lived presigned upload URL.
-- Live radio is available through Tailscale Serve only; public static hosting
-  never exposes a LAN Icecast URL.
+- Live radio is public read-only through CloudFront and Tailscale Funnel; control
+  and write endpoints stay private, and public hosting never exposes a LAN
+  Icecast URL.
 - Public exports reject private URLs, raw S3 keys, receiver IDs, AWS account IDs,
   and unreviewed transcripts.

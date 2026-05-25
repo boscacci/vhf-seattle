@@ -11,13 +11,13 @@ flowchart LR
   pi["Raspberry Pi<br/>AC-to-USB power<br/>Wi-Fi"]
   optiplex["OptiPlex private server<br/>API, SQLite, transcription, UI"]
   s3raw["Private S3 raw audio<br/>raw/ expires, hall-of-fame/ retained"]
-  public["CloudFront public site<br/>vhf.robertboscacci.com"]
+  public["CloudFront public app<br/>vhf.robertboscacci.com"]
 
   antenna --> voice
   voice --> pi
   pi -->|private Wi-Fi uploads| optiplex
   optiplex -->|presigned raw uploads| s3raw
-  optiplex -->|recent clip static export| public
+  optiplex -->|recent clips and read-only live proxy| public
 ```
 
 ## First Parts List
@@ -98,5 +98,5 @@ AIS can come back later, but it is not part of the current browser UI.
 
 The Mermaid diagram above is the source of truth for a polished Figma/FigJam
 diagram. Keep the public/private boundary visible: public viewers can see only
-the static site and exported clips, never the Pi, live stream, private API,
-database, or raw S3 archive.
+the read-only live app, exported clips, and current receiver audio, never radio
+controls, write APIs, private database access, or the raw S3 archive.

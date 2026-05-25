@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from talkingboats.channel_metadata import CHANNEL_METADATA
+
 
 @dataclass(frozen=True)
 class LiveChannel:
@@ -50,20 +52,26 @@ class Settings:
             if os.getenv("TALKINGBOATS_CLIP_DB_PATH")
             else None,
             live_channels={
-                "68": LiveChannel(
-                    channel="68",
-                    label="Fun Channel",
-                    frequency_mhz=156.425,
-                    stream_url=os.getenv("TALKINGBOATS_LIVE_68_URL"),
-                ),
+                "13": _live_channel_from_metadata("13", os.getenv("TALKINGBOATS_LIVE_13_URL")),
                 "14": LiveChannel(
                     channel="14",
-                    label="Super Business Channel",
-                    frequency_mhz=156.700,
+                    label=CHANNEL_METADATA["14"].label,
+                    frequency_mhz=CHANNEL_METADATA["14"].frequency_mhz,
                     stream_url=os.getenv("TALKINGBOATS_LIVE_14_URL"),
                 ),
+                "68": _live_channel_from_metadata("68", os.getenv("TALKINGBOATS_LIVE_68_URL")),
             },
         )
+
+
+def _live_channel_from_metadata(channel: str, stream_url: str | None) -> LiveChannel:
+    metadata = CHANNEL_METADATA[channel]
+    return LiveChannel(
+        channel=metadata.channel,
+        label=metadata.label,
+        frequency_mhz=metadata.frequency_mhz,
+        stream_url=stream_url,
+    )
 
 
 def _env_int(name: str, default: int) -> int:

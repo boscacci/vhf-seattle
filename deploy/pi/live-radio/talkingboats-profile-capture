@@ -69,27 +69,13 @@ run_sequential_slot() {
 }
 
 run_debug_profile() {
-  local wx_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS:-45}"
   local vts_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-180}"
-  local wx_threshold="${TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS:-2200}"
-  local vts_threshold="${TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS:-3600}"
-  local wx_min_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS:-4}"
-  local wx_post_roll_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS:-4.5}"
-  local wx_max_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS:-30}"
-  local vts_min_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS:-1.2}"
-  local vts_post_roll_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS:-2.5}"
-  local vts_max_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS:-45}"
+  local vts_threshold="${TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS:-5000}"
+  local vts_min_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS:-2.0}"
+  local vts_post_roll_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS:-0.4}"
+  local vts_max_clip_seconds="${TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS:-30}"
 
   while true; do
-    run_sequential_slot \
-      "WX" \
-      "162550000" \
-      "NOAA Weather 162.550" \
-      "${wx_seconds}" \
-      "${wx_threshold}" \
-      "${wx_min_clip_seconds}" \
-      "${wx_post_roll_seconds}" \
-      "${wx_max_clip_seconds}"
     run_sequential_slot \
       "14" \
       "156700000" \
@@ -114,7 +100,7 @@ run_elliott_bay_profile() {
     exit 2
   fi
   echo "event=capture_profile_airband_start profile=${profile} config=${config_path}" >&2
-  exec "${airband_binary}" -c "${config_path}"
+  exec "${airband_binary}" -F -e -c "${config_path}"
 }
 
 case "${profile}" in

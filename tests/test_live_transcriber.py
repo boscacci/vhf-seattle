@@ -49,14 +49,14 @@ def test_append_transcript_segments_ignores_empty_text() -> None:
     chunk_started = datetime(2026, 5, 24, 17, 0, tzinfo=UTC)
     segments = [
         SimpleNamespace(start=0.0, end=1.2, text="  "),
-        SimpleNamespace(start=1.2, end=2.5, text=" NOAA weather radio "),
+        SimpleNamespace(start=1.2, end=2.5, text=" marine traffic radio "),
     ]
 
     append_transcript_segments(state, segments, chunk_started=chunk_started)
 
     payload = state.payload()
     assert len(payload["entries"]) == 1
-    assert payload["entries"][0]["text"] == "NOAA weather radio"
+    assert payload["entries"][0]["text"] == "marine traffic radio"
     assert payload["entries"][0]["started_at"] == "2026-05-24T17:00:01Z"
     assert payload["entries"][0]["ended_at"] == "2026-05-24T17:00:02Z"
 

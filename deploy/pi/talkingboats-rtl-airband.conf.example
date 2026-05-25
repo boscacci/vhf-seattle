@@ -20,7 +20,7 @@ devices:
       outputs:
       (
         {
-          type = "rawfile";
+          type = "file";
           directory = "/opt/talkingboats/spool/airband/13";
           filename_template = "vhf-13";
           split_on_transmission = true;
@@ -34,7 +34,7 @@ devices:
       outputs:
       (
         {
-          type = "rawfile";
+          type = "file";
           directory = "/opt/talkingboats/spool/airband/14";
           filename_template = "vhf-14";
           split_on_transmission = true;

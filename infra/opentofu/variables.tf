@@ -34,6 +34,30 @@ variable "dev_resource_site_subdomain" {
   default     = "dev.talkingboats"
 }
 
+variable "live_origin_domain_name" {
+  description = "Public HTTPS origin domain for read-only live radio API routes. Do not include a scheme."
+  type        = string
+  default     = "optiplex.tailbea63b.ts.net"
+}
+
+variable "live_origin_https_port" {
+  description = "HTTPS port for the read-only live radio origin."
+  type        = number
+  default     = 10000
+}
+
+variable "dev_live_origin_domain_name" {
+  description = "Optional dev override for the read-only live radio origin domain."
+  type        = string
+  default     = null
+}
+
+variable "dev_live_origin_https_port" {
+  description = "Optional dev override for the read-only live radio origin HTTPS port."
+  type        = number
+  default     = null
+}
+
 variable "project_name" {
   description = "Short name used in AWS resource names."
   type        = string

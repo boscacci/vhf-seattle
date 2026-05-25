@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
 from talkingboats.clip_transcriber import (
     ClipReader,
     RecentTranscribedClip,
@@ -19,6 +20,7 @@ from talkingboats.clip_transcriber import (
 from talkingboats.security import assert_public_safe
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+PUBLIC_EXCLUDED_CHANNELS = ("WX",)
 
 ALLOWED_CLIP_FIELDS = {
     "id",
@@ -36,6 +38,7 @@ ALLOWED_CLIP_FIELDS = {
 ALLOWED_STATS_FIELDS = {
     "busiest_hours",
     "channel_counts",
+    "channel_labels",
     "vessel_type_counts",
     "generated_at",
     "clip_count",
@@ -69,21 +72,28 @@ def sanitize_public_manifest(private_manifest: Mapping[str, Any]) -> dict[str, A
             raise PublicExportError("clips must contain objects")
         if not clip.get("approved_public"):
             continue
+        if str(clip.get("channel") or "").upper() in PUBLIC_EXCLUDED_CHANNELS:
+            continue
         clips.append(_sanitize_clip(clip))
+
+    channel_counts = _channel_counts_for_public_clips(clips)
+    stats = _copy_allowed(private_manifest.get("stats", {}), ALLOWED_STATS_FIELDS)
+    stats["clip_count"] = len(clips)
+    stats["channel_counts"] = channel_counts
+    stats["channel_labels"] = public_monitored_channel_labels(channel_counts)
 
     public_manifest = {
         "generated_at": private_manifest.get("generated_at"),
         "site": {
-            "title": private_manifest.get("site", {}).get("title", "Seattle Marine Radio"),
+            "title": private_manifest.get("site", {}).get("title", "Elliott Bay VHF"),
             "subtitle": private_manifest.get("site", {}).get(
                 "subtitle",
-                "Elliott Bay VHF receiver clips and tailnet live audio.",
+                "Live Elliott Bay marine VHF audio and recent receiver clips.",
             ),
         },
-        "stats": _copy_allowed(private_manifest.get("stats", {}), ALLOWED_STATS_FIELDS),
+        "stats": stats,
         "clips": clips,
     }
-    public_manifest["stats"]["clip_count"] = len(clips)
     assert_public_safe(public_manifest)
     return public_manifest
 
@@ -124,7 +134,7 @@ def export_recent_clip_site(
     if limit <= 0:
         raise ValueError("limit must be positive")
     store = UploadedClipStore(clip_db_path)
-    clips = store.recent_transcribed(limit=limit)
+    clips = store.recent_transcribed(limit=limit, excluded_channels=PUBLIC_EXCLUDED_CHANNELS)
     public_manifest = _recent_clip_manifest(clips)
 
     if output_dir.exists():
@@ -161,6 +171,7 @@ def _sanitize_clip(clip: Mapping[str, Any]) -> dict[str, Any]:
         sanitized["vessel_context"] = [
             _copy_allowed(vessel, ALLOWED_VESSEL_FIELDS) for vessel in vessels
         ]
+    sanitized.setdefault("channel_label", channel_label(str(sanitized.get("channel") or "")))
 
     required = ["id", "public_title", "channel", "started_at"]
     missing = [field for field in required if not sanitized.get(field)]
@@ -176,6 +187,14 @@ def _copy_allowed(source: Any, allowed_fields: set[str]) -> dict[str, Any]:
     if not isinstance(source, Mapping):
         raise PublicExportError("expected object")
     return {field: source[field] for field in allowed_fields if field in source}
+
+
+def _channel_counts_for_public_clips(clips: list[dict[str, Any]]) -> dict[str, int]:
+    channel_counts: dict[str, int] = {}
+    for clip in clips:
+        channel = str(clip["channel"])
+        channel_counts[channel] = channel_counts.get(channel, 0) + 1
+    return channel_counts
 
 
 def _round_location(ais_context: dict[str, Any]) -> dict[str, Any]:
@@ -199,6 +218,7 @@ def _copy_approved_audio(
     audio_source_dir: Path,
     clips_dir: Path,
 ) -> None:
+    source_root = audio_source_dir.resolve()
     for clip in public_manifest["clips"]:
         filename = clip.get("audio_public_filename")
         if not filename:
@@ -206,6 +226,8 @@ def _copy_approved_audio(
         source = audio_source_dir / filename
         if not source.exists():
             raise PublicExportError(f"approved audio file does not exist: {source}")
+        if not source.resolve().is_relative_to(source_root):
+            raise PublicExportError("approved audio file escapes source directory")
         shutil.copy2(source, clips_dir / filename)
 
 
@@ -219,13 +241,14 @@ def _recent_clip_manifest(clips: list[RecentTranscribedClip]) -> dict[str, Any]:
     public_manifest = {
         "generated_at": generated_at,
         "site": {
-            "title": "Seattle Marine Radio",
-            "subtitle": "Elliott Bay VHF receiver clips and tailnet live audio.",
+            "title": "Elliott Bay VHF",
+            "subtitle": "Live Elliott Bay marine VHF audio and recent receiver clips.",
         },
         "stats": {
             "generated_at": generated_at,
             "clip_count": len(public_clips),
             "channel_counts": channel_counts,
+            "channel_labels": public_monitored_channel_labels(channel_counts),
         },
         "clips": public_clips,
     }
@@ -239,6 +262,7 @@ def _public_clip_from_recent(clip: RecentTranscribedClip) -> dict[str, Any]:
         "id": clip_id,
         "public_title": _public_clip_title(clip),
         "channel": clip.channel,
+        "channel_label": channel_label(clip.channel),
         "started_at": clip.started_at,
         "ended_at": clip.ended_at,
         "duration_seconds": clip.duration_seconds,
@@ -296,7 +320,7 @@ def _format_utc(value: datetime) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build the sanitized Seattle Marine Radio site.")
+    parser = argparse.ArgumentParser(description="Build the sanitized Elliott Bay VHF site.")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--private-manifest", type=Path)
     source.add_argument("--clip-db-path", type=Path)

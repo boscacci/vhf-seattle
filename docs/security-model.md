@@ -2,9 +2,10 @@
 
 ## Public Boundary
 
-`vhf.robertboscacci.com` is static-only. It serves recent exported clip metadata
-and copied public audio files from a private S3 bucket through CloudFront Origin
-Access Control.
+`vhf.robertboscacci.com` is public read-only. It serves static app assets and
+published clip audio from a private S3 bucket through CloudFront Origin Access
+Control, then routes read-only live API paths to the OptiPlex proxy through
+Tailscale Funnel.
 
 Public artifacts must not contain:
 
@@ -12,15 +13,14 @@ Public artifacts must not contain:
 - receiver IDs;
 - internal/private network URLs;
 - AWS account IDs or access key material;
-- live-radio stream URLs.
+- private live-radio stream URLs.
 
 ## Read-Only Clip Console
 
-The clip console can be public or Tailscale-served without a manual token. The
-same `public-site/` UI either reads static exported clips or, on Tailscale,
-reads recent transcripts plus short-lived playback URLs. It must not expose
-write endpoints, retune controls, raw ingest presigning, private network URLs,
-or arbitrary internal proxying.
+The clip console is public without a manual token. The same `public-site/` UI
+reads recent transcripts, short-lived playback URLs, live status, and the current
+read-only live audio stream. It must not expose write endpoints, retune controls,
+raw ingest presigning, private network URLs, or arbitrary internal proxying.
 
 ## Private Boundary
 

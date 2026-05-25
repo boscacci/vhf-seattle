@@ -129,7 +129,7 @@ def test_recent_transcribed_clips_returns_newest_with_segments(tmp_path) -> None
     store = UploadedClipStore(db_path)
     older_key = "raw/channel=14/date=2026-05-24/20260524T210000Z-older.mp3"
     newer_key = "raw/channel=13/date=2026-05-24/20260524T213000Z-newer.mp3"
-    pending_key = "raw/channel=WX/date=2026-05-24/20260524T214000Z-pending.mp3"
+    pending_key = "raw/channel=16/date=2026-05-24/20260524T214000Z-pending.mp3"
     store.record_presigned_upload(key=older_key, request=_clip_request(channel="14"))
     store.record_presigned_upload(
         key=newer_key,
@@ -137,7 +137,7 @@ def test_recent_transcribed_clips_returns_newest_with_segments(tmp_path) -> None
     )
     store.record_presigned_upload(
         key=pending_key,
-        request=_clip_request(channel="WX", started_at="2026-05-24T21:40:00Z"),
+        request=_clip_request(channel="16", started_at="2026-05-24T21:40:00Z"),
     )
     store.mark_transcribed(
         older_key,

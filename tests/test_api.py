@@ -1,6 +1,7 @@
+import asyncio
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+import httpx
 
 from talkingboats.api import app, get_settings, get_storage
 from talkingboats.clip_transcriber import UploadedClipStore
@@ -106,13 +107,17 @@ def test_recent_clips_are_public_read_only_with_playback_urls(tmp_path) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["clips"][0]["key"] == key
+    assert "key" not in body["clips"][0]
+    assert key not in response.text
     assert body["clips"][0]["channel"] == "14"
+    assert body["clips"][0]["channel_label"] == "VTS / Seattle Traffic"
     assert body["clips"][0]["transcript"] == "Seattle Traffic inbound for Elliott Bay"
     assert body["clips"][0]["segments"][0]["text"] == "Seattle Traffic inbound for Elliott Bay"
     assert body["clips"][0]["playback_url"] == "https://s3.example.test/playback"
     assert body["clips"][0]["playback_expires_in_seconds"] == 300
     assert body["channel_counts"] == {"14": 1}
+    assert body["channel_labels"]["13"] == "Bridge-to-bridge"
+    assert body["channel_labels"]["14"] == "VTS / Seattle Traffic"
 
 
 def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
@@ -121,7 +126,8 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
     store = UploadedClipStore(db_path)
     wx_key = "raw/channel=WX/date=2026-05-20/noaa.mp3"
     channel_14_key = "raw/channel=14/date=2026-05-20/traffic.mp3"
-    store.record_presigned_upload(key=wx_key, request=_clip_presign(channel="WX"))
+    legacy_wx_request = _clip_presign(channel="14").model_copy(update={"channel": "WX"})
+    store.record_presigned_upload(key=wx_key, request=legacy_wx_request)
     store.record_presigned_upload(key=channel_14_key, request=_clip_presign(channel="14"))
     store.mark_transcribed(
         wx_key,
@@ -148,8 +154,23 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert [clip["key"] for clip in body["clips"]] == [channel_14_key]
-    assert body["channel_counts"] == {"14": 1, "WX": 1}
+    assert [clip["channel"] for clip in body["clips"]] == ["14"]
+    assert [clip["channel_label"] for clip in body["clips"]] == ["VTS / Seattle Traffic"]
+    assert [clip["transcript"] for clip in body["clips"]] == ["Wait for your call"]
+    assert channel_14_key not in response.text
+    assert all("key" not in clip for clip in body["clips"])
+    assert body["channel_counts"] == {"14": 1}
+    assert body["channel_labels"]["13"] == "Bridge-to-bridge"
+    assert body["channel_labels"]["14"] == "VTS / Seattle Traffic"
+
+    wx_response = client.get("/api/clips/recent?limit=5&channel=WX")
+
+    assert wx_response.status_code == 200
+    assert wx_response.json() == {
+        "clips": [],
+        "channel_counts": {"14": 1},
+        "channel_labels": {"13": "Bridge-to-bridge", "14": "VTS / Seattle Traffic"},
+    }
 
 
 def test_operator_live_channels_do_not_expose_upstream_urls() -> None:
@@ -193,36 +214,70 @@ def test_playback_presign_rejects_public_prefix() -> None:
     assert response.status_code == 400
 
 
-def _client(*, clip_db_path: Path | None = None) -> TestClient:
+class AsgiTestClient:
+    def __init__(self, app) -> None:
+        self.app = app
+        self.cookies = httpx.Cookies()
+
+    def get(self, path: str, **kwargs) -> httpx.Response:
+        return _run(self._request("GET", path, **kwargs))
+
+    def post(self, path: str, **kwargs) -> httpx.Response:
+        return _run(self._request("POST", path, **kwargs))
+
+    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        transport = httpx.ASGITransport(app=self.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            cookies=self.cookies,
+        ) as client:
+            response = await client.request(method, path, **kwargs)
+        self.cookies.update(response.cookies)
+        return response
+
+
+def _client(*, clip_db_path: Path | None = None) -> AsgiTestClient:
     app.dependency_overrides.clear()
-    app.dependency_overrides[get_settings] = lambda: Settings(
-        aws_region="us-west-2",
-        raw_bucket="raw-bucket",
-        public_bucket="public-bucket",
-        operator_token="operator-token",
-        ingest_token="ingest-token",
-        raw_presign_seconds=900,
-        playback_presign_seconds=300,
-        public_site_dir=Path("outputs/public-site"),
-        public_base_url="https://vhf.robertboscacci.com",
-        live_channels={
-            "68": LiveChannel(
-                channel="68",
-                label="Fun Channel",
-                frequency_mhz=156.425,
-                stream_url="http://127.0.0.1:8040/vhf-68.mp3",
-            ),
-            "14": LiveChannel(
-                channel="14",
-                label="Super Business Channel",
-                frequency_mhz=156.700,
-                stream_url=None,
-            ),
-        },
-        clip_db_path=clip_db_path,
-    )
-    app.dependency_overrides[get_storage] = lambda: FakeStorage()
-    return TestClient(app)
+
+    async def override_settings() -> Settings:
+        return Settings(
+            aws_region="us-west-2",
+            raw_bucket="raw-bucket",
+            public_bucket="public-bucket",
+            operator_token="operator-token",
+            ingest_token="ingest-token",
+            raw_presign_seconds=900,
+            playback_presign_seconds=300,
+            public_site_dir=Path("outputs/public-site"),
+            public_base_url="https://vhf.robertboscacci.com",
+            live_channels={
+                "68": LiveChannel(
+                    channel="68",
+                    label="Recreational",
+                    frequency_mhz=156.425,
+                    stream_url="http://127.0.0.1:8040/vhf-68.mp3",
+                ),
+                "14": LiveChannel(
+                    channel="14",
+                    label="VTS / Seattle Traffic",
+                    frequency_mhz=156.700,
+                    stream_url=None,
+                ),
+            },
+            clip_db_path=clip_db_path,
+        )
+
+    async def override_storage() -> FakeStorage:
+        return FakeStorage()
+
+    app.dependency_overrides[get_settings] = override_settings
+    app.dependency_overrides[get_storage] = override_storage
+    return AsgiTestClient(app)
+
+
+def _run(awaitable):
+    return asyncio.run(awaitable)
 
 
 def _clip_request() -> dict[str, object]:

@@ -49,7 +49,7 @@ def test_spool_uploader_ignores_young_files(tmp_path) -> None:
 
 def test_spool_uploader_infers_channel_from_directory() -> None:
     assert infer_spool_channel(Path("/opt/talkingboats/spool/airband/13/file.mp3")) == "13"
-    assert infer_spool_channel(Path("/opt/talkingboats/spool/airband/WX/file.wav")) == "WX"
+    assert infer_spool_channel(Path("/opt/talkingboats/spool/airband/14/file.wav")) == "14"
 
 
 def test_spool_uploader_imports_without_pydantic() -> None:

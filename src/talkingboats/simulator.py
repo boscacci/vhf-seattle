@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from talkingboats.channel_metadata import CHANNEL_METADATA
 from talkingboats.schemas import Channel, ClipPresignRequest
 from talkingboats.storage import raw_clip_key
 
@@ -33,8 +34,8 @@ class ChannelScript:
 CHANNEL_SCRIPTS: dict[Channel, ChannelScript] = {
     "68": ChannelScript(
         channel="68",
-        label="Fun Channel",
-        frequency_mhz=156.425,
+        label=CHANNEL_METADATA["68"].label,
+        frequency_mhz=CHANNEL_METADATA["68"].frequency_mhz,
         tone_hz=620,
         titles=(
             "Dockside coordination",
@@ -51,8 +52,8 @@ CHANNEL_SCRIPTS: dict[Channel, ChannelScript] = {
     ),
     "14": ChannelScript(
         channel="14",
-        label="Super Business Channel",
-        frequency_mhz=156.700,
+        label=CHANNEL_METADATA["14"].label,
+        frequency_mhz=CHANNEL_METADATA["14"].frequency_mhz,
         tone_hz=420,
         titles=(
             "Seattle Traffic movement",
@@ -153,7 +154,7 @@ def generate_radio_fixture(config: RadioSimulationConfig) -> dict[str, Any]:
     manifest = {
         "generated_at": _format_utc(config.started_at.astimezone(UTC)),
         "site": {
-            "title": "Seattle Marine Radio",
+            "title": "Elliott Bay VHF",
             "subtitle": "Synthetic private fixture data for local Elliott Bay radio testing.",
         },
         "stats": {

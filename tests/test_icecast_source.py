@@ -12,7 +12,7 @@ def test_source_headers_use_http10_without_chunked_framing() -> None:
         mount="/talkingboats-live.mp3",
         username="source",
         password="secret",
-        ice_name="Talking Boats NOAA",
+        ice_name="Talking Boats VHF 14",
         ice_public="0",
     ).decode("ascii")
 

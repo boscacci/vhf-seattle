@@ -58,6 +58,23 @@ def test_opentofu_has_distinct_dev_and_prod_outputs() -> None:
     assert 'output "dev_public_site_bucket"' in outputs_tf
 
 
+def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
+    main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+    variables_tf = Path("infra/opentofu/variables.tf").read_text(encoding="utf-8")
+
+    assert 'variable "live_origin_domain_name"' in variables_tf
+    assert 'default     = "optiplex.tailbea63b.ts.net"' in variables_tf
+    assert 'resource "aws_cloudfront_origin_request_policy" "live_api"' in main_tf
+    assert 'query_string_behavior = "all"' in main_tf
+    assert 'origin_protocol_policy = "https-only"' in main_tf
+    assert 'https_port             = var.live_origin_https_port' in main_tf
+    assert 'path_pattern             = "/api/live/*"' in main_tf
+    assert 'path_pattern             = "/api/clips/recent"' in main_tf
+    assert main_tf.count("target_origin_id         = local.live_origin_id") == 2
+    assert main_tf.count("target_origin_id         = local.dev_live_origin_id") == 2
+    assert "origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id" in main_tf
+
+
 def _lifecycle_block(main_tf: str) -> str:
     start = main_tf.index('resource "aws_s3_bucket_lifecycle_configuration" "raw_audio"')
     end = main_tf.index('resource "aws_acm_certificate" "site"')

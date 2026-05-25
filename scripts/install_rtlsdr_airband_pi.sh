@@ -17,6 +17,7 @@ apt-get install -y \
   libconfig++-dev \
   libfftw3-dev \
   libmp3lame-dev \
+  librtlsdr-dev \
   libshout3-dev \
   pkg-config
 
@@ -27,6 +28,11 @@ else
   rm -rf "${build_dir}"
   git clone --depth 1 "${repo_url}" "${build_dir}"
 fi
+
+# Upstream's version helper is executed by CMake from the build directory, so make
+# its git lookup explicit before configuring.
+sed -i 's/git describe --tags --abbrev --dirty --always/git -C "${PROJECT_ROOT_PATH}" describe --tags --abbrev --dirty --always/' \
+  "${build_dir}/scripts/find_version"
 
 cmake -S "${build_dir}" -B "${build_dir}/build" -DNFM=ON
 cmake --build "${build_dir}/build" --parallel "$(nproc)"

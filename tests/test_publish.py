@@ -43,6 +43,14 @@ def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
                 "started_at": "2026-05-20T20:00:00Z",
                 "transcript_public": "This unreviewed text must not leak.",
             },
+            {
+                "id": "legacy-wx",
+                "approved_public": True,
+                "public_title": "Legacy broadcast",
+                "channel": "WX",
+                "started_at": "2026-05-20T21:00:00Z",
+                "transcript_public": "Legacy broadcast text.",
+            },
         ],
     }
 
@@ -129,6 +137,38 @@ def test_public_export_rejects_nested_audio_filename() -> None:
         )
 
 
+def test_public_export_rejects_audio_symlink_escape(tmp_path: Path) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    audio_source = tmp_path / "audio-source"
+    audio_source.mkdir()
+    outside_audio = tmp_path / "outside.mp3"
+    outside_audio.write_bytes(b"private audio")
+    (audio_source / "approved.mp3").symlink_to(outside_audio)
+    private_manifest = tmp_path / "private.json"
+    private_manifest.write_text(
+        json.dumps(
+            {
+                "clips": [
+                    {
+                        "id": "approved",
+                        "approved_public": True,
+                        "public_title": "Public moment",
+                        "channel": "68",
+                        "started_at": "2026-05-20T19:12:00Z",
+                        "audio_public_filename": "approved.mp3",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PublicExportError, match="approved audio file escapes source directory"):
+        export_public_site(private_manifest, site_source, tmp_path / "output", audio_source)
+
+
 def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) -> None:
     site_source = tmp_path / "site-source"
     site_source.mkdir()
@@ -167,9 +207,14 @@ def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) 
 
     clip = manifest["clips"][0]
     assert clip["channel"] == "14"
+    assert clip["channel_label"] == "VTS / Seattle Traffic"
     assert clip["transcript_public"] == "Southwest wind increasing after midnight."
     assert clip["public_title"] == "VHF 14 - May 24, 2026 3:08 PM PDT"
     assert clip["audio_public_filename"].endswith(".mp3")
+    assert manifest["stats"]["channel_labels"] == {
+        "13": "Bridge-to-bridge",
+        "14": "VTS / Seattle Traffic",
+    }
     exported_audio = tmp_path / "output" / "clips" / clip["audio_public_filename"]
     assert exported_audio.read_bytes() == b"real audio"
     assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
@@ -182,8 +227,8 @@ def test_recent_clip_public_audio_filename_cannot_look_like_account_id(monkeypat
 
     monkeypatch.setattr("talkingboats.publish.hashlib.sha256", lambda _value: FakeHash())
     clip = RecentTranscribedClip(
-        key="raw/channel=WX/date=2026-05-25/example.mp3",
-        channel="WX",
+        key="raw/channel=14/date=2026-05-25/example.mp3",
+        channel="14",
         started_at="2026-05-25T00:47:12Z",
         ended_at="2026-05-25T00:47:42Z",
         duration_seconds=30.0,
@@ -194,7 +239,7 @@ def test_recent_clip_public_audio_filename_cannot_look_like_account_id(monkeypat
 
     filename = _public_audio_filename(clip)
 
-    assert filename == "20260525T004712Z-vhf-wx-sha123456789012.mp3"
+    assert filename == "20260525T004712Z-vhf-14-sha123456789012.mp3"
     assert_public_safe({"audio_public_filename": filename})
 
 

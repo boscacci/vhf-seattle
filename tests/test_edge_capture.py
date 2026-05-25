@@ -23,7 +23,7 @@ from talkingboats.edge_capture import (
 )
 
 
-def test_detect_activity_keeps_pre_and_post_roll_and_ignores_silence() -> None:
+def test_detect_activity_trims_static_head_and_tail_like_receiver_squelch() -> None:
     started_at = datetime(2026, 5, 24, 13, 30, tzinfo=UTC)
     config = EdgeCaptureConfig(
         channel="68",
@@ -37,9 +37,9 @@ def test_detect_activity_keeps_pre_and_post_roll_and_ignores_silence() -> None:
     )
     pcm = b"".join(
         [
-            _pcm(amplitude=0, seconds=0.3, sample_rate_hz=config.sample_rate_hz),
-            _pcm(amplitude=5_000, seconds=0.5, sample_rate_hz=config.sample_rate_hz),
-            _pcm(amplitude=0, seconds=0.4, sample_rate_hz=config.sample_rate_hz),
+            _pcm(amplitude=9_000, seconds=0.3, sample_rate_hz=config.sample_rate_hz),
+            _tone_pcm(amplitude=5_000, seconds=0.5, sample_rate_hz=config.sample_rate_hz),
+            _pcm(amplitude=9_000, seconds=0.3, sample_rate_hz=config.sample_rate_hz),
         ]
     )
 
@@ -47,10 +47,10 @@ def test_detect_activity_keeps_pre_and_post_roll_and_ignores_silence() -> None:
 
     assert len(clips) == 1
     clip = clips[0]
-    assert clip.started_at == started_at + timedelta(seconds=0.1)
-    assert clip.ended_at == started_at + timedelta(seconds=1.0)
-    assert clip.duration_seconds == 0.9
-    assert clip.peak_amplitude == 5_000
+    assert clip.started_at == started_at + timedelta(seconds=0.3)
+    assert clip.ended_at == started_at + timedelta(seconds=0.8)
+    assert clip.duration_seconds == 0.5
+    assert clip.peak_amplitude >= 4_900
     assert clip.rms_amplitude > config.threshold_rms
 
 
@@ -69,7 +69,7 @@ def test_detect_activity_splits_long_transmissions_at_max_clip_seconds() -> None
 
     clips = list(
         detect_activity_clips(
-            [_pcm(amplitude=4_000, seconds=1.2, sample_rate_hz=config.sample_rate_hz)],
+            [_tone_pcm(amplitude=4_000, seconds=1.2, sample_rate_hz=config.sample_rate_hz)],
             started_at=started_at,
             config=config,
         )
@@ -105,7 +105,7 @@ def test_squelched_pcm_chunks_mutes_inactive_frames_but_preserves_active_audio()
 
 def test_squelched_pcm_chunks_mutes_loud_static_bursts_in_live_output() -> None:
     config = EdgeCaptureConfig(
-        channel="WX",
+        channel="14",
         sample_rate_hz=1_000,
         frame_ms=100,
         threshold_rms=1_000,
@@ -122,6 +122,38 @@ def test_squelched_pcm_chunks_mutes_loud_static_bursts_in_live_output() -> None:
     )
 
     assert rendered == active_frame + (b"\0" * len(static_burst)) + active_frame
+
+
+def test_squelched_pcm_chunks_can_delay_browser_output_for_static_safety() -> None:
+    config = EdgeCaptureConfig(
+        channel="14",
+        sample_rate_hz=1_000,
+        frame_ms=100,
+        threshold_rms=1_000,
+        post_roll_seconds=0.1,
+        live_squelch_lookahead_seconds=0.2,
+    )
+    active_frame = _tone_pcm(amplitude=4_000, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
+    static_burst = _pcm(amplitude=9_000, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
+
+    rendered_chunks = list(
+        squelched_pcm_chunks(
+            [active_frame, static_burst, active_frame],
+            config=config,
+        )
+    )
+
+    assert rendered_chunks[0] == b""
+    assert b"".join(rendered_chunks) == active_frame + (b"\0" * len(static_burst)) + active_frame
+
+
+def test_edge_capture_rejects_negative_live_squelch_lookahead() -> None:
+    try:
+        EdgeCaptureConfig(channel="68", live_squelch_lookahead_seconds=-0.1)
+    except ValueError as exc:
+        assert "live_squelch_lookahead_seconds must be non-negative" in str(exc)
+    else:
+        raise AssertionError("negative live squelch lookahead should fail")
 
 
 def test_thermal_policy_uses_hysteresis_for_cooling_down() -> None:
@@ -333,7 +365,7 @@ def test_build_activity_upload_request_sets_idempotency_key(tmp_path) -> None:
     audio_path = tmp_path / "activity.mp3"
     audio_path.write_bytes(b"fake mp3")
     clip = EdgeClip(
-        channel="WX",
+        channel="14",
         started_at=started_at,
         ended_at=started_at + timedelta(seconds=2),
         sample_rate_hz=1_000,
@@ -344,17 +376,15 @@ def test_build_activity_upload_request_sets_idempotency_key(tmp_path) -> None:
 
     request = build_activity_upload_request(clip, audio_path)
 
-    assert request.channel == "WX"
+    assert request.channel == "14"
     assert request.audio_path == audio_path
     assert request.content_type == "audio/mpeg"
-    assert request.idempotency_key.startswith("activity-v1:WX:2026-05-24T13:30:00Z:")
+    assert request.idempotency_key.startswith("activity-v1:14:2026-05-24T13:30:00Z:")
 
 
-def test_edge_capture_accepts_weather_and_harbor_channel_metadata() -> None:
-    weather = EdgeCaptureConfig(channel="WX")
+def test_edge_capture_accepts_harbor_channel_metadata() -> None:
     harbor = EdgeCaptureConfig(channel="05A")
 
-    assert weather.channel == "WX"
     assert harbor.channel == "05A"
 
 

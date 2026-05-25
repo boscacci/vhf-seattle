@@ -11,6 +11,7 @@ from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
 from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import Settings
 from talkingboats.schemas import (
@@ -25,15 +26,15 @@ from talkingboats.security import require_token
 from talkingboats.storage import S3AudioStorage
 
 
-def get_settings() -> Settings:
+async def get_settings() -> Settings:
     return Settings.from_env()
 
 
-def get_storage(settings: Annotated[Settings, Depends(get_settings)]) -> S3AudioStorage:
+async def get_storage(settings: Annotated[Settings, Depends(get_settings)]) -> S3AudioStorage:
     return S3AudioStorage(settings)
 
 
-def get_clip_store(
+async def get_clip_store(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> UploadedClipStore | None:
     if settings.clip_db_path is None:
@@ -41,7 +42,7 @@ def get_clip_store(
     return UploadedClipStore(settings.clip_db_path)
 
 
-def require_ingest_token(
+async def require_ingest_token(
     settings: Annotated[Settings, Depends(get_settings)],
     x_talkingboats_ingest_token: Annotated[str | None, Header()] = None,
 ) -> None:
@@ -52,7 +53,7 @@ def require_ingest_token(
     )
 
 
-def require_operator_token(
+async def require_operator_token(
     settings: Annotated[Settings, Depends(get_settings)],
     x_talkingboats_operator_token: Annotated[str | None, Header()] = None,
     talkingboats_operator_token: Annotated[str | None, Cookie()] = None,
@@ -71,19 +72,20 @@ app = FastAPI(
 )
 
 SHARED_UI_DIR = FilePath(__file__).resolve().parents[2] / "public-site"
+PUBLIC_EXCLUDED_CHANNELS = ("WX",)
 if SHARED_UI_DIR.exists():
     app.mount("/operator", StaticFiles(directory=SHARED_UI_DIR, html=True), name="operator")
 
 
 @app.get("/healthz")
-def healthz() -> dict[str, str]:
+async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.post(
     "/api/operator/session",
 )
-def create_operator_session(
+async def create_operator_session(
     response: Response,
     settings: Annotated[Settings, Depends(get_settings)],
     x_talkingboats_operator_token: Annotated[str | None, Header()] = None,
@@ -104,7 +106,7 @@ def create_operator_session(
 
 
 @app.post("/api/operator/session/logout")
-def clear_operator_session(response: Response) -> dict[str, str]:
+async def clear_operator_session(response: Response) -> dict[str, str]:
     response.delete_cookie("talkingboats_operator_token")
     return {"status": "ok"}
 
@@ -114,7 +116,7 @@ def clear_operator_session(response: Response) -> dict[str, str]:
     response_model=ClipPresignResponse,
     dependencies=[Depends(require_ingest_token)],
 )
-def presign_clip_upload(
+async def presign_clip_upload(
     request: ClipPresignRequest,
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
@@ -142,7 +144,7 @@ def presign_clip_upload(
     "/api/ingest/clips/stats",
     dependencies=[Depends(require_operator_token)],
 )
-def ingest_clip_stats(
+async def ingest_clip_stats(
     clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
 ) -> dict[str, object]:
     if clip_store is None:
@@ -153,7 +155,7 @@ def ingest_clip_stats(
 @app.get(
     "/api/clips/recent",
 )
-def recent_clips(
+async def recent_clips(
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
     clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
@@ -161,9 +163,26 @@ def recent_clips(
     channel: Annotated[str | None, Query(min_length=1, max_length=8)] = None,
 ) -> dict[str, object]:
     if clip_store is None:
-        return {"clips": [], "channel_counts": {}}
+        return {
+            "clips": [],
+            "channel_counts": {},
+            "channel_labels": public_monitored_channel_labels(),
+        }
+    channel_counts = clip_store.transcribed_channel_counts(
+        excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+    )
+    if channel and channel.upper() in PUBLIC_EXCLUDED_CHANNELS:
+        return {
+            "clips": [],
+            "channel_counts": channel_counts,
+            "channel_labels": public_monitored_channel_labels(channel_counts),
+        }
     clips = []
-    for clip in clip_store.recent_transcribed(limit=limit, channel=channel):
+    for clip in clip_store.recent_transcribed(
+        limit=limit,
+        channel=channel,
+        excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+    ):
         try:
             playback_url = storage.presign_playback(clip.key)
         except RuntimeError as exc:
@@ -173,8 +192,8 @@ def recent_clips(
             ) from exc
         clips.append(
             {
-                "key": clip.key,
                 "channel": clip.channel,
+                "channel_label": channel_label(clip.channel),
                 "started_at": clip.started_at,
                 "ended_at": clip.ended_at,
                 "duration_seconds": clip.duration_seconds,
@@ -185,7 +204,11 @@ def recent_clips(
                 "playback_expires_in_seconds": settings.playback_presign_seconds,
             }
         )
-    return {"clips": clips, "channel_counts": clip_store.transcribed_channel_counts()}
+    return {
+        "clips": clips,
+        "channel_counts": channel_counts,
+        "channel_labels": public_monitored_channel_labels(channel_counts),
+    }
 
 
 @app.post(
@@ -193,7 +216,7 @@ def recent_clips(
     response_model=PlaybackUrlResponse,
     dependencies=[Depends(require_operator_token)],
 )
-def presign_clip_playback(
+async def presign_clip_playback(
     request: PlaybackUrlRequest,
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
@@ -218,7 +241,7 @@ def presign_clip_playback(
     response_model=LiveChannelsResponse,
     dependencies=[Depends(require_operator_token)],
 )
-def list_live_channels(
+async def list_live_channels(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> LiveChannelsResponse:
     return LiveChannelsResponse(

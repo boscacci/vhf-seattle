@@ -2,11 +2,15 @@
   "clips": [],
   "generated_at": null,
   "site": {
-    "title": "Seattle Marine Radio",
-    "subtitle": "Elliott Bay VHF receiver clips and tailnet live audio."
+    "title": "Elliott Bay VHF",
+    "subtitle": "Live Elliott Bay marine VHF audio and recent receiver clips."
   },
   "stats": {
     "channel_counts": {},
+    "channel_labels": {
+      "13": "Bridge-to-bridge",
+      "14": "VTS / Seattle Traffic"
+    },
     "clip_count": 0,
     "vessel_type_counts": {}
   }

@@ -1,6 +1,8 @@
 const liveClipUrl = "/api/clips/recent?limit=100";
 const manifestUrl = "/public_manifest.json";
-const tailnetLiveBase = "https://optiplex.tailbea63b.ts.net:10000";
+const liveChannelsUrl = "/api/live/channels";
+const defaultLiveStreamUrl = "/api/live/current.mp3";
+const liveDspProfile = window.location.hostname === "vhf-dev.robertboscacci.com" ? "warm_voice" : "";
 const liveStatusPollMs = 2000;
 const quietTransmissionDelayMs = 5000;
 const pacificTimeZone = "America/Los_Angeles";
@@ -21,11 +23,24 @@ const pacificShortTimeFormatter = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
   timeZoneName: "short",
 });
+const defaultChannelLabels = {
+  "05A": "VTS / Port Ops",
+  "13": "Bridge-to-bridge",
+  "14": "VTS / Seattle Traffic",
+  "16": "Distress / Calling",
+  "22A": "USCG Liaison",
+  "66A": "Port Operations",
+  "68": "Recreational",
+  "69": "Non-commercial",
+  "71": "Non-commercial",
+  "72": "Ship-to-ship",
+  "74": "Port Operations",
+};
 
 const fallbackManifest = {
   site: {
-    title: "Seattle Marine Radio",
-    subtitle: "Elliott Bay VHF receiver clips and tailnet live audio.",
+    title: "Elliott Bay VHF",
+    subtitle: "Live Elliott Bay marine VHF audio and recent receiver clips.",
   },
   stats: {
     clip_count: 0,
@@ -48,6 +63,7 @@ const panels = {
 const liveAudio = document.querySelector("#live-audio");
 const liveStatus = document.querySelector("#live-status");
 const liveChannel = document.querySelector("#live-channel");
+const liveChannelPicker = document.querySelector("#live-channel-picker");
 const liveFrequency = document.querySelector("#live-frequency");
 const liveSignalDot = document.querySelector("#live-signal-dot");
 const waveformPanel = document.querySelector("#waveform-panel");
@@ -65,6 +81,24 @@ let waveformData = null;
 let waveformAnimationId = null;
 let quietSince = null;
 let selectedChannel = "all";
+let selectedLiveChannel = "14";
+let liveChannels = [
+  {
+    channel: "13",
+    label: defaultChannelLabels["13"],
+    frequencyMhz: "156.650",
+    streamPath: "/api/live/13/current.mp3",
+    statusPath: "/api/live/13/status",
+  },
+  {
+    channel: "14",
+    label: defaultChannelLabels["14"],
+    frequencyMhz: "156.700",
+    streamPath: defaultLiveStreamUrl,
+    statusPath: "/api/live/14/status",
+  },
+];
+let currentChannelLabels = { ...defaultChannelLabels };
 
 refreshButton.addEventListener("click", () => {
   loadAndRender();
@@ -124,7 +158,7 @@ async function loadClipPayload() {
     const payload = await response.json();
     return normalizeLivePayload(payload);
   } catch {
-    return loadStaticManifest();
+    return loadPublishedManifest();
   }
 }
 
@@ -135,15 +169,15 @@ function clipRequestUrl() {
   return `${liveClipUrl}&channel=${encodeURIComponent(selectedChannel)}`;
 }
 
-async function loadStaticManifest() {
+async function loadPublishedManifest() {
   try {
     const response = await fetch(manifestUrl, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`manifest HTTP ${response.status}`);
     }
-    return normalizeStaticManifest(await response.json());
+    return normalizePublishedManifest(await response.json());
   } catch {
-    return normalizeStaticManifest(fallbackManifest);
+    return normalizePublishedManifest(fallbackManifest);
   }
 }
 
@@ -155,12 +189,14 @@ function normalizeLivePayload(payload) {
     stats: {
       clip_count: clips.length,
       channel_counts: payload.channel_counts || countBy(clips, (clip) => clip.channel || "?"),
+      channel_labels: payload.channel_labels || {},
     },
     generated_at: new Date().toISOString(),
     clips: clips.map((clip) => ({
       id: clip.key || `${clip.channel}-${clip.started_at}`,
       public_title: titleForClip(clip),
       channel: clip.channel || "?",
+      channel_label: clip.channel_label || "",
       started_at: clip.started_at,
       ended_at: clip.ended_at,
       duration_seconds: clip.duration_seconds,
@@ -171,10 +207,10 @@ function normalizeLivePayload(payload) {
   };
 }
 
-function normalizeStaticManifest(payload) {
+function normalizePublishedManifest(payload) {
   const clips = Array.isArray(payload.clips) ? payload.clips : [];
   return {
-    source: "static",
+    source: "published",
     site: {
       ...fallbackManifest.site,
       ...(payload.site || {}),
@@ -185,6 +221,7 @@ function normalizeStaticManifest(payload) {
       id: clip.id || `${clip.channel}-${clip.started_at}`,
       public_title: clip.public_title || titleForClip(clip),
       channel: clip.channel || "?",
+      channel_label: clip.channel_label || "",
       started_at: clip.started_at,
       ended_at: clip.ended_at,
       duration_seconds: clip.duration_seconds,
@@ -196,6 +233,7 @@ function normalizeStaticManifest(payload) {
 
 function renderSite(payload) {
   const clips = payload.clips || [];
+  currentChannelLabels = channelLabelsForPayload(payload);
   document.title = payload.site?.title || fallbackManifest.site.title;
   document.querySelector("#site-title").textContent = payload.site?.title || fallbackManifest.site.title;
   document.querySelector("#site-subtitle").textContent =
@@ -215,7 +253,7 @@ function renderStats(payload, clips) {
     ["Clips", clips.length],
     ["Channels", channelTotal],
     ["Latest", latest],
-    ["Mode", payload.source === "live" ? "Live DB" : "Static"],
+    ["Feed", payload.source === "live" ? "Live DB" : "Published export"],
   ];
 
   stats.replaceChildren(
@@ -234,22 +272,31 @@ function renderStats(payload, clips) {
 
 function renderChannelFilter(payload) {
   const channelCounts = payload.stats?.channel_counts || countBy(payload.clips || [], (clip) => clip.channel || "?");
-  const channels = Object.keys(channelCounts).sort(compareChannels);
+  const configuredChannels = Object.keys(payload.stats?.channel_labels || payload.channel_labels || {});
+  const channels = [...new Set([...Object.keys(channelCounts), ...configuredChannels])].sort(compareChannels);
   if (selectedChannel !== "all" && !channels.includes(selectedChannel)) {
     channels.push(selectedChannel);
   }
-  const totalCount = Object.values(channelCounts).reduce((total, count) => total + Number(count || 0), 0);
   const options = [
-    optionForChannel("all", `All channels${totalCount ? ` (${totalCount})` : ""}`),
+    optionForChannel("all", "All channels"),
     ...channels.map((channel) =>
       optionForChannel(
         channel,
-        `${channelLabel(channel)}${channelCounts[channel] ? ` (${channelCounts[channel]})` : ""}`,
+        channelOptionLabel(channel, channelCounts[channel]),
       ),
     ),
   ];
   channelFilter.replaceChildren(...options);
   channelFilter.value = selectedChannel;
+}
+
+function channelOptionLabel(channel, count) {
+  const clipCount = Number(count || 0);
+  if (!clipCount) {
+    return channelLabel(channel);
+  }
+  const noun = clipCount === 1 ? "clip" : "clips";
+  return `${channelLabel(channel)} (${clipCount} ${noun})`;
 }
 
 function optionForChannel(value, label) {
@@ -311,6 +358,92 @@ function renderPill(text) {
   pill.className = "pill";
   pill.textContent = text;
   return pill;
+}
+
+async function loadLiveChannels() {
+  try {
+    const response = await fetch(liveChannelsUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`live channels HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    const channels = normalizeLiveChannels(payload.channels);
+    if (!channels.length) {
+      throw new Error("live channels unavailable");
+    }
+    liveChannels = channels;
+    if (payload.defaultChannel && liveChannels.some((item) => item.channel === payload.defaultChannel)) {
+      selectedLiveChannel = payload.defaultChannel;
+    }
+  } catch {
+    liveChannels = normalizeLiveChannels(liveChannels);
+  }
+  for (const channel of liveChannels) {
+    currentChannelLabels[channel.channel] = channel.label;
+  }
+  renderLiveChannelPicker();
+  if (liveAudio.src) {
+    liveAudio.src = liveStreamUrl();
+  }
+}
+
+function normalizeLiveChannels(channels) {
+  return (channels || [])
+    .map((channel) => ({
+      channel: String(channel.channel || "").toUpperCase(),
+      label: channel.label || defaultChannelLabels[channel.channel] || "",
+      frequencyMhz: channel.frequencyMhz || "",
+      streamPath: channel.streamPath || "",
+      statusPath: channel.statusPath || "",
+    }))
+    .filter((channel) => channel.channel && channel.label);
+}
+
+function renderLiveChannelPicker() {
+  if (!liveChannelPicker) {
+    return;
+  }
+  liveChannelPicker.replaceChildren();
+  for (const channel of liveChannels) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "live-channel-option";
+    button.classList.toggle("is-active", channel.channel === selectedLiveChannel);
+    button.dataset.channel = channel.channel;
+    button.textContent = channelLabel(channel.channel);
+    button.title = channelLabel(channel.channel);
+    button.setAttribute("aria-pressed", String(channel.channel === selectedLiveChannel));
+    button.addEventListener("click", () => selectLiveChannel(channel.channel));
+    liveChannelPicker.append(button);
+  }
+}
+
+function selectLiveChannel(channel) {
+  if (!channel || channel === selectedLiveChannel) {
+    return;
+  }
+  const wasPlaying = !liveAudio.paused;
+  selectedLiveChannel = channel;
+  lastLiveStatusId = null;
+  renderLiveChannelPicker();
+  renderLiveStatus(findLiveChannel(channel));
+  liveAudio.pause();
+  liveAudio.src = withCacheBust(liveStreamUrl());
+  liveAudio.load();
+  liveStatus.textContent = wasPlaying ? "Reconnecting" : "Ready";
+  drawWaitingFrame({ showWaiting: false });
+  pollLiveStatus();
+  if (wasPlaying) {
+    connectLive();
+  }
+}
+
+function findLiveChannel(channel) {
+  const selected = liveChannels.find((item) => item.channel === channel);
+  if (selected) {
+    return selected;
+  }
+  return { channel, label: defaultChannelLabels[channel] || "", frequencyMhz: "" };
 }
 
 function activateTab(name) {
@@ -393,21 +526,27 @@ function stopLiveStatusPolling() {
 }
 
 function liveStreamUrl() {
-  const host = window.location.hostname;
-  const isTailnet = host.endsWith(".tailbea63b.ts.net") || host === "100.124.5.39";
-  if (isTailnet || window.location.port === "10000") {
-    return "/api/live/current.mp3";
+  const url = rawLiveStreamUrl();
+  return withDspProfile(url);
+}
+
+function rawLiveStreamUrl() {
+  if (selectedLiveChannel === "14") {
+    return defaultLiveStreamUrl;
   }
-  return `${tailnetLiveBase}/api/live/current.mp3`;
+  return `/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`;
+}
+
+function withDspProfile(url) {
+  if (!liveDspProfile) {
+    return url;
+  }
+  const joiner = url.includes("?") ? "&" : "?";
+  return `${url}${joiner}dsp=${encodeURIComponent(liveDspProfile)}`;
 }
 
 function liveStatusUrl() {
-  const host = window.location.hostname;
-  const isTailnet = host.endsWith(".tailbea63b.ts.net") || host === "100.124.5.39";
-  if (isTailnet || window.location.port === "10000") {
-    return "/api/live/status";
-  }
-  return `${tailnetLiveBase}/api/live/status`;
+  return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;
 }
 
 async function pollLiveStatus() {
@@ -442,9 +581,8 @@ async function pollLiveStatus() {
 }
 
 function renderLiveStatus(status) {
-  const label = status?.label || channelLabel(status?.channel);
-  const channel = status?.channel ? channelLabel(status.channel) : "Current SDR feed";
-  liveChannel.textContent = `${channel} · ${label}`;
+  const channel = status?.channel || selectedLiveChannel;
+  liveChannel.textContent = channel ? channelLabel(channel) : "Current SDR feed";
   liveFrequency.textContent = status?.frequencyMhz ? `${status.frequencyMhz} MHz` : "";
 }
 
@@ -600,7 +738,23 @@ function titleForClip(clip) {
 }
 
 function channelLabel(channel) {
-  return channel === "WX" ? "NOAA WX" : `VHF ${channel || "?"}`;
+  const channelText = `VHF ${channel || "?"}`;
+  const label = currentChannelLabels[channel] || "";
+  return label ? `${channelText} · ${label}` : channelText;
+}
+
+function channelLabelsForPayload(payload) {
+  const labels = {
+    ...defaultChannelLabels,
+    ...(payload.channel_labels || {}),
+    ...(payload.stats?.channel_labels || {}),
+  };
+  for (const clip of payload.clips || []) {
+    if (clip.channel && clip.channel_label) {
+      labels[clip.channel] = clip.channel_label;
+    }
+  }
+  return labels;
 }
 
 function statusText(payload, clips, totalAvailable) {
@@ -615,7 +769,7 @@ function statusText(payload, clips, totalAvailable) {
     return `${clips.length}${availableText} ${selectedLabel}${clipNoun} from the live DB`;
   }
   const generated = payload.generated_at ? ` · exported ${formatDateTime(payload.generated_at)}` : "";
-  return `${clips.length}${availableText} ${selectedLabel}static ${clipNoun}${generated}`;
+  return `${clips.length}${availableText} ${selectedLabel}published ${clipNoun}${generated}`;
 }
 
 function totalAvailableClips(payload, clips) {
@@ -627,12 +781,6 @@ function totalAvailableClips(payload, clips) {
 }
 
 function compareChannels(left, right) {
-  if (left === "WX") {
-    return -1;
-  }
-  if (right === "WX") {
-    return 1;
-  }
   return left.localeCompare(right, undefined, { numeric: true });
 }
 
@@ -666,5 +814,6 @@ function shortTime(value) {
   return pacificShortTimeFormatter.format(date);
 }
 
+loadLiveChannels();
 prepareLiveAudio();
 loadAndRender();

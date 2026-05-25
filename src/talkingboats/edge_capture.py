@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-ALLOWED_CHANNELS = ("WX", "05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74")
+ALLOWED_CHANNELS = ("05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74")
 Channel = str
 CONTENT_TYPES_BY_SUFFIX = {
     ".aac": "audio/aac",
@@ -37,10 +37,11 @@ class EdgeCaptureConfig:
     sample_rate_hz: int = 24_000
     frame_ms: int = 100
     threshold_rms: int = 8_000
-    min_clip_seconds: float = 0.7
+    min_clip_seconds: float = 1.0
     max_clip_seconds: float = 45.0
-    pre_roll_seconds: float = 0.7
-    post_roll_seconds: float = 1.2
+    pre_roll_seconds: float = 0.0
+    post_roll_seconds: float = 0.3
+    live_squelch_lookahead_seconds: float = 1.0
 
     def __post_init__(self) -> None:
         if self.channel not in ALLOWED_CHANNELS:
@@ -59,6 +60,8 @@ class EdgeCaptureConfig:
             raise ValueError("max_clip_seconds must be at least min_clip_seconds")
         if self.pre_roll_seconds < 0 or self.post_roll_seconds < 0:
             raise ValueError("pre/post roll seconds must be non-negative")
+        if self.live_squelch_lookahead_seconds < 0:
+            raise ValueError("live_squelch_lookahead_seconds must be non-negative")
 
     @property
     def frame_seconds(self) -> float:
@@ -83,6 +86,10 @@ class EdgeCaptureConfig:
     @property
     def max_clip_frames(self) -> int:
         return max(self.min_clip_frames, math.floor(self.max_clip_seconds / self.frame_seconds))
+
+    @property
+    def live_squelch_lookahead_frames(self) -> int:
+        return round(self.live_squelch_lookahead_seconds / self.frame_seconds)
 
 
 @dataclass(frozen=True)
@@ -394,7 +401,7 @@ def detect_activity_clips(
     leftover = b""
     frame_index = 0
     pre_roll: deque[tuple[int, bytes]] = deque(maxlen=config.pre_roll_frames)
-    active_frames: list[bytes] = []
+    active_frames: list[tuple[int, bytes, bool]] = []
     active_start_index: int | None = None
     trailing_silence_frames = 0
 
@@ -402,14 +409,14 @@ def detect_activity_clips(
         nonlocal active_frames, active_start_index, trailing_silence_frames
         if active_start_index is None:
             return None
-        frames = active_frames
-        start_index = active_start_index
+        frames = _trim_unsquelched_edges(active_frames)
         active_frames = []
         active_start_index = None
         trailing_silence_frames = 0
         if len(frames) < config.min_clip_frames:
             return None
-        pcm = b"".join(frames)
+        start_index = frames[0][0]
+        pcm = b"".join(frame for _, frame, _ in frames)
         started = started_at.astimezone(UTC) + timedelta(seconds=start_index * config.frame_seconds)
         ended = started + timedelta(seconds=len(frames) * config.frame_seconds)
         metrics = pcm_metrics_i16le(pcm)
@@ -426,19 +433,22 @@ def detect_activity_clips(
     def process_frame(frame: bytes) -> EdgeClip | None:
         nonlocal active_start_index, trailing_silence_frames, active_frames
         metrics = pcm_metrics_i16le(frame)
-        is_active = metrics.rms >= config.threshold_rms
+        is_active = _is_unsquelched(metrics, config=config)
+        saved_frame = frame if is_active else b"\0" * len(frame)
 
         if active_start_index is None:
             if is_active:
                 active_start_index = frame_index - len(pre_roll)
-                active_frames = [data for _, data in pre_roll]
-                active_frames.append(frame)
+                active_frames = [
+                    (index, b"\0" * len(data), False) for index, data in pre_roll
+                ]
+                active_frames.append((frame_index, frame, True))
                 trailing_silence_frames = 0
             else:
                 pre_roll.append((frame_index, frame))
             return None
 
-        active_frames.append(frame)
+        active_frames.append((frame_index, saved_frame, is_active))
         if is_active:
             trailing_silence_frames = 0
         else:
@@ -446,7 +456,7 @@ def detect_activity_clips(
 
         if len(active_frames) >= config.max_clip_frames:
             return finish_clip()
-        if trailing_silence_frames >= config.post_roll_frames:
+        if trailing_silence_frames > 0 and trailing_silence_frames >= config.post_roll_frames:
             return finish_clip()
         return None
 
@@ -492,6 +502,18 @@ def pcm_metrics_i16le(pcm: bytes) -> FrameMetrics:
         peak=peak,
         zero_crossing_rate=crossings / max(1, len(samples) - 1),
     )
+
+
+def _trim_unsquelched_edges(
+    frames: list[tuple[int, bytes, bool]],
+) -> list[tuple[int, bytes, bool]]:
+    start = 0
+    end = len(frames)
+    while start < end and not frames[start][2]:
+        start += 1
+    while end > start and not frames[end - 1][2]:
+        end -= 1
+    return frames[start:end]
 
 
 def write_spooled_clip(clip: EdgeClip, output_dir: Path) -> SpooledClip:
@@ -636,39 +658,46 @@ def _squelched_pcm_chunk_stream(
     frame_bytes = config.frame_bytes
     leftover = b""
     hangover_frames = 0
+    delayed_frames: deque[bytes] = deque()
+    lookahead_frames = config.live_squelch_lookahead_frames
+
+    def append_rendered_frame(frame: bytes) -> None:
+        nonlocal hangover_frames
+        metrics = pcm_metrics_i16le(frame)
+        if _is_static_burst(metrics, config=config):
+            hangover_frames = 0
+            delayed_frames.append(b"\0" * len(frame))
+        elif metrics.rms >= config.threshold_rms:
+            hangover_frames = config.post_roll_frames
+            delayed_frames.append(frame)
+        elif hangover_frames > 0:
+            hangover_frames -= 1
+            delayed_frames.append(frame)
+        else:
+            delayed_frames.append(b"\0" * len(frame))
+
+    def drain_ready_frames(*, force: bool = False) -> bytes:
+        keep_frames = 0 if force else lookahead_frames
+        ready = bytearray()
+        while len(delayed_frames) > keep_frames:
+            ready.extend(delayed_frames.popleft())
+        return bytes(ready)
 
     for chunk in chunks:
         if not chunk:
             continue
         data = leftover + chunk
         complete_bytes = len(data) - (len(data) % frame_bytes)
-        rendered = bytearray()
         for offset in range(0, complete_bytes, frame_bytes):
-            frame = data[offset : offset + frame_bytes]
-            metrics = pcm_metrics_i16le(frame)
-            if _is_static_burst(metrics, config=config):
-                hangover_frames = 0
-                rendered.extend(b"\0" * len(frame))
-            elif metrics.rms >= config.threshold_rms:
-                hangover_frames = config.post_roll_frames
-                rendered.extend(frame)
-            elif hangover_frames > 0:
-                hangover_frames -= 1
-                rendered.extend(frame)
-            else:
-                rendered.extend(b"\0" * len(frame))
+            append_rendered_frame(data[offset : offset + frame_bytes])
         leftover = data[complete_bytes:]
-        if rendered:
-            yield chunk, bytes(rendered)
+        yield chunk, drain_ready_frames()
 
     if leftover:
-        metrics = pcm_metrics_i16le(leftover)
-        if _is_static_burst(metrics, config=config):
-            yield leftover, b"\0" * len(leftover)
-        elif metrics.rms >= config.threshold_rms or hangover_frames > 0:
-            yield leftover, leftover
-        else:
-            yield leftover, b"\0" * len(leftover)
+        append_rendered_frame(leftover)
+    flushed = drain_ready_frames(force=True)
+    if flushed:
+        yield b"", flushed
 
 
 def _is_static_burst(metrics: FrameMetrics, *, config: EdgeCaptureConfig) -> bool:
@@ -677,6 +706,10 @@ def _is_static_burst(metrics: FrameMetrics, *, config: EdgeCaptureConfig) -> boo
         and metrics.zero_crossing_rate >= 0.38
         and metrics.peak >= config.threshold_rms * 2
     )
+
+
+def _is_unsquelched(metrics: FrameMetrics, *, config: EdgeCaptureConfig) -> bool:
+    return metrics.rms >= config.threshold_rms and not _is_static_burst(metrics, config=config)
 
 
 def record_chunks(
@@ -700,10 +733,11 @@ def main() -> None:
     parser.add_argument("--sample-rate-hz", type=int, default=24_000)
     parser.add_argument("--frame-ms", type=int, default=100)
     parser.add_argument("--threshold-rms", type=int, default=8_000)
-    parser.add_argument("--min-clip-seconds", type=float, default=0.7)
+    parser.add_argument("--min-clip-seconds", type=float, default=1.0)
     parser.add_argument("--max-clip-seconds", type=float, default=45.0)
-    parser.add_argument("--pre-roll-seconds", type=float, default=0.7)
-    parser.add_argument("--post-roll-seconds", type=float, default=1.2)
+    parser.add_argument("--pre-roll-seconds", type=float, default=0.0)
+    parser.add_argument("--post-roll-seconds", type=float, default=0.3)
+    parser.add_argument("--live-squelch-lookahead-seconds", type=float, default=1.0)
     parser.add_argument("--chunk-size", type=int, default=24_000)
     parser.add_argument("--tee-stdout", action="store_true")
     parser.add_argument("--squelch-stdout", action="store_true")
@@ -741,6 +775,7 @@ def main() -> None:
         max_clip_seconds=args.max_clip_seconds,
         pre_roll_seconds=args.pre_roll_seconds,
         post_roll_seconds=args.post_roll_seconds,
+        live_squelch_lookahead_seconds=args.live_squelch_lookahead_seconds,
     )
     policy = ThermalPolicy(
         max_temp_c=args.max_temp_c,
@@ -794,6 +829,9 @@ def main() -> None:
         record_upload=args.record_upload,
         tee_stdout=args.tee_stdout,
         squelch_stdout=args.squelch_stdout,
+        live_squelch_lookahead_seconds=args.live_squelch_lookahead_seconds
+        if args.squelch_stdout
+        else None,
         upload=args.upload,
     )
 

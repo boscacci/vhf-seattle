@@ -12,6 +12,7 @@ bitrate="${TALKINGBOATS_LIVE_BITRATE:-64k}"
 audio_filter_enabled="${TALKINGBOATS_AUDIO_FILTER_ENABLED:-true}"
 audio_filter="${TALKINGBOATS_AUDIO_FILTER:-highpass=f=250,lowpass=f=3200,afftdn=nf=-28}"
 live_audio_squelch_enabled="${TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED:-true}"
+live_squelch_lookahead_seconds="${TALKINGBOATS_LIVE_SQUELCH_LOOKAHEAD_SECONDS:-1.0}"
 live_output_filter="${TALKINGBOATS_LIVE_OUTPUT_FILTER:-alimiter=limit=0.55}"
 icecast_host="${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}"
 icecast_port="${TALKINGBOATS_ICECAST_PORT:-8000}"
@@ -38,17 +39,17 @@ activity_upload_enabled="${TALKINGBOATS_EDGE_UPLOAD_ENABLED:-false}"
 activity_upload_encode_mp3="${TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3:-true}"
 activity_upload_delete_after="${TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD:-false}"
 threshold_rms="${TALKINGBOATS_EDGE_THRESHOLD_RMS:-8000}"
-min_clip_seconds="${TALKINGBOATS_EDGE_MIN_CLIP_SECONDS:-0.7}"
+min_clip_seconds="${TALKINGBOATS_EDGE_MIN_CLIP_SECONDS:-1.0}"
 max_clip_seconds="${TALKINGBOATS_EDGE_MAX_CLIP_SECONDS:-45}"
-pre_roll_seconds="${TALKINGBOATS_EDGE_PRE_ROLL_SECONDS:-0.7}"
-post_roll_seconds="${TALKINGBOATS_EDGE_POST_ROLL_SECONDS:-1.2}"
+pre_roll_seconds="${TALKINGBOATS_EDGE_PRE_ROLL_SECONDS:-0}"
+post_roll_seconds="${TALKINGBOATS_EDGE_POST_ROLL_SECONDS:-0.3}"
 max_temp_c="${TALKINGBOATS_EDGE_MAX_TEMP_C:-72}"
 resume_temp_c="${TALKINGBOATS_EDGE_RESUME_TEMP_C:-66}"
 max_load_per_cpu="${TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU:-0.85}"
 live_audio_squelch_args=()
 
 case "${channel}" in
-  WX|05A|13|14|16|22A|66A|68|69|71|72|74) ;;
+  05A|13|14|16|22A|66A|68|69|71|72|74) ;;
   *)
     echo "unsupported channel preset: ${channel}" >&2
     exit 2
@@ -210,6 +211,7 @@ rtl_fm \
     --max-clip-seconds "${max_clip_seconds}" \
     --pre-roll-seconds "${pre_roll_seconds}" \
     --post-roll-seconds "${post_roll_seconds}" \
+    --live-squelch-lookahead-seconds "${live_squelch_lookahead_seconds}" \
     "${activity_upload_args[@]}" \
     "${record_args[@]}" \
     "${live_audio_squelch_args[@]}" \
