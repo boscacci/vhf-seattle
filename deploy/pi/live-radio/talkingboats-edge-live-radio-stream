@@ -12,6 +12,7 @@ bitrate="${TALKINGBOATS_LIVE_BITRATE:-64k}"
 audio_filter_enabled="${TALKINGBOATS_AUDIO_FILTER_ENABLED:-true}"
 audio_filter="${TALKINGBOATS_AUDIO_FILTER:-highpass=f=250,lowpass=f=3200,afftdn=nf=-28}"
 live_audio_squelch_enabled="${TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED:-true}"
+live_output_filter="${TALKINGBOATS_LIVE_OUTPUT_FILTER:-alimiter=limit=0.55}"
 icecast_host="${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}"
 icecast_port="${TALKINGBOATS_ICECAST_PORT:-8000}"
 mount="${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}"
@@ -184,7 +185,7 @@ case "${record_enabled,,}" in
     exit 2
     ;;
 esac
-echo "event=edge_live_radio_start device=${device} channel=${channel} frequency_hz=${frequency_hz} label=${label} mount=${mount} spool_dir=${spool_dir} activity_upload_enabled=${activity_upload_enabled,,} record_enabled=${record_enabled,,} record_dir=${record_dir} record_segment_seconds=${record_segment_seconds} record_retention_seconds=${record_retention_seconds} record_upload_enabled=${record_upload_enabled,,} audio_filter_enabled=${audio_filter_enabled,,}" >&2
+echo "event=edge_live_radio_start device=${device} channel=${channel} frequency_hz=${frequency_hz} label=${label} mount=${mount} spool_dir=${spool_dir} activity_upload_enabled=${activity_upload_enabled,,} record_enabled=${record_enabled,,} record_dir=${record_dir} record_segment_seconds=${record_segment_seconds} record_retention_seconds=${record_retention_seconds} record_upload_enabled=${record_upload_enabled,,} audio_filter_enabled=${audio_filter_enabled,,} live_output_filter=${live_output_filter}" >&2
 
 rtl_fm \
   -d "${device}" \
@@ -223,6 +224,7 @@ rtl_fm \
     -ar "${sample_rate}" \
     -ac 1 \
     -i pipe:0 \
+    -af "${live_output_filter}" \
     -codec:a libmp3lame \
     -b:a "${bitrate}" \
     -content_type audio/mpeg \

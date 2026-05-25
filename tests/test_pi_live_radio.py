@@ -71,6 +71,8 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "--tee-stdout" in wrapper
     assert "--squelch-stdout" in wrapper
     assert "TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED" in wrapper
+    assert "TALKINGBOATS_LIVE_OUTPUT_FILTER" in wrapper
+    assert "alimiter=limit=0.55" in wrapper
     assert "python3 -m talkingboats.icecast_source" in wrapper
     assert "--netrc-file" in wrapper
     assert "icecast://source:" not in wrapper
@@ -86,6 +88,10 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "--record-retention-seconds" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_ENABLED" in installer
     assert 'append_env_if_missing TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED "true"' in installer
+    assert (
+        'append_env_if_missing TALKINGBOATS_LIVE_OUTPUT_FILTER "alimiter=limit=0.55"'
+        in installer
+    )
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_ENABLED "true"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED "false"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENABLED "false"' in installer
@@ -107,8 +113,12 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert "run_debug_profile" in wrapper
     assert "162550000" in wrapper
     assert "156700000" in wrapper
+    assert "current-status.json" in wrapper
+    assert "TALKINGBOATS_CAPTURE_LIVE_MOUNT:-/talkingboats-live.mp3" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS:-45" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS:-2200" in wrapper
-    assert "TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-90" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS:-3600" in wrapper
+    assert "TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-180" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS:-4.5" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS:-4" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS:-30" in wrapper
@@ -119,8 +129,10 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert "timeout --kill-after=10s" in wrapper
     assert "TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS:-5" in wrapper
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_PROFILE "debug"' in installer
-    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS "90"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS "45"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS "180"' in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_THRESHOLD_RMS "2200"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600"' in installer
     assert (
         'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS "4.5"'
         in installer

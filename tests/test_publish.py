@@ -3,14 +3,16 @@ from pathlib import Path
 
 import pytest
 
-from talkingboats.clip_transcriber import UploadedClipStore
+from talkingboats.clip_transcriber import RecentTranscribedClip, UploadedClipStore
 from talkingboats.publish import (
     PublicExportError,
+    _public_audio_filename,
     export_public_site,
     export_recent_clip_site,
     sanitize_public_manifest,
 )
 from talkingboats.schemas import ClipPresignRequest
+from talkingboats.security import assert_public_safe
 
 
 def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
@@ -171,6 +173,29 @@ def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) 
     exported_audio = tmp_path / "output" / "clips" / clip["audio_public_filename"]
     assert exported_audio.read_bytes() == b"real audio"
     assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
+
+
+def test_recent_clip_public_audio_filename_cannot_look_like_account_id(monkeypatch) -> None:
+    class FakeHash:
+        def hexdigest(self) -> str:
+            return "123456789012abcdef"
+
+    monkeypatch.setattr("talkingboats.publish.hashlib.sha256", lambda _value: FakeHash())
+    clip = RecentTranscribedClip(
+        key="raw/channel=WX/date=2026-05-25/example.mp3",
+        channel="WX",
+        started_at="2026-05-25T00:47:12Z",
+        ended_at="2026-05-25T00:47:42Z",
+        duration_seconds=30.0,
+        content_type="audio/mpeg",
+        transcript="forecast text",
+        segments=[],
+    )
+
+    filename = _public_audio_filename(clip)
+
+    assert filename == "20260525T004712Z-vhf-wx-sha123456789012.mp3"
+    assert_public_safe({"audio_public_filename": filename})
 
 
 class FakeClipReader:

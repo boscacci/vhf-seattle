@@ -263,7 +263,7 @@ def _public_audio_filename(clip: RecentTranscribedClip) -> str:
     started_at = _parse_utc(clip.started_at)
     stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
     channel = "".join(character.lower() for character in clip.channel if character.isalnum())
-    digest = hashlib.sha256(clip.key.encode("utf-8")).hexdigest()[:12]
+    digest = f"sha{hashlib.sha256(clip.key.encode('utf-8')).hexdigest()[:12]}"
     return f"{stamp}-vhf-{channel}-{digest}{_suffix_for_content_type(clip.content_type)}"
 
 

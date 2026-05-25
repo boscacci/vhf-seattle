@@ -122,6 +122,7 @@ class ProxySettings:
         "http://192.168.1.114:8000/talkingboats-WX.mp3",
         "http://192.168.1.114:8000/talkingboats-14.mp3",
     )
+    receiver_status_url: str = "http://192.168.1.114:8050/current-status.json"
     transcript_url: str = "http://127.0.0.1:8055/api/live-transcript"
     private_api_url: str = "http://192.168.1.247:8034"
     active_channel_id: str = "recreation_68"
@@ -141,6 +142,10 @@ class ProxySettings:
         return cls(
             stream_url=stream_url,
             stream_urls=_dedupe(stream_urls),
+            receiver_status_url=os.environ.get(
+                "TALKINGBOATS_PROXY_RECEIVER_STATUS_URL",
+                cls.receiver_status_url,
+            ),
             transcript_url=os.environ.get(
                 "TALKINGBOATS_PROXY_TRANSCRIPT_URL",
                 cls.transcript_url,
@@ -227,7 +232,11 @@ def create_app(
     @app.get("/api/live/status")
     async def live_status() -> dict[str, object]:
         stream_url = await _select_live_stream(settings.stream_urls, client_factory)
-        preset = _preset_for_stream_url(stream_url) or _find_channel(settings.active_channel_id)
+        preset = (
+            await _preset_from_receiver_status(settings, client_factory)
+            or _preset_for_stream_url(stream_url)
+            or _find_channel(settings.active_channel_id)
+        )
         return {
             "activeChannelId": preset.id,
             "channel": preset.channel,
@@ -408,6 +417,46 @@ async def _select_live_stream(
             except httpx.HTTPError as exc:
                 last_error = f"{url} failed: {type(exc).__name__}"
     raise HTTPException(status_code=502, detail=last_error)
+
+
+async def _preset_from_receiver_status(
+    settings: ProxySettings,
+    client_factory: ClientFactory,
+) -> ChannelPreset | None:
+    async with client_factory() as client:
+        try:
+            response = await client.get(settings.receiver_status_url, timeout=2)
+        except httpx.HTTPError:
+            return None
+    if response.status_code >= 400:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+
+    channel = str(payload.get("channel") or "")
+    frequency_hz = _int_or_none(payload.get("frequencyHz"))
+    label = str(payload.get("label") or "")
+    for preset in DEFAULT_CHANNELS:
+        if channel == preset.channel or frequency_hz == preset.frequency_hz:
+            return preset
+    if channel and frequency_hz and label:
+        return ChannelPreset(
+            id=f"receiver_{channel.lower()}",
+            channel=channel,
+            label=label,
+            frequency_hz=frequency_hz,
+            description="Current receiver slot.",
+        )
+    return None
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 async def _proxy_private_api(

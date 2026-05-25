@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import wave
 from array import array
@@ -87,7 +88,7 @@ def test_squelched_pcm_chunks_mutes_inactive_frames_but_preserves_active_audio()
         post_roll_seconds=0.1,
     )
     silent_frame = _pcm(amplitude=0, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
-    active_frame = _pcm(amplitude=4_000, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
+    active_frame = _tone_pcm(amplitude=4_000, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
     quiet_frame = _pcm(amplitude=100, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
 
     rendered = b"".join(
@@ -100,6 +101,27 @@ def test_squelched_pcm_chunks_mutes_inactive_frames_but_preserves_active_audio()
     assert rendered == (b"\0" * len(silent_frame)) + active_frame + quiet_frame + (
         b"\0" * len(silent_frame)
     )
+
+
+def test_squelched_pcm_chunks_mutes_loud_static_bursts_in_live_output() -> None:
+    config = EdgeCaptureConfig(
+        channel="WX",
+        sample_rate_hz=1_000,
+        frame_ms=100,
+        threshold_rms=1_000,
+        post_roll_seconds=0.1,
+    )
+    active_frame = _tone_pcm(amplitude=4_000, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
+    static_burst = _pcm(amplitude=9_000, seconds=0.1, sample_rate_hz=config.sample_rate_hz)
+
+    rendered = b"".join(
+        squelched_pcm_chunks(
+            [active_frame + static_burst + active_frame],
+            config=config,
+        )
+    )
+
+    assert rendered == active_frame + (b"\0" * len(static_burst)) + active_frame
 
 
 def test_thermal_policy_uses_hysteresis_for_cooling_down() -> None:
@@ -341,5 +363,17 @@ def _pcm(*, amplitude: int, seconds: float, sample_rate_hz: int) -> bytes:
     values = array(
         "h",
         [amplitude if index % 2 == 0 else -amplitude for index in range(sample_count)],
+    )
+    return values.tobytes()
+
+
+def _tone_pcm(*, amplitude: int, seconds: float, sample_rate_hz: int, hz: float = 80.0) -> bytes:
+    sample_count = round(seconds * sample_rate_hz)
+    values = array(
+        "h",
+        [
+            round(amplitude * math.sin(2 * math.pi * hz * index / sample_rate_hz))
+            for index in range(sample_count)
+        ],
     )
     return values.tobytes()

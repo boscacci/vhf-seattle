@@ -241,7 +241,11 @@ The debug profile overrides NOAA to reduce tiny forecast fragments:
 TALKINGBOATS_CAPTURE_DEBUG_WX_MIN_CLIP_SECONDS=4
 TALKINGBOATS_CAPTURE_DEBUG_WX_POST_ROLL_SECONDS=4.5
 TALKINGBOATS_CAPTURE_DEBUG_WX_MAX_CLIP_SECONDS=30
-TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS=90
+TALKINGBOATS_CAPTURE_DEBUG_WX_SECONDS=45
+TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS=180
+TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS=3600
+TALKINGBOATS_CAPTURE_LIVE_MOUNT=/talkingboats-live.mp3
+TALKINGBOATS_CAPTURE_STATUS_PATH=/opt/talkingboats/live-radio/current-status.json
 ```
 
 The default local rolling buffer is five-minute WAV segments with 24-hour
@@ -302,10 +306,13 @@ TALKINGBOATS_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28
 
 The live Icecast feed also applies an audio gate by default. Frames below the
 same RMS activity threshold used for clip capture are written as silence to the
-browser stream while the detector and recorder still see the original PCM:
+browser stream while the detector and recorder still see the original PCM. Loud
+noise-like static bursts are muted on the browser stream, and the final MP3 feed
+has a safety limiter so monitor audio cannot jump to full scale:
 
 ```bash
 TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED=true
+TALKINGBOATS_LIVE_OUTPUT_FILTER=alimiter=limit=0.55
 ```
 
 ## Live Transcription

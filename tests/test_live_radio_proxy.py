@@ -64,13 +64,24 @@ def test_proxy_current_live_stream_uses_first_available_mount() -> None:
 
 def test_proxy_live_status_reports_selected_stream_channel_and_allows_public_ui_origin() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "http://pi.test/talkingboats-WX.mp3"
-        return httpx.Response(200, content=b"mp3-data")
+        if str(request.url) == "http://pi.test/talkingboats-live.mp3":
+            return httpx.Response(200, content=b"mp3-data")
+        if str(request.url) == "http://pi.test/current-status.json":
+            return httpx.Response(
+                200,
+                json={
+                    "channel": "14",
+                    "frequencyHz": 156700000,
+                    "label": "VTS / Seattle Traffic",
+                },
+            )
+        raise AssertionError(f"unexpected URL: {request.url}")
 
     client = TestClient(
         create_app(
             ProxySettings(
-                stream_urls=("http://pi.test/talkingboats-WX.mp3",),
+                stream_urls=("http://pi.test/talkingboats-live.mp3",),
+                receiver_status_url="http://pi.test/current-status.json",
                 cors_origins=("https://vhf.robertboscacci.com",),
             ),
             client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
@@ -85,10 +96,10 @@ def test_proxy_live_status_reports_selected_stream_channel_and_allows_public_ui_
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://vhf.robertboscacci.com"
     assert response.json() == {
-        "activeChannelId": "noaa_seattle",
-        "channel": "WX",
-        "label": "NOAA Weather 162.550",
-        "frequencyMhz": "162.550",
+        "activeChannelId": "vts_14",
+        "channel": "14",
+        "label": "VTS / Seattle Traffic",
+        "frequencyMhz": "156.700",
         "streamDelaySeconds": {"minimum": 30, "maximum": 90},
     }
 

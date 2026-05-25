@@ -378,6 +378,7 @@ class ThermalPolicy:
 class FrameMetrics:
     rms: float
     peak: int
+    zero_crossing_rate: float
 
 
 def detect_activity_clips(
@@ -471,17 +472,26 @@ def detect_activity_clips(
 def pcm_metrics_i16le(pcm: bytes) -> FrameMetrics:
     usable_bytes = len(pcm) - (len(pcm) % 2)
     if usable_bytes <= 0:
-        return FrameMetrics(rms=0.0, peak=0)
+        return FrameMetrics(rms=0.0, peak=0, zero_crossing_rate=0.0)
     samples = array("h")
     samples.frombytes(pcm[:usable_bytes])
     if sys.byteorder != "little":
         samples.byteswap()
     if not samples:
-        return FrameMetrics(rms=0.0, peak=0)
+        return FrameMetrics(rms=0.0, peak=0, zero_crossing_rate=0.0)
     peak = max(abs(sample) for sample in samples)
     square_sum = sum(sample * sample for sample in samples)
+    crossings = sum(
+        1
+        for previous, current in zip(samples, samples[1:], strict=False)
+        if (previous < 0 <= current) or (previous >= 0 > current)
+    )
     rms = math.sqrt(square_sum / len(samples))
-    return FrameMetrics(rms=rms, peak=peak)
+    return FrameMetrics(
+        rms=rms,
+        peak=peak,
+        zero_crossing_rate=crossings / max(1, len(samples) - 1),
+    )
 
 
 def write_spooled_clip(clip: EdgeClip, output_dir: Path) -> SpooledClip:
@@ -636,7 +646,10 @@ def _squelched_pcm_chunk_stream(
         for offset in range(0, complete_bytes, frame_bytes):
             frame = data[offset : offset + frame_bytes]
             metrics = pcm_metrics_i16le(frame)
-            if metrics.rms >= config.threshold_rms:
+            if _is_static_burst(metrics, config=config):
+                hangover_frames = 0
+                rendered.extend(b"\0" * len(frame))
+            elif metrics.rms >= config.threshold_rms:
                 hangover_frames = config.post_roll_frames
                 rendered.extend(frame)
             elif hangover_frames > 0:
@@ -650,10 +663,20 @@ def _squelched_pcm_chunk_stream(
 
     if leftover:
         metrics = pcm_metrics_i16le(leftover)
-        if metrics.rms >= config.threshold_rms or hangover_frames > 0:
+        if _is_static_burst(metrics, config=config):
+            yield leftover, b"\0" * len(leftover)
+        elif metrics.rms >= config.threshold_rms or hangover_frames > 0:
             yield leftover, leftover
         else:
             yield leftover, b"\0" * len(leftover)
+
+
+def _is_static_burst(metrics: FrameMetrics, *, config: EdgeCaptureConfig) -> bool:
+    return (
+        metrics.rms >= config.threshold_rms
+        and metrics.zero_crossing_rate >= 0.38
+        and metrics.peak >= config.threshold_rms * 2
+    )
 
 
 def record_chunks(
