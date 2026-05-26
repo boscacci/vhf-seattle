@@ -219,6 +219,10 @@ def create_app(
     async def recent_clips(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/clips/recent", settings, client_factory)
 
+    @app.get("/api/analysis/lexical")
+    async def lexical_analysis(request: Request) -> Response:
+        return await _proxy_private_api(request, "/api/analysis/lexical", settings, client_factory)
+
     @app.get("/api/live/current.mp3")
     async def current_live_stream(dsp: str | None = None) -> StreamingResponse:
         stream_url = await _select_live_stream(settings.stream_urls, client_factory)

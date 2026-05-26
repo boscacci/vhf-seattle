@@ -8,6 +8,8 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
 
     assert "limit=${clipPageSize}" in app_js
     assert "channel-filter" in index_html
+    assert '<select id="channel-filter"' not in index_html
+    assert 'id="channel-filter" class="channel-filter" role="group"' in index_html
     assert "renderChannelFilter" in app_js
     assert "selectedChannel" in app_js
     assert "clipPageSize = 6" in app_js
@@ -16,7 +18,16 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert "renderClipPagination" in app_js
     assert "clip-pagination" in index_html
     assert ".clip-pagination" in styles_css
-    assert 'optionForChannel("all", "All channels")' in app_js
+    assert "columns: 2 320px;" not in styles_css
+    assert ".clip-list" in styles_css
+    assert ".clip-list {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);" in styles_css
+    assert "break-inside: avoid;" in styles_css
+    assert "min-height: 244px" not in styles_css
+    assert "channelFilterButton" in app_js
+    assert "channel-filter-option" in app_js
+    assert "aria-pressed" in app_js
+    assert "button.dataset.channel" in app_js
+    assert "optionForChannel" not in app_js
     assert "configuredChannels" in app_js
     assert "Bridge-to-bridge" in app_js
     assert "channel_label" in app_js
@@ -34,10 +45,51 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert 'dsp=warm_voice' not in app_js
     assert "/public_manifest.json" in app_js
     assert "Elliott Bay VHF" in index_html
+    assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml" />' in index_html
     assert "Seattle Marine Radio" not in index_html
     assert "Clip Review" in index_html
     assert "Live Monitor" in index_html
+    assert "Analysis" in index_html
+    assert "Analysis Dashboard" in index_html
+    assert 'id="tab-language" type="button" data-tab="language" hidden' in index_html
+    assert "panel-language" in index_html
+    assert "lexical-analysis" in index_html
+    assert "languageDashboardEnabled" in app_js
+    assert '"vhf.robertboscacci.com"' in app_js
+    assert "/api/analysis/lexical" in app_js
+    assert "/analysis/lexical.json" in app_js
+    assert "renderLanguageDashboard" in app_js
+    assert "topic_clusters.html" in app_js
+    assert "Suspected vessels" in app_js
+    assert "Ch ${channel}: ${count}" in app_js
+    assert "formatHourLabel" in app_js
+    assert "renderExamplePlayer(clip)" in app_js
+    assert "renderExamplePlayer(entity.examples?.[0] || {})" in app_js
+    assert "audioUrlForClip(example)" in app_js
+    assert "example-player" in app_js
+    assert "loadedmetadata" in app_js
+    assert 'className = "example-play"' not in app_js
+    assert "📻" in Path("public-site/favicon.svg").read_text(encoding="utf-8")
+    assert ".example-player" in styles_css
+    assert ".example-play {" not in styles_css
+    assert ".channel-filter-option" in styles_css
+    assert ".entity-list" in styles_css
+    assert "columns: 2 300px;" in styles_css
+    assert "Why they say it this way" in app_js
+    assert "educationGuideList" in app_js
+    assert 'document.createElement("details")' in app_js
+    assert 'document.createElement("summary")' in app_js
+    assert "guide-card-body" in app_js
+    assert "Reference index" in app_js
+    assert ".education-guide" in styles_css
+    assert ".education-guide-card[open]" in styles_css
+    assert "grid-column: 1 / -1;" in styles_css
+    assert ".guide-card-body" in styles_css
+    assert ".reference-index" in styles_css
+    assert ".language-grid" in styles_css
+    assert ".topic-frame" in styles_css
     assert "live-channel" in index_html
+    assert "system-media-controls" in index_html
     assert "waveform-canvas" in index_html
     assert 'id="waveform-panel" class="waveform-panel"' in index_html
     assert 'id="play-live"' in index_html
@@ -90,3 +142,99 @@ def test_public_site_uses_same_origin_live_api_urls() -> None:
     assert 'return `/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`;' in app_js
     assert 'return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;' in app_js
     assert "return withDspProfile(url);" in app_js
+
+
+def test_public_site_stops_other_audio_before_playing_clip_or_live_radio() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "function stopOtherAudio(currentPlayback)" in app_js
+    assert "stopCurrentClipPlayback();" in app_js
+    assert "currentPlayback !== currentClipPlayback" in app_js
+    assert "currentPlayback !== liveAudio" in app_js
+    assert "stopOtherAudio(audio);" in app_js
+    assert "stopOtherAudio(liveAudio);" in app_js
+    assert "await liveAudio.play();" in app_js
+
+
+def test_public_site_stops_audio_when_browser_page_is_hidden_or_unloaded() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert 'document.addEventListener("visibilitychange"' in app_js
+    assert "if (document.hidden)" in app_js
+    assert 'window.addEventListener("pagehide"' in app_js
+    assert "function stopAllAudio()" in app_js
+    assert "stopAllAudio();" in app_js
+    assert "stopCurrentClipPlayback();" in app_js
+    assert "closeLiveAudioStream();" in app_js
+
+
+def test_public_site_uses_native_audio_controls_for_clip_playback_and_metadata() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert 'document.createElement("audio")' in app_js
+    assert "audio.controls = true" in app_js
+    assert 'audio.preload = "metadata"' in app_js
+    assert "audio.src = audioUrl" in app_js
+    assert 'audio.addEventListener("play"' in app_js
+    assert 'audio.addEventListener("loadedmetadata"' in app_js
+    assert "formatPlaybackTime(example.duration_seconds" in app_js
+    assert "decodeAudioData" not in app_js
+    assert "function clearBrowserMediaSession()" in app_js
+
+
+def test_public_site_keeps_clip_audio_controls_compact() -> None:
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert ".example-player audio" in styles_css
+    assert "width: min(100%, 420px);" in styles_css
+    assert "height: 36px;" in styles_css
+    assert "min-height: 36px;" in styles_css
+    assert "grid-template-columns: minmax(180px, 420px) auto" not in styles_css
+
+
+def test_public_site_allows_live_radio_without_system_media_controls() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert 'id="system-media-controls"' in index_html
+    assert "systemMediaControlsDefault = false" in app_js
+    assert "systemMediaControlsEnabled = systemMediaControlsDefault" in app_js
+    assert "talkingboats.systemMediaControls" in app_js
+    assert "function updateSystemMediaControlsUi()" in app_js
+    assert "playLiveButton.disabled = !systemMediaControlsEnabled;" not in app_js
+    assert "Enable system controls to play live" not in app_js
+    assert "function updateLiveMediaSession" in app_js
+    assert "Live radio plays in Firefox without publishing system media controls." in app_js
+    system_controls_off_gate = (
+        'liveAudio.removeAttribute("src");\n'
+        '    liveStatus.textContent = "System controls off";'
+    )
+    assert system_controls_off_gate not in app_js
+    assert ".system-media-toggle" in styles_css
+
+
+def test_public_site_does_not_render_unknown_clip_duration_as_zero() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert 'const unknownPlaybackTimeLabel = "—";' in app_js
+    assert (
+        "formatPlaybackTime(example.duration_seconds, "
+        "{ unknownLabel: unknownPlaybackTimeLabel })"
+    ) in app_js
+    assert "if (!Number.isFinite(value) || value <= 0)" in app_js
+    assert "return unknownLabel;" in app_js
+    assert "Number(seconds) || 0" not in app_js
+
+
+def test_public_site_education_reference_cards_use_aligned_grid_layout() -> None:
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert ".education-guide-list {\n  display: grid;" in styles_css
+    assert "align-items: stretch;" in styles_css
+    assert ".education-guide-card:not([open])" in styles_css
+    assert "min-height: 128px;" in styles_css
+    assert ".education-guide-card summary {\n  display: grid;" in styles_css
+    assert "height: 100%;" in styles_css
+    assert "grid-template-rows: minmax(2.5em, auto) auto;" in styles_css
+    assert "justify-self: end;" in styles_css

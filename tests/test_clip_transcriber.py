@@ -168,6 +168,23 @@ def test_uploaded_clip_transcriber_retries_interrupted_processing_rows(tmp_path)
     assert clip.status == "transcribed"
 
 
+def test_uploaded_clip_store_ignores_duplicate_idempotency_key(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    first_key = "raw/channel=13/date=2026-05-24/20260524T210000Z-first.mp3"
+    second_key = "raw/channel=13/date=2026-05-24/20260524T210030Z-second.mp3"
+    first_request = _clip_request(channel="13", started_at="2026-05-24T21:00:00Z")
+    second_request = _clip_request(channel="13", started_at="2026-05-24T21:00:30Z").model_copy(
+        update={"idempotency_key": first_request.idempotency_key}
+    )
+
+    store.record_presigned_upload(key=first_key, request=first_request)
+    store.record_presigned_upload(key=second_key, request=second_request)
+
+    pending = store.pending_uploads(limit=10)
+    assert [clip.key for clip in pending] == [first_key]
+
+
 def test_recent_transcribed_clips_returns_newest_with_segments(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)

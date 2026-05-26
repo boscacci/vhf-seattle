@@ -19,6 +19,12 @@ dev = [
 ]
 analysis = [
     "numpy>=1.26,<3",
+    "bertopic>=0.16,<1",
+    "pandas>=2.2,<3",
+    "plotly>=5.22,<7",
+    "scikit-learn>=1.4,<2",
+    "sentence-transformers>=3,<6",
+    "tqdm>=4.66,<5",
 ]
 transcribe = [
     "faster-whisper>=1.1,<2",
@@ -38,6 +44,7 @@ talkingboats-capture-profiles = "talkingboats.capture_profiles:main"
 talkingboats-upload-spooled-clips = "talkingboats.spool_uploader:main"
 talkingboats-export-public = "talkingboats.publish:main"
 talkingboats-analyze-audio = "talkingboats.audio_analysis:main"
+talkingboats-analyze-transcripts = "talkingboats.lexical_analysis:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

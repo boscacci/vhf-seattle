@@ -15,6 +15,27 @@ Public artifacts must not contain:
 - AWS account IDs or access key material;
 - private live-radio stream URLs.
 
+## Compute Boundary
+
+The trusted compute boundary is intentionally local-first:
+
+- **Raspberry Pi:** trusted edge capture node on the private LAN. It may see raw
+  RF audio and short local buffers, but it should not hold long-lived AWS
+  credentials or expose public controls.
+- **OptiPlex:** trusted home processing node. It owns the private API, SQLite
+  clip database, transcription workers, retry loops, export jobs, and the
+  read-only proxy used by CloudFront.
+- **AWS:** durable storage and public edge. S3 receives raw objects only through
+  presigned URLs or service-held credentials, and CloudFront exposes only
+  sanitized static assets plus narrow read-only live/API routes.
+- **Public browser:** untrusted. It can read published clips, recent public clip
+  metadata, current status, and live audio, but it cannot retune the receiver,
+  request arbitrary LAN URLs, presign uploads, or access private transcripts.
+
+Doing useful work on the Pi and OptiPlex is the point of the system. Security
+comes from narrow boundaries, short-lived upload URLs, sanitization, and
+read-only public routes, not from pushing all computation into a cloud service.
+
 ## Read-Only Clip Console
 
 The clip console is public without a manual token. The same `public-site/` UI
@@ -33,6 +54,11 @@ The private API handles:
 
 Protect write/admin paths with LAN/Tailscale/VPN plus service-held credentials.
 Do not require an operator to manually paste tokens into the browser.
+
+The Pi-to-OptiPlex LAN path is private infrastructure. If the Pi cannot reach
+the OptiPlex, it should keep bounded local buffers and retry instead of failing
+open to public endpoints. If the OptiPlex cannot reach AWS, it should preserve
+local state and retry uploads/exports when connectivity returns.
 
 ## Retention
 

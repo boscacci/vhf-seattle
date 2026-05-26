@@ -243,6 +243,54 @@ def test_recent_clip_public_audio_filename_cannot_look_like_account_id(monkeypat
     assert_public_safe({"audio_public_filename": filename})
 
 
+def test_recent_clip_export_preserves_existing_analysis_artifacts(tmp_path: Path) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    db_path = tmp_path / "clips.sqlite3"
+    store = UploadedClipStore(db_path)
+    request = ClipPresignRequest(
+        channel="14",
+        started_at="2026-05-24T22:08:41Z",
+        ended_at="2026-05-24T22:08:49Z",
+        duration_seconds=8.1,
+        content_type="audio/mpeg",
+        idempotency_key="real-clip",
+    )
+    key = "raw/channel=14/date=2026-05-24/real.mp3"
+    store.record_presigned_upload(key=key, request=request)
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Seattle Traffic roger.",
+                started_at="2026-05-24T22:08:41Z",
+                ended_at="2026-05-24T22:08:49Z",
+            )
+        ],
+    )
+    output_dir = tmp_path / "output"
+    analysis_dir = output_dir / "analysis"
+    analysis_dir.mkdir(parents=True)
+    (analysis_dir / "lexical.json").write_text('{"status":"ok"}\n', encoding="utf-8")
+    (analysis_dir / "topic_clusters.html").write_text("<html>topics</html>\n", encoding="utf-8")
+
+    export_recent_clip_site(
+        clip_db_path=db_path,
+        site_source_dir=site_source,
+        output_dir=output_dir,
+        clip_reader=FakeClipReader({key: b"real audio"}),
+        limit=10,
+    )
+
+    assert (output_dir / "analysis" / "lexical.json").read_text(encoding="utf-8") == (
+        '{"status":"ok"}\n'
+    )
+    assert "topics" in (output_dir / "analysis" / "topic_clusters.html").read_text(
+        encoding="utf-8"
+    )
+
+
 class FakeClipReader:
     def __init__(self, objects: dict[str, bytes]) -> None:
         self.objects = objects

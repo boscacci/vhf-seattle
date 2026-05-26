@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import tempfile
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -107,19 +108,21 @@ def export_public_site(
     private_manifest = json.loads(private_manifest_path.read_text(encoding="utf-8"))
     public_manifest = sanitize_public_manifest(private_manifest)
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    shutil.copytree(site_source_dir, output_dir)
+    with _preserved_analysis_dir(output_dir) as preserved_analysis:
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        shutil.copytree(site_source_dir, output_dir)
+        _restore_analysis_dir(output_dir, preserved_analysis)
 
-    clips_dir = output_dir / "clips"
-    clips_dir.mkdir(exist_ok=True)
-    if audio_source_dir:
-        _copy_approved_audio(public_manifest, audio_source_dir, clips_dir)
+        clips_dir = output_dir / "clips"
+        clips_dir.mkdir(exist_ok=True)
+        if audio_source_dir:
+            _copy_approved_audio(public_manifest, audio_source_dir, clips_dir)
 
-    (output_dir / "public_manifest.json").write_text(
-        json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+        (output_dir / "public_manifest.json").write_text(
+            json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return public_manifest
 
 
@@ -129,7 +132,7 @@ def export_recent_clip_site(
     site_source_dir: Path,
     output_dir: Path,
     clip_reader: ClipReader,
-    limit: int = 100,
+    limit: int = 1000,
 ) -> dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
@@ -137,20 +140,51 @@ def export_recent_clip_site(
     clips = store.recent_transcribed(limit=limit, excluded_channels=PUBLIC_EXCLUDED_CHANNELS)
     public_manifest = _recent_clip_manifest(clips)
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    shutil.copytree(site_source_dir, output_dir)
+    with _preserved_analysis_dir(output_dir) as preserved_analysis:
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        shutil.copytree(site_source_dir, output_dir)
+        _restore_analysis_dir(output_dir, preserved_analysis)
 
-    clips_dir = output_dir / "clips"
-    clips_dir.mkdir(exist_ok=True)
-    for source_clip, public_clip in zip(clips, public_manifest["clips"], strict=True):
-        clip_reader.download(source_clip.key, clips_dir / public_clip["audio_public_filename"])
+        clips_dir = output_dir / "clips"
+        clips_dir.mkdir(exist_ok=True)
+        for source_clip, public_clip in zip(clips, public_manifest["clips"], strict=True):
+            clip_reader.download(source_clip.key, clips_dir / public_clip["audio_public_filename"])
 
-    (output_dir / "public_manifest.json").write_text(
-        json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+        (output_dir / "public_manifest.json").write_text(
+            json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return public_manifest
+
+
+class _preserved_analysis_dir:
+    def __init__(self, output_dir: Path) -> None:
+        self.output_dir = output_dir
+        self._tempdir: tempfile.TemporaryDirectory[str] | None = None
+        self.path: Path | None = None
+
+    def __enter__(self) -> Path | None:
+        source = self.output_dir / "analysis"
+        if not source.exists():
+            return None
+        self._tempdir = tempfile.TemporaryDirectory()
+        self.path = Path(self._tempdir.name) / "analysis"
+        shutil.copytree(source, self.path)
+        return self.path
+
+    def __exit__(self, *_exc_info: object) -> None:
+        if self._tempdir is not None:
+            self._tempdir.cleanup()
+
+
+def _restore_analysis_dir(output_dir: Path, preserved_analysis: Path | None) -> None:
+    if preserved_analysis is None:
+        return
+    destination = output_dir / "analysis"
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(preserved_analysis, destination)
 
 
 def _sanitize_clip(clip: Mapping[str, Any]) -> dict[str, Any]:
@@ -329,7 +363,7 @@ def main() -> None:
     parser.add_argument("--audio-source-dir", type=Path)
     parser.add_argument("--raw-bucket")
     parser.add_argument("--aws-region", default="us-west-2")
-    parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument("--limit", type=int, default=1000)
     args = parser.parse_args()
 
     if args.clip_db_path is not None:

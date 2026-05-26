@@ -435,6 +435,12 @@ class UploadedClipStore:
             )
             connection.execute(
                 """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_uploaded_clips_idempotency_key
+                ON uploaded_clips(idempotency_key)
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS uploaded_clip_segments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     clip_key TEXT NOT NULL,

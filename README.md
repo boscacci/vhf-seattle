@@ -1,25 +1,37 @@
 # Elliott Bay VHF
 
-Elliott Bay VHF captures Elliott Bay marine VHF, transcribes useful chunks,
-publishes recent clips, and serves a public read-only live radio monitor.
+Elliott Bay VHF captures Elliott Bay marine VHF, does cheap edge processing at
+the radio, uses local home-lab compute for heavier work, publishes recent clips,
+and serves a public read-only live radio monitor.
 
-- **Private side:** Raspberry Pi capture, raw audio, ingest API, transcription
-  workers, and the clip SQLite database.
-- **Public side:** one dark browser UI in `public-site/`, deployed at
-  `vhf.robertboscacci.com` with CloudFront static assets plus read-only live API
-  routes to the OptiPlex proxy.
+- **Radio edge:** an antenna and RTL-SDR live by the window. A Raspberry Pi owns
+  SDR demodulation, live MP3 encoding, RMS activity detection, bounded local
+  clip spooling, and short rolling buffers.
+- **Home processing:** the Pi talks over the private LAN to the OptiPlex. The
+  OptiPlex runs the private API, presigns S3 uploads, stores SQLite metadata,
+  transcribes clips, builds public exports, and runs the public read-only proxy.
+- **Cloud edge:** AWS keeps durable private raw audio, hosts sanitized static
+  site assets in private S3 buckets, and serves dev/prod public domains through
+  CloudFront and Route53.
 
 The public app can read live audio/status and recent clip data, but it never
 exposes radio controls, ingest endpoints, the Pi, raw Icecast URLs, database
 access, raw S3 keys, or long-lived credentials.
 
+This split is intentional. The project is not trying to hide every interesting
+operation in a cloud service. The point is to keep RF-sensitive and low-latency
+work next to the antenna, use the always-on OptiPlex for CPU-heavy and stateful
+processing, and use AWS only where it is useful: durable object storage,
+cacheable public delivery, DNS, TLS, and a narrow read-only edge.
+
 ## Architecture
 
 ```mermaid
 flowchart LR
-    antenna["Elliott Bay VHF antenna"] -->|"RF audio"| pi["Raspberry Pi SDR capture"]
-    pi -->|"Presigned clip uploads"| api["OptiPlex private API"]
-    pi -->|"Current MP3 stream"| proxy["Tailnet live proxy"]
+    antenna["Elliott Bay VHF antenna"] -->|"RF audio"| sdr["RTL-SDR receiver"]
+    sdr -->|"USB IQ samples"| pi["Raspberry Pi edge capture"]
+    pi -->|"LAN: clip metadata and upload requests"| api["OptiPlex private API"]
+    pi -->|"LAN: current Icecast MP3 streams"| proxy["OptiPlex read-only proxy"]
     api -->|"Raw clip objects"| raw["Private raw-audio S3"]
     worker["Uploaded clip transcriber"] -->|"Downloads audio"| raw
     worker -->|"Writes transcripts"| db["SQLite clip DB"]
@@ -47,6 +59,36 @@ kept in-repo so GitHub renders it without relying on a separate design tool.
 - Dev public site: separate static S3 origin and CloudFront distribution at
   `vhf-dev.robertboscacci.com`, using the same live origin unless overridden
 
+## Compute And Network Boundaries
+
+The system has three compute tiers:
+
+- **Raspberry Pi, near the antenna:** owns radio capture because it is physically
+  close to the SDR and can keep the USB/RF path short. It performs bounded edge
+  work: demodulation, speech-band cleanup, audio gating for the browser stream,
+  activity detection, rolling WAV segments, and clip sidecar metadata. It should
+  keep running even when the internet is down, and it should not need AWS
+  credentials.
+- **OptiPlex, on the LAN:** owns work that benefits from local CPU, disk, and
+  stable services: SQLite, transcription, retry loops, S3 presigning, public
+  export generation, the private API, and the read-only CloudFront live origin.
+  This is the normal development and operations box for `conda run -n dell ...`
+  commands.
+- **AWS, public edge:** owns long-lived raw object storage, private static-site
+  origins, CloudFront caching, TLS, DNS, and public read-only delivery. AWS is
+  deliberately not the primary signal-processing environment.
+
+The normal data path is:
+
+```text
+antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> private S3 / CloudFront
+```
+
+For live monitoring, CloudFront routes browser requests back to the OptiPlex
+proxy over the configured Funnel origin, and the OptiPlex reads the Pi's LAN
+Icecast streams. Public browsers never connect directly to the Pi or to a LAN
+Icecast URL.
+
 ## Local Setup
 
 Use the existing `dell` conda environment on the OptiPlex:
@@ -69,6 +111,13 @@ Shared radio UI through the private API:
 ```text
 http://localhost:8034/operator/
 ```
+
+If you are on a MacBook or another client machine instead of the OptiPlex, you
+may have the repo and AWS credentials but not the live SQLite database, Pi systemd
+units, or OpenTofu binary. In that case, use SSH to the OptiPlex for export,
+transcription, and service work. Direct S3/CloudFront syncs from the MacBook are
+acceptable only for emergency static UI fixes where existing manifests and clip
+objects are preserved.
 
 The browser UI shows recent transcribed clips and a separate live-monitor tab.
 At `vhf.robertboscacci.com` it reads `/api/clips/recent`,
@@ -193,7 +242,8 @@ sudo env TALKINGBOATS_LIVE_FREQUENCY_HZ=156700000 \
 
 ## Pi Edge Processing
 
-Keep the cheap, real-time radio work on the Pi:
+Keep the cheap, real-time radio work on the Pi. This is a design goal, not a
+fallback or bug:
 
 - SDR demodulation with `rtl_fm`.
 - Live mono MP3 encoding for debug streaming.
@@ -422,7 +472,24 @@ escape hatch, but the installer disables it so only one process owns the SDR.
 The primary exporter turns the recent transcribed clip DB into a static site with
 copied public audio files. The browser UI shows timestamps in Pacific time and
 the clip review list can filter by channel; the live API fetches filtered channel
-views directly so sparse channels are not hidden behind busier channels.
+views directly so sparse channels are not hidden behind busier channels. The dev
+site also exposes a Language tab that reads cached lexical-analysis JSON and a
+static topic-cluster plot from `analysis/`.
+
+Generate the lexical artifacts before export. The exporter preserves the
+existing `analysis/` directory when it refreshes the static site files:
+
+```bash
+conda run -n dell talkingboats-analyze-transcripts \
+  --db-path /home/rob/.local/share/talkingboats/live-transcripts.sqlite3 \
+  --output-dir outputs/public-site
+```
+
+Install the optional analysis extra only on machines that should run BERTopic:
+
+```bash
+conda run -n dell python -m pip install -e ".[analysis]"
+```
 
 ```bash
 conda run -n dell talkingboats-export-public \
@@ -440,6 +507,19 @@ Deploy dev first, then prod after the public checks look right:
 scripts/deploy_public_site.sh dev outputs/public-site
 scripts/deploy_public_site.sh prod outputs/public-site
 ```
+
+Keep branch and resource separation explicit:
+
+- Dev deploys go to the separate dev S3 origin and CloudFront distribution behind
+  `vhf-dev.robertboscacci.com`.
+- Prod deploys go to the prod S3 origin and CloudFront distribution behind
+  `vhf.robertboscacci.com`.
+- The deploy helper allows prod only from a clean `main` worktree. Use `dev`,
+  `codex/*`, or `feature/*` for dev validation, then merge through `main` for
+  prod.
+
+See [Deployment Hygiene](docs/deployment-hygiene.md) for the branch policy,
+resource matrix, and emergency override rules.
 
 Public URLs:
 

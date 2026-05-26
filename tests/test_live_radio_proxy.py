@@ -333,6 +333,23 @@ def test_proxy_recent_clips_endpoint_is_public_read_only() -> None:
     assert response.json() == {"clips": [{"transcript": "hello"}]}
 
 
+def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://private-api.test/api/analysis/lexical"
+        assert "x-talkingboats-operator-token" not in request.headers
+        return httpx.Response(200, json={"status": "ok", "source_clip_count": 1, "entities": []})
+
+    app = create_app(
+        ProxySettings(private_api_url="http://private-api.test"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(_asgi_get(app, "/api/analysis/lexical"))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "source_clip_count": 1, "entities": []}
+
+
 def test_proxy_recent_clips_endpoint_strips_viewer_auth_and_upstream_cookies() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "http://private-api.test/api/clips/recent?limit=5"

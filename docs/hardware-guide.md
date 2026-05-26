@@ -2,28 +2,73 @@
 
 ## Apartment Layout
 
-Keep the radio gear near the window and move data over Wi-Fi.
+Keep the RF path short and move data over the LAN. The antenna and RTL-SDR sit
+near the best window; the Raspberry Pi is the small edge computer beside them.
+The OptiPlex stays where it belongs as the home server with more CPU, disk, and
+stable services.
 
 ```mermaid
 flowchart LR
   antenna["Window VHF antenna"]
-  voice["RTL-SDR<br/>marine VHF voice"]
-  pi["Raspberry Pi<br/>AC-to-USB power<br/>Wi-Fi"]
-  optiplex["OptiPlex private server<br/>API, SQLite, transcription, UI"]
+  sdr["RTL-SDR<br/>marine VHF receiver"]
+  pi["Raspberry Pi edge node<br/>rtl_fm, Icecast, activity clips"]
+  lan["Private LAN / Wi-Fi"]
+  optiplex["OptiPlex home server<br/>API, SQLite, transcription, export"]
   s3raw["Private S3 raw audio<br/>raw/ expires, hall-of-fame/ retained"]
-  public["CloudFront public app<br/>vhf.robertboscacci.com"]
+  s3site["Private S3 public-site origin"]
+  public["CloudFront public app<br/>vhf / vhf-dev"]
 
-  antenna --> voice
-  voice --> pi
-  pi -->|private Wi-Fi uploads| optiplex
+  antenna -->|RF at 156-162 MHz| sdr
+  sdr -->|USB samples| pi
+  pi -->|clip requests, status, live MP3| lan
+  lan --> optiplex
   optiplex -->|presigned raw uploads| s3raw
-  optiplex -->|recent clips and read-only live proxy| public
+  optiplex -->|sanitized exports| s3site
+  s3site --> public
+  public -->|read-only live API origin| optiplex
 ```
+
+This layout is intentional. The Pi is not a weak substitute for the OptiPlex; it
+is the right place for low-latency radio plumbing because it is physically close
+to the antenna and SDR. The OptiPlex is the right place for local CPU-heavy and
+stateful work: transcription, retry loops, SQLite, publishing, and the public
+proxy. AWS is the durable/public edge, not the place where every radio decision
+has to happen.
+
+## Signal And Data Path
+
+The normal path is:
+
+```text
+antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> AWS public edge
+```
+
+- **RF and USB:** the antenna feeds the RTL-SDR, and the SDR feeds samples to the
+  Raspberry Pi over USB. Keep this physically simple: short antenna jumpers,
+  stable power, and enough ventilation.
+- **Pi edge work:** the Pi runs `rtl_fm`, speech-band cleanup, squelch/gating,
+  Icecast MP3 output, rolling WAV buffers, and activity clip detection. It can
+  keep short retry/debug buffers locally under `/opt/talkingboats/spool`.
+- **LAN handoff:** the Pi reaches the OptiPlex over private Wi-Fi/LAN using
+  stable names such as `talkingboats-pi.local` and `optiplex.local`. It asks the
+  private API for presigned upload URLs instead of holding cloud credentials.
+- **OptiPlex processing:** the OptiPlex records clip metadata in SQLite, retries
+  pending uploads, transcribes clips, generates static exports, and exposes the
+  read-only proxy that CloudFront can call.
+- **Cloud public edge:** S3 stores raw private audio and sanitized public-site
+  files. CloudFront and Route53 provide public `vhf` and `vhf-dev` domains with
+  only read-only app, clip, status, and live-audio paths.
+
+If a laptop is used for repo edits, remember that it is usually a control plane,
+not the runtime host. The OptiPlex is where the live database, long-running
+workers, and service environment normally live.
 
 ## First Parts List
 
 - One RTL-SDR-class receiver with TCXO and SMA connector.
 - One window-friendly VHF antenna to start.
+- One Raspberry Pi close to the window to own the SDR and local Icecast stream.
+- One OptiPlex or similar always-on LAN server for transcription and publishing.
 - Quality Pi power supply. For Pi 3-class hardware, use a 5.1V / 2.5A micro-USB
   supply.
 - Optional powered USB hub if the Pi reports undervoltage with two SDRs attached.
@@ -93,6 +138,20 @@ Better marine antenna if placement is easy:
 - VHF 14, `156.700 MHz`: Super Business Channel for Seattle Traffic / Puget Sound
   VTS.
 AIS can come back later, but it is not part of the current browser UI.
+
+## Local Compute Roles
+
+Use the hardware for what it is good at:
+
+- **Raspberry Pi:** edge capture, stream continuity, activity gating, short
+  rolling buffers, and safe retry queues. Keep memory and CPU bounded.
+- **OptiPlex:** Whisper/faster-whisper, SQLite, S3 interaction, publishing,
+  lexical analysis, and public proxying. This is where the `dell` conda
+  environment and live transcript DB normally live.
+- **MacBook or other laptop:** development, emergency AWS/static-site operations,
+  and browser checks. Do not assume it has the OptiPlex runtime state.
+- **AWS:** private object storage, CloudFront, DNS, TLS, and public read-only
+  delivery.
 
 ## Blog/Figma Diagram Notes
 
