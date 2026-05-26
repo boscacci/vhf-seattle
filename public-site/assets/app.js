@@ -18,11 +18,8 @@ const pacificDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
 });
 const pacificShortTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: pacificTimeZone,
-  month: "short",
-  day: "numeric",
   hour: "numeric",
   minute: "2-digit",
-  timeZoneName: "short",
 });
 const defaultChannelLabels = {
   "05A": "VTS / Port Ops",
@@ -542,6 +539,7 @@ function activateTab(name) {
     startLiveStatusPolling();
     startWaveform();
   } else {
+    closeLiveAudioStream();
     stopLiveStatusPolling();
     stopWaveform();
   }
@@ -552,6 +550,18 @@ function prepareLiveAudio() {
   liveAudio.crossOrigin = "anonymous";
   liveAudio.src = url;
   liveStatus.textContent = "Ready";
+  drawWaitingFrame({ showWaiting: false });
+}
+
+function closeLiveAudioStream() {
+  clearTimeout(liveRetryTimer);
+  liveRetryTimer = null;
+  liveAudio.pause();
+  liveAudio.removeAttribute("src");
+  liveAudio.load();
+  playLiveButton.textContent = "Play";
+  liveStatus.textContent = "Ready";
+  quietSince = null;
   drawWaitingFrame({ showWaiting: false });
 }
 
@@ -925,5 +935,4 @@ function shortTime(value) {
 }
 
 loadLiveChannels();
-prepareLiveAudio();
 loadAndRender();
