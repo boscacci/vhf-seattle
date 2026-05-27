@@ -144,7 +144,7 @@ h3 {
   top: 0;
   z-index: 2;
   display: grid;
-  grid-template-columns: auto auto auto 1fr;
+  grid-template-columns: auto auto auto auto 1fr;
   gap: 8px;
   align-items: center;
   margin: 0 0 18px;
@@ -565,18 +565,21 @@ audio {
   line-height: 1.4;
 }
 
-.language-dashboard {
+.language-dashboard,
+.performance-dashboard {
   display: grid;
   gap: 14px;
 }
 
-.language-grid {
+.language-grid,
+.performance-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
 .language-card,
+.performance-card,
 .language-panel,
 .entity-card,
 .topic-card,
@@ -588,14 +591,16 @@ audio {
   background: var(--panel);
 }
 
-.language-card {
+.language-card,
+.performance-card {
   display: grid;
   gap: 8px;
   min-height: 112px;
   padding: 14px;
 }
 
-.language-card strong {
+.language-card strong,
+.performance-card strong {
   white-space: pre-line;
   color: var(--ink);
   font-size: clamp(1.05rem, 1.35vw, 1.32rem);
@@ -604,6 +609,7 @@ audio {
 }
 
 .language-card span,
+.performance-card span,
 .muted-inline {
   color: var(--muted);
   line-height: 1.45;
@@ -622,6 +628,42 @@ audio {
   display: grid;
   gap: 14px;
   padding: 16px;
+}
+
+.performance-host {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  align-content: start;
+}
+
+.performance-host-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.performance-host h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.94rem;
+  line-height: 1.2;
+}
+
+.performance-host .performance-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.performance-card {
+  border-color: var(--line);
+}
+
+.performance-card.is-watch {
+  border-color: color-mix(in srgb, var(--amber), transparent 28%);
+}
+
+.performance-card.is-high {
+  border-color: color-mix(in srgb, var(--danger), transparent 24%);
 }
 
 .term-section {
@@ -850,9 +892,15 @@ audio {
   .clip-list,
   .live-grid,
   .language-grid,
+  .performance-host-grid,
+  .performance-grid,
   .topic-list,
   .education-list,
   .education-guide-list {
+    grid-template-columns: 1fr;
+  }
+
+  .performance-host .performance-grid {
     grid-template-columns: 1fr;
   }
 

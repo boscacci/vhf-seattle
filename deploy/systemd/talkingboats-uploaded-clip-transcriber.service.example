@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/rob/repos/rpi-for-something
+WorkingDirectory=/home/rob/repos/elliott-bay-vhf
 EnvironmentFile=/home/rob/.config/talkingboats/api.env
 ExecStart=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-transcribe-uploaded-clips --poll-seconds 30 --limit 5
 Restart=always

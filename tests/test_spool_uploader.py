@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -53,6 +54,9 @@ def test_spool_uploader_infers_channel_from_directory() -> None:
 
 
 def test_spool_uploader_imports_without_pydantic() -> None:
+    pythonpath = str(Path.cwd() / "src")
+    if existing_pythonpath := os.environ.get("PYTHONPATH"):
+        pythonpath = f"{pythonpath}{os.pathsep}{existing_pythonpath}"
     import_code = (
         "import sys; "
         "sys.modules['pydantic'] = None; "
@@ -67,6 +71,7 @@ def test_spool_uploader_imports_without_pydantic() -> None:
         ],
         check=True,
         capture_output=True,
+        env={**os.environ, "PYTHONPATH": pythonpath},
         text=True,
     )
 

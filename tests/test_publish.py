@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from talkingboats.audio_processing import PublicClipAudioRejected
 from talkingboats.clip_transcriber import RecentTranscribedClip, UploadedClipStore
 from talkingboats.publish import (
     PublicExportError,
@@ -119,6 +120,49 @@ def test_public_export_copies_static_site_and_writes_manifest(tmp_path: Path) ->
     assert exported["clips"][0]["id"] == "approved"
 
 
+def test_public_export_processes_approved_local_audio(tmp_path: Path) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    audio_source = tmp_path / "audio-source"
+    audio_source.mkdir()
+    (audio_source / "approved.mp3").write_bytes(b"quiet raw audio")
+    private_manifest = tmp_path / "private.json"
+    private_manifest.write_text(
+        json.dumps(
+            {
+                "clips": [
+                    {
+                        "id": "approved",
+                        "approved_public": True,
+                        "public_title": "Public moment",
+                        "channel": "68",
+                        "started_at": "2026-05-20T19:12:00Z",
+                        "audio_public_filename": "approved.mp3",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    processor = RecordingAudioProcessor()
+
+    export_public_site(
+        private_manifest,
+        site_source,
+        tmp_path / "output",
+        audio_source,
+        clip_audio_processor=processor,
+    )
+
+    assert processor.calls == [
+        (audio_source / "approved.mp3", tmp_path / "output" / "clips" / "approved.mp3")
+    ]
+    assert (tmp_path / "output" / "clips" / "approved.mp3").read_bytes() == (
+        b"processed quiet raw audio"
+    )
+
+
 def test_public_export_rejects_nested_audio_filename() -> None:
     with pytest.raises(PublicExportError, match="plain filename"):
         sanitize_public_manifest(
@@ -196,12 +240,15 @@ def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) 
         ],
     )
     reader = FakeClipReader({"raw/channel=14/date=2026-05-24/real.mp3": b"real audio"})
+    processor = RecordingAudioProcessor()
 
     manifest = export_recent_clip_site(
         clip_db_path=db_path,
         site_source_dir=site_source,
         output_dir=tmp_path / "output",
         clip_reader=reader,
+        clip_audio_processor=processor,
+        clip_audio_quality_gate=None,
         limit=10,
     )
 
@@ -216,7 +263,85 @@ def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) 
         "14": "VTS / Seattle Traffic",
     }
     exported_audio = tmp_path / "output" / "clips" / clip["audio_public_filename"]
-    assert exported_audio.read_bytes() == b"real audio"
+    assert processor.calls == [(processor.calls[0][0], exported_audio)]
+    assert processor.source_bytes == [b"real audio"]
+    assert exported_audio.read_bytes() == b"processed real audio"
+    assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
+
+
+def test_recent_clip_export_skips_unpublishable_audio_after_download(tmp_path: Path) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    db_path = tmp_path / "clips.sqlite3"
+    store = UploadedClipStore(db_path)
+    bad_key = "raw/channel=13/date=2026-05-27/bad.mp3"
+    good_key = "raw/channel=14/date=2026-05-27/good.mp3"
+    store.record_presigned_upload(
+        key=bad_key,
+        request=ClipPresignRequest(
+            channel="13",
+            started_at="2026-05-27T19:10:04Z",
+            content_type="audio/mpeg",
+            idempotency_key="bad-clip",
+        ),
+    )
+    store.mark_transcribed(
+        bad_key,
+        [
+            _segment(
+                text="For more information visit www.fema.org",
+                started_at="2026-05-27T19:10:04Z",
+                ended_at="2026-05-27T19:10:04Z",
+            )
+        ],
+    )
+    store.record_presigned_upload(
+        key=good_key,
+        request=ClipPresignRequest(
+            channel="14",
+            started_at="2026-05-27T19:09:04Z",
+            ended_at="2026-05-27T19:09:09Z",
+            duration_seconds=5.0,
+            content_type="audio/mpeg",
+            idempotency_key="good-clip",
+        ),
+    )
+    store.mark_transcribed(
+        good_key,
+        [
+            _segment(
+                text="Seattle Traffic roger.",
+                started_at="2026-05-27T19:09:04Z",
+                ended_at="2026-05-27T19:09:09Z",
+            )
+        ],
+    )
+    reader = FakeClipReader({bad_key: b"silent blip", good_key: b"real traffic"})
+    processor = RecordingAudioProcessor()
+
+    def quality_gate(source_path: Path) -> None:
+        if source_path.read_bytes() == b"silent blip":
+            raise PublicClipAudioRejected("duration 0.216s is below 1.000s")
+
+    manifest = export_recent_clip_site(
+        clip_db_path=db_path,
+        site_source_dir=site_source,
+        output_dir=tmp_path / "output",
+        clip_reader=reader,
+        clip_audio_processor=processor,
+        clip_audio_quality_gate=quality_gate,
+        limit=10,
+    )
+
+    assert [clip["transcript_public"] for clip in manifest["clips"]] == [
+        "Seattle Traffic roger."
+    ]
+    assert processor.source_bytes == [b"real traffic"]
+    assert not any(
+        path.name.startswith("20260527T191004Z")
+        for path in (tmp_path / "output" / "clips").iterdir()
+    )
     assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
 
 
@@ -280,6 +405,8 @@ def test_recent_clip_export_preserves_existing_analysis_artifacts(tmp_path: Path
         site_source_dir=site_source,
         output_dir=output_dir,
         clip_reader=FakeClipReader({key: b"real audio"}),
+        clip_audio_processor=RecordingAudioProcessor(),
+        clip_audio_quality_gate=None,
         limit=10,
     )
 
@@ -297,6 +424,18 @@ class FakeClipReader:
 
     def download(self, key: str, output_path: Path) -> None:
         output_path.write_bytes(self.objects[key])
+
+
+class RecordingAudioProcessor:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Path, Path]] = []
+        self.source_bytes: list[bytes] = []
+
+    def __call__(self, source_path: Path, output_path: Path) -> None:
+        self.calls.append((source_path, output_path))
+        source_bytes = source_path.read_bytes()
+        self.source_bytes.append(source_bytes)
+        output_path.write_bytes(b"processed " + source_bytes)
 
 
 def _segment(*, text: str, started_at: str, ended_at: str) -> object:

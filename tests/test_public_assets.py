@@ -58,6 +58,15 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert '"vhf.robertboscacci.com"' in app_js
     assert "/api/analysis/lexical" in app_js
     assert "/analysis/lexical.json" in app_js
+    assert (
+        'const liveLanguageAnalysisEnabled = window.location.hostname !== '
+        '"vhf.robertboscacci.com";'
+    ) in app_js
+    assert (
+        "if (!liveLanguageAnalysisEnabled) {\n"
+        "    return loadPublishedLanguagePayload();\n"
+        "  }"
+    ) in app_js
     assert "renderLanguageDashboard" in app_js
     assert "topic_clusters.html" in app_js
     assert "Suspected vessels" in app_js
@@ -103,6 +112,27 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert "getByteTimeDomainData" in app_js
     assert "liveStatusPollMs = 2000" in app_js
     assert "quietTransmissionDelayMs = 5000" in app_js
+    assert "performanceRefreshMs = 10000" in app_js
+    assert "loadAndRenderPerformance({ showLoading: false });" in app_js
+    assert "startPerformancePolling" in app_js
+    assert "stopPerformancePolling" in app_js
+    assert "CPU utilization" in app_js
+    assert "1-minute load average" in app_js
+    assert "OptiPlex live proxy" in app_js
+    assert "Raspberry Pi edge radio" in app_js
+    assert "Thermals" in app_js
+    assert "performance-host-grid" in app_js
+    assert "performanceHostPanel" in app_js
+    assert "serviceList" not in app_js
+    assert "Services" not in app_js
+    assert "Overall" not in app_js
+    assert "OptiPlex CPU" not in app_js
+    assert "Pi CPU" not in app_js
+    assert "Auto-refreshes every 10s" not in app_js
+    assert "formatPerformanceDateTime" in app_js
+    assert 'second: "2-digit"' in app_js
+    assert "resident memory" not in app_js
+    assert "RSS" not in app_js
     assert "startLiveStatusPolling" in app_js
     assert "setTimeout(pollLiveStatus, liveStatusPollMs)" in app_js
     assert "closeLiveAudioStream" in app_js

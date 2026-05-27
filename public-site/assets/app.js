@@ -3,6 +3,7 @@ const liveClipUrl = `/api/clips/recent?limit=${clipPageSize}`;
 const manifestUrl = "/public_manifest.json";
 const lexicalAnalysisUrl = "/api/analysis/lexical";
 const lexicalManifestUrl = "/analysis/lexical.json";
+const performanceUrl = "/api/live/performance";
 const topicClusterFallbackUrl = "/analysis/topic_clusters.html";
 const liveChannelsUrl = "/api/live/channels";
 const defaultLiveStreamUrl = "/api/live/current.mp3";
@@ -19,8 +20,14 @@ const languageDashboardEnabled = [
 ].includes(
   window.location.hostname,
 );
+const liveLanguageAnalysisEnabled = window.location.hostname !== "vhf.robertboscacci.com";
+const performanceDashboardEnabled = ["vhf-dev.robertboscacci.com", "localhost", "127.0.0.1", ""].includes(
+  window.location.hostname,
+);
 const liveStatusPollMs = 2000;
+const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
+const performanceHostLabel = "OptiPlex live proxy";
 const pacificTimeZone = "America/Los_Angeles";
 const pacificDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: pacificTimeZone,
@@ -29,6 +36,16 @@ const pacificDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   hour: "numeric",
   minute: "2-digit",
+  timeZoneName: "short",
+});
+const performanceDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: pacificTimeZone,
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
   timeZoneName: "short",
 });
 const pacificShortTimeFormatter = new Intl.DateTimeFormat("en-US", {
@@ -84,10 +101,12 @@ const refreshButton = document.querySelector("#refresh-clips");
 const stats = document.querySelector("#stats");
 const tabs = [...document.querySelectorAll(".tab")];
 const languageTab = document.querySelector("#tab-language");
+const performanceTab = document.querySelector("#tab-performance");
 const panels = {
   clips: document.querySelector("#panel-clips"),
   live: document.querySelector("#panel-live"),
   language: document.querySelector("#panel-language"),
+  performance: document.querySelector("#panel-performance"),
 };
 const liveAudio = document.querySelector("#live-audio");
 const liveStatus = document.querySelector("#live-status");
@@ -102,6 +121,8 @@ const systemMediaControlsToggle = document.querySelector("#system-media-controls
 const systemMediaNote = document.querySelector("#system-media-note");
 const languageStatus = document.querySelector("#language-status");
 const lexicalAnalysis = document.querySelector("#lexical-analysis");
+const performanceStatus = document.querySelector("#performance-status");
+const performanceDashboard = document.querySelector("#performance-dashboard");
 
 let liveRetryTimer = null;
 let liveStatusTimer = null;
@@ -117,7 +138,10 @@ let quietSince = null;
 let selectedChannel = "all";
 let selectedClipPage = 1;
 let selectedLiveChannel = "14";
+let activeTab = "clips";
 let languagePayloadLoaded = false;
+let performancePayloadLoaded = false;
+let performanceRefreshTimer = null;
 let systemMediaControlsEnabled = systemMediaControlsDefault;
 let liveChannels = [
   {
@@ -146,13 +170,20 @@ try {
 if (languageTab) {
   languageTab.hidden = !languageDashboardEnabled;
 }
+if (performanceTab) {
+  performanceTab.hidden = !performanceDashboardEnabled;
+}
 
 configureLiveAudioElement();
 clearBrowserMediaSession();
 updateSystemMediaControlsUi();
 
 refreshButton.addEventListener("click", () => {
-  loadAndRender();
+  if (activeTab === "performance") {
+    loadAndRenderPerformance({ showLoading: false });
+  } else {
+    loadAndRender();
+  }
 });
 
 channelFilter.addEventListener("click", (event) => {
@@ -258,6 +289,9 @@ async function loadPublishedManifest() {
 }
 
 async function loadLanguagePayload() {
+  if (!liveLanguageAnalysisEnabled) {
+    return loadPublishedLanguagePayload();
+  }
   try {
     const response = await fetch(lexicalAnalysisUrl, { cache: "no-store" });
     if (!response.ok) {
@@ -627,6 +661,10 @@ function activateTab(name) {
   if (name === "language" && !languageDashboardEnabled) {
     return;
   }
+  if (name === "performance" && !performanceDashboardEnabled) {
+    return;
+  }
+  activeTab = name;
   tabs.forEach((tab) => {
     tab.classList.toggle("is-active", tab.dataset.tab === name);
   });
@@ -635,7 +673,7 @@ function activateTab(name) {
     panel.classList.toggle("is-active", active);
     panel.hidden = !active;
   });
-  refreshButton.hidden = name !== "clips";
+  refreshButton.hidden = !["clips", "performance"].includes(name);
   if (name === "live" && !liveAudio.src) {
     prepareLiveAudio();
   }
@@ -649,6 +687,12 @@ function activateTab(name) {
   }
   if (name === "language" && !languagePayloadLoaded) {
     loadAndRenderLanguage();
+  }
+  if (name === "performance") {
+    loadAndRenderPerformance({ showLoading: !performancePayloadLoaded });
+    startPerformancePolling();
+  } else {
+    stopPerformancePolling();
   }
 }
 
@@ -709,6 +753,204 @@ function renderLanguageDashboard(payload) {
   );
 
   lexicalAnalysis.replaceChildren(cards, wordsPanel, entityPanel, topicPanel, educationPanel);
+}
+
+async function loadAndRenderPerformance({ showLoading = true } = {}) {
+  if (!performanceStatus || !performanceDashboard) {
+    return;
+  }
+  if (showLoading || !performancePayloadLoaded) {
+    performanceStatus.textContent = "Loading performance...";
+  }
+  try {
+    const response = await fetch(performanceUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`performance HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    performancePayloadLoaded = true;
+    renderPerformanceDashboard(payload);
+  } catch {
+    performanceStatus.textContent = "Performance unavailable";
+    performanceDashboard.replaceChildren(emptyPerformanceState());
+  }
+}
+
+function startPerformancePolling() {
+  stopPerformancePolling();
+  performanceRefreshTimer = setTimeout(pollPerformance, performanceRefreshMs);
+}
+
+function stopPerformancePolling() {
+  if (performanceRefreshTimer) {
+    clearTimeout(performanceRefreshTimer);
+    performanceRefreshTimer = null;
+  }
+}
+
+async function pollPerformance() {
+  if (activeTab !== "performance") {
+    return;
+  }
+  await loadAndRenderPerformance({ showLoading: false });
+  startPerformancePolling();
+}
+
+function renderPerformanceDashboard(payload) {
+  const generated = payload.generatedAt
+    ? `Updated ${formatPerformanceDateTime(payload.generatedAt)}`
+    : "Snapshot ready";
+  performanceStatus.textContent = generated;
+  const hosts = performanceHosts(payload);
+  if (!hosts.length) {
+    performanceDashboard.replaceChildren(emptyPerformanceState());
+    return;
+  }
+  const hostGrid = document.createElement("div");
+  hostGrid.className = "performance-host-grid";
+  hostGrid.append(...hosts.map((host, index) => performanceHostPanel(host, index)));
+  performanceDashboard.replaceChildren(hostGrid);
+}
+
+function performanceHosts(payload) {
+  const hosts = Array.isArray(payload.hosts) ? payload.hosts.filter(Boolean) : [];
+  if (hosts.length) {
+    return hosts;
+  }
+  return payload.host ? [payload.host] : [];
+}
+
+function hostRole(host, index) {
+  if (host?.role) {
+    return host.role;
+  }
+  return index === 0 ? performanceHostLabel : "Raspberry Pi edge radio";
+}
+
+function performanceHostPanel(host, index) {
+  const role = hostRole(host, index);
+  const panel = document.createElement("section");
+  panel.className = "performance-host";
+  const title = document.createElement("h3");
+  title.textContent = role;
+  const cards = document.createElement("div");
+  cards.className = "performance-grid";
+  const memory = host?.memory || {};
+  const disks = host?.disks || [];
+  const thermal = host?.thermal || {};
+  cards.append(
+    performanceCard("CPU utilization", cpuUtilizationSummary(host), cpuCaption(host), hostStatus(host, "cpu")),
+    performanceCard("Memory", percentLabel(memory.usedPercent), bytesLabel(memory.availableBytes, "available"), memory.status),
+    performanceCard("Disk", diskSummary(disks), "Most used filesystem", worstItemStatus(disks)),
+    performanceCard("Thermals", thermalSummary(thermal), thermalCaption(thermal), thermal.status),
+  );
+  panel.append(title, cards);
+  return panel;
+}
+
+function performanceCard(label, value, caption, status) {
+  const card = document.createElement("article");
+  card.className = `performance-card ${statusClass(status)}`;
+  const heading = document.createElement("p");
+  heading.className = "language-label";
+  heading.textContent = label;
+  const metric = document.createElement("strong");
+  metric.textContent = value;
+  const note = document.createElement("span");
+  note.textContent = caption;
+  card.append(heading, metric, note);
+  return card;
+}
+
+function emptyPerformanceState() {
+  const empty = document.createElement("p");
+  empty.className = "muted-inline";
+  empty.textContent = "No performance snapshot is available.";
+  return empty;
+}
+
+function cpuUtilizationSummary(host) {
+  return percentLabel(host?.cpu?.utilizationPercent);
+}
+
+function cpuCaption(host) {
+  return `1-minute load average: ${formatLoad(host?.load || {})}; ${host?.cpuCount || "?"} logical CPUs`;
+}
+
+function hostStatus(host, key) {
+  return host?.[key]?.status || "unknown";
+}
+
+function formatLoad(load) {
+  if (!Number.isFinite(Number(load.perCpu))) {
+    return "Unknown";
+  }
+  return `${Number(load.perCpu).toFixed(2)}x/core`;
+}
+
+function thermalSummary(thermal) {
+  const temperature = Number(thermal?.temperatureC);
+  if (!Number.isFinite(temperature)) {
+    return "Unknown";
+  }
+  return `${temperature.toFixed(1)} C`;
+}
+
+function thermalCaption(thermal) {
+  const throttled = thermal?.throttled || "unknown";
+  if (throttled === "0x0") {
+    return "No throttling reported";
+  }
+  return `Throttled: ${throttled}`;
+}
+
+function diskSummary(disks) {
+  const values = disks.map((disk) => Number(disk.usedPercent)).filter(Number.isFinite);
+  if (!values.length) {
+    return "Unknown";
+  }
+  return percentLabel(Math.max(...values));
+}
+
+function worstItemStatus(items) {
+  const ranks = { high: 3, watch: 2, ok: 1, unknown: 0 };
+  return items.reduce((worst, item) => (ranks[item.status] > ranks[worst] ? item.status : worst), "unknown");
+}
+
+function statusLabel(status) {
+  return {
+    high: "High",
+    watch: "Watch",
+    ok: "OK",
+    unknown: "Unknown",
+  }[status] || "Unknown";
+}
+
+function statusClass(status) {
+  return `is-${statusLabel(status).toLowerCase()}`;
+}
+
+function percentLabel(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "Unknown";
+  }
+  return `${number.toFixed(1)}%`;
+}
+
+function bytesLabel(value, suffix) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes)) {
+    return suffix ? `Unknown ${suffix}` : "Unknown";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let amount = bytes;
+  let unitIndex = 0;
+  while (amount >= 1024 && unitIndex < units.length - 1) {
+    amount /= 1024;
+    unitIndex += 1;
+  }
+  return `${amount.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]} ${suffix || ""}`.trim();
 }
 
 function languageCard(label, value, caption) {
@@ -1525,6 +1767,17 @@ function formatDateTime(value) {
     return "Unknown time";
   }
   return pacificDateTimeFormatter.format(date);
+}
+
+function formatPerformanceDateTime(value) {
+  if (!value) {
+    return "Unknown time";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Unknown time";
+  }
+  return performanceDateTimeFormatter.format(date);
 }
 
 function shortTime(value) {

@@ -1,5 +1,5 @@
 [project]
-name = "talkingboats"
+name = "elliott-bay-vhf"
 version = "0.1.0"
 description = "Private VHF capture and public recent-clip showcase for Elliott Bay radio monitoring."
 requires-python = ">=3.11"

@@ -110,6 +110,16 @@ def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
     assert "origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id" in main_tf
 
 
+def test_dev_cloudfront_marks_live_origin_requests_as_dev_only() -> None:
+    main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+    prod_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "site")
+    dev_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "dev_site")
+
+    assert 'name  = "X-TalkingBoats-Environment"' in dev_distribution
+    assert 'value = "dev"' in dev_distribution
+    assert "X-TalkingBoats-Environment" not in prod_distribution
+
+
 def _lifecycle_block(main_tf: str) -> str:
     start = main_tf.index('resource "aws_s3_bucket_lifecycle_configuration" "raw_audio"')
     end = main_tf.index('resource "aws_acm_certificate" "site"')

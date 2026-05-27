@@ -1,53 +1,63 @@
-# Elliott Bay VHF
+<h1 align="center">Elliott Bay VHF</h1>
 
-Elliott Bay VHF captures Elliott Bay marine VHF, does cheap edge processing at
-the radio, uses local home-lab compute for heavier work, publishes recent clips,
-and serves a public read-only live radio monitor.
+<p align="center">
+  <strong>
+    Live Elliott Bay marine VHF, captured at the radio edge, processed at home, and published safely through AWS.
+  </strong>
+</p>
 
-- **Radio edge:** an antenna and RTL-SDR live by the window. A Raspberry Pi owns
-  SDR demodulation, live MP3 encoding, RMS activity detection, bounded local
-  clip spooling, and short rolling buffers.
-- **Home processing:** the Pi talks over the private LAN to the OptiPlex. The
-  OptiPlex runs the private API, presigns S3 uploads, stores SQLite metadata,
-  transcribes clips, builds public exports, and runs the public read-only proxy.
-- **Cloud edge:** AWS keeps durable private raw audio, hosts sanitized static
-  site assets in private S3 buckets, and serves dev/prod public domains through
-  CloudFront and Route53.
+<p align="center">
+  <a href="https://vhf.robertboscacci.com">Production site</a> &middot;
+  <a href="https://vhf-dev.robertboscacci.com">Dev site</a> &middot;
+  <a href="docs/security-model.md">Security model</a> &middot;
+  <a href="docs/performance.md">Performance telemetry</a> &middot;
+  <a href="docs/deployment-hygiene.md">Deployment hygiene</a>
+</p>
 
-The public app can read live audio/status and recent clip data, but it never
-exposes radio controls, ingest endpoints, the Pi, raw Icecast URLs, database
+<p align="center">
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-private%20API-009688?style=flat-square">
+  <img alt="OpenTofu" src="https://img.shields.io/badge/IaC-OpenTofu-FFDA18?style=flat-square">
+  <img alt="AWS" src="https://img.shields.io/badge/AWS-S3%20%2B%20CloudFront-232F3E?style=flat-square">
+</p>
+
+<p align="center">
+  <img
+    src="docs/assets/elliott-bay-vhf-architecture.png"
+    alt="Architecture diagram showing the Raspberry Pi radio edge, OptiPlex home processing tier, and AWS public edge."
+    width="100%"
+  >
+</p>
+
+<p align="center">
+  <em>
+    Diagram source:
+    <a href="https://www.figma.com/design/4X91YXb7Q8zBSz8vRaneFV">Figma design</a>.
+  </em>
+</p>
+
+## What It Is
+
+Elliott Bay VHF is a home-lab marine radio pipeline for live monitoring, recent
+clip review, transcription, lexical analysis, and public read-only playback. It
+keeps signal-sensitive work next to the antenna, heavier processing on the
+OptiPlex, and public delivery on narrow AWS edges.
+
+| Layer | Runs On | Owns |
+| --- | --- | --- |
+| Radio edge | Raspberry Pi + RTL-SDR | VHF capture, live MP3, activity detection, bounded clip spooling, thermals |
+| Home processing | OptiPlex | Private API, SQLite metadata, transcription, exports, live proxy, system telemetry |
+| Public edge | AWS S3 + CloudFront | Static app assets, sanitized public audio, TLS, DNS, cacheable read-only delivery |
+
+The public app can read live audio/status and recent clip data, but it does not
+expose radio controls, ingest endpoints, the Pi, raw Icecast URLs, database
 access, raw S3 keys, or long-lived credentials.
-
-This split is intentional. The project is not trying to hide every interesting
-operation in a cloud service. The point is to keep RF-sensitive and low-latency
-work next to the antenna, use the always-on OptiPlex for CPU-heavy and stateful
-processing, and use AWS only where it is useful: durable object storage,
-cacheable public delivery, DNS, TLS, and a narrow read-only edge.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    antenna["Elliott Bay VHF antenna"] -->|"RF audio"| sdr["RTL-SDR receiver"]
-    sdr -->|"USB IQ samples"| pi["Raspberry Pi edge capture"]
-    pi -->|"LAN: clip metadata and upload requests"| api["OptiPlex private API"]
-    pi -->|"LAN: current Icecast MP3 streams"| proxy["OptiPlex read-only proxy"]
-    api -->|"Raw clip objects"| raw["Private raw-audio S3"]
-    worker["Uploaded clip transcriber"] -->|"Downloads audio"| raw
-    worker -->|"Writes transcripts"| db["SQLite clip DB"]
-    api -->|"Reads recent clips"| db
-    exporter["Public site exporter"] -->|"Reads reviewed clips"| db
-    exporter -->|"Copies sanitized audio and manifest"| publicS3["Private public-site S3"]
-    publicS3 -->|"Origin access only"| cdn["CloudFront"]
-    dns["Route53"] -->|"vhf / vhf-dev aliases"| cdn
-    browser["Public browser"] -->|"Live app"| cdn
-    cdn -->|"Read-only live API routes"| proxy
-    proxy -->|"Read-only clip API"| api
+```text
+antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> private S3 / CloudFront -> browser
 ```
-
-I attempted to generate the same diagram in FigJam through the Figma connector,
-but the connector token was expired in this session. The Mermaid source above is
-kept in-repo so GitHub renders it without relying on a separate design tool.
 
 ## First Build Target
 
@@ -499,6 +509,16 @@ conda run -n dell talkingboats-export-public \
   --output-dir outputs/public-site
 ```
 
+Public clip audio is processed during export. The exporter applies speech-band
+compression and loudness normalization with a true-peak ceiling of `-6 dB`, so
+browser playback is closer to normal device volume while the private raw S3
+objects remain untouched. Recent-clip exports also probe the raw source and skip
+public entries shorter than one second or with an almost silent source peak; this
+keeps subsecond transcriber hallucinations out of the dashboard. Use
+`--no-public-audio-processing` only for emergency debug copies, or
+`--public-audio-ffmpeg-path` / `--public-audio-ffprobe-path` if the service
+should use non-default media binaries.
+
 The older private-manifest mode remains for local simulator tests only.
 
 Deploy dev first, then prod after the public checks look right:
@@ -507,6 +527,52 @@ Deploy dev first, then prod after the public checks look right:
 scripts/deploy_public_site.sh dev outputs/public-site
 scripts/deploy_public_site.sh prod outputs/public-site
 ```
+
+To keep the Language tab fresh, install the scheduled lexical refresh on the
+OptiPlex. It rebuilds the lexical JSON, suspected entities, and BERTopic/UMAP
+topic plot from the current transcript DB, rebuilds the public export, and
+deploys the dev site every six hours. The script uses a lock directory so a slow
+topic run skips the next tick instead of overlapping itself.
+
+```bash
+sudo install -m 0644 deploy/systemd/talkingboats-lexical-refresh.service.example \
+  /etc/systemd/system/talkingboats-lexical-refresh.service
+sudo install -m 0644 deploy/systemd/talkingboats-lexical-refresh.timer.example \
+  /etc/systemd/system/talkingboats-lexical-refresh.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now talkingboats-lexical-refresh.timer
+```
+
+If installing as the `rob` user instead of a system service:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/talkingboats-lexical-refresh.service.example \
+  ~/.config/systemd/user/talkingboats-lexical-refresh.service
+cp deploy/systemd/talkingboats-lexical-refresh.timer.example \
+  ~/.config/systemd/user/talkingboats-lexical-refresh.timer
+systemctl --user daemon-reload
+systemctl --user enable --now talkingboats-lexical-refresh.timer
+```
+
+Run one refresh manually:
+
+```bash
+scripts/refresh_lexical_analysis.sh
+```
+
+The refresh defaults to:
+
+- DB: `/home/rob/.local/share/talkingboats/live-transcripts.sqlite3`
+- output: `outputs/public-site`
+- deploy target: `dev`
+- conda env: `dell`
+
+Use `.env` or systemd environment overrides such as
+`TALKINGBOATS_LEXICAL_DEPLOY_ENV`, `TALKINGBOATS_LEXICAL_DB_PATH`, and
+`TALKINGBOATS_LEXICAL_OUTPUT_DIR` if a host needs different paths. Do not set
+`TALKINGBOATS_LEXICAL_DEPLOY_ENV=prod` unless you intend to promote the refreshed
+analysis to prod; the prod deploy helper still enforces a clean `main` worktree.
 
 Keep branch and resource separation explicit:
 

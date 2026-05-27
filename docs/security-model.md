@@ -43,6 +43,13 @@ reads recent transcripts, short-lived playback URLs, live status, and the curren
 read-only live audio stream. It must not expose write endpoints, retune controls,
 raw ingest presigning, private network URLs, or arbitrary internal proxying.
 
+The performance telemetry endpoint is dev-only and gated by configured dev
+hostnames or the dev CloudFront live-origin request. Its public response is a
+whitelist of coarse CPU, memory, disk, and thermal health for the OptiPlex proxy
+and Raspberry Pi receiver. It must not expose LAN addresses, tailnet hostnames,
+service names, process lists, environment variables, internal URLs, tokens, or
+arbitrary collector fields.
+
 ## Private Boundary
 
 The private API handles:
