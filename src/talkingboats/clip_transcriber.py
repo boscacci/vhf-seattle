@@ -16,6 +16,12 @@ from typing import Any, Protocol
 import boto3
 from botocore.exceptions import ClientError
 
+from talkingboats.audio_processing import (
+    DEFAULT_SPEECH_AUDIO_FILTER,
+    DEFAULT_TRANSCRIBE_BEAM_SIZE,
+    DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ,
+    prepared_transcription_audio,
+)
 from talkingboats.schemas import ClipPresignRequest
 
 
@@ -429,6 +435,12 @@ class UploadedClipStore:
             )
             connection.execute(
                 """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_uploaded_clips_idempotency_key
+                ON uploaded_clips(idempotency_key)
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS uploaded_clip_segments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     clip_key TEXT NOT NULL,
@@ -475,7 +487,15 @@ def process_pending_uploads_once(
     retry_errors: bool = False,
     vad_filter: bool = False,
     min_segment_avg_logprob: float | None = -0.6,
+    audio_filter: str | None = DEFAULT_SPEECH_AUDIO_FILTER,
+    sample_rate_hz: int = DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ,
+    beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE,
+    hotwords: str | None = None,
+    ffmpeg_path: str | None = None,
+    ffmpeg_runner: Any | None = None,
 ) -> ProcessSummary:
+    if beam_size <= 0:
+        raise ValueError("beam_size must be positive")
     summary = ProcessSummary()
     for record in store.pending_uploads(limit=limit, retry_errors=retry_errors):
         summary.processed += 1
@@ -485,13 +505,23 @@ def process_pending_uploads_once(
             audio_path = Path(handle.name)
         try:
             clip_reader.download(record.key, audio_path)
-            segments = transcribe_audio_file(
-                model=model,
-                audio_path=audio_path,
-                record=record,
-                vad_filter=vad_filter,
-                min_segment_avg_logprob=min_segment_avg_logprob,
-            )
+            prepare_kwargs: dict[str, Any] = {
+                "sample_rate_hz": sample_rate_hz,
+                "audio_filter": audio_filter,
+                "ffmpeg_path": ffmpeg_path,
+            }
+            if ffmpeg_runner is not None:
+                prepare_kwargs["runner"] = ffmpeg_runner
+            with prepared_transcription_audio(audio_path, **prepare_kwargs) as prepared_audio_path:
+                segments = transcribe_audio_file(
+                    model=model,
+                    audio_path=prepared_audio_path,
+                    record=record,
+                    vad_filter=vad_filter,
+                    min_segment_avg_logprob=min_segment_avg_logprob,
+                    beam_size=beam_size,
+                    hotwords=hotwords,
+                )
             if segments:
                 store.mark_transcribed(record.key, segments)
                 summary.transcribed += 1
@@ -516,14 +546,20 @@ def transcribe_audio_file(
     record: UploadedClipRecord,
     vad_filter: bool = False,
     min_segment_avg_logprob: float | None = -0.6,
+    beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE,
+    hotwords: str | None = None,
 ) -> list[UploadedClipSegment]:
-    segments, _ = model.transcribe(
-        str(audio_path),
-        language="en",
-        beam_size=1,
-        vad_filter=vad_filter,
-        condition_on_previous_text=False,
-    )
+    if beam_size <= 0:
+        raise ValueError("beam_size must be positive")
+    kwargs: dict[str, Any] = {
+        "language": "en",
+        "beam_size": beam_size,
+        "vad_filter": vad_filter,
+        "condition_on_previous_text": False,
+    }
+    if hotwords:
+        kwargs["hotwords"] = hotwords
+    segments, _ = model.transcribe(str(audio_path), **kwargs)
     clip_started = _parse_utc(record.started_at)
     rendered: list[UploadedClipSegment] = []
     for segment in segments:
@@ -587,6 +623,22 @@ def main() -> None:
             "Set very low, such as -10, to keep all segments."
         ),
     )
+    parser.add_argument("--audio-filter", default=os.getenv("TALKINGBOATS_TRANSCRIBE_AUDIO_FILTER"))
+    parser.add_argument("--no-audio-filter", action="store_true")
+    parser.add_argument(
+        "--sample-rate-hz",
+        type=int,
+        default=_env_int(
+            "TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ",
+            DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ,
+        ),
+    )
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        default=_env_int("TALKINGBOATS_TRANSCRIBE_BEAM_SIZE", DEFAULT_TRANSCRIBE_BEAM_SIZE),
+    )
+    parser.add_argument("--hotwords", default=os.getenv("TALKINGBOATS_TRANSCRIBE_HOTWORDS"))
     args = parser.parse_args()
 
     if args.db_path is None:
@@ -595,6 +647,10 @@ def main() -> None:
         parser.error("--bucket or TALKINGBOATS_RAW_BUCKET is required")
     if args.poll_seconds <= 0:
         parser.error("--poll-seconds must be positive")
+    if args.sample_rate_hz <= 0:
+        parser.error("--sample-rate-hz must be positive")
+    if args.beam_size <= 0:
+        parser.error("--beam-size must be positive")
 
     store = UploadedClipStore(args.db_path)
     reader = S3ClipReader(bucket=args.bucket, aws_region=args.aws_region)
@@ -605,6 +661,9 @@ def main() -> None:
     )
 
     _log_event("uploaded_clip_transcriber_start", db_path=str(args.db_path), bucket=args.bucket)
+    audio_filter = None if args.no_audio_filter else (
+        args.audio_filter or DEFAULT_SPEECH_AUDIO_FILTER
+    )
     while True:
         summary = process_pending_uploads_once(
             store=store,
@@ -614,6 +673,10 @@ def main() -> None:
             retry_errors=args.retry_errors,
             vad_filter=args.vad_filter,
             min_segment_avg_logprob=args.min_segment_avg_logprob,
+            audio_filter=audio_filter,
+            sample_rate_hz=args.sample_rate_hz,
+            beam_size=args.beam_size,
+            hotwords=args.hotwords,
         )
         _log_event("uploaded_clip_transcriber_poll", **asdict(summary))
         if args.once:
@@ -662,6 +725,11 @@ def _env_bool(name: str, default: bool) -> bool:
 def _env_float(name: str, default: float) -> float:
     value = os.getenv(name)
     return float(value) if value is not None else default
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    return int(value) if value is not None else default
 
 
 def _is_likely_static_hallucination(text: str) -> bool:

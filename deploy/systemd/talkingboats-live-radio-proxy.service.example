@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/rob/repos/rpi-for-something
-EnvironmentFile=-/home/rob/repos/rpi-for-something/.env
+WorkingDirectory=/home/rob/repos/elliott-bay-vhf
+EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/.env
 ExecStart=/home/rob/miniforge3/condabin/conda run -n dell talkingboats-live-radio-proxy --host 127.0.0.1 --port 8095
 Restart=on-failure
 RestartSec=5

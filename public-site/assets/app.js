@@ -1,11 +1,33 @@
 const clipPageSize = 6;
 const liveClipUrl = `/api/clips/recent?limit=${clipPageSize}`;
 const manifestUrl = "/public_manifest.json";
+const lexicalAnalysisUrl = "/api/analysis/lexical";
+const lexicalManifestUrl = "/analysis/lexical.json";
+const performanceUrl = "/api/live/performance";
+const topicClusterFallbackUrl = "/analysis/topic_clusters.html";
 const liveChannelsUrl = "/api/live/channels";
 const defaultLiveStreamUrl = "/api/live/current.mp3";
+const systemMediaControlsStorageKey = "talkingboats.systemMediaControls";
+const systemMediaControlsDefault = false;
+const unknownPlaybackTimeLabel = "—";
 const liveDspProfile = window.location.hostname === "vhf-dev.robertboscacci.com" ? "warm_voice" : "";
+const languageDashboardEnabled = [
+  "vhf.robertboscacci.com",
+  "vhf-dev.robertboscacci.com",
+  "localhost",
+  "127.0.0.1",
+  "",
+].includes(
+  window.location.hostname,
+);
+const liveLanguageAnalysisEnabled = window.location.hostname !== "vhf.robertboscacci.com";
+const performanceDashboardEnabled = ["vhf-dev.robertboscacci.com", "localhost", "127.0.0.1", ""].includes(
+  window.location.hostname,
+);
 const liveStatusPollMs = 2000;
+const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
+const performanceHostLabel = "OptiPlex live proxy";
 const pacificTimeZone = "America/Los_Angeles";
 const pacificDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: pacificTimeZone,
@@ -14,6 +36,16 @@ const pacificDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   hour: "numeric",
   minute: "2-digit",
+  timeZoneName: "short",
+});
+const performanceDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: pacificTimeZone,
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
   timeZoneName: "short",
 });
 const pacificShortTimeFormatter = new Intl.DateTimeFormat("en-US", {
@@ -68,9 +100,13 @@ const channelFilter = document.querySelector("#channel-filter");
 const refreshButton = document.querySelector("#refresh-clips");
 const stats = document.querySelector("#stats");
 const tabs = [...document.querySelectorAll(".tab")];
+const languageTab = document.querySelector("#tab-language");
+const performanceTab = document.querySelector("#tab-performance");
 const panels = {
   clips: document.querySelector("#panel-clips"),
   live: document.querySelector("#panel-live"),
+  language: document.querySelector("#panel-language"),
+  performance: document.querySelector("#panel-performance"),
 };
 const liveAudio = document.querySelector("#live-audio");
 const liveStatus = document.querySelector("#live-status");
@@ -81,6 +117,12 @@ const liveSignalDot = document.querySelector("#live-signal-dot");
 const waveformPanel = document.querySelector("#waveform-panel");
 const waveformCanvas = document.querySelector("#waveform-canvas");
 const playLiveButton = document.querySelector("#play-live");
+const systemMediaControlsToggle = document.querySelector("#system-media-controls");
+const systemMediaNote = document.querySelector("#system-media-note");
+const languageStatus = document.querySelector("#language-status");
+const lexicalAnalysis = document.querySelector("#lexical-analysis");
+const performanceStatus = document.querySelector("#performance-status");
+const performanceDashboard = document.querySelector("#performance-dashboard");
 
 let liveRetryTimer = null;
 let liveStatusTimer = null;
@@ -91,10 +133,16 @@ let analyser = null;
 let analyserSource = null;
 let waveformData = null;
 let waveformAnimationId = null;
+let currentClipPlayback = null;
 let quietSince = null;
 let selectedChannel = "all";
 let selectedClipPage = 1;
 let selectedLiveChannel = "14";
+let activeTab = "clips";
+let languagePayloadLoaded = false;
+let performancePayloadLoaded = false;
+let performanceRefreshTimer = null;
+let systemMediaControlsEnabled = systemMediaControlsDefault;
 let liveChannels = [
   {
     channel: "13",
@@ -113,12 +161,38 @@ let liveChannels = [
 ];
 let currentChannelLabels = { ...defaultChannelLabels };
 
+try {
+  systemMediaControlsEnabled = window.localStorage.getItem(systemMediaControlsStorageKey) === "enabled";
+} catch {
+  systemMediaControlsEnabled = systemMediaControlsDefault;
+}
+
+if (languageTab) {
+  languageTab.hidden = !languageDashboardEnabled;
+}
+if (performanceTab) {
+  performanceTab.hidden = !performanceDashboardEnabled;
+}
+
+configureLiveAudioElement();
+clearBrowserMediaSession();
+updateSystemMediaControlsUi();
+
 refreshButton.addEventListener("click", () => {
-  loadAndRender();
+  if (activeTab === "performance") {
+    loadAndRenderPerformance({ showLoading: false });
+  } else {
+    loadAndRender();
+  }
 });
 
-channelFilter.addEventListener("change", () => {
-  selectedChannel = channelFilter.value;
+channelFilter.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const button = target?.closest(".channel-filter-option");
+  if (!button || !channelFilter.contains(button)) {
+    return;
+  }
+  selectedChannel = button.dataset.channel || "all";
   selectedClipPage = 1;
   loadAndRender();
 });
@@ -133,9 +207,24 @@ playLiveButton.addEventListener("click", () => {
   toggleLivePlayback();
 });
 
+systemMediaControlsToggle?.addEventListener("change", () => {
+  setSystemMediaControlsEnabled(systemMediaControlsToggle.checked);
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopAllAudio();
+  }
+});
+
+window.addEventListener("pagehide", () => {
+  stopAllAudio();
+});
+
 liveAudio.addEventListener("playing", () => {
   liveStatus.textContent = "Streaming";
   playLiveButton.textContent = "Pause";
+  updateLiveMediaSession("playing");
 });
 
 liveAudio.addEventListener("waiting", () => {
@@ -145,15 +234,18 @@ liveAudio.addEventListener("waiting", () => {
 liveAudio.addEventListener("pause", () => {
   playLiveButton.textContent = "Play";
   liveStatus.textContent = "Paused";
+  updateLiveMediaSession("paused");
 });
 
 liveAudio.addEventListener("error", () => {
   liveStatus.textContent = "Reconnecting";
+  updateLiveMediaSession("none");
   scheduleLiveReconnect();
 });
 
 liveAudio.addEventListener("ended", () => {
   liveStatus.textContent = "Reconnecting";
+  updateLiveMediaSession("none");
   scheduleLiveReconnect();
 });
 
@@ -193,6 +285,45 @@ async function loadPublishedManifest() {
     return normalizePublishedManifest(await response.json());
   } catch {
     return normalizePublishedManifest(fallbackManifest);
+  }
+}
+
+async function loadLanguagePayload() {
+  if (!liveLanguageAnalysisEnabled) {
+    return loadPublishedLanguagePayload();
+  }
+  try {
+    const response = await fetch(lexicalAnalysisUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`lexical analysis HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    if (payload?.status === "missing") {
+      return loadPublishedLanguagePayload();
+    }
+    return payload;
+  } catch {
+    return loadPublishedLanguagePayload();
+  }
+}
+
+async function loadPublishedLanguagePayload() {
+  try {
+    const response = await fetch(lexicalManifestUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`lexical manifest HTTP ${response.status}`);
+    }
+    return await response.json();
+  } catch {
+    return {
+      status: "missing",
+      source_clip_count: 0,
+      frequency: {},
+      terms: {},
+      entities: [],
+      topics: { status: "missing", plot_url: topicClusterFallbackUrl, items: [] },
+      education: [],
+    };
   }
 }
 
@@ -301,33 +432,40 @@ function renderChannelFilter(payload) {
   if (selectedChannel !== "all" && !channels.includes(selectedChannel)) {
     channels.push(selectedChannel);
   }
-  const options = [
-    optionForChannel("all", "All channels"),
-    ...channels.map((channel) =>
-      optionForChannel(
-        channel,
-        channelOptionLabel(channel, channelCounts[channel]),
-      ),
-    ),
+  const buttons = [
+    channelFilterButton("all", "All", channelFilterDetail("all", totalAvailableClipsFromCounts(channelCounts))),
+    ...channels.map((channel) => channelFilterButton(channel, `VHF ${channel}`, channelFilterDetail(channel, channelCounts[channel]))),
   ];
-  channelFilter.replaceChildren(...options);
-  channelFilter.value = selectedChannel;
+  channelFilter.replaceChildren(...buttons);
 }
 
-function channelOptionLabel(channel, count) {
+function channelFilterDetail(channel, count) {
   const clipCount = Number(count || 0);
+  const label = channel === "all" ? "All channels" : currentChannelLabels[channel] || defaultChannelLabels[channel] || "";
   if (!clipCount) {
-    return channelLabel(channel);
+    return label;
   }
   const noun = clipCount === 1 ? "clip" : "clips";
-  return `${channelLabel(channel)} (${clipCount} ${noun})`;
+  return `${label} · ${clipCount} ${noun}`;
 }
 
-function optionForChannel(value, label) {
-  const option = document.createElement("option");
-  option.value = value;
-  option.textContent = label;
-  return option;
+function channelFilterButton(value, label, detail) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "channel-filter-option";
+  button.dataset.channel = value;
+  button.setAttribute("aria-pressed", String(value === selectedChannel));
+  if (value === selectedChannel) {
+    button.classList.add("is-active");
+  }
+  const name = document.createElement("span");
+  name.className = "channel-filter-name";
+  name.textContent = label;
+  const detailText = document.createElement("span");
+  detailText.className = "channel-filter-detail";
+  detailText.textContent = detail;
+  button.append(name, detailText);
+  return button;
 }
 
 function filterClipsByChannel(clips) {
@@ -413,11 +551,7 @@ function renderClipCard(clip) {
   const audioUrl = audioUrlForClip(clip);
   article.append(meta, title, transcript);
   if (audioUrl) {
-    const audio = document.createElement("audio");
-    audio.controls = true;
-    audio.preload = "metadata";
-    audio.src = audioUrl;
-    article.append(audio);
+    article.append(renderExamplePlayer(clip));
   }
   return article;
 }
@@ -506,6 +640,7 @@ function selectLiveChannel(channel) {
   liveAudio.pause();
   liveAudio.src = withCacheBust(liveStreamUrl());
   liveAudio.load();
+  updateLiveMediaSession(wasPlaying ? "playing" : "paused");
   liveStatus.textContent = wasPlaying ? "Reconnecting" : "Ready";
   drawWaitingFrame({ showWaiting: false });
   pollLiveStatus();
@@ -523,6 +658,13 @@ function findLiveChannel(channel) {
 }
 
 function activateTab(name) {
+  if (name === "language" && !languageDashboardEnabled) {
+    return;
+  }
+  if (name === "performance" && !performanceDashboardEnabled) {
+    return;
+  }
+  activeTab = name;
   tabs.forEach((tab) => {
     tab.classList.toggle("is-active", tab.dataset.tab === name);
   });
@@ -531,7 +673,7 @@ function activateTab(name) {
     panel.classList.toggle("is-active", active);
     panel.hidden = !active;
   });
-  refreshButton.hidden = name !== "clips";
+  refreshButton.hidden = !["clips", "performance"].includes(name);
   if (name === "live" && !liveAudio.src) {
     prepareLiveAudio();
   }
@@ -543,6 +685,696 @@ function activateTab(name) {
     stopLiveStatusPolling();
     stopWaveform();
   }
+  if (name === "language" && !languagePayloadLoaded) {
+    loadAndRenderLanguage();
+  }
+  if (name === "performance") {
+    loadAndRenderPerformance({ showLoading: !performancePayloadLoaded });
+    startPerformancePolling();
+  } else {
+    stopPerformancePolling();
+  }
+}
+
+async function loadAndRenderLanguage() {
+  if (!languageStatus || !lexicalAnalysis) {
+    return;
+  }
+  languageStatus.textContent = "Loading analysis...";
+  const payload = await loadLanguagePayload();
+  languagePayloadLoaded = true;
+  renderLanguageDashboard(payload);
+}
+
+function renderLanguageDashboard(payload) {
+  const status = payload?.status || "missing";
+  if (status === "missing") {
+    languageStatus.textContent = "No analysis cache yet";
+  } else {
+    const generated = payload.generated_at ? `Analyzed ${formatDateTime(payload.generated_at)}` : "Analysis ready";
+    languageStatus.textContent = generated;
+  }
+
+  const frequency = payload.frequency || {};
+  const terms = payload.terms || {};
+  const topics = payload.topics || {};
+  const cards = document.createElement("div");
+  cards.className = "language-grid";
+  cards.append(
+    languageCard("Transmissions", String(payload.source_clip_count || 0), "Cached transcript clips"),
+    languageCard("Channels", channelSummary(payload.channels || frequency.by_channel || {}), "VHF activity split"),
+    languageCard("Busiest hour", busiestHour(frequency.by_hour_pacific || {}), "Pacific time"),
+    languageCard("Topic model", topicStatus(topics), "BERTopic / classical fallback"),
+  );
+
+  const wordsPanel = languagePanel("Radio words");
+  wordsPanel.append(
+    termSection("Jargon", terms.semantic_buckets?.communication_markers || []),
+    termSection("Movement", terms.semantic_buckets?.movement || []),
+    termSection("Places", terms.semantic_buckets?.places || []),
+    termSection("N-grams", terms.bigrams || []),
+  );
+
+  const entityPanel = languagePanel("Suspected vessels and entities");
+  entityPanel.append(entityList(payload.entities || []));
+
+  const topicPanel = languagePanel("3D topic clusters");
+  const topicFrame = document.createElement("iframe");
+  topicFrame.className = "topic-frame";
+  topicFrame.loading = "lazy";
+  topicFrame.title = "BERTopic 3D visual clustering";
+  topicFrame.src = topics.plot_url || topicClusterFallbackUrl;
+  topicPanel.append(topicFrame, topicList(topics.items || []));
+
+  const educationPanel = languagePanel("Maritime radio references");
+  educationPanel.append(
+    educationGuideList(payload.education_guide || []),
+    referenceIndex(payload.education || []),
+  );
+
+  lexicalAnalysis.replaceChildren(cards, wordsPanel, entityPanel, topicPanel, educationPanel);
+}
+
+async function loadAndRenderPerformance({ showLoading = true } = {}) {
+  if (!performanceStatus || !performanceDashboard) {
+    return;
+  }
+  if (showLoading || !performancePayloadLoaded) {
+    performanceStatus.textContent = "Loading performance...";
+  }
+  try {
+    const response = await fetch(performanceUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`performance HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    performancePayloadLoaded = true;
+    renderPerformanceDashboard(payload);
+  } catch {
+    performanceStatus.textContent = "Performance unavailable";
+    performanceDashboard.replaceChildren(emptyPerformanceState());
+  }
+}
+
+function startPerformancePolling() {
+  stopPerformancePolling();
+  performanceRefreshTimer = setTimeout(pollPerformance, performanceRefreshMs);
+}
+
+function stopPerformancePolling() {
+  if (performanceRefreshTimer) {
+    clearTimeout(performanceRefreshTimer);
+    performanceRefreshTimer = null;
+  }
+}
+
+async function pollPerformance() {
+  if (activeTab !== "performance") {
+    return;
+  }
+  await loadAndRenderPerformance({ showLoading: false });
+  startPerformancePolling();
+}
+
+function renderPerformanceDashboard(payload) {
+  const generated = payload.generatedAt
+    ? `Updated ${formatPerformanceDateTime(payload.generatedAt)}`
+    : "Snapshot ready";
+  performanceStatus.textContent = generated;
+  const hosts = performanceHosts(payload);
+  if (!hosts.length) {
+    performanceDashboard.replaceChildren(emptyPerformanceState());
+    return;
+  }
+  const hostGrid = document.createElement("div");
+  hostGrid.className = "performance-host-grid";
+  hostGrid.append(...hosts.map((host, index) => performanceHostPanel(host, index)));
+  performanceDashboard.replaceChildren(hostGrid);
+}
+
+function performanceHosts(payload) {
+  const hosts = Array.isArray(payload.hosts) ? payload.hosts.filter(Boolean) : [];
+  if (hosts.length) {
+    return hosts;
+  }
+  return payload.host ? [payload.host] : [];
+}
+
+function hostRole(host, index) {
+  if (host?.role) {
+    return host.role;
+  }
+  return index === 0 ? performanceHostLabel : "Raspberry Pi edge radio";
+}
+
+function performanceHostPanel(host, index) {
+  const role = hostRole(host, index);
+  const panel = document.createElement("section");
+  panel.className = "performance-host";
+  const title = document.createElement("h3");
+  title.textContent = role;
+  const cards = document.createElement("div");
+  cards.className = "performance-grid";
+  const memory = host?.memory || {};
+  const disks = host?.disks || [];
+  const thermal = host?.thermal || {};
+  cards.append(
+    performanceCard("CPU utilization", cpuUtilizationSummary(host), cpuCaption(host), hostStatus(host, "cpu")),
+    performanceCard("Memory", percentLabel(memory.usedPercent), bytesLabel(memory.availableBytes, "available"), memory.status),
+    performanceCard("Disk", diskSummary(disks), "Most used filesystem", worstItemStatus(disks)),
+    performanceCard("Thermals", thermalSummary(thermal), thermalCaption(thermal), thermal.status),
+  );
+  panel.append(title, cards);
+  return panel;
+}
+
+function performanceCard(label, value, caption, status) {
+  const card = document.createElement("article");
+  card.className = `performance-card ${statusClass(status)}`;
+  const heading = document.createElement("p");
+  heading.className = "language-label";
+  heading.textContent = label;
+  const metric = document.createElement("strong");
+  metric.textContent = value;
+  const note = document.createElement("span");
+  note.textContent = caption;
+  card.append(heading, metric, note);
+  return card;
+}
+
+function emptyPerformanceState() {
+  const empty = document.createElement("p");
+  empty.className = "muted-inline";
+  empty.textContent = "No performance snapshot is available.";
+  return empty;
+}
+
+function cpuUtilizationSummary(host) {
+  return percentLabel(host?.cpu?.utilizationPercent);
+}
+
+function cpuCaption(host) {
+  return `1-minute load average: ${formatLoad(host?.load || {})}; ${host?.cpuCount || "?"} logical CPUs`;
+}
+
+function hostStatus(host, key) {
+  return host?.[key]?.status || "unknown";
+}
+
+function formatLoad(load) {
+  if (!Number.isFinite(Number(load.perCpu))) {
+    return "Unknown";
+  }
+  return `${Number(load.perCpu).toFixed(2)}x/core`;
+}
+
+function thermalSummary(thermal) {
+  const temperature = Number(thermal?.temperatureC);
+  if (!Number.isFinite(temperature)) {
+    return "Unknown";
+  }
+  return `${temperature.toFixed(1)} C`;
+}
+
+function thermalCaption(thermal) {
+  const throttled = thermal?.throttled || "unknown";
+  if (throttled === "0x0") {
+    return "No throttling reported";
+  }
+  return `Throttled: ${throttled}`;
+}
+
+function diskSummary(disks) {
+  const values = disks.map((disk) => Number(disk.usedPercent)).filter(Number.isFinite);
+  if (!values.length) {
+    return "Unknown";
+  }
+  return percentLabel(Math.max(...values));
+}
+
+function worstItemStatus(items) {
+  const ranks = { high: 3, watch: 2, ok: 1, unknown: 0 };
+  return items.reduce((worst, item) => (ranks[item.status] > ranks[worst] ? item.status : worst), "unknown");
+}
+
+function statusLabel(status) {
+  return {
+    high: "High",
+    watch: "Watch",
+    ok: "OK",
+    unknown: "Unknown",
+  }[status] || "Unknown";
+}
+
+function statusClass(status) {
+  return `is-${statusLabel(status).toLowerCase()}`;
+}
+
+function percentLabel(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "Unknown";
+  }
+  return `${number.toFixed(1)}%`;
+}
+
+function bytesLabel(value, suffix) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes)) {
+    return suffix ? `Unknown ${suffix}` : "Unknown";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let amount = bytes;
+  let unitIndex = 0;
+  while (amount >= 1024 && unitIndex < units.length - 1) {
+    amount /= 1024;
+    unitIndex += 1;
+  }
+  return `${amount.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]} ${suffix || ""}`.trim();
+}
+
+function languageCard(label, value, caption) {
+  const card = document.createElement("article");
+  card.className = "language-card";
+  const heading = document.createElement("p");
+  heading.className = "language-label";
+  heading.textContent = label;
+  const metric = document.createElement("strong");
+  metric.textContent = value;
+  const note = document.createElement("span");
+  note.textContent = caption;
+  card.append(heading, metric, note);
+  return card;
+}
+
+function languagePanel(titleText) {
+  const section = document.createElement("section");
+  section.className = "language-panel";
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+  section.append(title);
+  return section;
+}
+
+function termSection(title, items) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "term-section";
+  const label = document.createElement("p");
+  label.className = "language-label";
+  label.textContent = title;
+  const list = document.createElement("div");
+  list.className = "term-list";
+  const terms = items.slice(0, 12);
+  if (!terms.length) {
+    const empty = document.createElement("span");
+    empty.className = "muted-inline";
+    empty.textContent = "No signals yet";
+    list.append(empty);
+  } else {
+    list.append(...terms.map((item) => renderPill(`${item.term} ${item.count}`)));
+  }
+  wrapper.append(label, list);
+  return wrapper;
+}
+
+function entityList(entities) {
+  const list = document.createElement("div");
+  list.className = "entity-list";
+  if (!entities.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted-inline";
+    empty.textContent = "No suspected vessels yet.";
+    list.append(empty);
+    return list;
+  }
+  list.append(
+    ...entities.slice(0, 10).map((entity) => {
+      const item = document.createElement("article");
+      item.className = "entity-card";
+      const title = document.createElement("h4");
+      title.textContent = entity.name || "Unknown";
+      const meta = document.createElement("p");
+      meta.className = "entity-meta";
+      meta.textContent = `${entity.kind || "entity"} · ${entity.count || 0} mentions · ${confidenceText(entity.confidence)}`;
+      const channels = document.createElement("div");
+      channels.className = "clip-meta";
+      for (const channel of Object.keys(entity.channels || {}).sort(compareChannels)) {
+        channels.append(renderChannelPill(channel));
+      }
+      const example = document.createElement("blockquote");
+      example.textContent = entity.examples?.[0]?.text || "";
+      item.append(title, meta, channels, example);
+      const player = renderExamplePlayer(entity.examples?.[0] || {});
+      if (player) {
+        item.append(player);
+      }
+      return item;
+    }),
+  );
+  return list;
+}
+
+function renderExamplePlayer(example) {
+  const audioUrl = audioUrlForClip(example);
+  if (!audioUrl) {
+    return null;
+  }
+
+  const player = document.createElement("div");
+  player.className = "example-player";
+
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.preload = "metadata";
+  audio.src = audioUrl;
+  audio.setAttribute("controlslist", "nodownload noplaybackrate noremoteplayback");
+  audio.setAttribute("disableremoteplayback", "");
+  audio.setAttribute("x-webkit-airplay", "deny");
+
+  const time = document.createElement("span");
+  time.className = "example-player-time";
+  time.textContent = formatPlaybackTime(example.duration_seconds, { unknownLabel: unknownPlaybackTimeLabel });
+
+  audio.addEventListener("loadedmetadata", () => {
+    if (Number.isFinite(audio.duration)) {
+      time.textContent = formatPlaybackTime(audio.duration, { unknownLabel: time.textContent });
+    }
+  });
+  audio.addEventListener("play", () => {
+    stopOtherAudio(audio);
+    currentClipPlayback = audio;
+    clearBrowserMediaSession();
+  });
+  audio.addEventListener("pause", () => {
+    if (currentClipPlayback === audio) {
+      currentClipPlayback = null;
+    }
+  });
+  audio.addEventListener("ended", () => {
+    if (currentClipPlayback === audio) {
+      currentClipPlayback = null;
+    }
+  });
+
+  player.append(audio, time);
+  return player;
+}
+
+function stopOtherAudio(currentPlayback) {
+  if (currentPlayback !== currentClipPlayback) {
+    stopCurrentClipPlayback();
+  }
+  if (currentPlayback !== liveAudio) {
+    closeLiveAudioStream();
+  }
+}
+
+function stopAllAudio() {
+  stopCurrentClipPlayback();
+  closeLiveAudioStream();
+}
+
+function stopCurrentClipPlayback() {
+  if (!currentClipPlayback) {
+    return;
+  }
+  const playback = currentClipPlayback;
+  currentClipPlayback = null;
+  playback.pause();
+  try {
+    playback.currentTime = 0;
+  } catch {
+    // Some remote streams do not allow seeking before metadata is ready.
+  }
+}
+
+function topicList(topics) {
+  const list = document.createElement("div");
+  list.className = "topic-list";
+  if (!topics.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted-inline";
+    empty.textContent = "Topic summaries will appear when the corpus is large enough.";
+    list.append(empty);
+    return list;
+  }
+  list.append(
+    ...topics.slice(0, 6).map((topic) => {
+      const item = document.createElement("article");
+      item.className = "topic-card";
+      const title = document.createElement("h4");
+      title.textContent = `${topic.label || "Topic"} · ${topic.count || 0}`;
+      const words = document.createElement("p");
+      words.className = "entity-meta";
+      words.textContent = (topic.top_words || []).join(", ");
+      item.append(title, words);
+      return item;
+    }),
+  );
+  return list;
+}
+
+function educationList(resources) {
+  const list = document.createElement("div");
+  list.className = "education-list";
+  if (!resources.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted-inline";
+    empty.textContent = "Reference links will appear after analysis runs.";
+    list.append(empty);
+    return list;
+  }
+  list.append(
+    ...resources.map((resource) => {
+      const item = document.createElement("article");
+      item.className = "education-card";
+      const title = document.createElement("a");
+      title.href = resource.url || "#";
+      title.rel = "noopener noreferrer";
+      title.target = "_blank";
+      title.textContent = resource.title || resource.source || "Reference";
+      const meta = document.createElement("p");
+      meta.className = "entity-meta";
+      meta.textContent = [resource.source, resource.category].filter(Boolean).join(" · ");
+      const relevance = document.createElement("p");
+      relevance.textContent = resource.local_relevance || "";
+      item.append(title, meta, relevance);
+      return item;
+    }),
+  );
+  return list;
+}
+
+function educationGuideList(sections) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "education-guide";
+  if (!sections.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted-inline";
+    empty.textContent = "Field notes will appear after analysis runs.";
+    wrapper.append(empty);
+    return wrapper;
+  }
+  const intro = document.createElement("div");
+  intro.className = "education-guide-intro";
+  const label = document.createElement("p");
+  label.className = "language-label";
+  label.textContent = "Why they say it this way";
+  const copy = document.createElement("p");
+  copy.textContent = "Field notes for the clipped calls, place names, and handoff language in the transcripts.";
+  intro.append(label, copy);
+
+  const list = document.createElement("div");
+  list.className = "education-guide-list";
+  list.append(
+    ...sections.map((section) => {
+      const item = document.createElement("details");
+      item.className = "education-guide-card";
+      const summary = document.createElement("summary");
+      const summaryCopy = document.createElement("span");
+      summaryCopy.className = "guide-summary-copy";
+      const title = document.createElement("h4");
+      title.textContent = section.title || "Field note";
+      const signals = document.createElement("span");
+      signals.className = "guide-signals";
+      signals.textContent = section.signals || "";
+      summaryCopy.append(title, signals);
+      const cue = document.createElement("span");
+      cue.className = "guide-expand-cue";
+      cue.textContent = "Details";
+      summary.append(summaryCopy, cue);
+      const body = document.createElement("div");
+      body.className = "guide-card-body";
+      body.append(
+        guideBodyRow("What you are hearing", section.what_it_explains || ""),
+        guideBodyRow("Why it matters", section.why_it_matters || ""),
+      );
+      item.append(summary, body);
+      return item;
+    }),
+  );
+  wrapper.append(intro, list);
+  return wrapper;
+}
+
+function guideBodyRow(labelText, bodyText) {
+  const row = document.createElement("div");
+  row.className = "guide-body-row";
+  const label = document.createElement("p");
+  label.className = "language-label";
+  label.textContent = labelText;
+  const body = document.createElement("p");
+  body.textContent = bodyText;
+  row.append(label, body);
+  return row;
+}
+
+function referenceIndex(resources) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "reference-index";
+  const title = document.createElement("h4");
+  title.textContent = "Reference index";
+  wrapper.append(title, educationList(resources));
+  return wrapper;
+}
+
+function channelSummary(channels) {
+  const entries = Object.entries(channels);
+  if (!entries.length) {
+    return "None";
+  }
+  return entries
+    .sort(([left], [right]) => compareChannels(left, right))
+    .map(([channel, count]) => `Ch ${channel}: ${count}`)
+    .join("\n");
+}
+
+function busiestHour(hours) {
+  const entries = Object.entries(hours);
+  if (!entries.length) {
+    return "None";
+  }
+  entries.sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0));
+  return `${formatHourLabel(entries[0][0])} (${entries[0][1]})`;
+}
+
+function formatHourLabel(hourText) {
+  const hour = Number(String(hourText || "").split(":")[0]);
+  if (!Number.isFinite(hour)) {
+    return hourText || "None";
+  }
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 || 12;
+  return `${hour12} ${suffix}`;
+}
+
+function topicStatus(topics) {
+  if (!topics?.status || topics.status === "missing") {
+    return "Missing";
+  }
+  if (topics.status === "ok") {
+    return `${(topics.items || []).length} topics`;
+  }
+  return "Classical only";
+}
+
+function confidenceText(value) {
+  const confidence = Number(value || 0);
+  if (!confidence) {
+    return "confidence unknown";
+  }
+  return `${Math.round(confidence * 100)}% confidence`;
+}
+
+function configureLiveAudioElement() {
+  liveAudio.preload = "none";
+  liveAudio.disableRemotePlayback = true;
+  liveAudio.setAttribute("controlslist", "nodownload noplaybackrate noremoteplayback");
+  liveAudio.setAttribute("disableremoteplayback", "");
+  liveAudio.setAttribute("x-webkit-airplay", "deny");
+}
+
+function setSystemMediaControlsEnabled(enabled) {
+  systemMediaControlsEnabled = Boolean(enabled);
+  try {
+    window.localStorage.setItem(systemMediaControlsStorageKey, systemMediaControlsEnabled ? "enabled" : "disabled");
+  } catch {
+    // Some private browsing modes can reject localStorage writes.
+  }
+  if (!systemMediaControlsEnabled) {
+    clearBrowserMediaSession();
+  } else if (!liveAudio.paused) {
+    updateLiveMediaSession("playing");
+  } else {
+    updateLiveMediaSession("paused");
+  }
+  if (!panels.live.hidden && !liveAudio.src) {
+    prepareLiveAudio();
+  }
+  updateSystemMediaControlsUi();
+}
+
+function updateSystemMediaControlsUi() {
+  if (systemMediaControlsToggle) {
+    systemMediaControlsToggle.checked = systemMediaControlsEnabled;
+  }
+  playLiveButton.disabled = false;
+  playLiveButton.title = "";
+  if (systemMediaNote) {
+    systemMediaNote.textContent = systemMediaControlsEnabled
+      ? "Live radio may appear in macOS and browser media controls."
+      : "Live radio plays in Firefox without publishing system media controls.";
+  }
+}
+
+function clearBrowserMediaSession() {
+  if (!("mediaSession" in navigator)) {
+    return;
+  }
+  try {
+    navigator.mediaSession.metadata = null;
+    navigator.mediaSession.playbackState = "none";
+  } catch {
+    return;
+  }
+  for (const action of ["play", "pause", "seekbackward", "seekforward", "previoustrack", "nexttrack", "stop"]) {
+    try {
+      navigator.mediaSession.setActionHandler(action, null);
+    } catch {
+      // Unsupported actions vary by browser.
+    }
+  }
+}
+
+function updateLiveMediaSession(playbackState = liveAudio.paused ? "paused" : "playing") {
+  if (!systemMediaControlsEnabled) {
+    clearBrowserMediaSession();
+    return;
+  }
+  if (!("mediaSession" in navigator)) {
+    return;
+  }
+  try {
+    if ("MediaMetadata" in window) {
+      navigator.mediaSession.metadata = new window.MediaMetadata({
+        title: "Elliott Bay VHF",
+        artist: channelLabel(selectedLiveChannel),
+        album: "Live radio",
+      });
+    }
+    navigator.mediaSession.playbackState = playbackState;
+    navigator.mediaSession.setActionHandler("play", () => {
+      connectLive();
+    });
+    navigator.mediaSession.setActionHandler("pause", () => {
+      liveAudio.pause();
+    });
+    navigator.mediaSession.setActionHandler("stop", () => {
+      closeLiveAudioStream();
+    });
+  } catch {
+    clearBrowserMediaSession();
+  }
 }
 
 function prepareLiveAudio() {
@@ -551,6 +1383,7 @@ function prepareLiveAudio() {
   liveAudio.src = url;
   liveStatus.textContent = "Ready";
   drawWaitingFrame({ showWaiting: false });
+  updateLiveMediaSession("paused");
 }
 
 function closeLiveAudioStream() {
@@ -563,6 +1396,7 @@ function closeLiveAudioStream() {
   liveStatus.textContent = "Ready";
   quietSince = null;
   drawWaitingFrame({ showWaiting: false });
+  clearBrowserMediaSession();
 }
 
 function toggleLivePlayback() {
@@ -587,6 +1421,7 @@ async function connectLive() {
       await audioContext.resume();
     }
     startWaveform();
+    stopOtherAudio(liveAudio);
     await liveAudio.play();
   } catch {
     liveStatus.textContent = "Press play";
@@ -820,6 +1655,17 @@ function audioUrlForClip(clip) {
   return "";
 }
 
+function formatPlaybackTime(seconds, { unknownLabel = unknownPlaybackTimeLabel } = {}) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) {
+    return unknownLabel;
+  }
+  const totalSeconds = Math.max(1, Math.round(value));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${remainingSeconds}`;
+}
+
 function titleForClip(clip) {
   const channel = channelLabel(clip.channel);
   const date = formatDateTime(clip.started_at);
@@ -921,6 +1767,17 @@ function formatDateTime(value) {
     return "Unknown time";
   }
   return pacificDateTimeFormatter.format(date);
+}
+
+function formatPerformanceDateTime(value) {
+  if (!value) {
+    return "Unknown time";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Unknown time";
+  }
+  return performanceDateTimeFormatter.format(date);
 }
 
 function shortTime(value) {

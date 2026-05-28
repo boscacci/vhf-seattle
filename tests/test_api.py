@@ -7,6 +7,7 @@ import httpx
 from talkingboats.api import app, get_settings, get_storage
 from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import LiveChannel, Settings
+from talkingboats.lexical_analysis import write_cached_lexical_analysis
 
 
 class FakeStorage:
@@ -169,7 +170,9 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
     store = UploadedClipStore(db_path)
     wx_key = "raw/channel=WX/date=2026-05-20/noaa.mp3"
     channel_14_key = "raw/channel=14/date=2026-05-20/traffic.mp3"
-    legacy_wx_request = _clip_presign(channel="14").model_copy(update={"channel": "WX"})
+    legacy_wx_request = _clip_presign(channel="14").model_copy(
+        update={"channel": "WX", "idempotency_key": "radio-event-wx"}
+    )
     store.record_presigned_upload(key=wx_key, request=legacy_wx_request)
     store.record_presigned_upload(key=channel_14_key, request=_clip_presign(channel="14"))
     store.mark_transcribed(
@@ -218,6 +221,59 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
         "channel_counts": {"14": 1},
         "channel_labels": {"13": "Bridge-to-bridge", "14": "VTS / Seattle Traffic"},
     }
+
+
+def test_public_lexical_analysis_returns_missing_payload_without_cache(tmp_path) -> None:
+    client = _client(clip_db_path=tmp_path / "radio.sqlite3")
+
+    response = client.get("/api/analysis/lexical")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "missing"
+    assert response.json()["source_clip_count"] == 0
+
+
+def test_public_lexical_analysis_returns_cached_payload_without_private_fields(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    UploadedClipStore(db_path)
+    cached = {
+        "status": "ok",
+        "generated_at": "2026-05-26T01:02:03Z",
+        "source_clip_count": 1,
+        "source_min_started_at": "2026-05-25T22:10:00Z",
+        "source_max_started_at": "2026-05-25T22:10:00Z",
+        "channels": {"14": 1},
+        "frequency": {"by_channel": {"14": 1}},
+        "terms": {"unigrams": []},
+        "entities": [
+            {
+                "name": "Seattle Traffic",
+                "kind": "shore_station",
+                "count": 1,
+                "confidence": 0.95,
+                "channels": {"14": 1},
+                "examples": [
+                    {
+                        "channel": "14",
+                        "started_at": "2026-05-25T22:10:00Z",
+                        "text": "Seattle Traffic roger.",
+                    }
+                ],
+            }
+        ],
+        "topics": {"status": "skipped", "plot_url": "/analysis/topic_clusters.html"},
+        "education": [],
+    }
+    write_cached_lexical_analysis(db_path, payload=cached, source_fingerprint="clip:1")
+    client = _client(clip_db_path=db_path)
+
+    response = client.get("/api/analysis/lexical")
+
+    assert response.status_code == 200
+    assert response.json() == cached
+    assert "raw/channel" not in response.text
+    assert "X-Amz-" not in response.text
+    assert "127.0.0.1" not in response.text
 
 
 def test_operator_live_channels_do_not_expose_upstream_urls() -> None:

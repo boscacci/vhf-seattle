@@ -3,11 +3,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
+import shutil
 import subprocess
 import threading
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +32,211 @@ SHELL_ASSET_TYPES = {
     "assets/styles.css": "text/css",
     "public_manifest.json": "application/json",
 }
+PERFORMANCE_DISK_PATHS = (
+    ("system", Path("/")),
+    ("home", Path("/home/rob")),
+    ("talkingboats spool", Path("/opt/talkingboats")),
+)
+PERFORMANCE_DEV_HOSTS = (
+    "vhf-dev.robertboscacci.com",
+    "localhost",
+    "127.0.0.1",
+    "testserver",
+    "",
+)
+PERFORMANCE_DEV_ORIGIN_HOSTS = ("optiplex.tailbea63b.ts.net",)
+PERFORMANCE_PUBLIC_ROLES = ("OptiPlex live proxy", "Raspberry Pi edge radio")
+PERFORMANCE_PUBLIC_STATUSES = {"ok", "watch", "high", "unknown"}
+PI_PERFORMANCE_SCRIPT = r"""
+import json
+import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+
+def threshold_status(value, watch_at, high_at):
+    if value >= high_at:
+        return "high"
+    if value >= watch_at:
+        return "watch"
+    return "ok"
+
+
+def worst_status(statuses):
+    rank = {"unknown": 0, "ok": 1, "watch": 2, "high": 3}
+    return max(statuses or ["unknown"], key=lambda status: rank.get(status, 0))
+
+
+def load_snapshot():
+    cpu_count = os.cpu_count() or 1
+    try:
+        one_minute, five_minute, fifteen_minute = os.getloadavg()
+    except OSError:
+        return {"status": "unknown"}
+    per_cpu = one_minute / cpu_count
+    return {
+        "oneMinute": round(one_minute, 2),
+        "fiveMinute": round(five_minute, 2),
+        "fifteenMinute": round(fifteen_minute, 2),
+        "perCpu": round(per_cpu, 2),
+        "status": threshold_status(per_cpu, watch_at=0.75, high_at=1.0),
+    }
+
+
+def cpu_times():
+    try:
+        fields = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0].split()[1:]
+    except OSError:
+        return None
+    values = [int(value) for value in fields[:8]]
+    idle = values[3] + values[4]
+    return sum(values), idle
+
+
+def cpu_snapshot():
+    first = cpu_times()
+    if first is None:
+        return {"status": "unknown"}
+    time.sleep(0.1)
+    second = cpu_times()
+    if second is None:
+        return {"status": "unknown"}
+    total_delta = second[0] - first[0]
+    idle_delta = second[1] - first[1]
+    if total_delta <= 0:
+        return {"status": "unknown"}
+    utilization = max(0.0, min(100.0, (1 - (idle_delta / total_delta)) * 100))
+    return {
+        "utilizationPercent": round(utilization, 1),
+        "status": threshold_status(utilization, watch_at=75.0, high_at=90.0),
+    }
+
+
+def meminfo():
+    values = {}
+    try:
+        lines = Path("/proc/meminfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        name, separator, raw_value = line.partition(":")
+        if not separator:
+            continue
+        parts = raw_value.strip().split()
+        if not parts:
+            continue
+        try:
+            values[name] = int(parts[0]) * 1024
+        except ValueError:
+            continue
+    return values
+
+
+def memory_snapshot():
+    values = meminfo()
+    total = values.get("MemTotal")
+    available = values.get("MemAvailable")
+    if not total or available is None:
+        return {"status": "unknown"}
+    used_percent = ((total - available) / total) * 100
+    return {
+        "totalBytes": total,
+        "availableBytes": available,
+        "usedPercent": round(used_percent, 1),
+        "status": threshold_status(used_percent, watch_at=75.0, high_at=90.0),
+    }
+
+
+def disk_snapshots():
+    disks = []
+    seen_devices = set()
+    for label, path in (("system", Path("/")), ("talkingboats spool", Path("/opt/talkingboats"))):
+        if not path.exists():
+            continue
+        try:
+            device = path.stat().st_dev
+        except OSError:
+            continue
+        if device in seen_devices:
+            continue
+        seen_devices.add(device)
+        usage = shutil.disk_usage(path)
+        used_percent = (usage.used / usage.total) * 100 if usage.total else 0.0
+        disks.append(
+            {
+                "label": label,
+                "totalBytes": usage.total,
+                "freeBytes": usage.free,
+                "usedPercent": round(used_percent, 1),
+                "status": threshold_status(used_percent, watch_at=80.0, high_at=90.0),
+            }
+        )
+    return disks
+
+
+def thermal_snapshot():
+    temperature = None
+    try:
+        raw_temp = Path("/sys/class/thermal/thermal_zone0/temp").read_text(encoding="utf-8")
+        temperature = round(int(raw_temp.strip()) / 1000, 1)
+    except (OSError, ValueError):
+        try:
+            result = subprocess.run(
+                ["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=1
+            )
+            marker = result.stdout.strip().partition("=")[2].replace("'C", "")
+            temperature = round(float(marker), 1)
+        except (FileNotFoundError, subprocess.SubprocessError, ValueError):
+            temperature = None
+    throttled = "unknown"
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=1
+        )
+        throttled = result.stdout.strip().partition("=")[2] or "unknown"
+    except (FileNotFoundError, subprocess.SubprocessError):
+        throttled = "unknown"
+    status = "unknown"
+    if temperature is not None:
+        status = threshold_status(temperature, watch_at=70.0, high_at=85.0)
+    if throttled not in {"", "0x0", "unknown"}:
+        status = worst_status([status, "watch"])
+    return {"temperatureC": temperature, "throttled": throttled, "status": status}
+
+
+load = load_snapshot()
+cpu = cpu_snapshot()
+memory = memory_snapshot()
+disks = disk_snapshots()
+thermal = thermal_snapshot()
+statuses = [
+    load.get("status", "unknown"),
+    cpu.get("status", "unknown"),
+    memory.get("status", "unknown"),
+]
+statuses.extend(disk.get("status", "unknown") for disk in disks)
+statuses.append(thermal.get("status", "unknown"))
+print(
+    json.dumps(
+        {
+            "role": "Raspberry Pi edge radio",
+            "reachable": True,
+            "status": worst_status([str(status) for status in statuses]),
+            "cpuCount": os.cpu_count() or 1,
+            "cpu": cpu,
+            "load": load,
+            "memory": memory,
+            "disks": disks,
+            "thermal": thermal,
+        },
+        sort_keys=True,
+    )
+)
+"""
+
+
 @dataclass(frozen=True)
 class ChannelPreset:
     id: str
@@ -134,6 +343,8 @@ class ProxySettings:
     ffmpeg_path: str = "ffmpeg"
     restart_transcriber_service: bool = True
     enable_debug_endpoints: bool = False
+    performance_dev_hosts: tuple[str, ...] = PERFORMANCE_DEV_HOSTS
+    performance_dev_origin_hosts: tuple[str, ...] = PERFORMANCE_DEV_ORIGIN_HOSTS
     cors_origins: tuple[str, ...] = (
         "https://vhf.robertboscacci.com",
         "https://vhf-dev.robertboscacci.com",
@@ -175,6 +386,12 @@ class ProxySettings:
             ffmpeg_path=os.environ.get("TALKINGBOATS_PROXY_FFMPEG_PATH", cls.ffmpeg_path),
             restart_transcriber_service=_env_bool("TALKINGBOATS_PROXY_RESTART_TRANSCRIBER", True),
             enable_debug_endpoints=_env_bool("TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS", False),
+            performance_dev_hosts=_env_csv("TALKINGBOATS_PROXY_PERFORMANCE_DEV_HOSTS")
+            or cls.performance_dev_hosts,
+            performance_dev_origin_hosts=_env_csv(
+                "TALKINGBOATS_PROXY_PERFORMANCE_DEV_ORIGIN_HOSTS"
+            )
+            or cls.performance_dev_origin_hosts,
             cors_origins=_env_csv("TALKINGBOATS_PROXY_CORS_ORIGINS") or cls.cors_origins,
         )
 
@@ -190,6 +407,7 @@ class RetuneRequest(BaseModel):
 
 ClientFactory = Callable[[], httpx.AsyncClient]
 Retuner = Callable[[ChannelPreset, ProxySettings], RetuneResult]
+PerformanceCollector = Callable[[ProxySettings], dict[str, object]]
 
 
 def create_app(
@@ -197,10 +415,12 @@ def create_app(
     *,
     client_factory: ClientFactory | None = None,
     retuner: Retuner | None = None,
+    performance_collector: PerformanceCollector | None = None,
 ) -> FastAPI:
     settings = settings or ProxySettings.from_env()
     client_factory = client_factory or _default_client
     retuner = retuner or retune_pi
+    performance_collector = performance_collector or collect_performance_snapshot
     retune_lock = asyncio.Lock()
     app = FastAPI(title="Talking Boats Tailnet Radio Proxy", version="0.1.0")
     if settings.cors_origins:
@@ -219,6 +439,10 @@ def create_app(
     async def recent_clips(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/clips/recent", settings, client_factory)
 
+    @app.get("/api/analysis/lexical")
+    async def lexical_analysis(request: Request) -> Response:
+        return await _proxy_private_api(request, "/api/analysis/lexical", settings, client_factory)
+
     @app.get("/api/live/current.mp3")
     async def current_live_stream(dsp: str | None = None) -> StreamingResponse:
         stream_url = await _select_live_stream(settings.stream_urls, client_factory)
@@ -234,6 +458,12 @@ def create_app(
             "defaultChannel": "14",
             "channels": _public_live_channels(settings),
         }
+
+    @app.get("/api/live/performance")
+    async def live_performance(request: Request) -> dict[str, object]:
+        if not _performance_host_allowed(request, settings):
+            raise HTTPException(status_code=404, detail="performance dashboard is dev-only")
+        return _public_performance_payload(performance_collector(settings))
 
     @app.get("/api/live/{channel}/current.mp3")
     async def channel_live_stream(channel: str, dsp: str | None = None) -> StreamingResponse:
@@ -373,6 +603,385 @@ def _live_status_payload(preset: ChannelPreset) -> dict[str, object]:
         "frequencyMhz": preset.frequency_mhz,
         "streamDelaySeconds": {"minimum": 1, "maximum": 5},
     }
+
+
+def _performance_host_allowed(request: Request, settings: ProxySettings) -> bool:
+    host = request.headers.get("host", "")
+    hostname = host.rsplit("@", 1)[-1].split(":", 1)[0].lower()
+    if hostname in {allowed.lower() for allowed in settings.performance_dev_hosts}:
+        return True
+    environment = request.headers.get("x-talkingboats-environment", "").lower()
+    origin_hosts = {allowed.lower() for allowed in settings.performance_dev_origin_hosts}
+    return environment == "dev" and hostname in origin_hosts
+
+
+def _public_performance_payload(payload: dict[str, object]) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        payload = {}
+    raw_hosts = payload.get("hosts")
+    hosts = raw_hosts if isinstance(raw_hosts, list) else []
+    if not hosts and isinstance(payload.get("host"), dict):
+        hosts = [payload["host"]]
+    public_hosts = [
+        _public_performance_host(host, index)
+        for index, host in enumerate(hosts)
+        if isinstance(host, dict)
+    ]
+    status = _public_status(payload.get("status"))
+    if status == "unknown":
+        status = _worst_status([str(host.get("status", "unknown")) for host in public_hosts])
+    return {
+        "status": status,
+        "generatedAt": _public_generated_at(payload.get("generatedAt")),
+        "host": public_hosts[0] if public_hosts else {},
+        "hosts": public_hosts,
+    }
+
+
+def _public_performance_host(host: dict[str, object], index: int) -> dict[str, object]:
+    role = (
+        PERFORMANCE_PUBLIC_ROLES[index]
+        if index < len(PERFORMANCE_PUBLIC_ROLES)
+        else f"Telemetry host {index + 1}"
+    )
+    public_host: dict[str, object] = {
+        "role": role,
+        "status": _public_status(host.get("status")),
+        "cpu": _public_metric(host.get("cpu"), ("utilizationPercent",)),
+        "load": _public_metric(
+            host.get("load"), ("oneMinute", "fiveMinute", "fifteenMinute", "perCpu")
+        ),
+        "memory": _public_metric(
+            host.get("memory"), ("totalBytes", "availableBytes", "usedPercent")
+        ),
+        "disks": _public_disks(host.get("disks")),
+        "thermal": _public_thermal(host.get("thermal")),
+    }
+    if isinstance(host.get("reachable"), bool):
+        public_host["reachable"] = host["reachable"]
+    cpu_count = _public_number(host.get("cpuCount"))
+    if cpu_count is not None:
+        public_host["cpuCount"] = int(cpu_count)
+    return public_host
+
+
+def _public_metric(value: object, numeric_fields: tuple[str, ...]) -> dict[str, object]:
+    metric: dict[str, object] = {"status": "unknown"}
+    if not isinstance(value, dict):
+        return metric
+    metric["status"] = _public_status(value.get("status"))
+    for field_name in numeric_fields:
+        number = _public_number(value.get(field_name))
+        if number is not None:
+            metric[field_name] = number
+    return metric
+
+
+def _public_disks(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    disks = []
+    for disk in value:
+        if not isinstance(disk, dict):
+            continue
+        disks.append(_public_metric(disk, ("totalBytes", "freeBytes", "usedPercent")))
+    return disks
+
+
+def _public_thermal(value: object) -> dict[str, object]:
+    thermal = _public_metric(value, ("temperatureC",))
+    throttled = value.get("throttled") if isinstance(value, dict) else None
+    thermal["throttled"] = _public_throttled_label(throttled)
+    return thermal
+
+
+def _public_generated_at(value: object) -> str:
+    if isinstance(value, str) and len(value) <= 64 and "://" not in value:
+        return value
+    return _format_utc(datetime.now(UTC))
+
+
+def _public_status(value: object) -> str:
+    if isinstance(value, str) and value in PERFORMANCE_PUBLIC_STATUSES:
+        return value
+    return "unknown"
+
+
+def _public_number(value: object) -> float | int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if not math.isfinite(float(value)):
+        return None
+    return value
+
+
+def _public_throttled_label(value: object) -> str:
+    if not isinstance(value, str):
+        return "unknown"
+    if value in {"unknown", "unavailable"}:
+        return value
+    if len(value) < 3 or not value.startswith("0x"):
+        return "unknown"
+    if all(character in "0123456789abcdefABCDEF" for character in value[2:]):
+        return value
+    return "unknown"
+
+
+def collect_performance_snapshot(settings: ProxySettings) -> dict[str, object]:
+    optiplex = _local_performance_host_snapshot()
+    pi = _pi_performance_snapshot(settings)
+    statuses = [
+        str(optiplex.get("status", "unknown")),
+        str(pi.get("status", "unknown")),
+    ]
+    return {
+        "status": _worst_status(statuses),
+        "generatedAt": _format_utc(datetime.now(UTC)),
+        "host": optiplex,
+        "hosts": [optiplex, pi],
+    }
+
+
+def _local_performance_host_snapshot() -> dict[str, object]:
+    load = _load_snapshot()
+    cpu = _cpu_utilization_snapshot()
+    memory = _memory_snapshot()
+    disks = _disk_snapshots()
+    thermal = _local_thermal_snapshot()
+    statuses = [
+        str(load.get("status", "unknown")),
+        str(cpu.get("status", "unknown")),
+        str(memory.get("status", "unknown")),
+        *(str(disk.get("status", "unknown")) for disk in disks),
+        str(thermal.get("status", "unknown")),
+    ]
+    return {
+        "status": _worst_status(statuses),
+        "role": "OptiPlex live proxy",
+        "reachable": True,
+        "cpuCount": os.cpu_count() or 1,
+        "cpu": cpu,
+        "load": load,
+        "memory": memory,
+        "disks": disks,
+        "thermal": thermal,
+    }
+
+
+def _load_snapshot() -> dict[str, object]:
+    cpu_count = os.cpu_count() or 1
+    try:
+        one_minute, five_minute, fifteen_minute = os.getloadavg()
+    except OSError:
+        return {"status": "unknown"}
+    per_cpu = one_minute / cpu_count
+    return {
+        "oneMinute": round(one_minute, 2),
+        "fiveMinute": round(five_minute, 2),
+        "fifteenMinute": round(fifteen_minute, 2),
+        "perCpu": round(per_cpu, 2),
+        "status": _threshold_status(per_cpu, watch_at=0.75, high_at=1.0),
+    }
+
+
+def _cpu_utilization_snapshot() -> dict[str, object]:
+    first = _read_cpu_times()
+    if first is None:
+        return {"status": "unknown"}
+    time.sleep(0.1)
+    second = _read_cpu_times()
+    if second is None:
+        return {"status": "unknown"}
+    total_delta = second[0] - first[0]
+    idle_delta = second[1] - first[1]
+    if total_delta <= 0:
+        return {"status": "unknown"}
+    utilization = max(0.0, min(100.0, (1 - (idle_delta / total_delta)) * 100))
+    return {
+        "utilizationPercent": round(utilization, 1),
+        "status": _threshold_status(utilization, watch_at=75.0, high_at=90.0),
+    }
+
+
+def _read_cpu_times() -> tuple[int, int] | None:
+    try:
+        first_line = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0]
+    except (IndexError, OSError):
+        return None
+    fields = first_line.split()
+    if not fields or fields[0] != "cpu":
+        return None
+    try:
+        values = [int(value) for value in fields[1:9]]
+    except ValueError:
+        return None
+    if len(values) < 5:
+        return None
+    idle = values[3] + values[4]
+    return sum(values), idle
+
+
+def _memory_snapshot() -> dict[str, object]:
+    meminfo = _read_meminfo()
+    total = meminfo.get("MemTotal")
+    available = meminfo.get("MemAvailable")
+    if not total or available is None:
+        return {"status": "unknown"}
+    used = max(0, total - available)
+    used_percent = (used / total) * 100
+    return {
+        "totalBytes": total,
+        "availableBytes": available,
+        "usedPercent": round(used_percent, 1),
+        "status": _threshold_status(used_percent, watch_at=75.0, high_at=90.0),
+    }
+
+
+def _read_meminfo() -> dict[str, int]:
+    values: dict[str, int] = {}
+    try:
+        lines = Path("/proc/meminfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        name, separator, raw_value = line.partition(":")
+        if not separator:
+            continue
+        parts = raw_value.strip().split()
+        if not parts:
+            continue
+        try:
+            values[name] = int(parts[0]) * 1024
+        except ValueError:
+            continue
+    return values
+
+
+def _disk_snapshots() -> list[dict[str, object]]:
+    disks = []
+    seen_devices: set[int] = set()
+    for label, path in PERFORMANCE_DISK_PATHS:
+        if not path.exists():
+            continue
+        try:
+            device = path.stat().st_dev
+        except OSError:
+            continue
+        if device in seen_devices:
+            continue
+        seen_devices.add(device)
+        usage = shutil.disk_usage(path)
+        used_percent = (usage.used / usage.total) * 100 if usage.total else 0.0
+        disks.append(
+            {
+                "label": label,
+                "totalBytes": usage.total,
+                "freeBytes": usage.free,
+                "usedPercent": round(used_percent, 1),
+                "status": _threshold_status(used_percent, watch_at=80.0, high_at=90.0),
+            }
+        )
+    return disks
+
+
+def _local_thermal_snapshot() -> dict[str, object]:
+    thermal_dir = Path("/sys/class/thermal")
+    temperatures: list[float] = []
+    try:
+        temp_paths = sorted(thermal_dir.glob("thermal_zone*/temp"))
+    except OSError:
+        temp_paths = []
+    for temp_path in temp_paths:
+        try:
+            raw_value = temp_path.read_text(encoding="utf-8").strip()
+            temperature = float(raw_value)
+        except (OSError, ValueError):
+            continue
+        if abs(temperature) > 1000:
+            temperature /= 1000
+        temperatures.append(temperature)
+    if not temperatures:
+        return {"status": "unknown", "throttled": "unknown"}
+    temperature = max(temperatures)
+    return {
+        "temperatureC": round(temperature, 1),
+        "throttled": "unknown",
+        "status": _threshold_status(temperature, watch_at=70.0, high_at=85.0),
+    }
+
+
+def _pi_performance_snapshot(settings: ProxySettings) -> dict[str, object]:
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=2",
+                settings.retune_ssh_target,
+                "python3",
+                "-",
+            ],
+            check=False,
+            capture_output=True,
+            input=PI_PERFORMANCE_SCRIPT,
+            text=True,
+            timeout=4,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return _unknown_pi_performance_snapshot()
+    if result.returncode != 0:
+        return _unknown_pi_performance_snapshot()
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return _unknown_pi_performance_snapshot()
+    if not isinstance(payload, dict):
+        return _unknown_pi_performance_snapshot()
+    payload["role"] = "Raspberry Pi edge radio"
+    payload["reachable"] = True
+    payload.setdefault("status", "unknown")
+    payload.setdefault("cpuCount", 1)
+    payload.setdefault("cpu", {"status": "unknown"})
+    payload.setdefault("load", {"status": "unknown"})
+    payload.setdefault("memory", {"status": "unknown"})
+    payload.setdefault("disks", [])
+    payload.setdefault("thermal", {"status": "unknown"})
+    return payload
+
+
+def _unknown_pi_performance_snapshot() -> dict[str, object]:
+    return {
+        "role": "Raspberry Pi edge radio",
+        "reachable": False,
+        "status": "unknown",
+        "cpuCount": 1,
+        "cpu": {"status": "unknown"},
+        "load": {"status": "unknown"},
+        "memory": {"status": "unknown"},
+        "disks": [],
+        "thermal": {"status": "unknown"},
+    }
+
+
+def _threshold_status(value: float, *, watch_at: float, high_at: float) -> str:
+    if value >= high_at:
+        return "high"
+    if value >= watch_at:
+        return "watch"
+    return "ok"
+
+
+def _worst_status(statuses: list[str]) -> str:
+    rank = {"unknown": 0, "ok": 1, "watch": 2, "high": 3}
+    if not statuses:
+        return "unknown"
+    return max(statuses, key=lambda status: rank.get(status, 0))
+
+
+def _format_utc(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _shell_asset_response(relative_path: str) -> Response:

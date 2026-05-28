@@ -4,12 +4,19 @@ import argparse
 import hashlib
 import json
 import shutil
-from collections.abc import Mapping
+import sys
+import tempfile
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from talkingboats.audio_processing import (
+    PublicClipAudioRejected,
+    assert_publishable_public_clip_audio,
+    process_public_clip_audio,
+)
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
 from talkingboats.clip_transcriber import (
     ClipReader,
@@ -21,6 +28,10 @@ from talkingboats.security import assert_public_safe
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
+ClipAudioProcessor = Callable[[Path, Path], None]
+ClipAudioQualityGate = Callable[[Path], None]
+ProgressReporter = Callable[[int, int], None]
+SkipReporter = Callable[[int, int, str], None]
 
 ALLOWED_CLIP_FIELDS = {
     "id",
@@ -103,23 +114,32 @@ def export_public_site(
     site_source_dir: Path,
     output_dir: Path,
     audio_source_dir: Path | None = None,
+    *,
+    clip_audio_processor: ClipAudioProcessor | None = process_public_clip_audio,
 ) -> dict[str, Any]:
     private_manifest = json.loads(private_manifest_path.read_text(encoding="utf-8"))
     public_manifest = sanitize_public_manifest(private_manifest)
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    shutil.copytree(site_source_dir, output_dir)
+    with _preserved_analysis_dir(output_dir) as preserved_analysis:
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        shutil.copytree(site_source_dir, output_dir)
+        _restore_analysis_dir(output_dir, preserved_analysis)
 
-    clips_dir = output_dir / "clips"
-    clips_dir.mkdir(exist_ok=True)
-    if audio_source_dir:
-        _copy_approved_audio(public_manifest, audio_source_dir, clips_dir)
+        clips_dir = output_dir / "clips"
+        clips_dir.mkdir(exist_ok=True)
+        if audio_source_dir:
+            _copy_approved_audio(
+                public_manifest,
+                audio_source_dir,
+                clips_dir,
+                clip_audio_processor=clip_audio_processor,
+            )
 
-    (output_dir / "public_manifest.json").write_text(
-        json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+        (output_dir / "public_manifest.json").write_text(
+            json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return public_manifest
 
 
@@ -129,28 +149,87 @@ def export_recent_clip_site(
     site_source_dir: Path,
     output_dir: Path,
     clip_reader: ClipReader,
-    limit: int = 100,
+    limit: int = 1000,
+    clip_audio_processor: ClipAudioProcessor | None = process_public_clip_audio,
+    clip_audio_quality_gate: ClipAudioQualityGate | None = assert_publishable_public_clip_audio,
+    progress: ProgressReporter | None = None,
+    skip_progress: SkipReporter | None = None,
 ) -> dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
     store = UploadedClipStore(clip_db_path)
     clips = store.recent_transcribed(limit=limit, excluded_channels=PUBLIC_EXCLUDED_CHANNELS)
-    public_manifest = _recent_clip_manifest(clips)
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    shutil.copytree(site_source_dir, output_dir)
+    with _preserved_analysis_dir(output_dir) as preserved_analysis:
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        shutil.copytree(site_source_dir, output_dir)
+        _restore_analysis_dir(output_dir, preserved_analysis)
 
-    clips_dir = output_dir / "clips"
-    clips_dir.mkdir(exist_ok=True)
-    for source_clip, public_clip in zip(clips, public_manifest["clips"], strict=True):
-        clip_reader.download(source_clip.key, clips_dir / public_clip["audio_public_filename"])
+        clips_dir = output_dir / "clips"
+        clips_dir.mkdir(exist_ok=True)
+        total_clips = len(clips)
+        publishable_clips = []
+        for index, source_clip in enumerate(clips, start=1):
+            if progress:
+                progress(index, total_clips)
+            public_clip = _public_clip_from_recent(source_clip)
+            destination = clips_dir / public_clip["audio_public_filename"]
+            if clip_audio_processor is None and clip_audio_quality_gate is None:
+                clip_reader.download(source_clip.key, destination)
+                publishable_clips.append(source_clip)
+                continue
+            with tempfile.NamedTemporaryFile(suffix=Path(source_clip.key).suffix) as handle:
+                raw_clip_path = Path(handle.name)
+                clip_reader.download(source_clip.key, raw_clip_path)
+                try:
+                    if clip_audio_quality_gate is not None:
+                        clip_audio_quality_gate(raw_clip_path)
+                except PublicClipAudioRejected as exc:
+                    if skip_progress:
+                        skip_progress(index, total_clips, str(exc))
+                    continue
+                if clip_audio_processor is None:
+                    shutil.copy2(raw_clip_path, destination)
+                else:
+                    clip_audio_processor(raw_clip_path, destination)
+                publishable_clips.append(source_clip)
 
-    (output_dir / "public_manifest.json").write_text(
-        json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+        public_manifest = _recent_clip_manifest(publishable_clips)
+        (output_dir / "public_manifest.json").write_text(
+            json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return public_manifest
+
+
+class _preserved_analysis_dir:
+    def __init__(self, output_dir: Path) -> None:
+        self.output_dir = output_dir
+        self._tempdir: tempfile.TemporaryDirectory[str] | None = None
+        self.path: Path | None = None
+
+    def __enter__(self) -> Path | None:
+        source = self.output_dir / "analysis"
+        if not source.exists():
+            return None
+        self._tempdir = tempfile.TemporaryDirectory()
+        self.path = Path(self._tempdir.name) / "analysis"
+        shutil.copytree(source, self.path)
+        return self.path
+
+    def __exit__(self, *_exc_info: object) -> None:
+        if self._tempdir is not None:
+            self._tempdir.cleanup()
+
+
+def _restore_analysis_dir(output_dir: Path, preserved_analysis: Path | None) -> None:
+    if preserved_analysis is None:
+        return
+    destination = output_dir / "analysis"
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(preserved_analysis, destination)
 
 
 def _sanitize_clip(clip: Mapping[str, Any]) -> dict[str, Any]:
@@ -217,6 +296,8 @@ def _copy_approved_audio(
     public_manifest: Mapping[str, Any],
     audio_source_dir: Path,
     clips_dir: Path,
+    *,
+    clip_audio_processor: ClipAudioProcessor | None,
 ) -> None:
     source_root = audio_source_dir.resolve()
     for clip in public_manifest["clips"]:
@@ -228,7 +309,11 @@ def _copy_approved_audio(
             raise PublicExportError(f"approved audio file does not exist: {source}")
         if not source.resolve().is_relative_to(source_root):
             raise PublicExportError("approved audio file escapes source directory")
-        shutil.copy2(source, clips_dir / filename)
+        destination = clips_dir / filename
+        if clip_audio_processor is None:
+            shutil.copy2(source, destination)
+        else:
+            clip_audio_processor(source, destination)
 
 
 def _recent_clip_manifest(clips: list[RecentTranscribedClip]) -> dict[str, Any]:
@@ -329,8 +414,52 @@ def main() -> None:
     parser.add_argument("--audio-source-dir", type=Path)
     parser.add_argument("--raw-bucket")
     parser.add_argument("--aws-region", default="us-west-2")
-    parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument("--limit", type=int, default=1000)
+    parser.add_argument("--public-audio-ffmpeg-path")
+    parser.add_argument("--public-audio-ffprobe-path")
+    parser.add_argument(
+        "--min-public-audio-duration-seconds",
+        type=float,
+        default=1.0,
+        help="Skip recent clips shorter than this during public export.",
+    )
+    parser.add_argument(
+        "--min-public-audio-peak-db",
+        type=float,
+        default=-50.0,
+        help="Skip recent clips whose raw peak audio level is below this.",
+    )
+    parser.add_argument(
+        "--no-public-audio-processing",
+        action="store_true",
+        help="Copy public clip audio without export-time compression and normalization.",
+    )
+    parser.add_argument(
+        "--no-public-audio-quality-gate",
+        action="store_true",
+        help="Publish recent clip audio without duration and level checks.",
+    )
     args = parser.parse_args()
+    clip_audio_processor = None
+    if not args.no_public_audio_processing:
+
+        def clip_audio_processor(source_path: Path, output_path: Path) -> None:
+            process_public_clip_audio(
+                source_path,
+                output_path,
+                ffmpeg_path=args.public_audio_ffmpeg_path,
+            )
+    clip_audio_quality_gate = None
+    if not args.no_public_audio_quality_gate:
+
+        def clip_audio_quality_gate(source_path: Path) -> None:
+            assert_publishable_public_clip_audio(
+                source_path,
+                min_duration_seconds=args.min_public_audio_duration_seconds,
+                min_peak_db=args.min_public_audio_peak_db,
+                ffprobe_path=args.public_audio_ffprobe_path,
+                ffmpeg_path=args.public_audio_ffmpeg_path,
+            )
 
     if args.clip_db_path is not None:
         if not args.raw_bucket:
@@ -341,6 +470,10 @@ def main() -> None:
             output_dir=args.output_dir,
             clip_reader=S3ClipReader(bucket=args.raw_bucket, aws_region=args.aws_region),
             limit=args.limit,
+            clip_audio_processor=clip_audio_processor,
+            clip_audio_quality_gate=clip_audio_quality_gate,
+            progress=_print_export_progress,
+            skip_progress=_print_skip_progress,
         )
     else:
         assert args.private_manifest is not None
@@ -349,7 +482,16 @@ def main() -> None:
             site_source_dir=args.site_source,
             output_dir=args.output_dir,
             audio_source_dir=args.audio_source_dir,
+            clip_audio_processor=clip_audio_processor,
         )
+
+
+def _print_export_progress(index: int, total: int) -> None:
+    print(f"Processing public clip audio {index}/{total}", file=sys.stderr, flush=True)
+
+
+def _print_skip_progress(index: int, total: int, reason: str) -> None:
+    print(f"Skipping public clip audio {index}/{total}: {reason}", file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

@@ -17,8 +17,12 @@ Pi. The Pi should ask the private API for presigned S3 upload URLs.
 - Separate dev/prod private raw-audio S3 buckets with `raw/` lifecycle expiry
 - Separate dev/prod IAM policies for the private server to presign audio,
   publish reviewed static files, and invalidate CloudFront
+- Explicit `Environment` tags on dev/prod buckets, CloudFront distributions,
+  certificates, and server IAM policies
 
 ## Commands
+
+Use OpenTofu only. Do not install or run HashiCorp Terraform for this repo.
 
 ```bash
 tofu init
@@ -26,6 +30,10 @@ tofu fmt -recursive
 tofu validate
 tofu plan
 ```
+
+OpenTofu still uses the HCL `terraform { ... }` settings block and the
+`.terraform.lock.hcl` dependency lock filename for compatibility. Those names do
+not mean the Terraform CLI is required.
 
 Run `tofu apply` only after checking bucket names and AWS profile/account.
 
@@ -35,3 +43,10 @@ From the repo root, deploy static files with the helper:
 scripts/deploy_public_site.sh dev outputs/public-site
 scripts/deploy_public_site.sh prod outputs/public-site
 ```
+
+The deploy helper enforces branch hygiene:
+
+- dev deploys: `dev`, `main`, `codex/*`, or `feature/*`
+- prod deploys: clean `main` worktree only
+
+See `docs/deployment-hygiene.md` for the full branch/resource policy.

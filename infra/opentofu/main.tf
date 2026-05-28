@@ -41,8 +41,9 @@ resource "aws_s3_bucket" "public_site" {
   force_destroy = var.force_destroy_buckets
 
   tags = {
-    Project = var.project_name
-    Role    = "public-static-site"
+    Environment = "prod"
+    Project     = var.project_name
+    Role        = "public-static-site"
   }
 }
 
@@ -51,8 +52,9 @@ resource "aws_s3_bucket" "raw_audio" {
   force_destroy = var.force_destroy_buckets
 
   tags = {
-    Project = var.project_name
-    Role    = "private-raw-audio"
+    Environment = "prod"
+    Project     = var.project_name
+    Role        = "private-raw-audio"
   }
 }
 
@@ -136,7 +138,8 @@ resource "aws_acm_certificate" "site" {
   }
 
   tags = {
-    Project = var.project_name
+    Environment = "prod"
+    Project     = var.project_name
   }
 }
 
@@ -248,6 +251,17 @@ resource "aws_cloudfront_distribution" "site" {
   }
 
   ordered_cache_behavior {
+    path_pattern             = "/api/analysis/lexical"
+    target_origin_id         = local.live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
     path_pattern           = "public_manifest.json"
     target_origin_id       = local.origin_id
     viewer_protocol_policy = "redirect-to-https"
@@ -267,6 +281,12 @@ resource "aws_cloudfront_distribution" "site" {
     acm_certificate_arn      = aws_acm_certificate_validation.site.certificate_arn
     ssl_support_method       = "sni-only"
     minimum_protocol_version = "TLSv1.2_2021"
+  }
+
+  tags = {
+    Environment = "prod"
+    Project     = var.project_name
+    Role        = "public-static-site"
   }
 
   depends_on = [aws_acm_certificate_validation.site]
@@ -345,6 +365,11 @@ resource "aws_iam_policy" "server_s3_access" {
   name        = "${var.project_name}-server-s3-access"
   description = "Least-privilege S3/CloudFront access for the private Talking Boats server"
   policy      = data.aws_iam_policy_document.server_s3_access.json
+
+  tags = {
+    Environment = "prod"
+    Project     = var.project_name
+  }
 }
 
 resource "aws_route53_record" "site_a" {
@@ -528,6 +553,11 @@ resource "aws_cloudfront_distribution" "dev_site" {
     domain_name = local.dev_live_origin_domain_name
     origin_id   = local.dev_live_origin_id
 
+    custom_header {
+      name  = "X-TalkingBoats-Environment"
+      value = "dev"
+    }
+
     custom_origin_config {
       http_port              = 80
       https_port             = local.dev_live_origin_https_port
@@ -569,6 +599,17 @@ resource "aws_cloudfront_distribution" "dev_site" {
   }
 
   ordered_cache_behavior {
+    path_pattern             = "/api/analysis/lexical"
+    target_origin_id         = local.dev_live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
     path_pattern           = "public_manifest.json"
     target_origin_id       = local.dev_origin_id
     viewer_protocol_policy = "redirect-to-https"
@@ -588,6 +629,12 @@ resource "aws_cloudfront_distribution" "dev_site" {
     acm_certificate_arn      = aws_acm_certificate_validation.dev_site.certificate_arn
     ssl_support_method       = "sni-only"
     minimum_protocol_version = "TLSv1.2_2021"
+  }
+
+  tags = {
+    Environment = "dev"
+    Project     = var.project_name
+    Role        = "public-static-site"
   }
 
   depends_on = [aws_acm_certificate_validation.dev_site]
@@ -666,6 +713,11 @@ resource "aws_iam_policy" "dev_server_s3_access" {
   name        = "${var.project_name}-dev-server-s3-access"
   description = "Least-privilege S3/CloudFront access for the private Talking Boats dev server"
   policy      = data.aws_iam_policy_document.dev_server_s3_access.json
+
+  tags = {
+    Environment = "dev"
+    Project     = var.project_name
+  }
 }
 
 resource "aws_route53_record" "dev_site_a" {

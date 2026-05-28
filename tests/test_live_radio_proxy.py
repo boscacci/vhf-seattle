@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import threading
+from pathlib import Path
 
 import httpx
 from fastapi import HTTPException
@@ -13,7 +14,10 @@ from talkingboats.live_radio_proxy import (
     RetuneRequest,
     RetuneResult,
     _audio_iterator_for_stream,
+    _disk_snapshots,
     _iter_upstream_audio,
+    _pi_performance_snapshot,
+    collect_performance_snapshot,
     create_app,
 )
 
@@ -331,6 +335,224 @@ def test_proxy_recent_clips_endpoint_is_public_read_only() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"clips": [{"transcript": "hello"}]}
+
+
+def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://private-api.test/api/analysis/lexical"
+        assert "x-talkingboats-operator-token" not in request.headers
+        return httpx.Response(200, json={"status": "ok", "source_clip_count": 1, "entities": []})
+
+    app = create_app(
+        ProxySettings(private_api_url="http://private-api.test"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(_asgi_get(app, "/api/analysis/lexical"))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "source_clip_count": 1, "entities": []}
+
+
+def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
+    def collector(_settings: ProxySettings) -> dict[str, object]:
+        return {
+            "status": "watch",
+            "generatedAt": "2026-05-26T20:00:00Z",
+            "host": {
+                "role": "OptiPlex live proxy",
+                "cpuCount": 8,
+                "load": {"oneMinute": 3.1, "perCpu": 0.39, "status": "ok"},
+                "memory": {"usedPercent": 62.5, "status": "ok"},
+                "disks": [
+                    {
+                        "label": "system",
+                        "usedPercent": 71.2,
+                        "freeBytes": 123_000_000_000,
+                        "status": "ok",
+                    }
+                ],
+                "internalUrl": "http://192.168.1.23:8000/private",
+            },
+            "services": [
+                {
+                    "name": "talkingboats-live-radio-proxy",
+                    "activeState": "active",
+                    "memoryBytes": 55_000_000,
+                    "status": "ok",
+                }
+            ],
+        }
+
+    app = create_app(ProxySettings(), performance_collector=collector)
+
+    dev_response = _run(
+        _asgi_get(app, "/api/live/performance", headers={"Host": "vhf-dev.robertboscacci.com"})
+    )
+    prod_response = _run(
+        _asgi_get(app, "/api/live/performance", headers={"Host": "vhf.robertboscacci.com"})
+    )
+    dev_origin_response = _run(
+        _asgi_get(
+            app,
+            "/api/live/performance",
+            headers={
+                "Host": "optiplex.tailbea63b.ts.net",
+                "X-TalkingBoats-Environment": "dev",
+            },
+        )
+    )
+    spoofed_header_response = _run(
+        _asgi_get(
+            app,
+            "/api/live/performance",
+            headers={
+                "Host": "vhf.robertboscacci.com",
+                "X-TalkingBoats-Environment": "dev",
+            },
+        )
+    )
+
+    assert dev_response.status_code == 200
+    assert dev_origin_response.status_code == 200
+    dev_payload = dev_response.json()
+    assert dev_payload["host"]["role"] == "OptiPlex live proxy"
+    assert "services" not in dev_payload
+    assert "internalUrl" not in dev_response.text
+    assert "talkingboats-live-radio-proxy" not in dev_response.text
+    assert spoofed_header_response.status_code == 404
+    assert prod_response.status_code == 404
+    assert "192.168." not in dev_response.text
+    assert "127.0.0.1" not in dev_response.text
+    assert "tailbea63b" not in dev_response.text
+    assert "TALKINGBOATS" not in dev_response.text
+
+
+def test_proxy_performance_static_shell_hooks_are_dev_only() -> None:
+    response = _run(_asgi_get(create_app(ProxySettings()), "/assets/app.js"))
+    index_response = _run(_asgi_get(create_app(ProxySettings()), "/"))
+
+    assert response.status_code == 200
+    assert 'const performanceUrl = "/api/live/performance";' in response.text
+    assert "performanceDashboardEnabled" in response.text
+    assert (
+        'const performanceDashboardEnabled = ["vhf-dev.robertboscacci.com", '
+        '"localhost", "127.0.0.1", ""].includes'
+    ) in response.text
+    assert "renderPerformanceDashboard" in response.text
+    assert 'id="tab-performance" type="button" data-tab="performance" hidden' in index_response.text
+
+
+def test_proxy_performance_disk_snapshot_collapses_duplicate_filesystems(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home_path = tmp_path / "home"
+    home_path.mkdir()
+    monkeypatch.setattr(
+        "talkingboats.live_radio_proxy.PERFORMANCE_DISK_PATHS",
+        (("system", tmp_path), ("home", home_path)),
+    )
+
+    snapshots = _disk_snapshots()
+
+    assert len(snapshots) == 1
+    assert snapshots[0]["label"] == "system"
+
+
+def test_proxy_performance_snapshot_combines_optiplex_and_pi(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "talkingboats.live_radio_proxy._load_snapshot",
+        lambda: {"oneMinute": 0.4, "perCpu": 0.05, "status": "ok"},
+    )
+    monkeypatch.setattr(
+        "talkingboats.live_radio_proxy._cpu_utilization_snapshot",
+        lambda: {"utilizationPercent": 12.5, "status": "ok"},
+    )
+    monkeypatch.setattr(
+        "talkingboats.live_radio_proxy._memory_snapshot",
+        lambda: {"usedPercent": 18.0, "status": "ok"},
+    )
+    monkeypatch.setattr(
+        "talkingboats.live_radio_proxy._disk_snapshots",
+        lambda: [{"label": "system", "usedPercent": 31.0, "status": "ok"}],
+    )
+    monkeypatch.setattr(
+        "talkingboats.live_radio_proxy._local_thermal_snapshot",
+        lambda: {"temperatureC": 45.0, "throttled": "unknown", "status": "ok"},
+    )
+    monkeypatch.setattr(
+        "talkingboats.live_radio_proxy._pi_performance_snapshot",
+        lambda _settings: {
+            "role": "Raspberry Pi edge radio",
+            "status": "watch",
+            "cpuCount": 4,
+            "cpu": {"utilizationPercent": 62.5, "status": "ok"},
+            "load": {"oneMinute": 3.2, "perCpu": 0.8, "status": "watch"},
+            "memory": {"usedPercent": 44.0, "status": "ok"},
+            "disks": [{"label": "system", "usedPercent": 8.0, "status": "ok"}],
+            "thermal": {"temperatureC": 37.0, "throttled": "0x0", "status": "ok"},
+        },
+    )
+
+    snapshot = collect_performance_snapshot(ProxySettings())
+
+    assert snapshot["status"] == "watch"
+    assert "services" not in snapshot
+    assert [host["role"] for host in snapshot["hosts"]] == [
+        "OptiPlex live proxy",
+        "Raspberry Pi edge radio",
+    ]
+    assert snapshot["host"]["role"] == "OptiPlex live proxy"
+    assert snapshot["hosts"][0]["thermal"]["temperatureC"] == 45.0
+    assert snapshot["hosts"][1]["thermal"]["temperatureC"] == 37.0
+
+
+def test_proxy_pi_performance_snapshot_reads_public_safe_ssh_json(monkeypatch) -> None:
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return type(
+            "Result",
+            (),
+            {
+                "returncode": 0,
+                "stdout": (
+                    '{"role":"Raspberry Pi edge radio","status":"ok","cpuCount":4,'
+                    '"cpu":{"utilizationPercent":7.5,"status":"ok"},'
+                    '"load":{"oneMinute":0.43,"perCpu":0.11,"status":"ok"},'
+                    '"memory":{"usedPercent":32.1,"status":"ok"},'
+                    '"disks":[{"label":"system","usedPercent":8.0,"status":"ok"}],'
+                    '"thermal":{"temperatureC":37.0,"throttled":"0x0","status":"ok"}}'
+                ),
+                "stderr": "",
+            },
+        )()
+
+    monkeypatch.setattr("talkingboats.live_radio_proxy.subprocess.run", fake_run)
+
+    snapshot = _pi_performance_snapshot(ProxySettings(retune_ssh_target="talkingboats-pi"))
+
+    assert calls[0][:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=2"]
+    assert "talkingboats-pi" in calls[0]
+    assert calls[0][-2:] == ["python3", "-"]
+    assert snapshot["role"] == "Raspberry Pi edge radio"
+    assert snapshot["thermal"]["temperatureC"] == 37.0
+    assert "talkingboats-pi" not in str(snapshot)
+    assert "TALKINGBOATS" not in str(snapshot)
+
+
+def test_proxy_pi_performance_snapshot_degrades_when_ssh_fails(monkeypatch) -> None:
+    def fake_run(_command, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["ssh", "talkingboats-pi"], timeout=4)
+
+    monkeypatch.setattr("talkingboats.live_radio_proxy.subprocess.run", fake_run)
+
+    snapshot = _pi_performance_snapshot(ProxySettings())
+
+    assert snapshot["role"] == "Raspberry Pi edge radio"
+    assert snapshot["status"] == "unknown"
+    assert snapshot["reachable"] is False
 
 
 def test_proxy_recent_clips_endpoint_strips_viewer_auth_and_upstream_cookies() -> None:

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
 from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import Settings
+from talkingboats.lexical_analysis import read_cached_lexical_analysis
 from talkingboats.schemas import (
     ClipPresignRequest,
     ClipPresignResponse,
@@ -225,6 +226,21 @@ async def recent_clips(
         "channel_counts": channel_counts,
         "channel_labels": public_monitored_channel_labels(channel_counts),
     }
+
+
+@app.get(
+    "/api/analysis/lexical",
+)
+async def lexical_analysis(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, object]:
+    try:
+        return read_cached_lexical_analysis(settings.clip_db_path)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
 
 
 @app.post(
