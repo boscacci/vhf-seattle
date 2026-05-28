@@ -25,6 +25,7 @@ const performanceDashboardEnabled = ["vhf-dev.robertboscacci.com", "localhost", 
   window.location.hostname,
 );
 const liveStatusPollMs = 2000;
+const liveActivityPollMs = 15000;
 const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
 const performanceHostLabel = "OptiPlex live proxy";
@@ -115,6 +116,8 @@ const panels = {
 };
 const liveAudio = document.querySelector("#live-audio");
 const liveStatus = document.querySelector("#live-status");
+const liveLastCommunication = document.querySelector("#live-last-communication");
+const liveLatency = document.querySelector("#live-latency");
 const liveChannel = document.querySelector("#live-channel");
 const liveChannelPicker = document.querySelector("#live-channel-picker");
 const liveFrequency = document.querySelector("#live-frequency");
@@ -122,6 +125,8 @@ const liveSignalDot = document.querySelector("#live-signal-dot");
 const waveformPanel = document.querySelector("#waveform-panel");
 const waveformCanvas = document.querySelector("#waveform-canvas");
 const playLiveButton = document.querySelector("#play-live");
+const playLiveLabel = playLiveButton?.querySelector(".play-label");
+const playLiveSymbol = playLiveButton?.querySelector(".play-symbol");
 const systemMediaControlsToggle = document.querySelector("#system-media-controls");
 const systemMediaNote = document.querySelector("#system-media-note");
 const languageStatus = document.querySelector("#language-status");
@@ -131,8 +136,12 @@ const performanceDashboard = document.querySelector("#performance-dashboard");
 
 let liveRetryTimer = null;
 let liveStatusTimer = null;
+let liveActivityTimer = null;
 let liveStatusAbortController = null;
+let liveActivityAbortController = null;
 let lastLiveStatusId = null;
+let latestLiveStatus = null;
+let lastCommunicationByChannel = {};
 let audioContext = null;
 let analyser = null;
 let analyserSource = null;
@@ -230,7 +239,7 @@ window.addEventListener("pagehide", () => {
 
 liveAudio.addEventListener("playing", () => {
   liveStatus.textContent = "Streaming";
-  playLiveButton.textContent = "Pause";
+  setLivePlayButton("pause");
   updateLiveMediaSession("playing");
 });
 
@@ -239,7 +248,7 @@ liveAudio.addEventListener("waiting", () => {
 });
 
 liveAudio.addEventListener("pause", () => {
-  playLiveButton.textContent = "Play";
+  setLivePlayButton("play");
   liveStatus.textContent = "Paused";
   updateLiveMediaSession("paused");
 });
@@ -644,6 +653,7 @@ function selectLiveChannel(channel) {
   lastLiveStatusId = null;
   renderLiveChannelPicker();
   renderLiveStatus(findLiveChannel(channel));
+  pollLiveActivity();
   liveAudio.pause();
   liveAudio.src = withCacheBust(liveStreamUrl());
   liveAudio.load();
@@ -686,10 +696,12 @@ function activateTab(name) {
   }
   if (name === "live") {
     startLiveStatusPolling();
+    startLiveActivityPolling();
     startWaveform();
   } else {
     closeLiveAudioStream();
     stopLiveStatusPolling();
+    stopLiveActivityPolling();
     stopWaveform();
   }
   if (name === "language" && !languagePayloadLoaded) {
@@ -1560,11 +1572,23 @@ function closeLiveAudioStream() {
   liveAudio.pause();
   liveAudio.removeAttribute("src");
   liveAudio.load();
-  playLiveButton.textContent = "Play";
+  setLivePlayButton("play");
   liveStatus.textContent = "Ready";
   quietSince = null;
   drawWaitingFrame({ showWaiting: false });
   clearBrowserMediaSession();
+}
+
+function setLivePlayButton(mode) {
+  const isPause = mode === "pause";
+  if (playLiveLabel) {
+    playLiveLabel.textContent = isPause ? "Pause" : "Play";
+  }
+  if (playLiveSymbol) {
+    playLiveSymbol.textContent = isPause ? "❚❚" : "▶";
+  } else {
+    playLiveButton.textContent = isPause ? "Pause" : "▶ Play";
+  }
 }
 
 function toggleLivePlayback() {
@@ -1617,6 +1641,18 @@ function stopLiveStatusPolling() {
   liveStatusAbortController = null;
 }
 
+function startLiveActivityPolling() {
+  clearTimeout(liveActivityTimer);
+  pollLiveActivity();
+}
+
+function stopLiveActivityPolling() {
+  clearTimeout(liveActivityTimer);
+  liveActivityTimer = null;
+  liveActivityAbortController?.abort();
+  liveActivityAbortController = null;
+}
+
 function liveStreamUrl() {
   const url = rawLiveStreamUrl();
   return withDspProfile(url);
@@ -1641,6 +1677,10 @@ function liveStatusUrl() {
   return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;
 }
 
+function lastCommunicationUrl() {
+  return `/api/clips/recent?limit=1&channel=${encodeURIComponent(selectedLiveChannel)}`;
+}
+
 async function pollLiveStatus() {
   if (panels.live.hidden) {
     return;
@@ -1656,6 +1696,7 @@ async function pollLiveStatus() {
       throw new Error(`live status HTTP ${response.status}`);
     }
     const status = await response.json();
+    latestLiveStatus = status;
     renderLiveStatus(status);
     if (lastLiveStatusId && status?.activeChannelId !== lastLiveStatusId && !liveAudio.paused) {
       reconnectLiveStream();
@@ -1672,10 +1713,94 @@ async function pollLiveStatus() {
   }
 }
 
+async function pollLiveActivity() {
+  if (panels.live.hidden) {
+    return;
+  }
+  liveActivityAbortController?.abort();
+  liveActivityAbortController = new AbortController();
+  try {
+    const response = await fetch(lastCommunicationUrl(), {
+      cache: "no-store",
+      signal: liveActivityAbortController.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`last communication HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    const clip = Array.isArray(payload.clips) ? payload.clips[0] : null;
+    if (clip) {
+      lastCommunicationByChannel[selectedLiveChannel] = {
+        channel: clip.channel || selectedLiveChannel,
+        started_at: clip.started_at,
+        ended_at: clip.ended_at,
+        duration_seconds: clip.duration_seconds,
+      };
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      liveLastCommunication.textContent = `Last ${selectedLiveChannel}: unavailable`;
+    }
+  } finally {
+    renderLiveTelemetry();
+    if (!panels.live.hidden) {
+      liveActivityTimer = setTimeout(pollLiveActivity, liveActivityPollMs);
+    }
+  }
+}
+
 function renderLiveStatus(status) {
   const channel = status?.channel || selectedLiveChannel;
   liveChannel.textContent = channel ? channelLabel(channel) : "Current SDR feed";
   liveFrequency.textContent = status?.frequencyMhz ? `${status.frequencyMhz} MHz` : "";
+  renderLiveTelemetry();
+}
+
+function renderLiveTelemetry() {
+  const clip = lastCommunicationByChannel[selectedLiveChannel];
+  const heardAt = lastCommunicationTime(clip);
+  liveLastCommunication.textContent = heardAt
+    ? `Last Ch ${selectedLiveChannel}: ${formatRelativeAge(heardAt)}`
+    : `Last Ch ${selectedLiveChannel}: checking`;
+  liveLatency.textContent = formatLiveLatency(latestLiveStatus?.streamDelaySeconds);
+}
+
+function lastCommunicationTime(clip) {
+  return clip?.ended_at || clip?.started_at || null;
+}
+
+function formatLiveLatency(delay) {
+  const minimum = Number(delay?.minimum);
+  const maximum = Number(delay?.maximum);
+  if (!Number.isFinite(minimum) || !Number.isFinite(maximum)) {
+    return "Live delay: estimating";
+  }
+  return `Live delay: about ${formatDelaySeconds(minimum)}-${formatDelaySeconds(maximum)} behind antenna`;
+}
+
+function formatDelaySeconds(value) {
+  const rounded = Math.max(0, Math.round(Number(value)));
+  return `${rounded}s`;
+}
+
+function formatRelativeAge(value) {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) {
+    return "unknown";
+  }
+  const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  return formatDateTime(value);
 }
 
 function withCacheBust(url) {

@@ -98,20 +98,32 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert ".language-grid" in styles_css
     assert ".topic-frame" in styles_css
     assert "live-channel" in index_html
+    assert "live-last-communication" in index_html
+    assert "live-latency" in index_html
     assert "system-media-controls" in index_html
     assert "waveform-canvas" in index_html
     assert 'id="waveform-panel" class="waveform-panel"' in index_html
     assert 'id="play-live"' in index_html
+    assert "play-symbol" in index_html
     assert "Open stream" not in index_html
     assert "connect-live" not in index_html
     assert "clip-list" in index_html
     assert "color-scheme: dark" in styles_css
     assert ".live-card" in styles_css
+    assert ".live-telemetry" in styles_css
     assert ".waiting-indicator" in styles_css
+    assert ".play-symbol" in styles_css
+    assert ".system-media-block" in styles_css
     assert "AudioContext" in app_js
     assert "getByteTimeDomainData" in app_js
     assert "liveStatusPollMs = 2000" in app_js
+    assert "liveActivityPollMs = 15000" in app_js
     assert "quietTransmissionDelayMs = 5000" in app_js
+    assert "lastCommunicationUrl" in app_js
+    assert "pollLiveActivity" in app_js
+    assert "formatRelativeAge" in app_js
+    assert "Live delay" in app_js
+    assert "behind antenna" in app_js
     assert "performanceRefreshMs = 10000" in app_js
     assert "loadAndRenderPerformance({ showLoading: false });" in app_js
     assert "startPerformancePolling" in app_js

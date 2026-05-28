@@ -62,7 +62,11 @@
                 <p class="eyebrow">Receiver</p>
                 <h2>Live Audio</h2>
               </div>
-              <p id="live-status" class="status-text" aria-live="polite">Ready</p>
+              <div class="live-telemetry" aria-live="polite">
+                <p id="live-status" class="status-text">Ready</p>
+                <p id="live-last-communication">Last heard: checking</p>
+                <p id="live-latency">Live delay: checking</p>
+              </div>
             </div>
             <div class="tuner-display">
               <span id="live-signal-dot" class="signal-dot" aria-hidden="true"></span>
@@ -86,13 +90,18 @@
             </div>
             <audio id="live-audio" preload="none"></audio>
             <div class="live-actions">
-              <button id="play-live" class="primary" type="button">Play</button>
-              <label class="system-media-toggle">
-                <input id="system-media-controls" type="checkbox" />
-                <span>System media</span>
-              </label>
+              <button id="play-live" class="primary live-play-button" type="button">
+                <span class="play-symbol" aria-hidden="true">▶</span>
+                <span class="play-label">Play</span>
+              </button>
+              <div class="system-media-block">
+                <label class="system-media-toggle">
+                  <input id="system-media-controls" type="checkbox" />
+                  <span>System media</span>
+                </label>
+                <p id="system-media-note" class="system-media-note"></p>
+              </div>
             </div>
-            <p id="system-media-note" class="system-media-note"></p>
           </article>
         </div>
       </section>
