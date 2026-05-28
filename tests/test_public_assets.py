@@ -123,6 +123,18 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert "Thermals" in app_js
     assert "performance-host-grid" in app_js
     assert "performanceHostPanel" in app_js
+    assert "performanceMetricChart" in app_js
+    assert "performance-chart-grid" in app_js
+    assert "performanceRangeOptions" in app_js
+    assert "selectedPerformanceRangeHours" in app_js
+    assert "performance-range-control" in app_js
+    assert "cpuUtilizationPercent" in app_js
+    assert "memoryUsedPercent" in app_js
+    assert "thermalTemperatureC" in app_js
+    assert 'document.createElementNS("http://www.w3.org/2000/svg", "svg")' in app_js
+    assert ".performance-chart-grid" in styles_css
+    assert ".performance-chart-svg" in styles_css
+    assert ".performance-range-control" in styles_css
     assert "serviceList" not in app_js
     assert "Services" not in app_js
     assert "Overall" not in app_js

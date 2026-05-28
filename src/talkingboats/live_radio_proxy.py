@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import math
 import os
 import shutil
+import sqlite3
 import subprocess
 import threading
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -25,7 +28,9 @@ from pydantic import BaseModel, Field
 
 from talkingboats.audio_dsp import build_ffmpeg_dsp_command, dsp_profile_for_name
 
-CLIP_CONSOLE_DIR = Path(__file__).resolve().parents[2] / "public-site"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CLIP_CONSOLE_DIR = REPO_ROOT / "public-site"
+DEFAULT_PERFORMANCE_HISTORY_DB_PATH = REPO_ROOT / "data" / "performance_telemetry.sqlite3"
 SHELL_ASSET_TYPES = {
     "index.html": "text/html",
     "assets/app.js": "application/javascript",
@@ -47,6 +52,11 @@ PERFORMANCE_DEV_HOSTS = (
 PERFORMANCE_DEV_ORIGIN_HOSTS = ("optiplex.tailbea63b.ts.net",)
 PERFORMANCE_PUBLIC_ROLES = ("OptiPlex live proxy", "Raspberry Pi edge radio")
 PERFORMANCE_PUBLIC_STATUSES = {"ok", "watch", "high", "unknown"}
+PERFORMANCE_SAMPLE_INTERVAL_SECONDS = 5.0
+PERFORMANCE_MEMORY_HISTORY_SECONDS = 6 * 60 * 60
+PERFORMANCE_PERSIST_INTERVAL_SECONDS = 60.0
+PERFORMANCE_PERSIST_HISTORY_SECONDS = 24 * 60 * 60
+PERFORMANCE_PUBLIC_HISTORY_LIMIT = 6_000
 PI_PERFORMANCE_SCRIPT = r"""
 import json
 import os
@@ -338,11 +348,17 @@ class ProxySettings:
     transcript_url: str = "http://127.0.0.1:8055/api/live-transcript"
     private_api_url: str = "http://192.168.1.247:8034"
     active_channel_id: str = "recreation_68"
-    retune_ssh_target: str = "talkingboats-pi"
+    retune_ssh_target: str = "192.168.1.114"
     pi_env_path: str = "/etc/talkingboats/live-radio.env"
     ffmpeg_path: str = "ffmpeg"
     restart_transcriber_service: bool = True
     enable_debug_endpoints: bool = False
+    performance_background_enabled: bool = True
+    performance_sample_interval_seconds: float = PERFORMANCE_SAMPLE_INTERVAL_SECONDS
+    performance_memory_history_seconds: int = PERFORMANCE_MEMORY_HISTORY_SECONDS
+    performance_persist_interval_seconds: float = PERFORMANCE_PERSIST_INTERVAL_SECONDS
+    performance_persist_history_seconds: int = PERFORMANCE_PERSIST_HISTORY_SECONDS
+    performance_history_db_path: str = str(DEFAULT_PERFORMANCE_HISTORY_DB_PATH)
     performance_dev_hosts: tuple[str, ...] = PERFORMANCE_DEV_HOSTS
     performance_dev_origin_hosts: tuple[str, ...] = PERFORMANCE_DEV_ORIGIN_HOSTS
     cors_origins: tuple[str, ...] = (
@@ -386,6 +402,30 @@ class ProxySettings:
             ffmpeg_path=os.environ.get("TALKINGBOATS_PROXY_FFMPEG_PATH", cls.ffmpeg_path),
             restart_transcriber_service=_env_bool("TALKINGBOATS_PROXY_RESTART_TRANSCRIBER", True),
             enable_debug_endpoints=_env_bool("TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS", False),
+            performance_background_enabled=_env_bool(
+                "TALKINGBOATS_PROXY_PERFORMANCE_BACKGROUND_ENABLED",
+                cls.performance_background_enabled,
+            ),
+            performance_sample_interval_seconds=_env_float(
+                "TALKINGBOATS_PROXY_PERFORMANCE_SAMPLE_INTERVAL_SECONDS",
+                cls.performance_sample_interval_seconds,
+            ),
+            performance_memory_history_seconds=_env_int(
+                "TALKINGBOATS_PROXY_PERFORMANCE_MEMORY_HISTORY_SECONDS",
+                cls.performance_memory_history_seconds,
+            ),
+            performance_persist_interval_seconds=_env_float(
+                "TALKINGBOATS_PROXY_PERFORMANCE_PERSIST_INTERVAL_SECONDS",
+                cls.performance_persist_interval_seconds,
+            ),
+            performance_persist_history_seconds=_env_int(
+                "TALKINGBOATS_PROXY_PERFORMANCE_PERSIST_HISTORY_SECONDS",
+                cls.performance_persist_history_seconds,
+            ),
+            performance_history_db_path=os.environ.get(
+                "TALKINGBOATS_PROXY_PERFORMANCE_HISTORY_DB_PATH",
+                cls.performance_history_db_path,
+            ),
             performance_dev_hosts=_env_csv("TALKINGBOATS_PROXY_PERFORMANCE_DEV_HOSTS")
             or cls.performance_dev_hosts,
             performance_dev_origin_hosts=_env_csv(
@@ -410,6 +450,267 @@ Retuner = Callable[[ChannelPreset, ProxySettings], RetuneResult]
 PerformanceCollector = Callable[[ProxySettings], dict[str, object]]
 
 
+class PerformanceHistoryStore:
+    def __init__(
+        self,
+        *,
+        db_path: Path | None = DEFAULT_PERFORMANCE_HISTORY_DB_PATH,
+        memory_history_seconds: int = PERFORMANCE_MEMORY_HISTORY_SECONDS,
+        persist_interval_seconds: float = PERFORMANCE_PERSIST_INTERVAL_SECONDS,
+        persist_history_seconds: int = PERFORMANCE_PERSIST_HISTORY_SECONDS,
+    ) -> None:
+        self._db_path = db_path
+        self._memory_history_seconds = memory_history_seconds
+        self._persist_interval_seconds = persist_interval_seconds
+        self._persist_history_seconds = persist_history_seconds
+        self._samples: dict[str, deque[dict[str, object]]] = {}
+        self._last_persist_epoch: dict[str, float] = {}
+        self._latest_payload: dict[str, object] | None = None
+        self._sampler_task: asyncio.Task[None] | None = None
+        self._lock = threading.Lock()
+
+    @classmethod
+    def from_settings(cls, settings: ProxySettings) -> PerformanceHistoryStore:
+        db_path = Path(settings.performance_history_db_path).expanduser()
+        return cls(
+            db_path=db_path if settings.performance_history_db_path else None,
+            memory_history_seconds=settings.performance_memory_history_seconds,
+            persist_interval_seconds=settings.performance_persist_interval_seconds,
+            persist_history_seconds=settings.performance_persist_history_seconds,
+        )
+
+    def running(self) -> bool:
+        return self._sampler_task is not None and not self._sampler_task.done()
+
+    def start_background_sampler(
+        self,
+        settings: ProxySettings,
+        collector: PerformanceCollector,
+    ) -> None:
+        if self.running() or settings.performance_sample_interval_seconds <= 0:
+            return
+        self._sampler_task = asyncio.create_task(self._sample_loop(settings, collector))
+
+    async def stop_background_sampler(self) -> None:
+        task = self._sampler_task
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        self._sampler_task = None
+
+    async def _sample_loop(
+        self,
+        settings: ProxySettings,
+        collector: PerformanceCollector,
+    ) -> None:
+        while True:
+            try:
+                await self.capture_async(settings, collector)
+            except Exception as exc:  # pragma: no cover - defensive runtime logging
+                print(
+                    json.dumps(
+                        {
+                            "event": "performance_sampler_failed",
+                            "error_type": type(exc).__name__,
+                        }
+                    )
+                )
+            await asyncio.sleep(settings.performance_sample_interval_seconds)
+
+    async def payload_for_request(
+        self,
+        settings: ProxySettings,
+        collector: PerformanceCollector,
+    ) -> dict[str, object]:
+        if self.running():
+            latest = self.latest_payload()
+            if latest is not None:
+                return latest
+        return await self.capture_async(settings, collector)
+
+    async def capture_async(
+        self,
+        settings: ProxySettings,
+        collector: PerformanceCollector,
+    ) -> dict[str, object]:
+        return await asyncio.to_thread(self.capture, settings, collector)
+
+    def capture(
+        self,
+        settings: ProxySettings,
+        collector: PerformanceCollector,
+    ) -> dict[str, object]:
+        return self.record(collector(settings))
+
+    def latest_payload(self) -> dict[str, object] | None:
+        with self._lock:
+            if self._latest_payload is None:
+                return None
+            return dict(self._latest_payload)
+
+    def record(self, payload: dict[str, object]) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            payload = {}
+        generated_at = _public_generated_at(payload.get("generatedAt"))
+        generated_epoch = _performance_sample_epoch(generated_at)
+        hosts = _raw_performance_hosts(payload)
+        public_hosts: list[dict[str, object]] = []
+        with self._lock:
+            for index, host in enumerate(hosts):
+                key = _performance_history_key(host, index)
+                role = _performance_history_role(host, index)
+                samples = self._samples.setdefault(key, deque())
+                sample = _performance_history_sample(generated_at, generated_epoch, host)
+                samples.append(sample)
+                self._trim_memory_samples(samples, generated_epoch)
+                self._persist_sample_if_due(key, role, sample)
+                host_with_history = dict(host)
+                host_with_history["history"] = self._combined_history(key, samples, generated_epoch)
+                public_hosts.append(host_with_history)
+        payload_with_history = dict(payload)
+        if public_hosts:
+            payload_with_history["hosts"] = public_hosts
+            payload_with_history["host"] = public_hosts[0]
+        self._latest_payload = payload_with_history
+        return payload_with_history
+
+    def _trim_memory_samples(
+        self,
+        samples: deque[dict[str, object]],
+        generated_epoch: float,
+    ) -> None:
+        cutoff = generated_epoch - self._memory_history_seconds
+        while samples and _sample_epoch(samples[0]) < cutoff:
+            samples.popleft()
+
+    def _persist_sample_if_due(
+        self,
+        host_key: str,
+        role: str,
+        sample: dict[str, object],
+    ) -> None:
+        if self._db_path is None or self._persist_interval_seconds <= 0:
+            return
+        generated_epoch = _sample_epoch(sample)
+        last_persisted = self._last_persist_epoch.get(host_key)
+        if (
+            last_persisted is not None
+            and generated_epoch - last_persisted < self._persist_interval_seconds
+        ):
+            return
+        self._ensure_database()
+        with sqlite3.connect(self._db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO performance_telemetry_samples (
+                    generated_at,
+                    generated_epoch,
+                    host_key,
+                    host_role,
+                    cpu_utilization_percent,
+                    memory_used_percent,
+                    thermal_temperature_c
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    sample["generatedAt"],
+                    generated_epoch,
+                    host_key,
+                    role,
+                    sample.get("cpuUtilizationPercent"),
+                    sample.get("memoryUsedPercent"),
+                    sample.get("thermalTemperatureC"),
+                ),
+            )
+            cutoff = generated_epoch - self._persist_history_seconds
+            connection.execute(
+                "DELETE FROM performance_telemetry_samples WHERE generated_epoch < ?",
+                (cutoff,),
+            )
+        self._last_persist_epoch[host_key] = generated_epoch
+
+    def _combined_history(
+        self,
+        host_key: str,
+        memory_samples: deque[dict[str, object]],
+        generated_epoch: float,
+    ) -> list[dict[str, object]]:
+        combined: dict[str, dict[str, object]] = {}
+        for sample in self._load_persisted_history(host_key, generated_epoch):
+            combined[str(sample["generatedAt"])] = sample
+        for sample in memory_samples:
+            combined[str(sample["generatedAt"])] = dict(sample)
+        return sorted(combined.values(), key=_sample_epoch)[-PERFORMANCE_PUBLIC_HISTORY_LIMIT:]
+
+    def _load_persisted_history(
+        self,
+        host_key: str,
+        generated_epoch: float,
+    ) -> list[dict[str, object]]:
+        if self._db_path is None or not self._db_path.exists():
+            return []
+        cutoff = generated_epoch - self._persist_history_seconds
+        with sqlite3.connect(self._db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    generated_at,
+                    generated_epoch,
+                    cpu_utilization_percent,
+                    memory_used_percent,
+                    thermal_temperature_c
+                FROM performance_telemetry_samples
+                WHERE host_key = ? AND generated_epoch >= ?
+                ORDER BY generated_epoch
+                """,
+                (host_key, cutoff),
+            ).fetchall()
+        history = []
+        for generated_at, epoch, cpu, memory, thermal in rows:
+            sample: dict[str, object] = {
+                "generatedAt": generated_at,
+                "_epoch": float(epoch),
+            }
+            if cpu is not None:
+                sample["cpuUtilizationPercent"] = float(cpu)
+            if memory is not None:
+                sample["memoryUsedPercent"] = float(memory)
+            if thermal is not None:
+                sample["thermalTemperatureC"] = float(thermal)
+            history.append(sample)
+        return history
+
+    def _ensure_database(self) -> None:
+        if self._db_path is None:
+            return
+        if str(self._db_path) != ":memory:":
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self._db_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS performance_telemetry_samples (
+                    id INTEGER PRIMARY KEY,
+                    generated_at TEXT NOT NULL,
+                    generated_epoch REAL NOT NULL,
+                    host_key TEXT NOT NULL,
+                    host_role TEXT NOT NULL,
+                    cpu_utilization_percent REAL,
+                    memory_used_percent REAL,
+                    thermal_temperature_c REAL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_performance_telemetry_host_epoch
+                ON performance_telemetry_samples (host_key, generated_epoch)
+                """
+            )
+
+
 def create_app(
     settings: ProxySettings | None = None,
     *,
@@ -421,8 +722,24 @@ def create_app(
     client_factory = client_factory or _default_client
     retuner = retuner or retune_pi
     performance_collector = performance_collector or collect_performance_snapshot
+    performance_history = PerformanceHistoryStore.from_settings(settings)
     retune_lock = asyncio.Lock()
-    app = FastAPI(title="Talking Boats Tailnet Radio Proxy", version="0.1.0")
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if settings.performance_background_enabled:
+            performance_history.start_background_sampler(settings, performance_collector)
+        try:
+            yield
+        finally:
+            await performance_history.stop_background_sampler()
+
+    app = FastAPI(
+        title="Talking Boats Tailnet Radio Proxy",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+    app.state.performance_history = performance_history
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -463,7 +780,8 @@ def create_app(
     async def live_performance(request: Request) -> dict[str, object]:
         if not _performance_host_allowed(request, settings):
             raise HTTPException(status_code=404, detail="performance dashboard is dev-only")
-        return _public_performance_payload(performance_collector(settings))
+        snapshot = await performance_history.payload_for_request(settings, performance_collector)
+        return _public_performance_payload(snapshot)
 
     @app.get("/api/live/{channel}/current.mp3")
     async def channel_live_stream(channel: str, dsp: str | None = None) -> StreamingResponse:
@@ -618,10 +936,7 @@ def _performance_host_allowed(request: Request, settings: ProxySettings) -> bool
 def _public_performance_payload(payload: dict[str, object]) -> dict[str, object]:
     if not isinstance(payload, dict):
         payload = {}
-    raw_hosts = payload.get("hosts")
-    hosts = raw_hosts if isinstance(raw_hosts, list) else []
-    if not hosts and isinstance(payload.get("host"), dict):
-        hosts = [payload["host"]]
+    hosts = _raw_performance_hosts(payload)
     public_hosts = [
         _public_performance_host(host, index)
         for index, host in enumerate(hosts)
@@ -636,6 +951,14 @@ def _public_performance_payload(payload: dict[str, object]) -> dict[str, object]
         "host": public_hosts[0] if public_hosts else {},
         "hosts": public_hosts,
     }
+
+
+def _raw_performance_hosts(payload: dict[str, object]) -> list[dict[str, object]]:
+    raw_hosts = payload.get("hosts")
+    hosts = raw_hosts if isinstance(raw_hosts, list) else []
+    if not hosts and isinstance(payload.get("host"), dict):
+        hosts = [payload["host"]]
+    return [host for host in hosts if isinstance(host, dict)]
 
 
 def _public_performance_host(host: dict[str, object], index: int) -> dict[str, object]:
@@ -657,6 +980,9 @@ def _public_performance_host(host: dict[str, object], index: int) -> dict[str, o
         "disks": _public_disks(host.get("disks")),
         "thermal": _public_thermal(host.get("thermal")),
     }
+    history = _public_performance_history(host.get("history"))
+    if history:
+        public_host["history"] = history
     if isinstance(host.get("reachable"), bool):
         public_host["reachable"] = host["reachable"]
     cpu_count = _public_number(host.get("cpuCount"))
@@ -693,6 +1019,80 @@ def _public_thermal(value: object) -> dict[str, object]:
     throttled = value.get("throttled") if isinstance(value, dict) else None
     thermal["throttled"] = _public_throttled_label(throttled)
     return thermal
+
+
+def _performance_history_key(host: dict[str, object], index: int) -> str:
+    role = _performance_history_role(host, index)
+    if role != f"Telemetry host {index + 1}":
+        return f"{index}:{role}"
+    return f"{index}:host"
+
+
+def _performance_history_role(host: dict[str, object], index: int) -> str:
+    role = host.get("role")
+    if isinstance(role, str) and 0 < len(role) <= 80 and "://" not in role:
+        return role
+    if index < len(PERFORMANCE_PUBLIC_ROLES):
+        return PERFORMANCE_PUBLIC_ROLES[index]
+    return f"Telemetry host {index + 1}"
+
+
+def _performance_history_sample(
+    generated_at: str,
+    generated_epoch: float,
+    host: dict[str, object],
+) -> dict[str, object]:
+    sample: dict[str, object] = {"generatedAt": generated_at, "_epoch": generated_epoch}
+    cpu = host.get("cpu") if isinstance(host.get("cpu"), dict) else {}
+    memory = host.get("memory") if isinstance(host.get("memory"), dict) else {}
+    thermal = host.get("thermal") if isinstance(host.get("thermal"), dict) else {}
+    cpu_utilization = _public_number(cpu.get("utilizationPercent"))
+    memory_used = _public_number(memory.get("usedPercent"))
+    thermal_temperature = _public_number(thermal.get("temperatureC"))
+    if cpu_utilization is not None:
+        sample["cpuUtilizationPercent"] = cpu_utilization
+    if memory_used is not None:
+        sample["memoryUsedPercent"] = memory_used
+    if thermal_temperature is not None:
+        sample["thermalTemperatureC"] = thermal_temperature
+    return sample
+
+
+def _public_performance_history(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    history = []
+    for sample in value[-PERFORMANCE_PUBLIC_HISTORY_LIMIT:]:
+        if not isinstance(sample, dict):
+            continue
+        public_sample = {"generatedAt": _public_generated_at(sample.get("generatedAt"))}
+        for source_field in (
+            "cpuUtilizationPercent",
+            "memoryUsedPercent",
+            "thermalTemperatureC",
+        ):
+            number = _public_number(sample.get(source_field))
+            if number is not None:
+                public_sample[source_field] = number
+        history.append(public_sample)
+    return history
+
+
+def _performance_sample_epoch(generated_at: str) -> float:
+    try:
+        return datetime.fromisoformat(generated_at.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return time.time()
+
+
+def _sample_epoch(sample: dict[str, object]) -> float:
+    epoch = _public_number(sample.get("_epoch"))
+    if epoch is not None:
+        return float(epoch)
+    generated_at = sample.get("generatedAt")
+    if isinstance(generated_at, str):
+        return _performance_sample_epoch(generated_at)
+    return time.time()
 
 
 def _public_generated_at(value: object) -> str:
@@ -1315,6 +1715,26 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
 
 
 def _env_csv(name: str) -> tuple[str, ...]:

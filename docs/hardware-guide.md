@@ -49,9 +49,11 @@ antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> AWS public edge
 - **Pi edge work:** the Pi runs `rtl_fm`, speech-band cleanup, squelch/gating,
   Icecast MP3 output, rolling WAV buffers, and activity clip detection. It can
   keep short retry/debug buffers locally under `/opt/talkingboats/spool`.
-- **LAN handoff:** the Pi reaches the OptiPlex over private Wi-Fi/LAN using
-  stable names such as `talkingboats-pi.local` and `optiplex.local`. It asks the
-  private API for presigned upload URLs instead of holding cloud credentials.
+- **LAN handoff:** the Pi reaches the OptiPlex over private Wi-Fi/LAN. The
+  current Pi is reached from the OptiPlex at `192.168.1.114`; mDNS names can be
+  stale, so verify the live address before changing receiver or telemetry
+  settings. The Pi asks the private API for presigned upload URLs instead of
+  holding cloud credentials.
 - **OptiPlex processing:** the OptiPlex records clip metadata in SQLite, retries
   pending uploads, transcribes clips, generates static exports, and exposes the
   read-only proxy that CloudFront can call.

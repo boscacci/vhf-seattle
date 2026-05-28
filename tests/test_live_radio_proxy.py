@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import subprocess
 import threading
 from pathlib import Path
@@ -10,6 +11,7 @@ from fastapi import HTTPException
 
 from talkingboats.live_radio_proxy import (
     ChannelPreset,
+    PerformanceHistoryStore,
     ProxySettings,
     RetuneRequest,
     RetuneResult,
@@ -428,6 +430,162 @@ def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
     assert "TALKINGBOATS" not in dev_response.text
 
 
+def test_proxy_performance_endpoint_keeps_public_timeseries_history() -> None:
+    snapshots = [
+        {
+            "status": "ok",
+            "generatedAt": "2026-05-26T20:00:00Z",
+            "hosts": [
+                {
+                    "role": "OptiPlex live proxy",
+                    "cpu": {"utilizationPercent": 11.0, "status": "ok"},
+                    "memory": {"usedPercent": 21.0, "status": "ok"},
+                    "thermal": {"temperatureC": 41.0, "throttled": "0x0", "status": "ok"},
+                    "internalUrl": "http://192.168.1.23/private",
+                }
+            ],
+        },
+        {
+            "status": "watch",
+            "generatedAt": "2026-05-26T20:00:10Z",
+            "hosts": [
+                {
+                    "role": "OptiPlex live proxy",
+                    "cpu": {"utilizationPercent": 19.5, "status": "ok"},
+                    "memory": {"usedPercent": 27.5, "status": "ok"},
+                    "thermal": {"temperatureC": 43.5, "throttled": "0x0", "status": "ok"},
+                    "sshTarget": "talkingboats-pi",
+                }
+            ],
+        },
+    ]
+
+    def collector(_settings: ProxySettings) -> dict[str, object]:
+        return snapshots.pop(0)
+
+    app = create_app(ProxySettings(), performance_collector=collector)
+
+    first_response = _run(
+        _asgi_get(app, "/api/live/performance", headers={"Host": "vhf-dev.robertboscacci.com"})
+    )
+    second_response = _run(
+        _asgi_get(app, "/api/live/performance", headers={"Host": "vhf-dev.robertboscacci.com"})
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    history = second_response.json()["hosts"][0]["history"]
+    assert history == [
+        {
+            "generatedAt": "2026-05-26T20:00:00Z",
+            "cpuUtilizationPercent": 11.0,
+            "memoryUsedPercent": 21.0,
+            "thermalTemperatureC": 41.0,
+        },
+        {
+            "generatedAt": "2026-05-26T20:00:10Z",
+            "cpuUtilizationPercent": 19.5,
+            "memoryUsedPercent": 27.5,
+            "thermalTemperatureC": 43.5,
+        },
+    ]
+    assert "192.168." not in second_response.text
+    assert "talkingboats-pi" not in second_response.text
+    assert "internalUrl" not in second_response.text
+
+
+def test_proxy_performance_history_store_uses_memory_and_sqlite_windows(tmp_path: Path) -> None:
+    settings = ProxySettings(
+        performance_history_db_path=str(tmp_path / "performance.sqlite3"),
+        performance_memory_history_seconds=6 * 60 * 60,
+        performance_persist_interval_seconds=60,
+        performance_persist_history_seconds=24 * 60 * 60,
+    )
+    store = PerformanceHistoryStore.from_settings(settings)
+
+    def snapshot(generated_at: str, value: float) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "generatedAt": generated_at,
+            "hosts": [
+                {
+                    "role": "OptiPlex live proxy",
+                    "cpu": {"utilizationPercent": value, "status": "ok"},
+                    "memory": {"usedPercent": value + 10, "status": "ok"},
+                    "thermal": {"temperatureC": value + 30, "throttled": "0x0", "status": "ok"},
+                }
+            ],
+        }
+
+    store.record(snapshot("2026-05-26T12:00:00Z", 10.0))
+    store.record(snapshot("2026-05-26T12:00:05Z", 11.0))
+    store.record(snapshot("2026-05-26T19:00:00Z", 20.0))
+    payload = store.record(snapshot("2026-05-26T19:00:05Z", 21.0))
+
+    history = payload["hosts"][0]["history"]
+    assert [
+        sample["generatedAt"]
+        for sample in history
+    ] == [
+        "2026-05-26T12:00:00Z",
+        "2026-05-26T19:00:00Z",
+        "2026-05-26T19:00:05Z",
+    ]
+    assert history[-1]["cpuUtilizationPercent"] == 21.0
+    assert history[-1]["memoryUsedPercent"] == 31.0
+    assert history[-1]["thermalTemperatureC"] == 51.0
+
+    with sqlite3.connect(settings.performance_history_db_path) as connection:
+        persisted_count = connection.execute(
+            "SELECT COUNT(*) FROM performance_telemetry_samples"
+        ).fetchone()[0]
+
+    assert persisted_count == 2
+
+
+def test_proxy_performance_lifespan_starts_server_side_sampler(tmp_path: Path) -> None:
+    sampled = threading.Event()
+
+    def collector(_settings: ProxySettings) -> dict[str, object]:
+        sampled.set()
+        return {
+            "status": "ok",
+            "generatedAt": "2026-05-26T20:00:00Z",
+            "hosts": [
+                {
+                    "role": "OptiPlex live proxy",
+                    "cpu": {"utilizationPercent": 12.0, "status": "ok"},
+                    "memory": {"usedPercent": 22.0, "status": "ok"},
+                    "thermal": {"temperatureC": 42.0, "throttled": "0x0", "status": "ok"},
+                }
+            ],
+        }
+
+    settings = ProxySettings(
+        performance_history_db_path=str(tmp_path / "performance.sqlite3"),
+        performance_sample_interval_seconds=3600,
+    )
+    app = create_app(settings, performance_collector=collector)
+
+    async def scenario() -> httpx.Response:
+        async with app.router.lifespan_context(app):
+            for _ in range(20):
+                if sampled.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            return await _asgi_get(
+                app,
+                "/api/live/performance",
+                headers={"Host": "vhf-dev.robertboscacci.com"},
+            )
+
+    response = _run(scenario())
+
+    assert sampled.is_set()
+    assert response.status_code == 200
+    assert response.json()["hosts"][0]["history"][0]["cpuUtilizationPercent"] == 12.0
+
+
 def test_proxy_performance_static_shell_hooks_are_dev_only() -> None:
     response = _run(_asgi_get(create_app(ProxySettings()), "/assets/app.js"))
     index_response = _run(_asgi_get(create_app(ProxySettings()), "/"))
@@ -505,6 +663,17 @@ def test_proxy_performance_snapshot_combines_optiplex_and_pi(monkeypatch) -> Non
     assert snapshot["host"]["role"] == "OptiPlex live proxy"
     assert snapshot["hosts"][0]["thermal"]["temperatureC"] == 45.0
     assert snapshot["hosts"][1]["thermal"]["temperatureC"] == 37.0
+
+
+def test_proxy_defaults_to_current_pi_lan_address() -> None:
+    settings = ProxySettings()
+
+    assert settings.retune_ssh_target == "192.168.1.114"
+    assert settings.performance_sample_interval_seconds == 5.0
+    assert settings.performance_memory_history_seconds == 6 * 60 * 60
+    assert settings.performance_persist_interval_seconds == 60.0
+    assert settings.performance_persist_history_seconds == 24 * 60 * 60
+    assert settings.performance_history_db_path.endswith("data/performance_telemetry.sqlite3")
 
 
 def test_proxy_pi_performance_snapshot_reads_public_safe_ssh_json(monkeypatch) -> None:

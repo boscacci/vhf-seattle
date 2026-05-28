@@ -666,6 +666,114 @@ audio {
   border-color: color-mix(in srgb, var(--danger), transparent 24%);
 }
 
+.performance-range-control {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.performance-range-option {
+  min-width: 54px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.performance-range-option[aria-pressed="true"] {
+  background: var(--panel-strong);
+  color: var(--ink);
+}
+
+.performance-chart-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.performance-chart {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel), var(--bg) 12%);
+}
+
+.performance-chart-header {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.performance-chart-value {
+  flex: 0 0 auto;
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.performance-chart-svg {
+  display: block;
+  width: 100%;
+  aspect-ratio: 320 / 124;
+  overflow: visible;
+}
+
+.performance-chart-gridline {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.performance-chart-axis,
+.performance-chart-caption,
+.performance-chart-empty {
+  fill: var(--muted);
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.performance-chart-empty {
+  text-anchor: middle;
+}
+
+.performance-chart-line {
+  fill: none;
+  stroke: var(--chart-line, var(--teal));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.performance-chart-dot {
+  fill: var(--chart-line, var(--teal));
+}
+
+.performance-chart.is-cpu {
+  --chart-line: var(--teal);
+}
+
+.performance-chart.is-memory {
+  --chart-line: var(--blue);
+}
+
+.performance-chart.is-thermal {
+  --chart-line: var(--amber);
+}
+
 .term-section {
   display: grid;
   gap: 8px;

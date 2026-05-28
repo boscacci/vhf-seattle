@@ -13,13 +13,30 @@ and Raspberry Pi edge-radio telemetry, but it does not include LAN addresses,
 tailnet hostnames, service names, process lists, environment variables, private
 stream URLs, command lines, logs, tokens, cookies, or local filesystem paths.
 The browser refreshes the Performance tab every 10 seconds while it is open, and
-the tab's Refresh button forces a new snapshot.
+the tab's Refresh button forces a new snapshot. The proxy also samples telemetry
+server-side every 5 seconds, so the chart history is available even if nobody has
+kept the browser open. It keeps the last 6 hours at high granularity in memory
+and persists one sample per minute to a local SQLite database for the last 24
+hours. The tab can render the same host charts over 30 minutes, 6 hours, or 24
+hours.
 
 Each host snapshot includes CPU utilization, 1-minute load average, system
 memory, filesystem capacity, and thermals. The Pi snapshot includes the
 Raspberry Pi throttling flag when `vcgencmd` is available; the OptiPlex snapshot
 reports thermal data when Linux exposes it through `/sys/class/thermal`. Disk
 reads collapse duplicate mounts on the same filesystem.
+
+The default SQLite file is `data/performance_telemetry.sqlite3` under the proxy
+checkout. Override it with `TALKINGBOATS_PROXY_PERFORMANCE_HISTORY_DB_PATH` if a
+systemd unit needs a different writable path. The sampling and retention knobs
+are:
+
+| Environment variable | Default |
+| --- | --- |
+| `TALKINGBOATS_PROXY_PERFORMANCE_SAMPLE_INTERVAL_SECONDS` | `5` |
+| `TALKINGBOATS_PROXY_PERFORMANCE_MEMORY_HISTORY_SECONDS` | `21600` |
+| `TALKINGBOATS_PROXY_PERFORMANCE_PERSIST_INTERVAL_SECONDS` | `60` |
+| `TALKINGBOATS_PROXY_PERFORMANCE_PERSIST_HISTORY_SECONDS` | `86400` |
 
 ## Pressure Thresholds
 
@@ -77,9 +94,9 @@ dashboard. Direct read-only checks are still useful when the receiver side feels
 suspect:
 
 ```bash
-ssh rob@talkingboats-pi.local 'uptime; df -h / /opt 2>/dev/null || df -h /; free -h'
-ssh rob@talkingboats-pi.local 'vcgencmd measure_temp 2>/dev/null; vcgencmd get_throttled 2>/dev/null'
-ssh rob@talkingboats-pi.local 'systemctl --no-pager --plain --type=service --state=running | grep talkingboats'
+ssh rob@192.168.1.114 'uptime; df -h / /opt 2>/dev/null || df -h /; free -h'
+ssh rob@192.168.1.114 'vcgencmd measure_temp 2>/dev/null; vcgencmd get_throttled 2>/dev/null'
+ssh rob@192.168.1.114 'systemctl --no-pager --plain --type=service --state=running | grep talkingboats'
 ```
 
 The Pi edge capture already pauses heavier clip work when thermal or CPU load

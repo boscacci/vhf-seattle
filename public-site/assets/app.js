@@ -28,6 +28,11 @@ const liveStatusPollMs = 2000;
 const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
 const performanceHostLabel = "OptiPlex live proxy";
+const performanceRangeOptions = [
+  { label: "30m", hours: 0.5 },
+  { label: "6h", hours: 6 },
+  { label: "24h", hours: 24 },
+];
 const pacificTimeZone = "America/Los_Angeles";
 const pacificDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: pacificTimeZone,
@@ -142,6 +147,8 @@ let activeTab = "clips";
 let languagePayloadLoaded = false;
 let performancePayloadLoaded = false;
 let performanceRefreshTimer = null;
+let latestPerformancePayload = null;
+let selectedPerformanceRangeHours = 6;
 let systemMediaControlsEnabled = systemMediaControlsDefault;
 let liveChannels = [
   {
@@ -769,6 +776,7 @@ async function loadAndRenderPerformance({ showLoading = true } = {}) {
     }
     const payload = await response.json();
     performancePayloadLoaded = true;
+    latestPerformancePayload = payload;
     renderPerformanceDashboard(payload);
   } catch {
     performanceStatus.textContent = "Performance unavailable";
@@ -806,10 +814,11 @@ function renderPerformanceDashboard(payload) {
     performanceDashboard.replaceChildren(emptyPerformanceState());
     return;
   }
+  const rangeControl = performanceRangeControl();
   const hostGrid = document.createElement("div");
   hostGrid.className = "performance-host-grid";
   hostGrid.append(...hosts.map((host, index) => performanceHostPanel(host, index)));
-  performanceDashboard.replaceChildren(hostGrid);
+  performanceDashboard.replaceChildren(rangeControl, hostGrid);
 }
 
 function performanceHosts(payload) {
@@ -844,7 +853,14 @@ function performanceHostPanel(host, index) {
     performanceCard("Disk", diskSummary(disks), "Most used filesystem", worstItemStatus(disks)),
     performanceCard("Thermals", thermalSummary(thermal), thermalCaption(thermal), thermal.status),
   );
-  panel.append(title, cards);
+  const charts = document.createElement("div");
+  charts.className = "performance-chart-grid";
+  charts.append(
+    performanceMetricChart("CPU", host?.history, "cpuUtilizationPercent", "%", "cpu"),
+    performanceMetricChart("Memory", host?.history, "memoryUsedPercent", "%", "memory"),
+    performanceMetricChart("Thermals", host?.history, "thermalTemperatureC", " C", "thermal"),
+  );
+  panel.append(title, cards, charts);
   return panel;
 }
 
@@ -860,6 +876,158 @@ function performanceCard(label, value, caption, status) {
   note.textContent = caption;
   card.append(heading, metric, note);
   return card;
+}
+
+function performanceRangeControl() {
+  const control = document.createElement("div");
+  control.className = "performance-range-control";
+  performanceRangeOptions.forEach((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "performance-range-option";
+    button.textContent = option.label;
+    button.setAttribute("aria-pressed", String(option.hours === selectedPerformanceRangeHours));
+    button.addEventListener("click", () => {
+      selectedPerformanceRangeHours = option.hours;
+      if (latestPerformancePayload) {
+        renderPerformanceDashboard(latestPerformancePayload);
+      }
+    });
+    control.append(button);
+  });
+  return control;
+}
+
+function performanceMetricChart(label, history, field, suffix, className) {
+  const chart = document.createElement("article");
+  chart.className = `performance-chart is-${className}`;
+  const samples = performanceMetricSamples(history, field);
+  const latest = samples[samples.length - 1];
+  const heading = document.createElement("div");
+  heading.className = "performance-chart-header";
+  const title = document.createElement("p");
+  title.className = "language-label";
+  title.textContent = label;
+  const value = document.createElement("strong");
+  value.className = "performance-chart-value";
+  value.textContent = formatMetricChartValue(latest?.value, suffix);
+  heading.append(title, value);
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("performance-chart-svg");
+  svg.setAttribute("viewBox", "0 0 320 124");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", `${label} time series`);
+  drawPerformanceMetricChart(svg, samples, suffix);
+
+  const caption = document.createElement("span");
+  caption.className = "performance-chart-caption";
+  caption.textContent = performanceChartCaption(samples);
+  chart.append(heading, svg, caption);
+  return chart;
+}
+
+function performanceMetricSamples(history, field) {
+  const rows = Array.isArray(history) ? history : [];
+  const samples = rows
+    .map((sample) => {
+      const value = Number(sample?.[field]);
+      const time = performanceSampleTime(sample);
+      if (!Number.isFinite(value) || !Number.isFinite(time)) {
+        return null;
+      }
+      return { generatedAt: sample.generatedAt, time, value };
+    })
+    .filter(Boolean);
+  const latestTime = samples.reduce((latest, sample) => Math.max(latest, sample.time), 0);
+  const cutoff = latestTime - selectedPerformanceRangeHours * 60 * 60 * 1000;
+  return samples.filter((sample) => sample.time >= cutoff);
+}
+
+function drawPerformanceMetricChart(svg, samples, suffix) {
+  const width = 320;
+  const height = 124;
+  const left = 34;
+  const right = 12;
+  const top = 12;
+  const bottom = 26;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const maxValue = 100;
+  [0, 50, 100].forEach((tick) => {
+    const y = top + plotHeight - (tick / maxValue) * plotHeight;
+    const line = performanceSvgElement("line");
+    line.setAttribute("x1", left);
+    line.setAttribute("x2", width - right);
+    line.setAttribute("y1", y.toFixed(1));
+    line.setAttribute("y2", y.toFixed(1));
+    line.classList.add("performance-chart-gridline");
+    svg.append(line);
+    const label = performanceSvgElement("text");
+    label.setAttribute("x", "4");
+    label.setAttribute("y", (y + 4).toFixed(1));
+    label.classList.add("performance-chart-axis");
+    label.textContent = tick === 100 && suffix === " C" ? "100C" : `${tick}${suffix.trim()}`;
+    svg.append(label);
+  });
+  if (!samples.length) {
+    const empty = performanceSvgElement("text");
+    empty.setAttribute("x", "160");
+    empty.setAttribute("y", "66");
+    empty.classList.add("performance-chart-empty");
+    empty.textContent = "Waiting for samples";
+    svg.append(empty);
+    return;
+  }
+  const points = samples.map((sample, index) => {
+    const x = left + (samples.length === 1 ? plotWidth : (index / (samples.length - 1)) * plotWidth);
+    const clampedValue = Math.max(0, Math.min(maxValue, sample.value));
+    const y = top + plotHeight - (clampedValue / maxValue) * plotHeight;
+    return { x, y };
+  });
+  if (points.length > 1) {
+    const path = performanceSvgElement("path");
+    path.setAttribute(
+      "d",
+      points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" "),
+    );
+    path.classList.add("performance-chart-line");
+    svg.append(path);
+  }
+  const dot = performanceSvgElement("circle");
+  const latestPoint = points[points.length - 1];
+  dot.setAttribute("cx", latestPoint.x.toFixed(1));
+  dot.setAttribute("cy", latestPoint.y.toFixed(1));
+  dot.setAttribute("r", "3.4");
+  dot.classList.add("performance-chart-dot");
+  svg.append(dot);
+}
+
+function performanceSvgElement(name) {
+  return document.createElementNS("http://www.w3.org/2000/svg", name);
+}
+
+function performanceSampleTime(sample) {
+  if (!sample?.generatedAt) {
+    return NaN;
+  }
+  const time = new Date(sample.generatedAt).getTime();
+  return Number.isFinite(time) ? time : NaN;
+}
+
+function formatMetricChartValue(value, suffix) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "Unknown";
+  }
+  return `${number.toFixed(1)}${suffix}`;
+}
+
+function performanceChartCaption(samples) {
+  if (samples.length < 2) {
+    return "Collecting samples";
+  }
+  return `${formatPerformanceDateTime(samples[0].generatedAt)} - ${formatPerformanceDateTime(samples[samples.length - 1].generatedAt)}`;
 }
 
 function emptyPerformanceState() {
