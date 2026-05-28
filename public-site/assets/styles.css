@@ -450,6 +450,12 @@ audio {
   box-shadow: 0 0 22px rgba(64, 224, 191, 0.75);
 }
 
+.signal-dot.is-connecting {
+  background: var(--amber);
+  box-shadow: 0 0 24px rgba(244, 179, 80, 0.72);
+  animation: live-signal-pulse 880ms ease-out infinite;
+}
+
 .tuner-copy {
   display: grid;
   gap: 6px;
@@ -555,12 +561,49 @@ audio {
   font-weight: 900;
 }
 
+.live-play-button.is-connecting {
+  border-color: color-mix(in srgb, var(--amber), transparent 28%);
+  background: linear-gradient(135deg, var(--teal), var(--amber));
+  box-shadow:
+    0 0 0 4px rgba(64, 224, 191, 0.14),
+    0 0 28px rgba(244, 179, 80, 0.36);
+  animation: live-button-pulse 880ms ease-out infinite;
+}
+
 .play-symbol {
   display: inline-grid;
   place-items: center;
   min-width: 1.2em;
   font-size: 1.15em;
   line-height: 1;
+}
+
+@keyframes live-button-pulse {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+
+  45% {
+    transform: translateY(-1px) scale(1.035);
+  }
+
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes live-signal-pulse {
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.18);
+  }
+
+  100% {
+    transform: scale(1);
+  }
 }
 
 .primary:disabled {

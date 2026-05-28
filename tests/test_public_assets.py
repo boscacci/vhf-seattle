@@ -274,6 +274,34 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
     assert ".system-media-toggle" in styles_css
 
 
+def test_public_site_warms_live_stream_and_acknowledges_play_immediately() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert 'liveAudio.preload = "auto";' in app_js
+    assert 'liveAudio.preload = "none";' not in app_js
+    assert "liveAudio.muted = true;" in app_js
+    assert 'liveAudio.setAttribute("playsinline", "");' in app_js
+    assert 'if (name === "live") {\n    if (liveAudio.paused || !liveAudio.src) {' in app_js
+    assert "prepareLiveAudio();" in app_js
+    assert "if (wasPlaying) {" in app_js
+    assert "connectLive();" in app_js
+    assert "} else {\n    prepareLiveAudio();" in app_js
+    assert (
+        "if (liveAudio.src) {\n"
+        "    liveAudio.src = liveStreamUrl();\n"
+        "    liveAudio.load();"
+    ) in app_js
+    assert 'liveStatus.textContent = "Warming stream";' in app_js
+    assert 'setLivePlayButton("connecting");' in app_js
+    assert 'liveStatus.textContent = "Connecting live stream";' in app_js
+    assert "liveAudio.muted = false;" in app_js
+    assert 'playLiveButton.classList.toggle("is-connecting", isConnecting);' in app_js
+    assert ".live-play-button.is-connecting" in styles_css
+    assert "@keyframes live-button-pulse" in styles_css
+    assert ".signal-dot.is-connecting" in styles_css
+
+
 def test_public_site_analysis_dashboard_uses_analyzed_clip_wording() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 

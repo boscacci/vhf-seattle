@@ -610,6 +610,7 @@ async function loadLiveChannels() {
   renderLiveChannelPicker();
   if (liveAudio.src) {
     liveAudio.src = liveStreamUrl();
+    liveAudio.load();
   }
 }
 
@@ -655,14 +656,16 @@ function selectLiveChannel(channel) {
   renderLiveStatus(findLiveChannel(channel));
   pollLiveActivity();
   liveAudio.pause();
-  liveAudio.src = withCacheBust(liveStreamUrl());
-  liveAudio.load();
   updateLiveMediaSession(wasPlaying ? "playing" : "paused");
-  liveStatus.textContent = wasPlaying ? "Reconnecting" : "Ready";
+  liveStatus.textContent = wasPlaying ? "Reconnecting" : "Warming stream";
   drawWaitingFrame({ showWaiting: false });
   pollLiveStatus();
   if (wasPlaying) {
+    liveAudio.src = withCacheBust(liveStreamUrl());
+    liveAudio.load();
     connectLive();
+  } else {
+    prepareLiveAudio();
   }
 }
 
@@ -691,10 +694,10 @@ function activateTab(name) {
     panel.hidden = !active;
   });
   refreshButton.hidden = !["clips", "performance"].includes(name);
-  if (name === "live" && !liveAudio.src) {
-    prepareLiveAudio();
-  }
   if (name === "live") {
+    if (liveAudio.paused || !liveAudio.src) {
+      prepareLiveAudio();
+    }
     startLiveStatusPolling();
     startLiveActivityPolling();
     startWaveform();
@@ -1467,10 +1470,12 @@ function confidenceText(value) {
 }
 
 function configureLiveAudioElement() {
-  liveAudio.preload = "none";
+  liveAudio.preload = "auto";
+  liveAudio.muted = true;
   liveAudio.disableRemotePlayback = true;
   liveAudio.setAttribute("controlslist", "nodownload noplaybackrate noremoteplayback");
   liveAudio.setAttribute("disableremoteplayback", "");
+  liveAudio.setAttribute("playsinline", "");
   liveAudio.setAttribute("x-webkit-airplay", "deny");
 }
 
@@ -1624,9 +1629,15 @@ function updateLiveMediaSession(playbackState = liveAudio.paused ? "paused" : "p
 function prepareLiveAudio() {
   const url = liveStreamUrl();
   liveAudio.crossOrigin = "anonymous";
-  liveAudio.src = url;
-  liveStatus.textContent = "Ready";
-  drawWaitingFrame({ showWaiting: false });
+  liveAudio.preload = "auto";
+  liveAudio.muted = true;
+  if (liveAudio.getAttribute("src") !== url) {
+    liveAudio.src = url;
+    liveAudio.load();
+  }
+  liveStatus.textContent = "Warming stream";
+  setLivePlayButton("play");
+  drawWaitingFrame({ showWaiting: true });
   updateLiveMediaSession("paused");
 }
 
@@ -1634,6 +1645,7 @@ function closeLiveAudioStream() {
   clearTimeout(liveRetryTimer);
   liveRetryTimer = null;
   liveAudio.pause();
+  liveAudio.muted = true;
   liveAudio.removeAttribute("src");
   liveAudio.load();
   setLivePlayButton("play");
@@ -1645,14 +1657,18 @@ function closeLiveAudioStream() {
 
 function setLivePlayButton(mode) {
   const isPause = mode === "pause";
+  const isConnecting = mode === "connecting";
   if (playLiveLabel) {
-    playLiveLabel.textContent = isPause ? "Pause" : "Play";
+    playLiveLabel.textContent = isPause ? "Pause" : isConnecting ? "Tuning" : "Play";
   }
   if (playLiveSymbol) {
     playLiveSymbol.textContent = isPause ? "❚❚" : "▶";
   } else {
-    playLiveButton.textContent = isPause ? "Pause" : "▶ Play";
+    playLiveButton.textContent = isPause ? "Pause" : isConnecting ? "▶ Tuning" : "▶ Play";
   }
+  playLiveButton.classList.toggle("is-connecting", isConnecting);
+  playLiveButton.setAttribute("aria-busy", String(isConnecting));
+  liveSignalDot.classList.toggle("is-connecting", isConnecting);
 }
 
 function toggleLivePlayback() {
@@ -1665,9 +1681,12 @@ function toggleLivePlayback() {
 
 async function connectLive() {
   clearTimeout(liveRetryTimer);
-  const url = liveAudio.src || withCacheBust(liveStreamUrl());
+  setLivePlayButton("connecting");
+  liveStatus.textContent = "Connecting live stream";
+  drawWaitingFrame({ showWaiting: true });
+  const url = liveAudio.getAttribute("src") || withCacheBust(liveStreamUrl());
   liveAudio.crossOrigin = "anonymous";
-  if (liveAudio.src !== url) {
+  if (liveAudio.getAttribute("src") !== url) {
     liveAudio.src = url;
     liveAudio.load();
   }
@@ -1678,8 +1697,11 @@ async function connectLive() {
     }
     startWaveform();
     stopOtherAudio(liveAudio);
+    liveAudio.muted = false;
     await liveAudio.play();
   } catch {
+    liveAudio.muted = true;
+    setLivePlayButton("play");
     liveStatus.textContent = "Press play";
   }
 }
