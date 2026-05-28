@@ -173,6 +173,20 @@ def test_dev_cognito_auth_allows_only_rob_as_super_admin() -> None:
     assert 'output "dev_cognito_login_url"' in outputs_tf
 
 
+def test_google_cognito_helper_uses_secret_manager_and_preserves_client_settings() -> None:
+    configure_script = Path("scripts/configure_dev_google_cognito_idp.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "TALKINGBOATS_GOOGLE_OAUTH_SECRET_ID" in configure_script
+    assert "aws secretsmanager get-secret-value" in configure_script
+    assert "describe-user-pool-client" in configure_script
+    assert "client_update_payload" in configure_script
+    assert "CallbackURLs" in configure_script
+    assert "AllowedOAuthFlows" in configure_script
+    assert "--supported-identity-providers Google" not in configure_script
+
+
 def _lifecycle_block(main_tf: str) -> str:
     start = main_tf.index('resource "aws_s3_bucket_lifecycle_configuration" "raw_audio"')
     end = main_tf.index('resource "aws_acm_certificate" "site"')

@@ -54,18 +54,18 @@ exp://100.125.120.39:8083/--/auth/callback
 
 The intended dev sign-in path is Google federation through Cognito Hosted UI.
 Create a Google OAuth web client, add the Cognito `/oauth2/idpresponse`
-redirect URI, then run:
+redirect URI, store the client credential JSON in AWS Secrets Manager as
+`talkingboats/dev/google-oauth-client`, then run:
 
 ```bash
-export TALKINGBOATS_GOOGLE_OAUTH_CLIENT_ID="..."
-export TALKINGBOATS_GOOGLE_OAUTH_CLIENT_SECRET="..."
 scripts/configure_dev_google_cognito_idp.sh
 ```
 
-The script keeps the Google client secret out of git and out of local OpenTofu
-state, then switches the dev mobile client to Google-only sign-in. The app still
-rejects every Cognito token except `cinemarob1@gmail.com`; a verified Google
-identity for that address is treated as the super admin.
+The script keeps the Google client secret out of git and local OpenTofu state,
+then switches the dev mobile client to Google-only sign-in. Set
+`TALKINGBOATS_GOOGLE_OAUTH_SECRET_ID` if you use a different AWS secret name.
+The app still rejects every Cognito token except `cinemarob1@gmail.com`; a
+verified Google identity for that address is treated as the super admin.
 
 Future managed-login lanes:
 

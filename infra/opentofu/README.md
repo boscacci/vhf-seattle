@@ -72,15 +72,17 @@ redirect URI:
 printf '%s/oauth2/idpresponse\n' "$(cd infra/opentofu && tofu output -raw dev_cognito_domain)"
 ```
 
-Then configure the dev user pool without writing the Google secret to OpenTofu
-state:
+Then store the Google client credentials in AWS Secrets Manager and configure
+the dev user pool without writing the Google secret to OpenTofu state:
 
 ```bash
-export TALKINGBOATS_GOOGLE_OAUTH_CLIENT_ID="..."
-export TALKINGBOATS_GOOGLE_OAUTH_CLIENT_SECRET="..."
+aws secretsmanager create-secret \
+  --name talkingboats/dev/google-oauth-client \
+  --secret-string '{"client_id":"...","client_secret":"..."}'
 scripts/configure_dev_google_cognito_idp.sh
 ```
 
+Set `TALKINGBOATS_GOOGLE_OAUTH_SECRET_ID` if you use a different secret name.
 The script defaults the mobile client to Google-only sign-in. Set
 `TALKINGBOATS_COGNITO_ALLOW_PASSWORD_FALLBACK=true` before running it if you
 temporarily need the Cognito password form too.
