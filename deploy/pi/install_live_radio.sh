@@ -101,6 +101,8 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_EDGE_RECORD_UPLOAD_QUEUE_SIZE=%q\n' "4"
     printf 'TALKINGBOATS_EDGE_UPLOAD_ENABLED=%q\n' "false"
     printf 'TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3=%q\n' "true"
+    printf 'TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER=%q\n' \
+      "highpass=f=250,lowpass=f=3200,afftdn=nf=-28,acompressor=threshold=0.06:ratio=3:attack=8:release=180:makeup=4,loudnorm=I=-16:LRA=8:TP=-6"
     printf 'TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD=%q\n' "false"
     printf 'TALKINGBOATS_EDGE_THRESHOLD_RMS=%q\n' "8000"
     printf 'TALKINGBOATS_EDGE_MIN_CLIP_SECONDS=%q\n' "1.0"
@@ -162,6 +164,8 @@ append_env_if_missing TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED "false"
 append_env_if_missing TALKINGBOATS_EDGE_RECORD_UPLOAD_QUEUE_SIZE "4"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENABLED "false"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3 "true"
+append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER \
+  "highpass=f=250,lowpass=f=3200,afftdn=nf=-28,acompressor=threshold=0.06:ratio=3:attack=8:release=180:makeup=4,loudnorm=I=-16:LRA=8:TP=-6"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD "false"
 append_env_if_missing TALKINGBOATS_EDGE_THRESHOLD_RMS "8000"
 append_env_if_missing TALKINGBOATS_EDGE_MIN_CLIP_SECONDS "1.0"

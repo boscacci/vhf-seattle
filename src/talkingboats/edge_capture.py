@@ -19,6 +19,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from talkingboats.audio_processing import (
+    DEFAULT_EDGE_UPLOAD_AUDIO_FILTER,
+    build_ffmpeg_upload_mp3_command,
+)
+
 ALLOWED_CHANNELS = ("05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74")
 Channel = str
 CONTENT_TYPES_BY_SUFFIX = {
@@ -547,28 +552,32 @@ def write_spooled_clip(clip: EdgeClip, output_dir: Path) -> SpooledClip:
     return SpooledClip(audio_path=audio_path, metadata_path=metadata_path)
 
 
-def encode_mp3(wav_path: Path, *, bitrate: str = "64k") -> Path:
+def encode_mp3_for_upload(
+    wav_path: Path,
+    *,
+    bitrate: str = "64k",
+    audio_filter: str | None = DEFAULT_EDGE_UPLOAD_AUDIO_FILTER,
+    ffmpeg_path: str = "ffmpeg",
+    runner: Callable[..., object] = subprocess.run,
+) -> Path:
     mp3_path = wav_path.with_suffix(".mp3")
     tmp_mp3 = mp3_path.with_suffix(".tmp.mp3")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(wav_path),
-            "-codec:a",
-            "libmp3lame",
-            "-b:a",
-            bitrate,
-            str(tmp_mp3),
-        ],
+    runner(
+        build_ffmpeg_upload_mp3_command(
+            wav_path,
+            tmp_mp3,
+            bitrate=bitrate,
+            audio_filter=audio_filter,
+            ffmpeg_path=ffmpeg_path,
+        ),
         check=True,
     )
     tmp_mp3.replace(mp3_path)
     return mp3_path
+
+
+def encode_mp3(wav_path: Path, *, bitrate: str = "64k") -> Path:
+    return encode_mp3_for_upload(wav_path, bitrate=bitrate)
 
 
 def infer_audio_content_type(path: Path) -> str:
@@ -750,6 +759,7 @@ def main() -> None:
     parser.add_argument("--record-upload-queue-size", type=int, default=4)
     parser.add_argument("--encode-mp3", action="store_true")
     parser.add_argument("--mp3-bitrate", default="64k")
+    parser.add_argument("--mp3-audio-filter", default=DEFAULT_EDGE_UPLOAD_AUDIO_FILTER)
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--api-url", default=os.getenv("TALKINGBOATS_PRIVATE_API"))
     parser.add_argument("--ingest-token", default=os.getenv("TALKINGBOATS_INGEST_TOKEN"))
@@ -833,6 +843,9 @@ def main() -> None:
         if args.squelch_stdout
         else None,
         upload=args.upload,
+        edge_upload_audio_filter_enabled=_audio_filter_enabled(args.mp3_audio_filter)
+        if args.encode_mp3
+        else None,
     )
 
     try:
@@ -861,7 +874,11 @@ def main() -> None:
                 )
                 continue
             if args.encode_mp3:
-                upload_path = encode_mp3(spooled.audio_path, bitrate=args.mp3_bitrate)
+                upload_path = encode_mp3_for_upload(
+                    spooled.audio_path,
+                    bitrate=args.mp3_bitrate,
+                    audio_filter=_optional_audio_filter(args.mp3_audio_filter),
+                )
             _log_event(
                 "edge_capture_clip",
                 channel=clip.channel,
@@ -948,6 +965,19 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _optional_audio_filter(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped or stripped.lower() in {"0", "false", "no", "none", "off", "disabled"}:
+        return None
+    return stripped
+
+
+def _audio_filter_enabled(value: str | None) -> bool:
+    return _optional_audio_filter(value) is not None
 
 
 def _parse_utc(value: str) -> datetime:

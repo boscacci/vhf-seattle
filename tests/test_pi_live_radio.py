@@ -85,6 +85,8 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "TALKINGBOATS_EDGE_RECORD_ENABLED" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED" in wrapper
     assert "TALKINGBOATS_EDGE_UPLOAD_ENABLED" in wrapper
+    assert "TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER" in wrapper
+    assert "--mp3-audio-filter" in wrapper
     assert "--record-dir" in wrapper
     assert "--record-upload" in wrapper
     assert "--upload" in wrapper
@@ -100,6 +102,9 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_ENABLED "true"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED "false"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENABLED "false"' in installer
+    assert "TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER" in installer
+    assert "acompressor=threshold=0.06" in installer
+    assert "loudnorm=I=-16:LRA=8:TP=-6" in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_PRE_ROLL_SECONDS "0"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_POST_ROLL_SECONDS "0.3"' in installer
     assert "talkingboats-profile-capture.service" in installer

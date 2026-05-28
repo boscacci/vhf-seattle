@@ -16,6 +16,12 @@ DEFAULT_PUBLIC_CLIP_AUDIO_FILTER = ",".join(
         "loudnorm=I=-16:LRA=8:TP=-6",
     )
 )
+DEFAULT_EDGE_UPLOAD_AUDIO_FILTER = ",".join(
+    (
+        DEFAULT_SPEECH_AUDIO_FILTER,
+        DEFAULT_PUBLIC_CLIP_AUDIO_FILTER,
+    )
+)
 DEFAULT_PUBLIC_CLIP_MIN_DURATION_SECONDS = 1.0
 DEFAULT_PUBLIC_CLIP_MIN_PEAK_DB = -50.0
 DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ = 16_000
@@ -87,6 +93,40 @@ def build_ffmpeg_public_clip_command(
         "-1",
         str(output_path),
     ]
+    return command
+
+
+def build_ffmpeg_upload_mp3_command(
+    source_path: Path,
+    output_path: Path,
+    *,
+    bitrate: str,
+    audio_filter: str | None = DEFAULT_EDGE_UPLOAD_AUDIO_FILTER,
+    ffmpeg_path: str = "ffmpeg",
+) -> list[str]:
+    command = [
+        ffmpeg_path,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source_path),
+        "-vn",
+    ]
+    if audio_filter:
+        command.extend(["-af", audio_filter])
+    command.extend(
+        [
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            bitrate,
+            "-map_metadata",
+            "-1",
+            str(output_path),
+        ]
+    )
     return command
 
 

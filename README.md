@@ -289,6 +289,7 @@ TALKINGBOATS_EDGE_RECORD_RETENTION_SECONDS=86400
 TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED=false
 TALKINGBOATS_EDGE_UPLOAD_ENABLED=false
 TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3=true
+TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28,acompressor=threshold=0.06:ratio=3:attack=8:release=180:makeup=4,loudnorm=I=-16:LRA=8:TP=-6
 TALKINGBOATS_LIVE_SQUELCH=20
 TALKINGBOATS_EDGE_MAX_TEMP_C=72
 TALKINGBOATS_EDGE_RESUME_TEMP_C=66
@@ -348,9 +349,13 @@ not get promoted as stock phrases like "Thank you." Set the value much lower,
 such as `-10`, when deliberately auditing weak-signal audio.
 
 Speech cleanup is on by default and runs before the edge detector, so uploaded
-clips and live debug audio use the same filtered PCM. The uploaded-clip and live
-caption transcribers also use the same pre-transcription cleanup before Whisper:
-16 kHz mono WAV plus the shared speech filter. The default chain does not include
+clips and live debug audio use the same filtered PCM. When Pi activity uploads
+encode MP3s, the upload encoder also applies the speech filter plus compression
+and loudness normalization before sending clips to the OptiPlex for transcription.
+That keeps the private raw upload closer to the audio the public site will play
+instead of waiting for export-time processing. The uploaded-clip and live caption
+transcribers also use the same pre-transcription cleanup before Whisper: 16 kHz
+mono WAV plus the shared speech filter. The default chain does not include
 dynamic normalization because that can raise static before or around the activity
 gate. Turn cleanup off only for an A/B test:
 
@@ -365,6 +370,7 @@ Default filter chain:
 ```bash
 TALKINGBOATS_AUDIO_FILTER_ENABLED=true
 TALKINGBOATS_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28
+TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28,acompressor=threshold=0.06:ratio=3:attack=8:release=180:makeup=4,loudnorm=I=-16:LRA=8:TP=-6
 TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ=16000
 ```
 
