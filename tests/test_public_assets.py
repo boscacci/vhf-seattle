@@ -191,6 +191,17 @@ def test_public_site_analysis_copy_clarifies_frequency_metrics() -> None:
     assert "busiestHoursSummary" in app_js
     assert "formatHourRangeLabel" in app_js
     assert "No analyzed transmissions yet" in app_js
+    assert "activeChannelSummary" in app_js
+    assert "AIS vessel tracks" in app_js
+    assert "Radio channels plus AIS vessel tracks" in app_js
+
+
+def test_public_site_performance_metric_values_average_selected_window() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "averageMetricValue(samples)" in app_js
+    assert "Average over selected window" in app_js
+    assert "latest?.value" not in app_js
 
 
 def test_public_site_renders_db_clips_and_static_export_clips() -> None:

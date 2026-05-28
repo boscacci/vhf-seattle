@@ -23,6 +23,11 @@ output "raw_audio_bucket" {
   value       = aws_s3_bucket.raw_audio.bucket
 }
 
+output "radio_events_table_name" {
+  description = "DynamoDB table for durable prod radio, AIS, and telemetry event records."
+  value       = aws_dynamodb_table.radio_events.name
+}
+
 output "server_iam_policy_arn" {
   description = "Attach this policy to the private server role/user used for presigned URLs and public exports."
   value       = aws_iam_policy.server_s3_access.arn
@@ -51,6 +56,11 @@ output "dev_public_site_bucket" {
 output "dev_raw_audio_bucket" {
   description = "Private dev raw-audio S3 bucket."
   value       = aws_s3_bucket.dev_raw_audio.bucket
+}
+
+output "dev_radio_events_table_name" {
+  description = "DynamoDB table for durable dev radio, AIS, and telemetry event records."
+  value       = aws_dynamodb_table.dev_radio_events.name
 }
 
 output "dev_server_iam_policy_arn" {

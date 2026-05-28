@@ -73,6 +73,31 @@ def test_opentofu_tags_environment_boundaries() -> None:
     )
 
 
+def test_opentofu_defines_dynamodb_event_tables_for_dev_and_prod() -> None:
+    main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+    outputs_tf = Path("infra/opentofu/outputs.tf").read_text(encoding="utf-8")
+
+    prod_table = _resource_block(main_tf, "aws_dynamodb_table", "radio_events")
+    dev_table = _resource_block(main_tf, "aws_dynamodb_table", "dev_radio_events")
+
+    assert re.search(r'billing_mode\s+=\s+"PAY_PER_REQUEST"', prod_table)
+    assert re.search(r'hash_key\s+=\s+"pk"', prod_table)
+    assert re.search(r'range_key\s+=\s+"sk"', prod_table)
+    assert re.search(r'stream_enabled\s+=\s+true', prod_table)
+    assert "point_in_time_recovery" in prod_table
+    assert 'Environment = "prod"' in prod_table
+
+    assert re.search(r'billing_mode\s+=\s+"PAY_PER_REQUEST"', dev_table)
+    assert re.search(r'hash_key\s+=\s+"pk"', dev_table)
+    assert re.search(r'range_key\s+=\s+"sk"', dev_table)
+    assert re.search(r'stream_enabled\s+=\s+true', dev_table)
+    assert "point_in_time_recovery" in dev_table
+    assert 'Environment = "dev"' in dev_table
+
+    assert 'output "radio_events_table_name"' in outputs_tf
+    assert 'output "dev_radio_events_table_name"' in outputs_tf
+
+
 def test_public_site_deploy_script_enforces_branch_environment_hygiene() -> None:
     deploy_script = Path("scripts/deploy_public_site.sh").read_text(encoding="utf-8")
 
@@ -86,9 +111,10 @@ def test_public_site_deploy_script_enforces_branch_environment_hygiene() -> None
 def test_deploy_script_uses_opentofu_cli_only() -> None:
     deploy_script = Path("scripts/deploy_public_site.sh").read_text(encoding="utf-8")
 
-    assert 'tofu output -raw "${bucket_output}"' in deploy_script
-    assert 'tofu output -raw "${distribution_output}"' in deploy_script
-    assert 'tofu output -raw "${fqdn_output}"' in deploy_script
+    assert 'tofu output -raw "${output_name}"' in deploy_script
+    assert 'bucket="$(tofu_output_raw "${bucket_output}")"' in deploy_script
+    assert 'distribution_id="$(tofu_output_raw "${distribution_output}")"' in deploy_script
+    assert 'fqdn="$(tofu_output_raw "${fqdn_output}")"' in deploy_script
     assert "terraform " not in deploy_script.lower()
 
 

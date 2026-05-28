@@ -191,6 +191,38 @@ def test_entity_examples_only_mark_public_export_window_as_playable(
     assert "audio_public_filename" not in example
 
 
+def test_entity_examples_prefer_short_analysis_clips(tmp_path: Path) -> None:
+    db_path = tmp_path / "clips.sqlite3"
+    store = UploadedClipStore(db_path)
+    _transcribe(
+        store,
+        key="raw/channel=14/date=2026-05-26/long.mp3",
+        channel="14",
+        started_at="2026-05-26T03:00:00Z",
+        text="Seattle Traffic long but recent example.",
+        duration_seconds=31.0,
+    )
+    _transcribe(
+        store,
+        key="raw/channel=14/date=2026-05-26/short.mp3",
+        channel="14",
+        started_at="2026-05-26T02:00:00Z",
+        text="Seattle Traffic short useful example.",
+        duration_seconds=5.0,
+    )
+
+    payload = generate_lexical_analysis(
+        db_path=db_path,
+        output_dir=tmp_path / "site",
+        generated_at=datetime(2026, 5, 26, 3, 30, 0, tzinfo=UTC),
+    )
+
+    examples = _entity(payload, "Seattle Traffic")["examples"]
+    assert examples[0]["started_at"] == "2026-05-26T02:00:00Z"
+    assert examples[0]["duration_seconds"] == 5.0
+    assert all(example["duration_seconds"] <= 12.0 for example in examples)
+
+
 def test_analysis_audio_example_window_matches_public_export_default() -> None:
     assert lexical_analysis.PUBLIC_AUDIO_EXAMPLE_LIMIT == DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
     assert DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT >= 3000
@@ -390,9 +422,10 @@ def _transcribe(
     channel: str,
     started_at: str,
     text: str,
+    duration_seconds: float = 8.0,
 ) -> None:
     start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-    ended_at = (start + timedelta(seconds=8)).isoformat().replace("+00:00", "Z")
+    ended_at = (start + timedelta(seconds=duration_seconds)).isoformat().replace("+00:00", "Z")
     store.record_presigned_upload(
         key=key,
         request=ClipPresignRequest(
@@ -401,7 +434,7 @@ def _transcribe(
             ended_at=ended_at,
             content_type="audio/mpeg",
             idempotency_key=f"radio-event-{channel}-{started_at}-{key}",
-            duration_seconds=8.0,
+            duration_seconds=duration_seconds,
         ),
     )
     store.mark_transcribed(

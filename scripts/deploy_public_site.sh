@@ -31,6 +31,19 @@ worktree_is_dirty() {
     [[ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]]
 }
 
+tofu_output_raw() {
+  local output_name="$1"
+  local value
+  value="$(cd "${tofu_dir}" && tofu output -raw "${output_name}" 2>&1)"
+  local status=$?
+  if [[ ${status} -ne 0 || -z "${value}" || "${value}" == *"No outputs found"* ]]; then
+    echo "OpenTofu output '${output_name}' is unavailable in ${tofu_dir}." >&2
+    echo "Run with a populated state directory via TALKINGBOATS_TOFU_DIR, or refresh/apply the stack first." >&2
+    exit 1
+  fi
+  printf '%s' "${value}"
+}
+
 enforce_branch_hygiene() {
   local environment="$1"
   local branch="$2"
@@ -99,9 +112,9 @@ esac
 
 enforce_branch_hygiene "${environment}" "${branch}"
 
-bucket="$(cd "${tofu_dir}" && tofu output -raw "${bucket_output}")"
-distribution_id="$(cd "${tofu_dir}" && tofu output -raw "${distribution_output}")"
-fqdn="$(cd "${tofu_dir}" && tofu output -raw "${fqdn_output}")"
+bucket="$(tofu_output_raw "${bucket_output}")"
+distribution_id="$(tofu_output_raw "${distribution_output}")"
+fqdn="$(tofu_output_raw "${fqdn_output}")"
 
 echo "Deploying ${site_dir} from ${branch} to ${environment}: https://${fqdn}"
 aws s3 sync "${site_dir}" "s3://${bucket}/" --delete

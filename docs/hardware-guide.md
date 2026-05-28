@@ -139,7 +139,8 @@ Better marine antenna if placement is easy:
 - VHF 68, `156.425 MHz`: Fun Channel for pleasure-craft working traffic.
 - VHF 14, `156.700 MHz`: Super Business Channel for Seattle Traffic / Puget Sound
   VTS.
-AIS can come back later, but it is not part of the current browser UI.
+- AIS has a browser map renderer and historical NOAA ERDDAP import helper, but
+  it is not live-streaming into the dev payload yet.
 
 ## Local Compute Roles
 

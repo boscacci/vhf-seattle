@@ -805,11 +805,12 @@ function renderLanguageDashboard(payload) {
   const terms = payload.terms || {};
   const topics = payload.topics || {};
   const channelCounts = payload.channels || frequency.by_channel || {};
+  const aisTracks = payload.ais_tracks || [];
   const cards = document.createElement("div");
   cards.className = "language-grid";
   cards.append(
     languageCard("Transmissions", String(payload.source_clip_count || 0), "Analyzed transcript clips"),
-    languageCard("Active channels", String(Object.keys(channelCounts).length), "VHF channels in this analysis"),
+    languageCard("Active channels", activeChannelSummary(channelCounts, aisTracks), "Radio channels plus AIS vessel tracks"),
     languageCard(
       "Busiest hours",
       busiestHoursSummary(frequency.by_hour_pacific || {}),
@@ -821,7 +822,7 @@ function renderLanguageDashboard(payload) {
   const channelPanel = languagePanel("Analyzed transcript clips by VHF channel");
   channelPanel.append(channelActivityChart(channelCounts));
 
-  const mapPanel = vesselMapPanel(payload.ais_tracks || []);
+  const mapPanel = vesselMapPanel(aisTracks);
 
   const wordsPanel = languagePanel("Radio words");
   wordsPanel.append(
@@ -991,7 +992,6 @@ function performanceMetricChart(label, history, field, suffix, className) {
   const chart = document.createElement("article");
   chart.className = `performance-chart is-${className}`;
   const samples = performanceMetricSamples(history, field);
-  const latest = samples[samples.length - 1];
   const heading = document.createElement("div");
   heading.className = "performance-chart-header";
   const title = document.createElement("p");
@@ -999,7 +999,7 @@ function performanceMetricChart(label, history, field, suffix, className) {
   title.textContent = label;
   const value = document.createElement("strong");
   value.className = "performance-chart-value";
-  value.textContent = formatMetricChartValue(latest?.value, suffix);
+  value.textContent = formatMetricChartValue(averageMetricValue(samples), suffix);
   heading.append(title, value);
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -1031,6 +1031,14 @@ function performanceMetricSamples(history, field) {
   const latestTime = samples.reduce((latest, sample) => Math.max(latest, sample.time), 0);
   const cutoff = latestTime - selectedPerformanceRangeHours * 60 * 60 * 1000;
   return samples.filter((sample) => sample.time >= cutoff);
+}
+
+function averageMetricValue(samples) {
+  if (!samples.length) {
+    return NaN;
+  }
+  const total = samples.reduce((sum, sample) => sum + sample.value, 0);
+  return total / samples.length;
 }
 
 function drawPerformanceMetricChart(svg, samples, suffix) {
@@ -1113,10 +1121,13 @@ function formatMetricChartValue(value, suffix) {
 }
 
 function performanceChartCaption(samples) {
-  if (samples.length < 2) {
-    return "Collecting samples";
+  if (!samples.length) {
+    return "Average over selected window";
   }
-  return `${formatPerformanceDateTime(samples[0].generatedAt)} - ${formatPerformanceDateTime(samples[samples.length - 1].generatedAt)}`;
+  if (samples.length < 2) {
+    return `Average over selected window · ${formatPerformanceDateTime(samples[0].generatedAt)}`;
+  }
+  return `Average over selected window · ${formatPerformanceDateTime(samples[0].generatedAt)} - ${formatPerformanceDateTime(samples[samples.length - 1].generatedAt)}`;
 }
 
 function emptyPerformanceState() {
@@ -1231,6 +1242,12 @@ function languagePanel(titleText) {
   title.textContent = titleText;
   section.append(title);
   return section;
+}
+
+function activeChannelSummary(channelCounts, aisTracks) {
+  const vhfCount = Object.keys(channelCounts || {}).length;
+  const aisCount = normalizeAisTracks(aisTracks).length;
+  return `VHF ${vhfCount}\nAIS ${aisCount}`;
 }
 
 function termSection(title, items) {

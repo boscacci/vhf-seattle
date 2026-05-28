@@ -22,6 +22,7 @@ PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
 TOPIC_PLOT_PATH = "/analysis/topic_clusters.html"
 PUBLIC_AUDIO_EXAMPLE_LIMIT = DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
+MAX_ENTITY_EXAMPLE_DURATION_SECONDS = 12.0
 MAX_BERTOPIC_TOPICS = 18
 TOPIC_COLOR_PALETTE = (
     "#40e0bf",
@@ -911,7 +912,7 @@ def _extract_entities(
         )
         item["count"] += 1
         item["channels"][clip.channel] += 1
-        if len(item["examples"]) < 3:
+        if len(item["examples"]) < 3 and _is_short_entity_example(clip):
             example = {
                 "channel": clip.channel,
                 "started_at": clip.started_at,
@@ -924,7 +925,11 @@ def _extract_entities(
 
     for clip in sorted(
         clips,
-        key=lambda item: (item.key in playable_keys, item.started_at),
+        key=lambda item: (
+            _is_short_entity_example(item),
+            item.key in playable_keys,
+            item.started_at,
+        ),
         reverse=True,
     ):
         for name, kind, pattern in KNOWN_ENTITY_PATTERNS:
@@ -957,6 +962,11 @@ def _extract_entities(
         key=lambda item: (item["count"], item["confidence"], item["name"]),
         reverse=True,
     )
+
+
+def _is_short_entity_example(clip: TranscriptClip) -> bool:
+    duration = clip.duration_seconds
+    return duration is not None and duration <= MAX_ENTITY_EXAMPLE_DURATION_SECONDS
 
 
 def _public_audio_keys(clips: list[TranscriptClip], *, limit: int) -> set[str]:

@@ -22,10 +22,16 @@ locals {
   raw_audio_bucket     = coalesce(var.raw_audio_bucket_name, "${local.bucket_base}-${data.aws_caller_identity.current.account_id}-raw")
   dev_public_bucket    = coalesce(var.dev_public_site_bucket_name, "${local.dev_bucket_base}-${data.aws_caller_identity.current.account_id}-public")
   dev_raw_audio_bucket = coalesce(var.dev_raw_audio_bucket_name, "${local.dev_bucket_base}-${data.aws_caller_identity.current.account_id}-raw")
-  origin_id            = "s3-public-site"
-  dev_origin_id        = "s3-dev-public-site"
-  live_origin_id       = "live-radio-proxy"
-  dev_live_origin_id   = "dev-live-radio-proxy"
+  radio_events_table   = replace("${var.project_name}-${var.resource_site_subdomain}-events", ".", "-")
+  dev_radio_events_table = replace(
+    "${var.project_name}-${var.dev_resource_site_subdomain}-events",
+    ".",
+    "-",
+  )
+  origin_id          = "s3-public-site"
+  dev_origin_id      = "s3-dev-public-site"
+  live_origin_id     = "live-radio-proxy"
+  dev_live_origin_id = "dev-live-radio-proxy"
   dev_live_origin_domain_name = coalesce(
     var.dev_live_origin_domain_name,
     var.live_origin_domain_name,
@@ -125,6 +131,39 @@ resource "aws_s3_bucket_lifecycle_configuration" "raw_audio" {
       days = var.raw_retention_days
     }
 
+  }
+}
+
+resource "aws_dynamodb_table" "radio_events" {
+  name             = local.radio_events_table
+  billing_mode     = "PAY_PER_REQUEST"
+  hash_key         = "pk"
+  range_key        = "sk"
+  stream_enabled   = true
+  stream_view_type = "NEW_AND_OLD_IMAGES"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+
+  tags = {
+    Environment = "prod"
+    Project     = var.project_name
+    Role        = "radio-event-store"
   }
 }
 
@@ -353,6 +392,20 @@ data "aws_iam_policy_document" "server_s3_access" {
   }
 
   statement {
+    sid = "ManageRadioEvents"
+    actions = [
+      "dynamodb:BatchGetItem",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:DescribeTable",
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+      "dynamodb:UpdateItem",
+    ]
+    resources = [aws_dynamodb_table.radio_events.arn]
+  }
+
+  statement {
     sid = "InvalidatePublicDistribution"
     actions = [
       "cloudfront:CreateInvalidation",
@@ -485,6 +538,39 @@ resource "aws_s3_bucket_lifecycle_configuration" "dev_raw_audio" {
       days = var.raw_retention_days
     }
 
+  }
+}
+
+resource "aws_dynamodb_table" "dev_radio_events" {
+  name             = local.dev_radio_events_table
+  billing_mode     = "PAY_PER_REQUEST"
+  hash_key         = "pk"
+  range_key        = "sk"
+  stream_enabled   = true
+  stream_view_type = "NEW_AND_OLD_IMAGES"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+
+  tags = {
+    Environment = "dev"
+    Project     = var.project_name
+    Role        = "radio-event-store"
   }
 }
 
@@ -698,6 +784,20 @@ data "aws_iam_policy_document" "dev_server_s3_access" {
       "s3:PutObject",
     ]
     resources = ["${aws_s3_bucket.dev_public_site.arn}/*"]
+  }
+
+  statement {
+    sid = "ManageRadioEvents"
+    actions = [
+      "dynamodb:BatchGetItem",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:DescribeTable",
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+      "dynamodb:UpdateItem",
+    ]
+    resources = [aws_dynamodb_table.dev_radio_events.arn]
   }
 
   statement {

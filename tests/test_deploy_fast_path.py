@@ -23,6 +23,16 @@ def test_full_public_deploy_supports_external_tofu_state_dir() -> None:
     assert 'cd "${tofu_dir}"' in script
 
 
+def test_deploy_scripts_fail_fast_when_tofu_outputs_are_missing() -> None:
+    for path in ("scripts/deploy_static_shell.sh", "scripts/deploy_public_site.sh"):
+        script = Path(path).read_text(encoding="utf-8")
+
+        assert "tofu_output_raw()" in script
+        assert "No outputs found" in script
+        assert "OpenTofu output" in script
+        assert 'bucket="$(tofu_output_raw "${bucket_output}")"' in script
+
+
 def test_docker_orchestration_files_cover_optiplex_services_without_secrets() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     compose = Path("compose.yaml").read_text(encoding="utf-8")
