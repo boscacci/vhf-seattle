@@ -9,6 +9,7 @@ def test_lexical_refresh_script_regenerates_exports_and_deploys_dev() -> None:
     assert "TALKINGBOATS_LEXICAL_DB_PATH" in script
     assert "TALKINGBOATS_LEXICAL_OUTPUT_DIR" in script
     assert "TALKINGBOATS_LEXICAL_DEPLOY_ENV" in script
+    assert 'tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"' in script
     assert (
         f"TALKINGBOATS_LEXICAL_EXPORT_LIMIT:-{DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT}"
         in script
@@ -22,6 +23,7 @@ def test_lexical_refresh_script_regenerates_exports_and_deploys_dev() -> None:
     assert "--output-dir \"${output_dir}\"" in script
     assert "talkingboats-export-public" in script
     assert "--clip-db-path \"${db_path}\"" in script
+    assert 'cd "${tofu_dir}"' in script
     assert "scripts/deploy_public_site.sh \"${deploy_env}\" \"${output_dir}\"" in script
     assert "Refresh complete" in script
 

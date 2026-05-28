@@ -72,7 +72,7 @@ fi
 
 environment="$1"
 site_dir="${2:-outputs/public-site}"
-tofu_dir="infra/opentofu"
+tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
 branch="$(current_git_branch)"
 
 if [[ ! -d "${site_dir}" ]]; then

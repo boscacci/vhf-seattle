@@ -15,6 +15,7 @@ lock_dir="${TALKINGBOATS_LEXICAL_LOCK_DIR:-outputs/.lexical-refresh.lock}"
 page_size="${TALKINGBOATS_LEXICAL_PAGE_SIZE:-500}"
 export_limit="${TALKINGBOATS_LEXICAL_EXPORT_LIMIT:-3000}"
 raw_bucket_output="${TALKINGBOATS_LEXICAL_RAW_BUCKET_OUTPUT:-raw_audio_bucket}"
+tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
 
 usage() {
   cat <<'EOF'
@@ -64,7 +65,7 @@ fi
 trap cleanup EXIT
 
 mkdir -p "${output_dir}"
-raw_bucket="$(cd infra/opentofu && tofu output -raw "${raw_bucket_output}")"
+raw_bucket="$(cd "${tofu_dir}" && tofu output -raw "${raw_bucket_output}")"
 
 echo "Refreshing lexical analysis from ${db_path} into ${output_dir}"
 rm -rf "${output_dir}/analysis"

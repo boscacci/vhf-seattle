@@ -16,6 +16,13 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert "TALKINGBOATS_TOFU_DIR" in script
 
 
+def test_full_public_deploy_supports_external_tofu_state_dir() -> None:
+    script = Path("scripts/deploy_public_site.sh").read_text(encoding="utf-8")
+
+    assert 'tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"' in script
+    assert 'cd "${tofu_dir}"' in script
+
+
 def test_docker_orchestration_files_cover_optiplex_services_without_secrets() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     compose = Path("compose.yaml").read_text(encoding="utf-8")
