@@ -64,7 +64,7 @@ fi
 
 environment="$1"
 site_source="${2:-public-site}"
-tofu_dir="infra/opentofu"
+tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
 branch="$(current_git_branch)"
 invalidate_paths=( "/" "/index.html" "/assets/*" "/favicon.svg" )
 

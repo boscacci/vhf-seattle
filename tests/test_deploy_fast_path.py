@@ -11,6 +11,7 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert "dev_public_site_bucket" in script
     assert "cloudfront create-invalidation" in script
     assert "enforce_branch_hygiene" in script
+    assert "TALKINGBOATS_TOFU_DIR" in script
 
 
 def test_docker_orchestration_files_cover_optiplex_services_without_secrets() -> None:
