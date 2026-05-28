@@ -100,6 +100,7 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert ".reference-index" in styles_css
     assert ".language-grid" in styles_css
     assert ".topic-frame" in styles_css
+    assert "touch-action: none;" in styles_css
     assert "live-channel" in index_html
     assert "live-last-communication" in index_html
     assert "live-latency" in index_html
@@ -232,12 +233,22 @@ def test_public_site_stops_audio_when_browser_page_is_hidden_or_unloaded() -> No
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert 'document.addEventListener("visibilitychange"' in app_js
-    assert "if (document.hidden)" in app_js
+    assert "if (document.hidden && !shouldPreserveLiveAudioSession())" in app_js
     assert 'window.addEventListener("pagehide"' in app_js
     assert "function stopAllAudio()" in app_js
     assert "stopAllAudio();" in app_js
     assert "stopCurrentClipPlayback();" in app_js
     assert "closeLiveAudioStream();" in app_js
+
+
+def test_public_site_preserves_opted_in_live_audio_session_across_navigation() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "function shouldPreserveLiveAudioSession()" in app_js
+    assert "suspendLiveView();" in app_js
+    assert "if (shouldPreserveLiveAudioSession())" in app_js
+    assert "System media controls can keep live radio playing" in app_js
+    assert "navigator.mediaSession.playbackState = playbackState" in app_js
 
 
 def test_public_site_uses_native_audio_controls_for_clip_playback_and_metadata() -> None:
@@ -280,7 +291,7 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
     assert "function systemMediaEnvironmentLabel()" in app_js
     assert "navigator.userAgentData" in app_js
     assert "navigator.userAgent" in app_js
-    assert "System media controls may appear on" in app_js
+    assert "System media controls can keep live radio playing" in app_js
     assert "Live radio stays inside this page on" in app_js
     assert "Live radio may appear in macOS and browser media controls." not in app_js
     assert "Live radio plays in Firefox without publishing system media controls." not in app_js

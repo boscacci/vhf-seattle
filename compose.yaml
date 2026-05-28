@@ -31,6 +31,8 @@ services:
   uploaded-clip-transcriber:
     <<: *app
     profiles: ["transcribe"]
+    environment:
+      TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO: "true"
     command: talkingboats-transcribe-uploaded-clips --db-path /data/live-transcripts.sqlite3
     depends_on:
       - private-api

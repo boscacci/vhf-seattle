@@ -235,13 +235,15 @@ systemMediaControlsToggle?.addEventListener("change", () => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
+  if (document.hidden && !shouldPreserveLiveAudioSession()) {
     stopAllAudio();
   }
 });
 
 window.addEventListener("pagehide", () => {
-  stopAllAudio();
+  if (!shouldPreserveLiveAudioSession()) {
+    stopAllAudio();
+  }
 });
 
 liveAudio.addEventListener("playing", () => {
@@ -767,10 +769,7 @@ function activateTab(name) {
     startLiveActivityPolling();
     startWaveform();
   } else {
-    closeLiveAudioStream();
-    stopLiveStatusPolling();
-    stopLiveActivityPolling();
-    stopWaveform();
+    suspendLiveView();
   }
   if (name === "language" && !languagePayloadLoaded) {
     loadAndRenderLanguage();
@@ -1352,6 +1351,21 @@ function stopAllAudio() {
   closeLiveAudioStream();
 }
 
+function suspendLiveView() {
+  stopLiveStatusPolling();
+  stopLiveActivityPolling();
+  stopWaveform();
+  if (shouldPreserveLiveAudioSession()) {
+    updateLiveMediaSession("playing");
+    return;
+  }
+  closeLiveAudioStream();
+}
+
+function shouldPreserveLiveAudioSession() {
+  return systemMediaControlsEnabled && liveAudio.src && !liveAudio.paused;
+}
+
 function stopCurrentClipPlayback() {
   if (!currentClipPlayback) {
     return;
@@ -1818,7 +1832,7 @@ function updateSystemMediaControlsUi() {
   if (systemMediaNote) {
     const environmentLabel = systemMediaEnvironmentLabel();
     systemMediaNote.textContent = systemMediaControlsEnabled
-      ? `System media controls may appear on ${environmentLabel}.`
+      ? `System media controls can keep live radio playing on ${environmentLabel} when your device allows it.`
       : `Live radio stays inside this page on ${environmentLabel}.`;
   }
 }

@@ -355,11 +355,14 @@ and loudness normalization before sending clips to the OptiPlex for transcriptio
 The active rtl_airband spool uploader uses the same upload filter before it
 presigns and uploads completed `/opt/talkingboats/spool/airband` clips.
 That keeps the private raw upload closer to the audio the public site will play
-instead of waiting for export-time processing. The uploaded-clip and live caption
-transcribers also use the same pre-transcription cleanup before Whisper: 16 kHz
-mono WAV plus the shared speech filter. The default chain does not include
-dynamic normalization because that can raise static before or around the activity
-gate. Turn cleanup off only for an A/B test:
+instead of waiting for export-time processing. Set
+`TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true` on the OptiPlex
+uploaded-clip transcriber so edge-encoded MP3 uploads go straight to Whisper
+without another local ffmpeg cleanup pass. The live caption transcriber still
+uses the same pre-transcription cleanup before Whisper: 16 kHz mono WAV plus the
+shared speech filter. The default chain does not include dynamic normalization
+because that can raise static before or around the activity gate. Turn cleanup
+off only for an A/B test:
 
 ```bash
 sudo sed -i 's/^TALKINGBOATS_AUDIO_FILTER_ENABLED=.*/TALKINGBOATS_AUDIO_FILTER_ENABLED=false/' \
@@ -374,6 +377,7 @@ TALKINGBOATS_AUDIO_FILTER_ENABLED=true
 TALKINGBOATS_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28
 TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER=highpass=f=250,lowpass=f=3200,afftdn=nf=-28,acompressor=threshold=0.06:ratio=3:attack=8:release=180:makeup=4,loudnorm=I=-16:LRA=8:TP=-6
 TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ=16000
+TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true
 ```
 
 The live Icecast feed also applies an audio gate by default. Frames below the

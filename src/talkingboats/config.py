@@ -6,6 +6,8 @@ from pathlib import Path
 
 from talkingboats.channel_metadata import CHANNEL_METADATA
 
+DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT = 3000
+
 
 @dataclass(frozen=True)
 class LiveChannel:

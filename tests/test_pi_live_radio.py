@@ -195,4 +195,15 @@ def test_live_radio_audio_filter_is_flagged_and_default_on() -> None:
     assert "TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ=16000" in readme
     assert "TALKINGBOATS_TRANSCRIBE_BEAM_SIZE=5" in readme
     assert "TALKINGBOATS_TRANSCRIBE_HOTWORDS" in readme
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true" in readme
     assert "dynaudnorm" not in readme
+
+
+def test_uploaded_clip_transcriber_defaults_to_edge_preprocessed_mp3s() -> None:
+    unit = Path("deploy/systemd/talkingboats-uploaded-clip-transcriber.service.example").read_text(
+        encoding="utf-8"
+    )
+    compose = Path("compose.yaml").read_text(encoding="utf-8")
+
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true" in unit
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" in compose

@@ -82,6 +82,32 @@ def test_uploaded_clip_transcriber_prepares_audio_before_model_transcription(tmp
     assert FakeSpeechModel.last_kwargs["hotwords"] == "Seattle Traffic, Elliott Bay, VTS"
 
 
+def test_uploaded_clip_transcriber_can_trust_edge_preprocessed_mp3(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=68/date=2026-05-24/20260524T210000Z-edge.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request())
+    ffmpeg_calls = []
+
+    def fake_ffmpeg(command, *, check):
+        ffmpeg_calls.append((command, check))
+        Path(command[-1]).write_bytes(b"RIFFprepared wav")
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=WritingClipReader(),
+        model=FakeSpeechModel(),
+        limit=10,
+        audio_filter="highpass=f=250,lowpass=f=3200,afftdn=nf=-28",
+        trust_edge_preprocessed_audio=True,
+        ffmpeg_runner=fake_ffmpeg,
+    )
+
+    assert summary.transcribed == 1
+    assert ffmpeg_calls == []
+    assert FakeSpeechModel.last_path.endswith(".mp3")
+
+
 def test_uploaded_clip_transcriber_leaves_missing_objects_retryable(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)

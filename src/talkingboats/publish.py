@@ -24,6 +24,7 @@ from talkingboats.clip_transcriber import (
     S3ClipReader,
     UploadedClipStore,
 )
+from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 from talkingboats.security import assert_public_safe
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
@@ -160,7 +161,7 @@ def export_recent_clip_site(
     site_source_dir: Path,
     output_dir: Path,
     clip_reader: ClipReader,
-    limit: int = 1000,
+    limit: int = DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT,
     clip_audio_processor: ClipAudioProcessor | None = process_public_clip_audio,
     clip_audio_quality_gate: ClipAudioQualityGate | None = assert_publishable_public_clip_audio,
     progress: ProgressReporter | None = None,
@@ -476,7 +477,7 @@ def main() -> None:
     parser.add_argument("--audio-source-dir", type=Path)
     parser.add_argument("--raw-bucket")
     parser.add_argument("--aws-region", default="us-west-2")
-    parser.add_argument("--limit", type=int, default=1000)
+    parser.add_argument("--limit", type=int, default=DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT)
     parser.add_argument("--public-audio-ffmpeg-path")
     parser.add_argument("--public-audio-ffprobe-path")
     parser.add_argument(

@@ -493,6 +493,7 @@ def process_pending_uploads_once(
     hotwords: str | None = None,
     ffmpeg_path: str | None = None,
     ffmpeg_runner: Any | None = None,
+    trust_edge_preprocessed_audio: bool = False,
 ) -> ProcessSummary:
     if beam_size <= 0:
         raise ValueError("beam_size must be positive")
@@ -507,7 +508,11 @@ def process_pending_uploads_once(
             clip_reader.download(record.key, audio_path)
             prepare_kwargs: dict[str, Any] = {
                 "sample_rate_hz": sample_rate_hz,
-                "audio_filter": audio_filter,
+                "audio_filter": _audio_filter_for_record(
+                    record,
+                    audio_filter=audio_filter,
+                    trust_edge_preprocessed_audio=trust_edge_preprocessed_audio,
+                ),
                 "ffmpeg_path": ffmpeg_path,
             }
             if ffmpeg_runner is not None:
@@ -626,6 +631,15 @@ def main() -> None:
     parser.add_argument("--audio-filter", default=os.getenv("TALKINGBOATS_TRANSCRIBE_AUDIO_FILTER"))
     parser.add_argument("--no-audio-filter", action="store_true")
     parser.add_argument(
+        "--trust-edge-preprocessed-audio",
+        action="store_true",
+        default=_env_bool("TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO", False),
+        help=(
+            "Skip OptiPlex ffmpeg cleanup for edge-encoded MP3 uploads. "
+            "Use when the Pi already applied the upload speech filter."
+        ),
+    )
+    parser.add_argument(
         "--sample-rate-hz",
         type=int,
         default=_env_int(
@@ -677,6 +691,7 @@ def main() -> None:
             sample_rate_hz=args.sample_rate_hz,
             beam_size=args.beam_size,
             hotwords=args.hotwords,
+            trust_edge_preprocessed_audio=args.trust_edge_preprocessed_audio,
         )
         _log_event("uploaded_clip_transcriber_poll", **asdict(summary))
         if args.once:
@@ -702,6 +717,17 @@ def _row_to_record(row: tuple[Any, ...]) -> UploadedClipRecord:
 def _default_db_path() -> Path | None:
     value = os.getenv("TALKINGBOATS_CLIP_DB_PATH")
     return Path(value) if value else None
+
+
+def _audio_filter_for_record(
+    record: UploadedClipRecord,
+    *,
+    audio_filter: str | None,
+    trust_edge_preprocessed_audio: bool,
+) -> str | None:
+    if trust_edge_preprocessed_audio and record.content_type == "audio/mpeg":
+        return None
+    return audio_filter
 
 
 def _load_faster_whisper_model(*, model_size: str, device: str, compute_type: str) -> Any:

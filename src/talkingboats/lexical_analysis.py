@@ -15,13 +15,35 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 from talkingboats.security import assert_public_safe
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
 TOPIC_PLOT_PATH = "/analysis/topic_clusters.html"
-PUBLIC_AUDIO_EXAMPLE_LIMIT = 1000
+PUBLIC_AUDIO_EXAMPLE_LIMIT = DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 MAX_BERTOPIC_TOPICS = 18
+TOPIC_COLOR_PALETTE = (
+    "#40e0bf",
+    "#6ab8ff",
+    "#f0b85a",
+    "#ff7777",
+    "#8bd867",
+    "#f58fb2",
+    "#a5b4fc",
+    "#f7cf5d",
+    "#34d399",
+    "#fb7185",
+    "#38bdf8",
+    "#c084fc",
+    "#f97316",
+    "#22d3ee",
+    "#e879f9",
+    "#84cc16",
+    "#facc15",
+    "#60a5fa",
+)
+TOPIC_OUTLIER_COLOR = "#596761"
 
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9'-]{2,}|\b\d{2,4}\b")
 STOPWORDS = {
@@ -670,6 +692,7 @@ def _build_topics(
         )
         topics, _ = topic_model.fit_transform(documents, embeddings=embeddings)
         coordinates = umap_model.fit_transform(embeddings)
+        marker_colors = [_topic_color(topic_id) for topic_id in topics]
         figure = go.Figure(
             data=[
                 go.Scatter3d(
@@ -679,29 +702,61 @@ def _build_topics(
                     mode="markers",
                     marker={
                         "size": 5,
-                        "color": topics,
-                        "colorscale": "Viridis",
-                        "opacity": 0.82,
+                        "color": marker_colors,
+                        "colorscale": "Turbo",
+                        "opacity": 0.88,
+                        "line": {"color": "rgba(7,17,15,0.45)", "width": 1},
                     },
                     text=[_short_text(doc, limit=160) for doc in documents],
-                    hovertemplate="Topic %{marker.color}<br>%{text}<extra></extra>",
+                    customdata=[_topic_label(topic_id) for topic_id in topics],
+                    hovertemplate="%{customdata}<br>%{text}<extra></extra>",
                 )
             ],
             layout={
                 "paper_bgcolor": "#07110f",
                 "plot_bgcolor": "#07110f",
                 "font": {"color": "#f2f7f4"},
+                "dragmode": "orbit",
+                "autosize": True,
                 "scene": {
-                    "xaxis": {"showticklabels": False, "title": "UMAP 1"},
-                    "yaxis": {"showticklabels": False, "title": "UMAP 2"},
-                    "zaxis": {"showticklabels": False, "title": "UMAP 3"},
+                    "camera": {"eye": {"x": 1.45, "y": 1.55, "z": 1.05}},
+                    "bgcolor": "#07110f",
+                    "xaxis": {
+                        "showticklabels": False,
+                        "title": "UMAP 1",
+                        "gridcolor": "rgba(242,247,244,0.16)",
+                        "zerolinecolor": "rgba(242,247,244,0.22)",
+                    },
+                    "yaxis": {
+                        "showticklabels": False,
+                        "title": "UMAP 2",
+                        "gridcolor": "rgba(242,247,244,0.16)",
+                        "zerolinecolor": "rgba(242,247,244,0.22)",
+                    },
+                    "zaxis": {
+                        "showticklabels": False,
+                        "title": "UMAP 3",
+                        "gridcolor": "rgba(242,247,244,0.16)",
+                        "zerolinecolor": "rgba(242,247,244,0.22)",
+                    },
                 },
-                "margin": {"l": 0, "r": 0, "t": 18, "b": 0},
+                "margin": {"l": 0, "r": 0, "t": 8, "b": 0},
             },
         )
         _atomic_write_text(
             html_output_path,
-            figure.to_html(full_html=True, include_plotlyjs="cdn"),
+            _mobile_topic_plot_html(
+                figure.to_html(
+                    full_html=True,
+                    include_plotlyjs="cdn",
+                    config={
+                        "responsive": True,
+                        "scrollZoom": True,
+                        "displaylogo": False,
+                        "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+                    },
+                )
+            ),
         )
         return {
             "status": "ok",
@@ -725,6 +780,31 @@ def _build_topics(
             "plot_url": TOPIC_PLOT_PATH,
             "items": [],
         }
+
+
+def _topic_color(topic_id: int) -> str:
+    if topic_id == -1:
+        return TOPIC_OUTLIER_COLOR
+    return TOPIC_COLOR_PALETTE[int(topic_id) % len(TOPIC_COLOR_PALETTE)]
+
+
+def _topic_label(topic_id: int) -> str:
+    if topic_id == -1:
+        return "Outliers"
+    return f"Topic {topic_id}"
+
+
+def _mobile_topic_plot_html(html_text: str) -> str:
+    mobile_css = """
+<style>
+  html, body { min-height: 100%; margin: 0; background: #07110f; overflow: hidden; }
+  .plotly-graph-div { width: 100vw !important; height: 100dvh !important; touch-action: none; }
+  .modebar { transform: scale(1.08); transform-origin: top right; }
+</style>
+"""
+    if "</head>" in html_text:
+        return html_text.replace("</head>", f"{mobile_css}</head>", 1)
+    return f"{mobile_css}{html_text}"
 
 
 def _topic_items(

@@ -11,6 +11,7 @@ import pytest
 
 import talkingboats.lexical_analysis as lexical_analysis
 from talkingboats.clip_transcriber import UploadedClipStore
+from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 from talkingboats.lexical_analysis import (
     generate_lexical_analysis,
     main,
@@ -190,6 +191,11 @@ def test_entity_examples_only_mark_public_export_window_as_playable(
     assert "audio_public_filename" not in example
 
 
+def test_analysis_audio_example_window_matches_public_export_default() -> None:
+    assert lexical_analysis.PUBLIC_AUDIO_EXAMPLE_LIMIT == DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
+    assert DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT >= 3000
+
+
 def test_missing_cache_returns_valid_empty_payload(tmp_path: Path) -> None:
     db_path = tmp_path / "clips.sqlite3"
     UploadedClipStore(db_path)
@@ -307,10 +313,17 @@ def test_bertopic_model_is_configured_for_condensed_topic_count(
         def __init__(self, **kwargs: object) -> None:
             captured["figure_kwargs"] = kwargs
 
-        def to_html(self, *, full_html: bool, include_plotlyjs: str) -> str:
+        def to_html(
+            self,
+            *,
+            full_html: bool,
+            include_plotlyjs: str,
+            config: dict[str, object] | None = None,
+        ) -> str:
             captured["html_options"] = {
                 "full_html": full_html,
                 "include_plotlyjs": include_plotlyjs,
+                "config": config,
             }
             return "<html>topics</html>"
 
@@ -351,9 +364,21 @@ def test_bertopic_model_is_configured_for_condensed_topic_count(
     )
 
     bertopic_kwargs = captured["bertopic_kwargs"]
+    scatter_kwargs = captured["scatter_kwargs"]
+    figure_kwargs = captured["figure_kwargs"]
+    html_options = captured["html_options"]
     assert isinstance(bertopic_kwargs, dict)
+    assert isinstance(scatter_kwargs, dict)
+    assert isinstance(figure_kwargs, dict)
+    assert isinstance(html_options, dict)
     assert bertopic_kwargs["nr_topics"] == lexical_analysis.MAX_BERTOPIC_TOPICS
     assert lexical_analysis.MAX_BERTOPIC_TOPICS < 20
+    assert len(set(scatter_kwargs["marker"]["color"])) > 6
+    assert scatter_kwargs["marker"]["colorscale"] != "Viridis"
+    assert figure_kwargs["layout"]["dragmode"] == "orbit"
+    assert figure_kwargs["layout"]["scene"]["camera"]
+    assert html_options["config"]["scrollZoom"] is True
+    assert html_options["config"]["responsive"] is True
     assert payload["status"] == "ok"
     assert len(payload["items"]) <= lexical_analysis.MAX_BERTOPIC_TOPICS
 

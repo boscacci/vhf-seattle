@@ -30,10 +30,12 @@ def test_docker_orchestration_files_cover_optiplex_services_without_secrets() ->
     assert "live-proxy" in compose
     assert "private-api" in compose
     assert "uploaded-clip-transcriber" in compose
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" in compose
     assert "live-transcriber" in compose
     assert "lexical-refresh" in compose
     assert "profiles" in compose
     assert "TALKINGBOATS_INGEST_TOKEN=" in env_example
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true" in env_example
     assert "changeme" not in env_example.lower()
     assert "config/optiplex.env" in gitignore
     assert "config/optiplex.env" in dockerignore
