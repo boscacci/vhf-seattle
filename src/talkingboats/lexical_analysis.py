@@ -21,6 +21,7 @@ PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
 TOPIC_PLOT_PATH = "/analysis/topic_clusters.html"
 PUBLIC_AUDIO_EXAMPLE_LIMIT = 1000
+MAX_BERTOPIC_TOPICS = 18
 
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9'-]{2,}|\b\d{2,4}\b")
 STOPWORDS = {
@@ -663,6 +664,7 @@ def _build_topics(
             n_gram_range=(1, 2),
             top_n_words=12,
             min_topic_size=8,
+            nr_topics=MAX_BERTOPIC_TOPICS,
             calculate_probabilities=False,
             umap_model=umap_model,
         )
@@ -705,7 +707,12 @@ def _build_topics(
             "status": "ok",
             "reason": None,
             "plot_url": TOPIC_PLOT_PATH,
-            "items": _topic_items(topic_model, topics, documents),
+            "items": _topic_items(
+                topic_model,
+                topics,
+                documents,
+                max_items=MAX_BERTOPIC_TOPICS,
+            ),
         }
     except Exception as exc:  # noqa: BLE001 - keep analysis useful without model artifacts.
         _write_placeholder_topic_html(
@@ -724,10 +731,14 @@ def _topic_items(
     topic_model: Any,
     topics: Sequence[int],
     documents: Sequence[str],
+    *,
+    max_items: int | None = None,
 ) -> list[dict[str, Any]]:
     counts = Counter(topics)
     items = []
     for topic_id, count in counts.most_common():
+        if max_items is not None and len(items) >= max_items:
+            break
         if topic_id == -1:
             label = "Outliers"
             words: list[str] = []

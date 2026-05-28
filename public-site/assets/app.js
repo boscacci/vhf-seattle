@@ -740,10 +740,10 @@ function renderLanguageDashboard(payload) {
   const cards = document.createElement("div");
   cards.className = "language-grid";
   cards.append(
-    languageCard("Transmissions", String(payload.source_clip_count || 0), "Cached transcript clips"),
+    languageCard("Transmissions", String(payload.source_clip_count || 0), "Analyzed transcript clips"),
     languageCard("Channels", channelSummary(payload.channels || frequency.by_channel || {}), "VHF activity split"),
     languageCard("Busiest hour", busiestHour(frequency.by_hour_pacific || {}), "Pacific time"),
-    languageCard("Topic model", topicStatus(topics), "BERTopic / classical fallback"),
+    languageCard("Topic model", topicStatus(topics), "Condensed topic clusters"),
   );
 
   const wordsPanel = languagePanel("Radio words");
@@ -1501,10 +1501,74 @@ function updateSystemMediaControlsUi() {
   playLiveButton.disabled = false;
   playLiveButton.title = "";
   if (systemMediaNote) {
+    const environmentLabel = systemMediaEnvironmentLabel();
     systemMediaNote.textContent = systemMediaControlsEnabled
-      ? "Live radio may appear in macOS and browser media controls."
-      : "Live radio plays in Firefox without publishing system media controls.";
+      ? `System media controls may appear on ${environmentLabel}.`
+      : `Live radio stays inside this page on ${environmentLabel}.`;
   }
+}
+
+function systemMediaEnvironmentLabel() {
+  const userAgentData = navigator.userAgentData;
+  const userAgent = navigator.userAgent || "";
+  const platform = `${userAgentData?.platform || ""} ${navigator.platform || ""}`;
+  const browser = browserNameFromUserAgentData(userAgentData) || browserNameFromUserAgent(userAgent);
+  const operatingSystem = operatingSystemNameFromUserAgent(userAgent, platform);
+  if (browser && operatingSystem) {
+    return `${browser} on ${operatingSystem}`;
+  }
+  return browser || operatingSystem || "this device";
+}
+
+function browserNameFromUserAgentData(userAgentData) {
+  const brands = Array.isArray(userAgentData?.brands) ? userAgentData.brands : [];
+  const brandText = brands.map((brand) => brand.brand).join(" ");
+  if (/Edg/i.test(brandText)) {
+    return "Edge";
+  }
+  if (/Chrome|Chromium/i.test(brandText)) {
+    return "Chrome";
+  }
+  return "";
+}
+
+function browserNameFromUserAgent(userAgent) {
+  if (/Edg\//.test(userAgent)) {
+    return "Edge";
+  }
+  if (/Firefox\//.test(userAgent)) {
+    return "Firefox";
+  }
+  if (/CriOS\//.test(userAgent)) {
+    return "Chrome";
+  }
+  if (/Chrome\//.test(userAgent) && !/Chromium\//.test(userAgent)) {
+    return "Chrome";
+  }
+  if (/Safari\//.test(userAgent) && !/Chrome\//.test(userAgent) && !/CriOS\//.test(userAgent)) {
+    return "Safari";
+  }
+  return "";
+}
+
+function operatingSystemNameFromUserAgent(userAgent, platform) {
+  const combined = `${userAgent} ${platform}`.toLowerCase();
+  if (/iphone|ipad|ipod/.test(combined)) {
+    return "iOS";
+  }
+  if (/android/.test(combined)) {
+    return "Android";
+  }
+  if (/windows/.test(combined)) {
+    return "Windows";
+  }
+  if (/macintosh|mac os|macintel|mac/.test(combined)) {
+    return "macOS";
+  }
+  if (/linux/.test(combined)) {
+    return "Linux";
+  }
+  return "";
 }
 
 function clearBrowserMediaSession() {

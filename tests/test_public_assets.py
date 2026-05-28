@@ -259,13 +259,28 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
     assert "playLiveButton.disabled = !systemMediaControlsEnabled;" not in app_js
     assert "Enable system controls to play live" not in app_js
     assert "function updateLiveMediaSession" in app_js
-    assert "Live radio plays in Firefox without publishing system media controls." in app_js
+    assert "function systemMediaEnvironmentLabel()" in app_js
+    assert "navigator.userAgentData" in app_js
+    assert "navigator.userAgent" in app_js
+    assert "System media controls may appear on" in app_js
+    assert "Live radio stays inside this page on" in app_js
+    assert "Live radio may appear in macOS and browser media controls." not in app_js
+    assert "Live radio plays in Firefox without publishing system media controls." not in app_js
     system_controls_off_gate = (
         'liveAudio.removeAttribute("src");\n'
         '    liveStatus.textContent = "System controls off";'
     )
     assert system_controls_off_gate not in app_js
     assert ".system-media-toggle" in styles_css
+
+
+def test_public_site_analysis_dashboard_uses_analyzed_clip_wording() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "Analyzed transcript clips" in app_js
+    assert "Cached transcript clips" not in app_js
+    assert "Condensed topic clusters" in app_js
+    assert "BERTopic / classical fallback" not in app_js
 
 
 def test_public_site_does_not_render_unknown_clip_duration_as_zero() -> None:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
+import types
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -240,6 +242,120 @@ def test_generate_lexical_analysis_rejects_nonpositive_page_size(tmp_path: Path)
 
     with pytest.raises(ValueError, match="page_size must be positive"):
         generate_lexical_analysis(db_path=db_path, output_dir=tmp_path / "site", page_size=0)
+
+
+def test_bertopic_model_is_configured_for_condensed_topic_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeSentenceTransformer:
+        def __init__(self, model_name: str) -> None:
+            captured["model_name"] = model_name
+
+        def encode(
+            self,
+            documents: list[str],
+            *,
+            show_progress_bar: bool,
+        ) -> list[tuple[float, float, float]]:
+            captured["show_progress_bar"] = show_progress_bar
+            return [
+                (float(index), float(index + 1), float(index + 2))
+                for index, _ in enumerate(documents)
+            ]
+
+    class _Coordinates:
+        def __init__(self, row_count: int) -> None:
+            self.row_count = row_count
+
+        def __getitem__(self, key: tuple[slice, int]) -> list[float]:
+            _rows, column = key
+            return [float(index + column) for index in range(self.row_count)]
+
+    class FakeUMAP:
+        def __init__(self, **kwargs: object) -> None:
+            captured["umap_kwargs"] = kwargs
+
+        def fit_transform(self, embeddings: list[tuple[float, float, float]]) -> _Coordinates:
+            return _Coordinates(len(embeddings))
+
+    class FakeBERTopic:
+        def __init__(self, **kwargs: object) -> None:
+            captured["bertopic_kwargs"] = kwargs
+
+        def fit_transform(
+            self,
+            documents: list[str],
+            *,
+            embeddings: list[tuple[float, float, float]],
+        ) -> tuple[list[int], None]:
+            bertopic_kwargs = captured["bertopic_kwargs"]
+            assert isinstance(bertopic_kwargs, dict)
+            topic_count = int(bertopic_kwargs.get("nr_topics", 25))
+            return [index % topic_count for index, _ in enumerate(documents)], None
+
+        def get_topic(self, topic_id: int) -> list[tuple[str, float]]:
+            return [(f"word-{topic_id}", 1.0)]
+
+    class FakeScatter3d:
+        def __init__(self, **kwargs: object) -> None:
+            captured["scatter_kwargs"] = kwargs
+
+    class FakeFigure:
+        def __init__(self, **kwargs: object) -> None:
+            captured["figure_kwargs"] = kwargs
+
+        def to_html(self, *, full_html: bool, include_plotlyjs: str) -> str:
+            captured["html_options"] = {
+                "full_html": full_html,
+                "include_plotlyjs": include_plotlyjs,
+            }
+            return "<html>topics</html>"
+
+    monkeypatch.setitem(sys.modules, "bertopic", types.SimpleNamespace(BERTopic=FakeBERTopic))
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=FakeSentenceTransformer),
+    )
+    monkeypatch.setitem(sys.modules, "umap", types.SimpleNamespace(UMAP=FakeUMAP))
+    monkeypatch.setitem(
+        sys.modules,
+        "plotly",
+        types.SimpleNamespace(
+            graph_objects=types.SimpleNamespace(
+                Figure=FakeFigure,
+                Scatter3d=FakeScatter3d,
+            )
+        ),
+    )
+
+    clips = [
+        lexical_analysis.TranscriptClip(
+            key=f"clip-{index}.mp3",
+            channel="14",
+            started_at=f"2026-05-26T00:{index:02d}:00Z",
+            ended_at=None,
+            duration_seconds=None,
+            content_type="audio/mpeg",
+            transcript=f"Seattle Traffic routine movement report {index}",
+        )
+        for index in range(40)
+    ]
+
+    payload = lexical_analysis._build_topics(
+        clips,
+        html_output_path=tmp_path / "topic_clusters.html",
+    )
+
+    bertopic_kwargs = captured["bertopic_kwargs"]
+    assert isinstance(bertopic_kwargs, dict)
+    assert bertopic_kwargs["nr_topics"] == lexical_analysis.MAX_BERTOPIC_TOPICS
+    assert lexical_analysis.MAX_BERTOPIC_TOPICS < 20
+    assert payload["status"] == "ok"
+    assert len(payload["items"]) <= lexical_analysis.MAX_BERTOPIC_TOPICS
 
 
 def _transcribe(
