@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   AUTH_METHODS,
+  COMPASS_SENSOR_INTERVAL_MS,
   cardinalDirection,
   formatHeading,
   headingFromMagnetometer,
   magneticStrength,
+  nearestCompassHeading,
   normalizeDegrees,
+  preciseHeadingFromMagnetometer,
+  shortestCompassDelta,
 } from "./compass";
 
 describe("compass helpers", () => {
@@ -26,6 +30,21 @@ describe("compass helpers", () => {
   it("derives a heading from magnetometer x and y readings", () => {
     expect(headingFromMagnetometer({ x: 0, y: 1, z: 0 })).toBe(90);
     expect(headingFromMagnetometer({ x: -1, y: 0, z: 0 })).toBe(180);
+  });
+
+  it("keeps sub-degree magnetometer headings for smooth animation", () => {
+    expect(preciseHeadingFromMagnetometer({ x: 10, y: 1, z: 0 })).toBeCloseTo(5.7106, 4);
+  });
+
+  it("rotates through the shortest compass path across north", () => {
+    expect(shortestCompassDelta(350, 10)).toBe(20);
+    expect(shortestCompassDelta(10, 350)).toBe(-20);
+    expect(nearestCompassHeading(350, 10)).toBe(370);
+    expect(nearestCompassHeading(725, 2)).toBe(722);
+  });
+
+  it("samples quickly enough for responsive phone rotation", () => {
+    expect(COMPASS_SENSOR_INTERVAL_MS).toBeLessThanOrEqual(20);
   });
 
   it("formats readable headings", () => {

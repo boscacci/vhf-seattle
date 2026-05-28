@@ -12,6 +12,9 @@ export type AuthMethod = {
 
 const CARDINALS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
 
+export const COMPASS_SENSOR_INTERVAL_MS = 16;
+export const COMPASS_ROTATION_RANGE_DEGREES = 36000;
+
 export const AUTH_METHODS: AuthMethod[] = [
   {
     id: "google",
@@ -40,8 +43,21 @@ export function cardinalDirection(degrees: number): string {
   return CARDINALS[index];
 }
 
+export function preciseHeadingFromMagnetometer(vector: MagneticVector): number {
+  return normalizeDegrees((Math.atan2(vector.y, vector.x) * 180) / Math.PI);
+}
+
 export function headingFromMagnetometer(vector: MagneticVector): number {
-  return Math.round(normalizeDegrees((Math.atan2(vector.y, vector.x) * 180) / Math.PI));
+  return Math.round(preciseHeadingFromMagnetometer(vector));
+}
+
+export function shortestCompassDelta(fromDegrees: number, toDegrees: number): number {
+  const delta = normalizeDegrees(toDegrees - fromDegrees + 180) - 180;
+  return delta === -180 ? 180 : delta;
+}
+
+export function nearestCompassHeading(currentDegrees: number, targetDegrees: number): number {
+  return currentDegrees + shortestCompassDelta(currentDegrees, targetDegrees);
 }
 
 export function formatHeading(degrees: number): string {

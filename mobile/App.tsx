@@ -1,13 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Animated,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StatusBar as NativeStatusBar,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { Magnetometer } from "expo-sensors";
-import { StatusBar } from "expo-status-bar";
+import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import Svg, {
   Circle,
   Defs,
-  G,
   LinearGradient as SvgLinearGradient,
   Line,
   Path,
@@ -17,13 +26,19 @@ import Svg, {
 
 import {
   AUTH_METHODS,
+  COMPASS_ROTATION_RANGE_DEGREES,
+  COMPASS_SENSOR_INTERVAL_MS,
   formatHeading,
-  headingFromMagnetometer,
   magneticStrength,
+  nearestCompassHeading,
+  preciseHeadingFromMagnetometer,
   type MagneticVector,
 } from "./src/compass";
+import { topChromeGutter } from "./src/layout";
 
 const initialVector: MagneticVector = { x: 0, y: 1, z: 0 };
+const initialHeading = preciseHeadingFromMagnetometer(initialVector);
+const COMPASS_UI_REFRESH_INTERVAL_MS = 66;
 
 const compassTicks = Array.from({ length: 24 }, (_, index) => {
   const degrees = index * 15;
@@ -41,43 +56,15 @@ const compassTicks = Array.from({ length: 24 }, (_, index) => {
 });
 
 export default function App() {
-  const [vector, setVector] = useState<MagneticVector>(initialVector);
-  const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
+  const { heading, needleRotation, sensorAvailable, vector } = useLiveCompass();
   const [signalPulse, setSignalPulse] = useState(0);
-  const heading = useMemo(() => headingFromMagnetometer(vector), [vector]);
   const strength = useMemo(() => magneticStrength(vector), [vector]);
+  const topGutter = useMemo(
+    () => topChromeGutter(Platform.OS, NativeStatusBar.currentHeight),
+    [],
+  );
   const sensorLabel =
     sensorAvailable === null ? "Seeking sensor" : sensorAvailable ? "Compass live" : "Compass demo";
-
-  useEffect(() => {
-    let mounted = true;
-    let subscription: { remove: () => void } | null = null;
-
-    Magnetometer.isAvailableAsync()
-      .then((available) => {
-        if (!mounted) {
-          return;
-        }
-        setSensorAvailable(available);
-        if (!available) {
-          return;
-        }
-        Magnetometer.setUpdateInterval(250);
-        subscription = Magnetometer.addListener((reading) => {
-          setVector(reading);
-        });
-      })
-      .catch(() => {
-        if (mounted) {
-          setSensorAvailable(false);
-        }
-      });
-
-    return () => {
-      mounted = false;
-      subscription?.remove();
-    };
-  }, []);
 
   function pingBridge() {
     setSignalPulse((value) => value + 1);
@@ -86,8 +73,8 @@ export default function App() {
 
   return (
     <LinearGradient colors={["#041411", "#071f24", "#100f1c"]} style={styles.shell}>
-      <StatusBar style="light" />
-      <SafeAreaView style={styles.safeArea}>
+      <ExpoStatusBar backgroundColor="#041411" style="light" translucent />
+      <SafeAreaView style={[styles.safeArea, { paddingTop: topGutter }]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.topBar}>
             <View>
@@ -119,11 +106,11 @@ export default function App() {
               </View>
             </View>
 
-            <CompassDial heading={heading} />
+            <CompassDial needleRotation={needleRotation} />
 
             <View style={styles.metricGrid}>
               <Metric label="Magnetic field" value={`${strength.toFixed(1)} uT`} />
-              <Metric label="Bearing" value={`${heading} deg`} />
+              <Metric label="Bearing" value={`${Math.round(heading)} deg`} />
             </View>
           </View>
 
@@ -189,7 +176,7 @@ function CaptainHat() {
   );
 }
 
-function CompassDial({ heading }: { heading: number }) {
+function CompassDial({ needleRotation }: { needleRotation: ReturnType<Animated.Value["interpolate"]> }) {
   return (
     <View style={styles.compassWrap}>
       <Svg width="100%" height="100%" viewBox="0 0 280 280" accessibilityLabel="Compass bearing dial">
@@ -257,14 +244,96 @@ function CompassDial({ heading }: { heading: number }) {
         >
           W
         </SvgText>
-        <G transform={`rotate(${heading} 140 140)`}>
+      </Svg>
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.needleLayer, { transform: [{ rotate: needleRotation }] }]}
+      >
+        <Svg width="100%" height="100%" viewBox="0 0 280 280" accessibilityLabel="Compass needle">
           <Path d="M140 48 L155 142 L140 131 L125 142 Z" fill="#ff5c7a" />
           <Path d="M140 232 L125 142 L140 151 L155 142 Z" fill="#55f0df" opacity={0.92} />
-        </G>
-        <Circle cx="140" cy="140" r="12" fill="#f7f0d1" stroke="#081716" strokeWidth="4" />
-      </Svg>
+          <Circle cx="140" cy="140" r="12" fill="#f7f0d1" stroke="#081716" strokeWidth="4" />
+        </Svg>
+      </Animated.View>
     </View>
   );
+}
+
+function useLiveCompass() {
+  const [vector, setVector] = useState<MagneticVector>(initialVector);
+  const [heading, setHeading] = useState(initialHeading);
+  const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
+  const rotation = useRef(new Animated.Value(initialHeading)).current;
+  const continuousHeading = useRef(initialHeading);
+  const lastUiRefresh = useRef(0);
+
+  const needleRotation = useMemo(
+    () =>
+      rotation.interpolate({
+        extrapolate: "extend",
+        inputRange: [-COMPASS_ROTATION_RANGE_DEGREES, COMPASS_ROTATION_RANGE_DEGREES],
+        outputRange: [`-${COMPASS_ROTATION_RANGE_DEGREES}deg`, `${COMPASS_ROTATION_RANGE_DEGREES}deg`],
+      }),
+    [rotation],
+  );
+
+  const animateNeedleToHeading = useCallback(
+    (nextHeading: number) => {
+      const targetHeading = nearestCompassHeading(continuousHeading.current, nextHeading);
+      continuousHeading.current = targetHeading;
+      Animated.spring(rotation, {
+        damping: 48,
+        mass: 0.42,
+        overshootClamping: false,
+        restDisplacementThreshold: 0.005,
+        restSpeedThreshold: 0.005,
+        stiffness: 620,
+        toValue: targetHeading,
+        useNativeDriver: true,
+      }).start();
+    },
+    [rotation],
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    let subscription: { remove: () => void } | null = null;
+
+    Magnetometer.isAvailableAsync()
+      .then((available) => {
+        if (!mounted) {
+          return;
+        }
+        setSensorAvailable(available);
+        if (!available) {
+          return;
+        }
+        Magnetometer.setUpdateInterval(COMPASS_SENSOR_INTERVAL_MS);
+        subscription = Magnetometer.addListener((reading) => {
+          const nextHeading = preciseHeadingFromMagnetometer(reading);
+          animateNeedleToHeading(nextHeading);
+
+          const now = Date.now();
+          if (now - lastUiRefresh.current >= COMPASS_UI_REFRESH_INTERVAL_MS) {
+            lastUiRefresh.current = now;
+            setVector(reading);
+            setHeading(nextHeading);
+          }
+        });
+      })
+      .catch(() => {
+        if (mounted) {
+          setSensorAvailable(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+      subscription?.remove();
+    };
+  }, [animateNeedleToHeading]);
+
+  return { heading, needleRotation, sensorAvailable, vector };
 }
 
 const styles = StyleSheet.create({
@@ -391,7 +460,11 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     aspectRatio: 1,
     maxWidth: 252,
+    position: "relative",
     width: "100%",
+  },
+  needleLayer: {
+    ...StyleSheet.absoluteFillObject,
   },
   metricGrid: {
     flexDirection: "row",
