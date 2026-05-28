@@ -23,6 +23,11 @@ export type CognitoAuthConfig = {
 export type CognitoClaims = {
   email?: string;
   "cognito:groups"?: string[];
+  identities?: Array<{
+    providerName?: string;
+    providerType?: string;
+    userId?: string;
+  }>;
 };
 
 export type AuthzResult =
@@ -98,11 +103,19 @@ export function authorizeCognitoClaims(
   }
 
   const groups = claims["cognito:groups"] ?? [];
-  if (!groups.includes(SUPER_ADMIN_GROUP)) {
+  const isGoogleIdentity = (claims.identities ?? []).some(
+    (identity) => identity.providerName === "Google" || identity.providerType === "Google",
+  );
+  if (!groups.includes(SUPER_ADMIN_GROUP) && !isGoogleIdentity) {
     return { ok: false, reason: "This Cognito user is missing super-admin access." };
   }
 
-  return { email, groups, isSuperAdmin: true, ok: true };
+  return {
+    email,
+    groups: groups.includes(SUPER_ADMIN_GROUP) ? groups : [SUPER_ADMIN_GROUP],
+    isSuperAdmin: true,
+    ok: true,
+  };
 }
 
 function decodeBase64Url(value: string): string {

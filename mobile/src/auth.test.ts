@@ -89,6 +89,29 @@ describe("Cognito authorization rules", () => {
     ).toBe(false);
   });
 
+  it("accepts Rob from the Google Cognito identity provider", () => {
+    expect(
+      authorizeCognitoClaims(
+        {
+          email: DEFAULT_APPROVED_EMAIL,
+          identities: [
+            {
+              providerName: "Google",
+              providerType: "Google",
+              userId: "google-subject",
+            },
+          ],
+        },
+        { allowedEmail: DEFAULT_APPROVED_EMAIL },
+      ),
+    ).toEqual({
+      email: DEFAULT_APPROVED_EMAIL,
+      groups: [SUPER_ADMIN_GROUP],
+      isSuperAdmin: true,
+      ok: true,
+    });
+  });
+
   it("decodes Cognito JWT claims", () => {
     const payload = Buffer.from(
       JSON.stringify({

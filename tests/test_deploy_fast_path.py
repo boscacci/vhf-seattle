@@ -47,6 +47,20 @@ def test_mobile_auth_env_writer_uses_tofu_outputs_and_gitignored_local_file() ->
     assert "*.env.local" in gitignore
 
 
+def test_google_cognito_setup_script_keeps_provider_secret_out_of_state() -> None:
+    script = Path("scripts/configure_dev_google_cognito_idp.sh").read_text(encoding="utf-8")
+    main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+
+    assert "TALKINGBOATS_GOOGLE_OAUTH_CLIENT_ID" in script
+    assert "TALKINGBOATS_GOOGLE_OAUTH_CLIENT_SECRET" in script
+    assert "create-identity-provider" in script
+    assert "update-identity-provider" in script
+    assert "update-user-pool-client" in script
+    assert "--supported-identity-providers Google" in script
+    assert "client_secret" not in main_tf
+    assert "ignore_changes = [supported_identity_providers]" in main_tf
+
+
 def test_docker_orchestration_files_cover_optiplex_services_without_secrets() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     compose = Path("compose.yaml").read_text(encoding="utf-8")

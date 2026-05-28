@@ -52,11 +52,22 @@ over the tailnet, the default redirect URI is:
 exp://100.125.120.39:8083/--/auth/callback
 ```
 
-The current managed-login path supports:
+The intended dev sign-in path is Google federation through Cognito Hosted UI.
+Create a Google OAuth web client, add the Cognito `/oauth2/idpresponse`
+redirect URI, then run:
 
-- Google federation
+```bash
+export TALKINGBOATS_GOOGLE_OAUTH_CLIENT_ID="..."
+export TALKINGBOATS_GOOGLE_OAUTH_CLIENT_SECRET="..."
+scripts/configure_dev_google_cognito_idp.sh
+```
+
+The script keeps the Google client secret out of git and out of local OpenTofu
+state, then switches the dev mobile client to Google-only sign-in. The app still
+rejects every Cognito token except `cinemarob1@gmail.com`; a verified Google
+identity for that address is treated as the super admin.
+
+Future managed-login lanes:
+
 - SMS OTP passwordless sign-in
 - Passkeys/WebAuthn
-
-Only Cognito local password sign-in is enabled in dev until the Google and SMS
-provider credentials are added securely outside git.

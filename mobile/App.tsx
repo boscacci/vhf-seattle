@@ -69,7 +69,7 @@ const FEATURE_CARDS = [
   {
     id: "cognito",
     label: "Cognito",
-    caption: "Admin login",
+    caption: "Auth broker",
   },
   ...AUTH_METHODS,
 ];
@@ -148,7 +148,7 @@ function AuthPanel({ adminAuth }: { adminAuth: ReturnType<typeof useCognitoAdmin
       <View style={styles.authHeader}>
         <View>
           <Text style={styles.panelLabel}>Access</Text>
-          <Text style={styles.authTitle}>{session ? "Super admin" : "Cognito login"}</Text>
+          <Text style={styles.authTitle}>{session ? "Super admin" : "Google login"}</Text>
         </View>
         <View style={[styles.authStateBadge, session && styles.authStateBadgeActive]}>
           <Text style={[styles.authStateText, session && styles.authStateTextActive]}>
@@ -158,7 +158,7 @@ function AuthPanel({ adminAuth }: { adminAuth: ReturnType<typeof useCognitoAdmin
       </View>
 
       <Pressable
-        accessibilityLabel={session ? "Sign out of Cognito" : "Sign in with Cognito"}
+        accessibilityLabel={session ? "Sign out" : "Sign in with Google"}
         accessibilityRole="button"
         disabled={busy || !configured}
         onPress={session ? signOut : signIn}
@@ -169,7 +169,7 @@ function AuthPanel({ adminAuth }: { adminAuth: ReturnType<typeof useCognitoAdmin
         ]}
       >
         <Text style={[styles.authActionText, (!configured || busy) && styles.authActionTextDisabled]}>
-          {busy ? "Working..." : session ? "Sign out" : "Sign in"}
+          {busy ? "Working..." : session ? "Sign out" : "Sign in with Google"}
         </Text>
       </Pressable>
 

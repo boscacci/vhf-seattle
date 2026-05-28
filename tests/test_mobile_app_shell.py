@@ -9,7 +9,7 @@ def test_mobile_access_panel_puts_sign_in_before_provider_cards() -> None:
     app_shell = app_tsx[app_tsx.index("export default function App"):app_tsx.index("function AuthPanel")]
 
     assert "styles.authGrid" not in auth_panel
-    assert 'accessibilityLabel={session ? "Sign out of Cognito" : "Sign in with Cognito"}' in auth_panel
+    assert 'accessibilityLabel={session ? "Sign out" : "Sign in with Google"}' in auth_panel
     assert app_shell.index("<AuthPanel") < app_shell.index("<FeaturePanel")
 
 

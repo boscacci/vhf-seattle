@@ -937,6 +937,10 @@ resource "aws_cognito_user_pool_client" "dev_mobile" {
   write_attributes = [
     "email",
   ]
+
+  lifecycle {
+    ignore_changes = [supported_identity_providers]
+  }
 }
 
 resource "aws_cognito_managed_login_branding" "dev_mobile" {

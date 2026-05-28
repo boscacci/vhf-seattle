@@ -64,3 +64,23 @@ scripts/write_mobile_auth_env.sh
 The generated `mobile/.env.local` file is gitignored. The Cognito client is a
 public PKCE client with no secret; never add provider secrets, temporary
 passwords, or local token values to git.
+
+To use Google federation, create a Google OAuth web client with this authorized
+redirect URI:
+
+```bash
+printf '%s/oauth2/idpresponse\n' "$(cd infra/opentofu && tofu output -raw dev_cognito_domain)"
+```
+
+Then configure the dev user pool without writing the Google secret to OpenTofu
+state:
+
+```bash
+export TALKINGBOATS_GOOGLE_OAUTH_CLIENT_ID="..."
+export TALKINGBOATS_GOOGLE_OAUTH_CLIENT_SECRET="..."
+scripts/configure_dev_google_cognito_idp.sh
+```
+
+The script defaults the mobile client to Google-only sign-in. Set
+`TALKINGBOATS_COGNITO_ALLOW_PASSWORD_FALLBACK=true` before running it if you
+temporarily need the Cognito password form too.
