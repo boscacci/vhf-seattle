@@ -447,7 +447,7 @@ def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
     assert "TALKINGBOATS" not in dev_response.text
 
 
-def test_proxy_performance_endpoint_keeps_public_timeseries_history() -> None:
+def test_proxy_performance_endpoint_keeps_public_timeseries_history(tmp_path: Path) -> None:
     snapshots = [
         {
             "status": "ok",
@@ -480,7 +480,10 @@ def test_proxy_performance_endpoint_keeps_public_timeseries_history() -> None:
     def collector(_settings: ProxySettings) -> dict[str, object]:
         return snapshots.pop(0)
 
-    app = create_app(ProxySettings(), performance_collector=collector)
+    app = create_app(
+        ProxySettings(performance_history_db_path=str(tmp_path / "performance.sqlite3")),
+        performance_collector=collector,
+    )
 
     first_response = _run(
         _asgi_get(app, "/api/live/performance", headers={"Host": "vhf-dev.robertboscacci.com"})
