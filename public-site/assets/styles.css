@@ -144,7 +144,7 @@ h3 {
   top: 0;
   z-index: 2;
   display: grid;
-  grid-template-columns: auto auto auto auto 1fr;
+  grid-template-columns: auto auto auto auto auto 1fr;
   gap: 8px;
   align-items: center;
   margin: 0 0 18px;
@@ -656,16 +656,22 @@ audio {
 }
 
 .language-dashboard,
+.map-dashboard,
 .performance-dashboard {
   display: grid;
   gap: 14px;
 }
 
 .language-grid,
+.map-summary-grid,
 .performance-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+.map-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .language-card,
@@ -1245,10 +1251,11 @@ audio {
 
 @media (max-width: 900px) {
   .hero,
-  .clip-list,
-  .live-grid,
-  .language-grid,
-  .performance-host-grid,
+	  .clip-list,
+	  .live-grid,
+	  .language-grid,
+	  .map-summary-grid,
+	  .performance-host-grid,
   .performance-grid,
   .topic-list,
   .education-list,

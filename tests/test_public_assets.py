@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
+def test_public_site_is_recent_clip_app_with_dedicated_ais_map() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
@@ -49,6 +49,11 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert "Seattle Marine Radio" not in index_html
     assert "Clip Review" in index_html
     assert "Live Monitor" in index_html
+    assert "AIS Map" in index_html
+    assert 'id="tab-map" type="button" data-tab="map"' in index_html
+    assert "panel-map" in index_html
+    assert "ais-map-dashboard" in index_html
+    assert "map-status" in index_html
     assert "Analysis" in index_html
     assert "Analysis Dashboard" in index_html
     assert 'id="tab-language" type="button" data-tab="language" hidden' in index_html
@@ -175,10 +180,14 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert '"Static"' not in app_js
     assert "static clips" not in app_js
     assert "Tailnet Protected" not in index_html
-    assert "vesselMapPanel" in app_js
+    assert "loadAndRenderMap" in app_js
+    assert "renderAisMapDashboard" in app_js
     assert "renderVesselMap" in app_js
     assert "ais_tracks" in app_js
-    assert "Elliott Bay operating picture" in app_js
+    assert "Elliott Bay AIS map" in app_js
+    assert "No AIS vessel positions received yet" in app_js
+    assert "lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel" in app_js
+    assert "lexicalAnalysis.replaceChildren(cards, channelPanel, mapPanel" not in app_js
     assert ".vessel-map-panel" in styles_css
     assert ".nautical-map" in styles_css
     assert ".vessel-marker" in styles_css

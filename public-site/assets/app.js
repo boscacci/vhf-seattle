@@ -112,6 +112,7 @@ const performanceTab = document.querySelector("#tab-performance");
 const panels = {
   clips: document.querySelector("#panel-clips"),
   live: document.querySelector("#panel-live"),
+  map: document.querySelector("#panel-map"),
   language: document.querySelector("#panel-language"),
   performance: document.querySelector("#panel-performance"),
 };
@@ -130,6 +131,8 @@ const playLiveLabel = playLiveButton?.querySelector(".play-label");
 const playLiveSymbol = playLiveButton?.querySelector(".play-symbol");
 const systemMediaControlsToggle = document.querySelector("#system-media-controls");
 const systemMediaNote = document.querySelector("#system-media-note");
+const mapStatus = document.querySelector("#map-status");
+const aisMapDashboard = document.querySelector("#ais-map-dashboard");
 const languageStatus = document.querySelector("#language-status");
 const lexicalAnalysis = document.querySelector("#lexical-analysis");
 const performanceStatus = document.querySelector("#performance-status");
@@ -154,6 +157,7 @@ let selectedChannel = "all";
 let selectedClipPage = 1;
 let selectedLiveChannel = "14";
 let activeTab = "clips";
+let mapPayloadLoaded = false;
 let languagePayloadLoaded = false;
 let performancePayloadLoaded = false;
 let performanceRefreshTimer = null;
@@ -205,6 +209,8 @@ updateSystemMediaControlsUi();
 refreshButton.addEventListener("click", () => {
   if (activeTab === "performance") {
     loadAndRenderPerformance({ showLoading: false });
+  } else if (activeTab === "map") {
+    loadAndRenderMap({ showLoading: false });
   } else {
     loadAndRender();
   }
@@ -761,7 +767,7 @@ function activateTab(name) {
     panel.classList.toggle("is-active", active);
     panel.hidden = !active;
   });
-  refreshButton.hidden = !["clips", "performance"].includes(name);
+  refreshButton.hidden = !["clips", "map", "performance"].includes(name);
   if (name === "live") {
     if (liveAudio.paused || !liveAudio.src) {
       prepareLiveAudio();
@@ -774,6 +780,9 @@ function activateTab(name) {
   }
   if (name === "language" && !languagePayloadLoaded) {
     loadAndRenderLanguage();
+  }
+  if (name === "map") {
+    loadAndRenderMap({ showLoading: !mapPayloadLoaded });
   }
   if (name === "performance") {
     loadAndRenderPerformance({ showLoading: !performancePayloadLoaded });
@@ -791,6 +800,42 @@ async function loadAndRenderLanguage() {
   const payload = await loadLanguagePayload();
   languagePayloadLoaded = true;
   renderLanguageDashboard(payload);
+}
+
+async function loadAndRenderMap({ showLoading = true } = {}) {
+  if (!mapStatus || !aisMapDashboard) {
+    return;
+  }
+  if (showLoading || !mapPayloadLoaded) {
+    mapStatus.textContent = "Loading AIS...";
+  }
+  const manifest = await loadPublishedManifest();
+  mapPayloadLoaded = true;
+  renderAisMapDashboard(manifest);
+}
+
+function renderAisMapDashboard(manifest) {
+  const tracks = normalizeAisTracks(manifest.ais_tracks);
+  mapStatus.textContent = tracks.length
+    ? `${tracks.length} AIS vessel ${tracks.length === 1 ? "track" : "tracks"}`
+    : "No AIS vessel positions received yet";
+
+  const generatedAt = manifest.generated_at || manifest.stats?.generated_at || null;
+  const cards = document.createElement("div");
+  cards.className = "language-grid map-summary-grid";
+  cards.append(
+    languageCard("AIS tracks", String(tracks.length), "Vessel positions in the public manifest"),
+    languageCard(
+      "Last update",
+      generatedAt ? shortTime(generatedAt) : "None",
+      generatedAt ? `Manifest generated ${formatDateTime(generatedAt)}` : "Waiting for first AIS publish",
+    ),
+  );
+
+  const panel = languagePanel("Elliott Bay AIS map");
+  panel.classList.add("vessel-map-panel");
+  panel.append(renderVesselMap(tracks));
+  aisMapDashboard.replaceChildren(cards, panel);
 }
 
 function renderLanguageDashboard(payload) {
@@ -823,8 +868,6 @@ function renderLanguageDashboard(payload) {
   const channelPanel = languagePanel("Analyzed transcript clips by VHF channel");
   channelPanel.append(channelActivityChart(channelCounts));
 
-  const mapPanel = vesselMapPanel(aisTracks);
-
   const wordsPanel = languagePanel("Radio words");
   wordsPanel.append(
     termSection("Jargon", terms.semantic_buckets?.communication_markers || []),
@@ -850,7 +893,7 @@ function renderLanguageDashboard(payload) {
     referenceIndex(payload.education || []),
   );
 
-  lexicalAnalysis.replaceChildren(cards, channelPanel, mapPanel, wordsPanel, entityPanel, topicPanel, educationPanel);
+  lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel, entityPanel, topicPanel, educationPanel);
 }
 
 async function loadAndRenderPerformance({ showLoading = true } = {}) {
@@ -1568,13 +1611,6 @@ function channelActivityChart(channels) {
   return list;
 }
 
-function vesselMapPanel(tracks) {
-  const panel = languagePanel("Elliott Bay operating picture");
-  panel.classList.add("vessel-map-panel");
-  panel.append(renderVesselMap(tracks));
-  return panel;
-}
-
 function renderVesselMap(tracks) {
   const wrapper = document.createElement("div");
   wrapper.className = "nautical-map";
@@ -1591,7 +1627,7 @@ function renderVesselMap(tracks) {
   const caption = document.createElement("div");
   caption.className = "vessel-map-caption";
   if (!normalizedTracks.length) {
-    caption.textContent = "AIS positions will appear when vessel track data is available.";
+    caption.textContent = "No AIS vessel positions received yet. Receiver tracks will appear here after the first AIS publish.";
   } else {
     caption.append(...normalizedTracks.slice(0, 6).map(vesselMapLegendItem));
   }

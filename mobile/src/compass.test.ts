@@ -6,6 +6,7 @@ import {
   COMPASS_SENSOR_INTERVAL_MS,
   COMPASS_UI_REFRESH_INTERVAL_MS,
   cardinalDirection,
+  clampedCompassGimbalTilt,
   formatHeading,
   headingFromDeviceMotionRotation,
   headingFromMagnetometer,
@@ -43,6 +44,17 @@ describe("compass helpers", () => {
     expect(headingFromDeviceMotionRotation({ alpha: 0 })).toBe(0);
     expect(headingFromDeviceMotionRotation({ alpha: -Math.PI / 2 })).toBe(90);
     expect(headingFromDeviceMotionRotation({ alpha: Math.PI / 2 })).toBe(270);
+  });
+
+  it("clamps native pitch and roll into deliberate gimbal tilt", () => {
+    expect(clampedCompassGimbalTilt({ alpha: 0, beta: Math.PI, gamma: -Math.PI })).toEqual({
+      pitchDegrees: 16,
+      rollDegrees: -16,
+    });
+    expect(clampedCompassGimbalTilt({ alpha: 0, beta: Math.PI / 12, gamma: Math.PI / 18 })).toEqual({
+      pitchDegrees: 15,
+      rollDegrees: 10,
+    });
   });
 
   it("rotates through the shortest compass path across north", () => {

@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type ViewStyle,
 } from "react-native";
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
@@ -18,6 +19,7 @@ import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import Svg, {
   Circle,
   Defs,
+  Ellipse,
   LinearGradient as SvgLinearGradient,
   Line,
   Path,
@@ -31,6 +33,7 @@ import {
   COMPASS_ROTATION_RANGE_DEGREES,
   COMPASS_SENSOR_INTERVAL_MS,
   COMPASS_UI_REFRESH_INTERVAL_MS,
+  clampedCompassGimbalTilt,
   formatHeading,
   headingFromDeviceMotionRotation,
   magneticStrength,
@@ -91,7 +94,7 @@ const compassTicks = Array.from({ length: 24 }, (_, index) => {
 
 export default function App() {
   const adminAuth = useCognitoAdminAuth();
-  const { heading, needleRotation, sensorSource, vector } = useLiveCompass();
+  const { gimbalTiltTransform, heading, needleRotation, sensorSource, vector } = useLiveCompass();
   const strength = useMemo(() => magneticStrength(vector), [vector]);
   const topGutter = useMemo(
     () => topChromeGutter(Platform.OS, NativeStatusBar.currentHeight),
@@ -124,7 +127,7 @@ export default function App() {
               </View>
             </View>
 
-            <CompassDial needleRotation={needleRotation} />
+            <CompassDial gimbalTiltTransform={gimbalTiltTransform} needleRotation={needleRotation} />
 
             <View style={styles.metricGrid}>
               <Metric label="Magnetic field" value={`${strength.toFixed(1)} uT`} />
@@ -232,83 +235,120 @@ function CaptainHat({ size = 120 }: { size?: number }) {
   );
 }
 
-function CompassDial({ needleRotation }: { needleRotation: ReturnType<Animated.Value["interpolate"]> }) {
+function CompassDial({
+  gimbalTiltTransform,
+  needleRotation,
+}: {
+  gimbalTiltTransform: ViewStyle["transform"];
+  needleRotation: ReturnType<Animated.Value["interpolate"]>;
+}) {
   return (
-    <View style={styles.compassWrap}>
-      <Svg width="100%" height="100%" viewBox="0 0 280 280" accessibilityLabel="Compass bearing dial">
-        <Defs>
-          <SvgLinearGradient id="dial" x1="0" x2="1" y1="0" y2="1">
-            <Stop offset="0" stopColor="#103f42" />
-            <Stop offset="1" stopColor="#061413" />
-          </SvgLinearGradient>
-        </Defs>
-        <Circle cx="140" cy="140" r="132" fill="url(#dial)" stroke="#3ce8d2" strokeWidth="2" opacity={0.96} />
-        <Circle cx="140" cy="140" r="102" fill="#071918" stroke="#244d4b" strokeWidth="1" />
-        {compassTicks.map((tick) => (
-          <Line
-            key={tick.degrees}
-            x1={tick.x1}
-            y1={tick.y1}
-            x2={tick.x2}
-            y2={tick.y2}
-            stroke={tick.major ? "#f8c660" : "#6fc9c1"}
-            strokeLinecap="round"
-            strokeWidth={tick.major ? 3 : 1.4}
-          />
-        ))}
-        <SvgText
-          x="140"
-          y="42"
-          fill="#fbfff8"
-          fontFamily="System"
-          fontSize="24"
-          fontWeight="700"
-          textAnchor="middle"
+    <View style={styles.compassStage}>
+      <View accessibilityLabel="Orient north" pointerEvents="none" style={styles.lubberLine}>
+        <View style={styles.lubberTriangle} />
+      </View>
+      <Animated.View style={[styles.compassWrap, styles.compassGimbal, { transform: gimbalTiltTransform }]}>
+        <View pointerEvents="none" style={styles.liquidCompassLayer} />
+        <Svg width="100%" height="100%" viewBox="0 0 280 280" accessibilityLabel="Compass bearing dial">
+          <Defs>
+            <SvgLinearGradient id="outerBrass" x1="0" x2="1" y1="0" y2="1">
+              <Stop offset="0" stopColor="#f5d47a" />
+              <Stop offset="0.42" stopColor="#9a6c2c" />
+              <Stop offset="1" stopColor="#342414" />
+            </SvgLinearGradient>
+            <SvgLinearGradient id="liquidDial" x1="0" x2="1" y1="0" y2="1">
+              <Stop offset="0" stopColor="#1b5f62" />
+              <Stop offset="0.48" stopColor="#082625" />
+              <Stop offset="1" stopColor="#020b0a" />
+            </SvgLinearGradient>
+            <SvgLinearGradient id="glassFlash" x1="0" x2="1" y1="0" y2="1">
+              <Stop offset="0" stopColor="#ffffff" stopOpacity={0.44} />
+              <Stop offset="1" stopColor="#ffffff" stopOpacity={0.02} />
+            </SvgLinearGradient>
+          </Defs>
+          <Circle cx="140" cy="140" r="135" fill="url(#outerBrass)" stroke="#f7d98d" strokeWidth="2" opacity={0.98} />
+          <Circle cx="140" cy="140" r="126" fill="#24180e" stroke="#d6a14c" strokeWidth="2" />
+          <Circle cx="140" cy="140" r="116" fill="url(#liquidDial)" stroke="#53e2d2" strokeWidth="1.6" opacity={0.97} />
+          <Circle cx="140" cy="140" r="97" fill="#061615" stroke="#1e5655" strokeWidth="1" />
+          {compassTicks.map((tick) => (
+            <Line
+              key={tick.degrees}
+              x1={tick.x1}
+              y1={tick.y1}
+              x2={tick.x2}
+              y2={tick.y2}
+              stroke={tick.major ? "#f8c660" : "#6fc9c1"}
+              strokeLinecap="round"
+              strokeWidth={tick.major ? 3 : 1.4}
+            />
+          ))}
+          <SvgText
+            x="140"
+            y="58"
+            fill="#fbfff8"
+            fontFamily="System"
+            fontSize="24"
+            fontWeight="700"
+            textAnchor="middle"
+          >
+            N
+          </SvgText>
+          <SvgText
+            x="140"
+            y="252"
+            fill="#b0c7c1"
+            fontFamily="System"
+            fontSize="18"
+            fontWeight="700"
+            textAnchor="middle"
+          >
+            S
+          </SvgText>
+          <SvgText
+            x="246"
+            y="148"
+            fill="#b0c7c1"
+            fontFamily="System"
+            fontSize="18"
+            fontWeight="700"
+            textAnchor="middle"
+          >
+            E
+          </SvgText>
+          <SvgText
+            x="34"
+            y="148"
+            fill="#b0c7c1"
+            fontFamily="System"
+            fontSize="18"
+            fontWeight="700"
+            textAnchor="middle"
+          >
+            W
+          </SvgText>
+        </Svg>
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.needleLayer, { transform: [{ rotate: needleRotation }] }]}
         >
-          N
-        </SvgText>
-        <SvgText
-          x="140"
-          y="252"
-          fill="#b0c7c1"
-          fontFamily="System"
-          fontSize="18"
-          fontWeight="700"
-          textAnchor="middle"
+          <Svg width="100%" height="100%" viewBox="0 0 280 280" accessibilityLabel="Compass needle">
+            <Path d="M140 37 L169 142 L140 126 L111 142 Z" fill="#ff4f64" stroke="#ffc1cd" strokeWidth="1.2" />
+            <Path d="M140 243 L111 142 L140 155 L169 142 Z" fill="#5eead4" opacity={0.9} />
+            <Circle cx="140" cy="140" r="15" fill="#f7efd0" stroke="#110c08" strokeWidth="5" />
+            <Circle cx="140" cy="140" r="6" fill="#d7aa56" />
+          </Svg>
+        </Animated.View>
+        <Svg
+          pointerEvents="none"
+          width="100%"
+          height="100%"
+          viewBox="0 0 280 280"
+          style={styles.glassLayer}
+          accessibilityLabel="Compass glass"
         >
-          S
-        </SvgText>
-        <SvgText
-          x="246"
-          y="148"
-          fill="#b0c7c1"
-          fontFamily="System"
-          fontSize="18"
-          fontWeight="700"
-          textAnchor="middle"
-        >
-          E
-        </SvgText>
-        <SvgText
-          x="34"
-          y="148"
-          fill="#b0c7c1"
-          fontFamily="System"
-          fontSize="18"
-          fontWeight="700"
-          textAnchor="middle"
-        >
-          W
-        </SvgText>
-      </Svg>
-      <Animated.View
-        pointerEvents="none"
-        style={[styles.needleLayer, { transform: [{ rotate: needleRotation }] }]}
-      >
-        <Svg width="100%" height="100%" viewBox="0 0 280 280" accessibilityLabel="Compass needle">
-          <Path d="M140 48 L155 142 L140 131 L125 142 Z" fill="#ff5c7a" />
-          <Path d="M140 232 L125 142 L140 151 L155 142 Z" fill="#55f0df" opacity={0.92} />
-          <Circle cx="140" cy="140" r="12" fill="#f7f0d1" stroke="#081716" strokeWidth="4" />
+          <Ellipse cx="112" cy="84" rx="76" ry="24" fill="#ffffff" opacity={0.22} />
+          <Circle cx="196" cy="83" r="4" fill="#d9fff8" opacity={0.42} />
+          <Circle cx="207" cy="98" r="2.5" fill="#d9fff8" opacity={0.34} />
         </Svg>
       </Animated.View>
     </View>
@@ -439,6 +479,8 @@ function useLiveCompass() {
   const [heading, setHeading] = useState(initialHeading);
   const [sensorSource, setSensorSource] = useState<CompassSensorSource>("seeking");
   const rotation = useRef(new Animated.Value(initialHeading)).current;
+  const tiltPitch = useRef(new Animated.Value(0)).current;
+  const tiltRoll = useRef(new Animated.Value(0)).current;
   const continuousHeading = useRef(initialHeading);
   const lastUiRefresh = useRef(0);
   const lastMagneticFieldRefresh = useRef(0);
@@ -451,6 +493,27 @@ function useLiveCompass() {
         outputRange: [`-${COMPASS_ROTATION_RANGE_DEGREES}deg`, `${COMPASS_ROTATION_RANGE_DEGREES}deg`],
       }),
     [rotation],
+  );
+  const gimbalTiltTransform = useMemo(
+    () =>
+      [
+        { perspective: 760 },
+        {
+          rotateX: tiltPitch.interpolate({
+            extrapolate: "clamp",
+            inputRange: [-16, 16],
+            outputRange: ["-16deg", "16deg"],
+          }),
+        },
+        {
+          rotateY: tiltRoll.interpolate({
+            extrapolate: "clamp",
+            inputRange: [-16, 16],
+            outputRange: ["-16deg", "16deg"],
+          }),
+        },
+      ] as ViewStyle["transform"],
+    [tiltPitch, tiltRoll],
   );
 
   const animateNeedleToHeading = useCallback(
@@ -539,6 +602,9 @@ function useLiveCompass() {
         DeviceMotion.setUpdateInterval(COMPASS_SENSOR_INTERVAL_MS);
         motionSubscription = DeviceMotion.addListener((reading) => {
           if (reading.rotation) {
+            const tilt = clampedCompassGimbalTilt(reading.rotation);
+            tiltPitch.setValue(tilt.pitchDegrees);
+            tiltRoll.setValue(tilt.rollDegrees);
             updateHeading(headingFromDeviceMotionRotation(reading.rotation));
           }
         });
@@ -556,9 +622,9 @@ function useLiveCompass() {
       motionSubscription?.remove();
       magnetometerSubscription?.remove();
     };
-  }, [animateNeedleToHeading]);
+  }, [animateNeedleToHeading, tiltPitch, tiltRoll]);
 
-  return { heading, needleRotation, sensorSource, vector };
+  return { gimbalTiltTransform, heading, needleRotation, sensorSource, vector };
 }
 
 const styles = StyleSheet.create({
@@ -646,14 +712,57 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
   },
-  compassWrap: {
+  compassStage: {
     alignSelf: "center",
     aspectRatio: 1,
     maxWidth: 252,
     position: "relative",
     width: "100%",
   },
+  compassWrap: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 999,
+  },
+  compassGimbal: {
+    shadowColor: "#d9a34f",
+    shadowOffset: { height: 16, width: 0 },
+    shadowOpacity: 0.22,
+    shadowRadius: 24,
+  },
+  liquidCompassLayer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(51, 230, 211, 0.05)",
+    borderColor: "rgba(245, 210, 122, 0.44)",
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  lubberLine: {
+    alignItems: "center",
+    alignSelf: "center",
+    height: 38,
+    position: "absolute",
+    top: -8,
+    width: 52,
+    zIndex: 3,
+  },
+  lubberTriangle: {
+    borderLeftColor: "transparent",
+    borderLeftWidth: 13,
+    borderRightColor: "transparent",
+    borderRightWidth: 13,
+    borderTopColor: "#ff4f64",
+    borderTopWidth: 26,
+    height: 0,
+    shadowColor: "#ff4f64",
+    shadowOffset: { height: 0, width: 0 },
+    shadowOpacity: 0.64,
+    shadowRadius: 8,
+    width: 0,
+  },
   needleLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  glassLayer: {
     ...StyleSheet.absoluteFillObject,
   },
   metricGrid: {

@@ -6,6 +6,8 @@ export type MagneticVector = {
 
 export type DeviceMotionRotation = {
   alpha: number;
+  beta?: number;
+  gamma?: number;
 };
 
 export type AuthMethod = {
@@ -20,6 +22,7 @@ export const COMPASS_SENSOR_INTERVAL_MS = 16;
 export const COMPASS_UI_REFRESH_INTERVAL_MS = 16;
 export const COMPASS_NEEDLE_RESPONSE_MS = 0;
 export const COMPASS_ROTATION_RANGE_DEGREES = 36000;
+export const COMPASS_GIMBAL_MAX_TILT_DEGREES = 16;
 
 export const AUTH_METHODS: AuthMethod[] = [
   {
@@ -60,6 +63,24 @@ export function headingFromMagnetometer(vector: MagneticVector): number {
 
 export function headingFromDeviceMotionRotation(rotation: DeviceMotionRotation): number {
   return normalizeDegrees((-rotation.alpha * 180) / Math.PI);
+}
+
+export function clampedCompassGimbalTilt(rotation: DeviceMotionRotation): {
+  pitchDegrees: number;
+  rollDegrees: number;
+} {
+  return {
+    pitchDegrees: clampTilt(radiansToDegrees(rotation.beta ?? 0)),
+    rollDegrees: clampTilt(radiansToDegrees(rotation.gamma ?? 0)),
+  };
+}
+
+function radiansToDegrees(value: number): number {
+  return (value * 180) / Math.PI;
+}
+
+function clampTilt(value: number): number {
+  return Math.max(-COMPASS_GIMBAL_MAX_TILT_DEGREES, Math.min(COMPASS_GIMBAL_MAX_TILT_DEGREES, Math.round(value)));
 }
 
 export function shortestCompassDelta(fromDegrees: number, toDegrees: number): number {

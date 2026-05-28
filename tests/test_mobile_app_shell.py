@@ -28,3 +28,13 @@ def test_mobile_landing_removes_starter_copy_and_button_game() -> None:
     assert "signalRow" not in app_tsx
     assert "signalPulse" not in app_tsx
     assert "FeaturePanel" in app_tsx
+
+
+def test_mobile_compass_has_steampunk_gimbaled_instrument_details() -> None:
+    app_tsx = Path("mobile/App.tsx").read_text(encoding="utf-8")
+
+    assert "gimbalTiltTransform" in app_tsx
+    assert "liquidCompassLayer" in app_tsx
+    assert "lubberLine" in app_tsx
+    assert "Orient north" in app_tsx
+    assert "brass" in app_tsx.lower()

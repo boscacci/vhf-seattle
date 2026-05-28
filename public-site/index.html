@@ -25,6 +25,9 @@
         <button class="tab" id="tab-live" type="button" data-tab="live">
           Live Monitor
         </button>
+        <button class="tab" id="tab-map" type="button" data-tab="map">
+          AIS Map
+        </button>
         <button class="tab" id="tab-language" type="button" data-tab="language" hidden>
           Analysis
         </button>
@@ -104,6 +107,17 @@
             </div>
           </article>
         </div>
+      </section>
+
+      <section class="tab-panel" id="panel-map" aria-labelledby="tab-map" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Vessel traffic</p>
+            <h2>Elliott Bay AIS Map</h2>
+          </div>
+          <p id="map-status" class="status-text" aria-live="polite">Loading AIS...</p>
+        </div>
+        <div id="ais-map-dashboard" class="map-dashboard"></div>
       </section>
 
       <section class="tab-panel" id="panel-language" aria-labelledby="tab-language" hidden>
