@@ -352,6 +352,8 @@ Speech cleanup is on by default and runs before the edge detector, so uploaded
 clips and live debug audio use the same filtered PCM. When Pi activity uploads
 encode MP3s, the upload encoder also applies the speech filter plus compression
 and loudness normalization before sending clips to the OptiPlex for transcription.
+The active rtl_airband spool uploader uses the same upload filter before it
+presigns and uploads completed `/opt/talkingboats/spool/airband` clips.
 That keeps the private raw upload closer to the audio the public site will play
 instead of waiting for export-time processing. The uploaded-clip and live caption
 transcribers also use the same pre-transcription cleanup before Whisper: 16 kHz

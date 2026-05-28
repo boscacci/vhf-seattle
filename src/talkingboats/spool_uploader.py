@@ -4,12 +4,18 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
+import tempfile
 import time
 import urllib.request
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
+
+from talkingboats.audio_processing import build_ffmpeg_upload_mp3_command
 
 ALLOWED_CHANNELS = {"05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74"}
 CONTENT_TYPES = {
@@ -42,6 +48,10 @@ class UploadResult:
     bucket: str
     key: str
     bytes_uploaded: int
+
+
+UploadFunc = Callable[..., UploadResult]
+Runner = Callable[..., object]
 
 
 def infer_spool_channel(path: Path) -> Channel:
@@ -136,26 +146,80 @@ def process_spool_once(
     ingest_token: str,
     min_age_seconds: float,
     delete_after_upload: bool,
+    now: datetime | None = None,
+    stat_func=None,
+    upload_func: UploadFunc = upload_spooled_clip,
+    audio_filter: str | None = None,
+    mp3_bitrate: str = "64k",
+    ffmpeg_path: str = "ffmpeg",
+    runner: Runner = subprocess.run,
 ) -> int:
     uploaded = 0
-    now = datetime.now(UTC)
+    now = now or datetime.now(UTC)
     for clip in discover_completed_audio_files(
         spool_root=spool_root,
         now=now,
         min_age_seconds=min_age_seconds,
+        stat_func=stat_func,
     ):
-        result = upload_spooled_clip(api_url=api_url, ingest_token=ingest_token, clip=clip)
+        with prepared_spooled_clip_for_upload(
+            clip,
+            audio_filter=audio_filter,
+            mp3_bitrate=mp3_bitrate,
+            ffmpeg_path=ffmpeg_path,
+            runner=runner,
+        ) as upload_clip:
+            result = upload_func(api_url=api_url, ingest_token=ingest_token, clip=upload_clip)
         uploaded += 1
         _log_event(
             "spool_clip_uploaded",
             channel=clip.channel,
             audio_file=clip.audio_path.name,
+            uploaded_audio_file=upload_clip.audio_path.name,
             key=result.key,
             bytes_uploaded=result.bytes_uploaded,
         )
         if delete_after_upload:
             clip.audio_path.unlink(missing_ok=True)
     return uploaded
+
+
+@contextmanager
+def prepared_spooled_clip_for_upload(
+    clip: SpooledAudioClip,
+    *,
+    audio_filter: str | None,
+    mp3_bitrate: str = "64k",
+    ffmpeg_path: str = "ffmpeg",
+    runner: Runner = subprocess.run,
+) -> Iterator[SpooledAudioClip]:
+    resolved_filter = _optional_audio_filter(audio_filter)
+    if resolved_filter is None:
+        yield clip
+        return
+
+    with tempfile.TemporaryDirectory(prefix="talkingboats-spool-upload-") as tempdir:
+        upload_path = Path(tempdir) / f"{clip.audio_path.stem}-edge.mp3"
+        runner(
+            build_ffmpeg_upload_mp3_command(
+                clip.audio_path,
+                upload_path,
+                bitrate=mp3_bitrate,
+                audio_filter=resolved_filter,
+                ffmpeg_path=ffmpeg_path,
+            ),
+            check=True,
+        )
+        yield replace(
+            clip,
+            audio_path=upload_path,
+            content_type="audio/mpeg",
+            idempotency_key=_idempotency_key(
+                channel=clip.channel,
+                started_at=clip.started_at,
+                path=upload_path,
+            ),
+        )
 
 
 def main() -> None:
@@ -165,6 +229,18 @@ def main() -> None:
     parser.add_argument("--ingest-token", default=os.getenv("TALKINGBOATS_INGEST_TOKEN", ""))
     parser.add_argument("--min-age-seconds", type=float, default=10.0)
     parser.add_argument("--poll-seconds", type=float, default=20.0)
+    parser.add_argument(
+        "--audio-filter",
+        default=os.getenv("TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER"),
+    )
+    parser.add_argument(
+        "--mp3-bitrate",
+        default=os.getenv("TALKINGBOATS_EDGE_UPLOAD_BITRATE", "64k"),
+    )
+    parser.add_argument(
+        "--ffmpeg-path",
+        default=os.getenv("TALKINGBOATS_EDGE_UPLOAD_FFMPEG_PATH", "ffmpeg"),
+    )
     parser.add_argument("--delete-after-upload", action="store_true")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
@@ -182,6 +258,9 @@ def main() -> None:
                 ingest_token=args.ingest_token,
                 min_age_seconds=args.min_age_seconds,
                 delete_after_upload=args.delete_after_upload,
+                audio_filter=args.audio_filter,
+                mp3_bitrate=args.mp3_bitrate,
+                ffmpeg_path=args.ffmpeg_path,
             )
             _log_event("spool_uploader_poll", uploaded=uploaded)
         except Exception as exc:  # noqa: BLE001 - keep daemon retrying.
@@ -204,6 +283,15 @@ def _started_at_from_filename(path: Path) -> datetime | None:
 def _idempotency_key(*, channel: str, started_at: datetime, path: Path) -> str:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     return f"spool-v1:{channel}:{_format_utc(started_at)}:{digest}"
+
+
+def _optional_audio_filter(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped or stripped.lower() in {"0", "false", "no", "none", "off", "disabled"}:
+        return None
+    return stripped
 
 
 def _format_utc(value: datetime) -> str:
