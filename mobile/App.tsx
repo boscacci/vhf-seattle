@@ -13,7 +13,6 @@ import {
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
 import { DeviceMotion, Magnetometer } from "expo-sensors";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import Svg, {
@@ -61,6 +60,20 @@ type AdminSession = {
   isSuperAdmin: true;
 };
 
+const FEATURE_CARDS = [
+  {
+    id: "compass",
+    label: "Compass",
+    caption: "Fast bearing",
+  },
+  {
+    id: "cognito",
+    label: "Cognito",
+    caption: "Admin login",
+  },
+  ...AUTH_METHODS,
+];
+
 const compassTicks = Array.from({ length: 24 }, (_, index) => {
   const degrees = index * 15;
   const radians = (degrees - 90) * (Math.PI / 180);
@@ -79,18 +92,12 @@ const compassTicks = Array.from({ length: 24 }, (_, index) => {
 export default function App() {
   const adminAuth = useCognitoAdminAuth();
   const { heading, needleRotation, sensorSource, vector } = useLiveCompass();
-  const [signalPulse, setSignalPulse] = useState(0);
   const strength = useMemo(() => magneticStrength(vector), [vector]);
   const topGutter = useMemo(
     () => topChromeGutter(Platform.OS, NativeStatusBar.currentHeight),
     [],
   );
   const sensorLabel = compassSensorLabel(sensorSource);
-
-  function pingBridge() {
-    setSignalPulse((value) => value + 1);
-    Haptics.selectionAsync().catch(() => undefined);
-  }
 
   return (
     <LinearGradient colors={["#041411", "#071f24", "#100f1c"]} style={styles.shell}>
@@ -102,18 +109,8 @@ export default function App() {
               <Text style={styles.eyebrow}>Elliott Bay</Text>
               <Text style={styles.title}>VHF Mobile</Text>
             </View>
-            <View style={styles.versionBadge}>
-              <Text style={styles.versionText}>Dev shell</Text>
-            </View>
+            <CaptainHat size={72} />
           </View>
-
-          <LinearGradient colors={["#123c36", "#0a272d"]} style={styles.captainPanel}>
-            <CaptainHat />
-            <View style={styles.captainCopy}>
-              <Text style={styles.panelLabel}>Hello world</Text>
-              <Text style={styles.panelTitle}>Harbor watch in your hand</Text>
-            </View>
-          </LinearGradient>
 
           <View style={styles.compassPanel}>
             <View style={styles.panelHeader}>
@@ -135,21 +132,8 @@ export default function App() {
             </View>
           </View>
 
-          <View style={styles.signalRow}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={pingBridge}
-              style={({ pressed }) => [styles.signalButton, pressed && styles.signalButtonPressed]}
-            >
-              <Text style={styles.signalButtonText}>Tap the bridge</Text>
-            </Pressable>
-            <View style={styles.signalCount}>
-              <Text style={styles.signalCountValue}>{signalPulse}</Text>
-              <Text style={styles.signalCountLabel}>pulses</Text>
-            </View>
-          </View>
-
           <AuthPanel adminAuth={adminAuth} />
+          <FeaturePanel />
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
@@ -194,18 +178,25 @@ function AuthPanel({ adminAuth }: { adminAuth: ReturnType<typeof useCognitoAdmin
           <Text style={styles.adminEmail}>{session.email}</Text>
           <Text style={styles.adminRole}>super-admins</Text>
         </View>
-      ) : (
-        <View style={styles.authGrid}>
-          {AUTH_METHODS.map((method) => (
-            <View key={method.id} style={styles.authCard}>
-              <Text style={styles.authLabel}>{method.label}</Text>
-              <Text style={styles.authCaption}>{method.caption}</Text>
-            </View>
-          ))}
-        </View>
-      )}
+      ) : null}
 
       {error ? <Text style={styles.authError}>{error}</Text> : null}
+    </View>
+  );
+}
+
+function FeaturePanel() {
+  return (
+    <View style={styles.featurePanel}>
+      <Text style={styles.panelLabel}>Features</Text>
+      <View style={styles.featureGrid}>
+        {FEATURE_CARDS.map((feature) => (
+          <View key={feature.id} style={styles.featureCard}>
+            <Text style={styles.featureLabel}>{feature.label}</Text>
+            <Text style={styles.featureCaption}>{feature.caption}</Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -219,9 +210,9 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CaptainHat() {
+function CaptainHat({ size = 120 }: { size?: number }) {
   return (
-    <Svg width={120} height={92} viewBox="0 0 120 92" accessibilityLabel="Captain hat illustration">
+    <Svg width={size} height={(size * 92) / 120} viewBox="0 0 120 92" accessibilityLabel="Captain hat illustration">
       <Defs>
         <SvgLinearGradient id="hatBand" x1="0" x2="1" y1="0" y2="1">
           <Stop offset="0" stopColor="#f8f2d6" />
@@ -327,14 +318,13 @@ function CompassDial({ needleRotation }: { needleRotation: ReturnType<Animated.V
 function compassSensorLabel(source: CompassSensorSource): string {
   switch (source) {
     case "motion":
-      return "Motion fusion";
     case "magnetometer":
-      return "Magnetometer";
+      return "Live";
     case "demo":
-      return "Compass demo";
+      return "Demo";
     case "seeking":
     default:
-      return "Seeking sensor";
+      return "Starting";
   }
 }
 
@@ -579,6 +569,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
+    ...(Platform.OS === "web" ? { boxSizing: "border-box" as const, width: "100%" as const } : {}),
     gap: 12,
     paddingBottom: 28,
     paddingHorizontal: 18,
@@ -602,48 +593,12 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
   },
-  versionBadge: {
-    backgroundColor: "#143238",
-    borderColor: "#356b70",
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-  },
-  versionText: {
-    color: "#d8fff7",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  captainPanel: {
-    alignItems: "center",
-    borderColor: "#2b5a56",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 14,
-    minHeight: 104,
-    overflow: "hidden",
-    padding: 12,
-  },
-  captainCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
   panelLabel: {
     color: "#9fb8b2",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0,
     textTransform: "uppercase",
-  },
-  panelTitle: {
-    color: "#fbfff8",
-    fontSize: 23,
-    fontWeight: "900",
-    letterSpacing: 0,
-    lineHeight: 27,
-    marginTop: 4,
   },
   compassPanel: {
     backgroundColor: "rgba(6, 22, 22, 0.92)",
@@ -724,47 +679,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "900",
   },
-  signalRow: {
-    alignItems: "stretch",
-    flexDirection: "row",
-    gap: 10,
-  },
-  signalButton: {
-    alignItems: "center",
-    backgroundColor: "#13dec0",
-    borderRadius: 8,
-    flex: 1,
-    justifyContent: "center",
-    minHeight: 58,
-    paddingHorizontal: 16,
-  },
-  signalButtonPressed: {
-    backgroundColor: "#8dffec",
-  },
-  signalButtonText: {
-    color: "#031514",
-    fontSize: 19,
-    fontWeight: "900",
-  },
-  signalCount: {
-    alignItems: "center",
-    backgroundColor: "#181a2a",
-    borderColor: "#37345b",
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: "center",
-    minWidth: 86,
-  },
-  signalCountValue: {
-    color: "#ffd36d",
-    fontSize: 23,
-    fontWeight: "900",
-  },
-  signalCountLabel: {
-    color: "#bdb6d4",
-    fontSize: 12,
-    fontWeight: "800",
-  },
   authPanel: {
     backgroundColor: "rgba(10, 25, 26, 0.9)",
     borderColor: "#254542",
@@ -805,30 +719,6 @@ const styles = StyleSheet.create({
   },
   authStateTextActive: {
     color: "#adfff1",
-  },
-  authGrid: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  authCard: {
-    backgroundColor: "#111d2a",
-    borderColor: "#2e4660",
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    minHeight: 74,
-    padding: 10,
-  },
-  authLabel: {
-    color: "#f4fbff",
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  authCaption: {
-    color: "#a9bfd2",
-    fontSize: 12,
-    fontWeight: "800",
-    marginTop: 6,
   },
   adminCard: {
     backgroundColor: "#0d2a2f",
@@ -876,5 +766,40 @@ const styles = StyleSheet.create({
   },
   authActionTextDisabled: {
     color: "#9eb4bd",
+  },
+  featurePanel: {
+    backgroundColor: "rgba(7, 20, 21, 0.74)",
+    borderColor: "#1b3837",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+    padding: 14,
+  },
+  featureGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  featureCard: {
+    backgroundColor: "#101b27",
+    borderColor: "#2a415c",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexBasis: "47%",
+    flexGrow: 1,
+    minHeight: 68,
+    padding: 10,
+  },
+  featureLabel: {
+    color: "#f4fbff",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  featureCaption: {
+    color: "#a9bfd2",
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 16,
+    marginTop: 5,
   },
 });
