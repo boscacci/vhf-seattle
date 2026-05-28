@@ -6,7 +6,9 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
 
     assert "aws s3 sync" in script
     assert "--delete" not in script
-    assert "public_manifest.json" not in script
+    assert '--exclude "public_manifest.json"' in script
+    assert '--exclude "clips/*"' in script
+    assert '--exclude "analysis/*"' in script
     assert '"/" "/index.html" "/assets/*" "/favicon.svg"' in script
     assert "dev_public_site_bucket" in script
     assert "cloudfront create-invalidation" in script

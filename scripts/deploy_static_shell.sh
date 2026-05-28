@@ -67,6 +67,7 @@ site_source="${2:-public-site}"
 tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
 branch="$(current_git_branch)"
 invalidate_paths=( "/" "/index.html" "/assets/*" "/favicon.svg" )
+sync_excludes=( --exclude "public_manifest.json" --exclude "clips/*" --exclude "analysis/*" )
 
 if [[ ! -d "${site_source}" ]]; then
   echo "Static shell source does not exist: ${site_source}" >&2
@@ -97,7 +98,7 @@ distribution_id="$(cd "${tofu_dir}" && tofu output -raw "${distribution_output}"
 fqdn="$(cd "${tofu_dir}" && tofu output -raw "${fqdn_output}")"
 
 echo "Deploying static shell ${site_source} from ${branch} to ${environment}: https://${fqdn}"
-aws s3 sync "${site_source}" "s3://${bucket}/"
+aws s3 sync "${site_source}" "s3://${bucket}/" "${sync_excludes[@]}"
 aws cloudfront create-invalidation \
   --distribution-id "${distribution_id}" \
   --paths "${invalidate_paths[@]}" \
