@@ -19,6 +19,8 @@ Pi. The Pi should ask the private API for presigned S3 upload URLs.
   publish reviewed static files, and invalidate CloudFront
 - Explicit `Environment` tags on dev/prod buckets, CloudFront distributions,
   certificates, and server IAM policies
+- Dev Cognito user pool for the mobile app. Sign-up is disabled, Rob is the only
+  provisioned user, and the user is assigned to the `super-admins` group.
 
 ## Commands
 
@@ -50,3 +52,15 @@ The deploy helper enforces branch hygiene:
 - prod deploys: clean `main` worktree only
 
 See `docs/deployment-hygiene.md` for the full branch/resource policy.
+
+## Dev Mobile Auth
+
+After `tofu apply`, generate the local Expo auth config:
+
+```bash
+scripts/write_mobile_auth_env.sh
+```
+
+The generated `mobile/.env.local` file is gitignored. The Cognito client is a
+public PKCE client with no secret; never add provider secrets, temporary
+passwords, or local token values to git.

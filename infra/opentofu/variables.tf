@@ -99,3 +99,29 @@ variable "dev_raw_audio_bucket_name" {
   type        = string
   default     = null
 }
+
+variable "dev_admin_email" {
+  description = "Only approved dev Cognito user. This user is provisioned into the super-admins group."
+  type        = string
+  default     = "cinemarob1@gmail.com"
+}
+
+variable "dev_auth_callback_urls" {
+  description = "Allowed OAuth callback URLs for the dev mobile app and local Expo testing."
+  type        = list(string)
+  default = [
+    "elliottbayvhf://auth/callback",
+    "exp://100.125.120.39:8083/--/auth/callback",
+    "http://localhost:8083/auth/callback",
+  ]
+}
+
+variable "dev_auth_logout_urls" {
+  description = "Allowed Cognito logout redirect URLs for the dev mobile app and local Expo testing."
+  type        = list(string)
+  default = [
+    "elliottbayvhf://auth/callback",
+    "exp://100.125.120.39:8083/--/auth/callback",
+    "http://localhost:8083/auth/callback",
+  ]
+}

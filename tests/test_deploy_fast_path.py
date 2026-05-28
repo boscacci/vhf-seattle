@@ -33,6 +33,20 @@ def test_deploy_scripts_fail_fast_when_tofu_outputs_are_missing() -> None:
         assert 'bucket="$(tofu_output_raw "${bucket_output}")"' in script
 
 
+def test_mobile_auth_env_writer_uses_tofu_outputs_and_gitignored_local_file() -> None:
+    script = Path("scripts/write_mobile_auth_env.sh").read_text(encoding="utf-8")
+    gitignore = Path(".gitignore").read_text(encoding="utf-8")
+
+    assert "dev_cognito_domain" in script
+    assert "dev_cognito_mobile_client_id" in script
+    assert "dev_cognito_allowed_email" in script
+    assert "tofu_output_raw_or_default" in script
+    assert "cognito_domain=\"$(tofu_output_raw dev_cognito_domain)\"" in script
+    assert "EXPO_PUBLIC_COGNITO_REDIRECT_URI" in script
+    assert "mobile/.env*" in gitignore
+    assert "*.env.local" in gitignore
+
+
 def test_docker_orchestration_files_cover_optiplex_services_without_secrets() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     compose = Path("compose.yaml").read_text(encoding="utf-8")

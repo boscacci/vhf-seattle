@@ -10,6 +10,8 @@ import {
   Text,
   View,
 } from "react-native";
+import * as AuthSession from "expo-auth-session";
+import * as WebBrowser from "expo-web-browser";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { DeviceMotion, Magnetometer } from "expo-sensors";
@@ -35,7 +37,16 @@ import {
   preciseHeadingFromMagnetometer,
   type MagneticVector,
 } from "./src/compass";
+import {
+  authorizeCognitoClaims,
+  cognitoDiscovery,
+  cognitoLogoutUrl,
+  decodeJwtClaims,
+  readCognitoAuthConfig,
+} from "./src/auth";
 import { topChromeGutter } from "./src/layout";
+
+WebBrowser.maybeCompleteAuthSession();
 
 const initialVector: MagneticVector = { x: 0, y: 1, z: 0 };
 const initialHeading = preciseHeadingFromMagnetometer(initialVector);
@@ -43,6 +54,11 @@ const COMPASS_UI_REFRESH_INTERVAL_MS = 66;
 const MAGNETIC_FIELD_REFRESH_INTERVAL_MS = 100;
 
 type CompassSensorSource = "seeking" | "motion" | "magnetometer" | "demo";
+type AdminSession = {
+  email: string;
+  groups: string[];
+  isSuperAdmin: true;
+};
 
 const compassTicks = Array.from({ length: 24 }, (_, index) => {
   const degrees = index * 15;
@@ -60,6 +76,7 @@ const compassTicks = Array.from({ length: 24 }, (_, index) => {
 });
 
 export default function App() {
+  const adminAuth = useCognitoAdminAuth();
   const { heading, needleRotation, sensorSource, vector } = useLiveCompass();
   const [signalPulse, setSignalPulse] = useState(0);
   const strength = useMemo(() => magneticStrength(vector), [vector]);
@@ -131,20 +148,63 @@ export default function App() {
             </View>
           </View>
 
-          <View style={styles.authPanel}>
-            <Text style={styles.panelLabel}>Access</Text>
-            <View style={styles.authGrid}>
-              {AUTH_METHODS.map((method) => (
-                <View key={method.id} style={styles.authCard}>
-                  <Text style={styles.authLabel}>{method.label}</Text>
-                  <Text style={styles.authCaption}>{method.caption}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
+          <AuthPanel adminAuth={adminAuth} />
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
+  );
+}
+
+function AuthPanel({ adminAuth }: { adminAuth: ReturnType<typeof useCognitoAdminAuth> }) {
+  const { busy, configured, error, session, signIn, signOut } = adminAuth;
+
+  return (
+    <View style={styles.authPanel}>
+      <View style={styles.authHeader}>
+        <View>
+          <Text style={styles.panelLabel}>Access</Text>
+          <Text style={styles.authTitle}>{session ? "Super admin" : "Cognito login"}</Text>
+        </View>
+        <View style={[styles.authStateBadge, session && styles.authStateBadgeActive]}>
+          <Text style={[styles.authStateText, session && styles.authStateTextActive]}>
+            {session ? "Signed in" : configured ? "Ready" : "Missing config"}
+          </Text>
+        </View>
+      </View>
+
+      {session ? (
+        <View style={styles.adminCard}>
+          <Text style={styles.adminEmail}>{session.email}</Text>
+          <Text style={styles.adminRole}>super-admins</Text>
+        </View>
+      ) : (
+        <View style={styles.authGrid}>
+          {AUTH_METHODS.map((method) => (
+            <View key={method.id} style={styles.authCard}>
+              <Text style={styles.authLabel}>{method.label}</Text>
+              <Text style={styles.authCaption}>{method.caption}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {error ? <Text style={styles.authError}>{error}</Text> : null}
+
+      <Pressable
+        accessibilityRole="button"
+        disabled={busy || !configured}
+        onPress={session ? signOut : signIn}
+        style={({ pressed }) => [
+          styles.authAction,
+          (!configured || busy) && styles.authActionDisabled,
+          pressed && configured && styles.authActionPressed,
+        ]}
+      >
+        <Text style={[styles.authActionText, (!configured || busy) && styles.authActionTextDisabled]}>
+          {busy ? "Working..." : session ? "Sign out" : "Sign in"}
+        </Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -274,6 +334,112 @@ function compassSensorLabel(source: CompassSensorSource): string {
     default:
       return "Seeking sensor";
   }
+}
+
+function useCognitoAdminAuth() {
+  const config = useMemo(() => readCognitoAuthConfig(), []);
+  const redirectUri = useMemo(
+    () =>
+      config?.redirectUri ??
+      AuthSession.makeRedirectUri({
+        path: "auth/callback",
+        scheme: "elliottbayvhf",
+      }),
+    [config?.redirectUri],
+  );
+  const discovery = useMemo(() => (config ? cognitoDiscovery(config) : null), [config]);
+  const [session, setSession] = useState<AdminSession | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [authRequest, , promptAsync] = AuthSession.useAuthRequest(
+    {
+      clientId: config?.clientId ?? "missing-cognito-client",
+      redirectUri,
+      responseType: AuthSession.ResponseType.Code,
+      scopes: ["openid", "email", "profile"],
+      usePKCE: true,
+    },
+    discovery,
+  );
+
+  const signIn = useCallback(async () => {
+    if (!config || !discovery || !authRequest) {
+      setError("Cognito is not configured for this build.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await promptAsync();
+      if (result.type !== "success") {
+        setBusy(false);
+        return;
+      }
+
+      const code = result.params.code;
+      if (!code) {
+        throw new Error("Cognito did not return an authorization code.");
+      }
+
+      const tokenResponse = await AuthSession.exchangeCodeAsync(
+        {
+          clientId: config.clientId,
+          code,
+          extraParams: {
+            code_verifier: authRequest.codeVerifier ?? "",
+          },
+          redirectUri,
+        },
+        discovery,
+      );
+      const idToken = tokenResponse.idToken;
+      if (!idToken) {
+        throw new Error("Cognito did not return an ID token.");
+      }
+
+      const authorization = authorizeCognitoClaims(decodeJwtClaims(idToken), config);
+      if (!authorization.ok) {
+        throw new Error(authorization.reason);
+      }
+
+      setSession({
+        email: authorization.email,
+        groups: authorization.groups,
+        isSuperAdmin: authorization.isSuperAdmin,
+      });
+    } catch (authError) {
+      setSession(null);
+      setError(authError instanceof Error ? authError.message : "Cognito sign-in failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, [authRequest, config, discovery, promptAsync, redirectUri]);
+
+  const signOut = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (config) {
+        await WebBrowser.openAuthSessionAsync(cognitoLogoutUrl(config, redirectUri), redirectUri);
+      }
+      setSession(null);
+    } catch (signOutError) {
+      setSession(null);
+      setError(signOutError instanceof Error ? signOutError.message : "Cognito sign-out failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, [config, redirectUri]);
+
+  return {
+    busy,
+    configured: Boolean(config),
+    error,
+    session,
+    signIn,
+    signOut,
+  };
 }
 
 function useLiveCompass() {
@@ -605,6 +771,39 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 14,
   },
+  authHeader: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+  },
+  authTitle: {
+    color: "#fbfff8",
+    fontSize: 22,
+    fontWeight: "900",
+    letterSpacing: 0,
+    marginTop: 4,
+  },
+  authStateBadge: {
+    backgroundColor: "#14232f",
+    borderColor: "#34485e",
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  authStateBadgeActive: {
+    backgroundColor: "#0d302d",
+    borderColor: "#1fbba4",
+  },
+  authStateText: {
+    color: "#adc0cf",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  authStateTextActive: {
+    color: "#adfff1",
+  },
   authGrid: {
     flexDirection: "row",
     gap: 8,
@@ -628,5 +827,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     marginTop: 6,
+  },
+  adminCard: {
+    backgroundColor: "#0d2a2f",
+    borderColor: "#1fbba4",
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+  },
+  adminEmail: {
+    color: "#f6fffb",
+    fontSize: 17,
+    fontWeight: "900",
+    letterSpacing: 0,
+  },
+  adminRole: {
+    color: "#71ead8",
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 5,
+  },
+  authError: {
+    color: "#ffb1a8",
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 18,
+  },
+  authAction: {
+    alignItems: "center",
+    backgroundColor: "#13dec0",
+    borderRadius: 8,
+    justifyContent: "center",
+    minHeight: 52,
+    paddingHorizontal: 14,
+  },
+  authActionDisabled: {
+    backgroundColor: "#25414b",
+  },
+  authActionPressed: {
+    backgroundColor: "#8dffec",
+  },
+  authActionText: {
+    color: "#031514",
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  authActionTextDisabled: {
+    color: "#9eb4bd",
   },
 });

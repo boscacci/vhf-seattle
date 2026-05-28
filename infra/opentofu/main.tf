@@ -40,6 +40,8 @@ locals {
     var.dev_live_origin_https_port,
     var.live_origin_https_port,
   )
+  dev_cognito_domain_prefix = replace("${var.project_name}-${var.dev_resource_site_subdomain}-auth", ".", "-")
+  dev_cognito_domain        = "https://${aws_cognito_user_pool_domain.dev_auth.domain}.auth.${var.aws_region}.amazoncognito.com"
 }
 
 resource "aws_s3_bucket" "public_site" {
@@ -842,4 +844,130 @@ resource "aws_route53_record" "dev_site_aaaa" {
     zone_id                = aws_cloudfront_distribution.dev_site.hosted_zone_id
     evaluate_target_health = false
   }
+}
+
+resource "aws_cognito_user_pool" "dev_auth" {
+  name                     = "${var.project_name}-dev-auth"
+  username_attributes      = ["email"]
+  auto_verified_attributes = ["email"]
+  deletion_protection      = "ACTIVE"
+  user_pool_tier           = "ESSENTIALS"
+
+  admin_create_user_config {
+    allow_admin_create_user_only = true
+  }
+
+  account_recovery_setting {
+    recovery_mechanism {
+      name     = "verified_email"
+      priority = 1
+    }
+  }
+
+  password_policy {
+    minimum_length                   = 14
+    password_history_size            = 5
+    require_lowercase                = true
+    require_numbers                  = true
+    require_symbols                  = true
+    require_uppercase                = true
+    temporary_password_validity_days = 7
+  }
+
+  schema {
+    attribute_data_type = "String"
+    mutable             = true
+    name                = "email"
+    required            = true
+
+    string_attribute_constraints {
+      min_length = "5"
+      max_length = "2048"
+    }
+  }
+
+  sign_in_policy {
+    allowed_first_auth_factors = ["PASSWORD"]
+  }
+
+  web_authn_configuration {
+    relying_party_id  = local.dev_site_fqdn
+    user_verification = "required"
+  }
+
+  tags = {
+    Environment = "dev"
+    Project     = var.project_name
+    Role        = "mobile-auth"
+  }
+}
+
+resource "aws_cognito_user_pool_domain" "dev_auth" {
+  domain                = local.dev_cognito_domain_prefix
+  managed_login_version = 2
+  user_pool_id          = aws_cognito_user_pool.dev_auth.id
+}
+
+resource "aws_cognito_user_pool_client" "dev_mobile" {
+  name                                 = "${var.project_name}-dev-mobile"
+  user_pool_id                         = aws_cognito_user_pool.dev_auth.id
+  generate_secret                      = false
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = ["email", "openid", "profile"]
+  callback_urls                        = var.dev_auth_callback_urls
+  logout_urls                          = var.dev_auth_logout_urls
+  supported_identity_providers         = ["COGNITO"]
+  prevent_user_existence_errors        = "ENABLED"
+  enable_token_revocation              = true
+  access_token_validity                = 1
+  id_token_validity                    = 1
+  refresh_token_validity               = 30
+
+  explicit_auth_flows = [
+    "ALLOW_REFRESH_TOKEN_AUTH",
+    "ALLOW_USER_SRP_AUTH",
+  ]
+
+  read_attributes = [
+    "email",
+    "email_verified",
+  ]
+
+  write_attributes = [
+    "email",
+  ]
+}
+
+resource "aws_cognito_managed_login_branding" "dev_mobile" {
+  client_id                   = aws_cognito_user_pool_client.dev_mobile.id
+  user_pool_id                = aws_cognito_user_pool.dev_auth.id
+  use_cognito_provided_values = true
+
+  depends_on = [aws_cognito_user_pool_domain.dev_auth]
+}
+
+resource "aws_cognito_user_group" "dev_super_admins" {
+  name         = "super-admins"
+  description  = "Full administrative access to the Elliott Bay VHF dev app"
+  precedence   = 0
+  user_pool_id = aws_cognito_user_pool.dev_auth.id
+}
+
+resource "aws_cognito_user" "dev_super_admin" {
+  user_pool_id             = aws_cognito_user_pool.dev_auth.id
+  username                 = var.dev_admin_email
+  desired_delivery_mediums = ["EMAIL"]
+  force_alias_creation     = false
+
+  attributes = {
+    email          = var.dev_admin_email
+    email_verified = "true"
+  }
+}
+
+resource "aws_cognito_user_in_group" "dev_super_admin" {
+  group_name   = aws_cognito_user_group.dev_super_admins.name
+  user_pool_id = aws_cognito_user_pool.dev_auth.id
+  username     = aws_cognito_user.dev_super_admin.username
 }

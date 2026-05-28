@@ -67,3 +67,28 @@ output "dev_server_iam_policy_arn" {
   description = "Attach this policy to the private dev server role/user."
   value       = aws_iam_policy.dev_server_s3_access.arn
 }
+
+output "dev_cognito_user_pool_id" {
+  description = "Dev Cognito user pool ID for mobile login."
+  value       = aws_cognito_user_pool.dev_auth.id
+}
+
+output "dev_cognito_mobile_client_id" {
+  description = "Public dev Cognito OAuth client ID for the mobile app."
+  value       = aws_cognito_user_pool_client.dev_mobile.id
+}
+
+output "dev_cognito_domain" {
+  description = "Dev Cognito hosted login domain."
+  value       = local.dev_cognito_domain
+}
+
+output "dev_cognito_login_url" {
+  description = "Dev Cognito hosted login URL using the first configured callback URL."
+  value       = "${local.dev_cognito_domain}/oauth2/authorize?response_type=code&client_id=${aws_cognito_user_pool_client.dev_mobile.id}&redirect_uri=${urlencode(var.dev_auth_callback_urls[0])}&scope=openid+email+profile"
+}
+
+output "dev_cognito_allowed_email" {
+  description = "Only approved dev Cognito user email."
+  value       = var.dev_admin_email
+}

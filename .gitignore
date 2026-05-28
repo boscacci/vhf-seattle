@@ -1,4 +1,6 @@
 .env
+*.env.local
+mobile/.env*
 config/optiplex.env
 .pytest_cache/
 .ruff_cache/
