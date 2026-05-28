@@ -41,6 +41,7 @@ install -d -m 0755 \
   "${record_root}" \
   "${airband_spool_root}/13" \
   "${airband_spool_root}/14" \
+  "${airband_spool_root}/68" \
   /etc/talkingboats \
   /etc/systemd/system
 
@@ -234,6 +235,7 @@ PYTHONPATH="${app_root}/src" python3 -m talkingboats.capture_profiles \
   --icecast-port "${TALKINGBOATS_ICECAST_PORT:-8000}" \
   --icecast-output "13:/talkingboats-13.mp3:Talking Boats Bridge-to-bridge" \
   --icecast-output "14:${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}:Talking Boats VTS / Seattle Traffic" \
+  --icecast-output "68:/talkingboats-68.mp3:Talking Boats Recreational" \
   --icecast-source-password "${TALKINGBOATS_ICECAST_SOURCE_PASSWORD}" \
   > /etc/talkingboats/rtl_airband-elliott-bay.conf
 chmod 0600 /etc/talkingboats/rtl_airband-elliott-bay.conf
@@ -248,7 +250,7 @@ cat > /etc/icecast2/icecast.xml <<EOF
   <admin>rob@localhost</admin>
   <limits>
     <clients>12</clients>
-    <sources>2</sources>
+    <sources>3</sources>
     <queue-size>524288</queue-size>
     <client-timeout>30</client-timeout>
     <header-timeout>15</header-timeout>
@@ -276,6 +278,11 @@ cat > /etc/icecast2/icecast.xml <<EOF
   </mount>
   <mount type="normal">
     <mount-name>${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-68.mp3</mount-name>
     <public>0</public>
     <burst-size>65535</burst-size>
   </mount>

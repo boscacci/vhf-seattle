@@ -261,6 +261,7 @@ def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) 
     assert manifest["stats"]["channel_labels"] == {
         "13": "Bridge-to-bridge",
         "14": "VTS / Seattle Traffic",
+        "68": "Recreational",
     }
     exported_audio = tmp_path / "output" / "clips" / clip["audio_public_filename"]
     assert processor.calls == [(processor.calls[0][0], exported_audio)]

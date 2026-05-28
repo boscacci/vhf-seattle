@@ -447,6 +447,7 @@ monitored VHF channels. CloudFront routes the public app to:
 https://vhf.robertboscacci.com/api/live/current.mp3
 https://vhf.robertboscacci.com/api/live/13/current.mp3
 https://vhf.robertboscacci.com/api/live/14/current.mp3
+https://vhf.robertboscacci.com/api/live/68/current.mp3
 ```
 
 The CloudFront live origin is configurable with `live_origin_domain_name` and

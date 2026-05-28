@@ -331,6 +331,7 @@ def _default_channel_stream_urls() -> dict[str, tuple[str, ...]]:
             "http://192.168.1.114:8000/talkingboats-live.mp3",
             "http://192.168.1.114:8000/talkingboats-14.mp3",
         ),
+        "68": ("http://192.168.1.114:8000/talkingboats-68.mp3",),
     }
 
 

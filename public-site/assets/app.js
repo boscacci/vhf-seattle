@@ -174,6 +174,13 @@ let liveChannels = [
     streamPath: defaultLiveStreamUrl,
     statusPath: "/api/live/14/status",
   },
+  {
+    channel: "68",
+    label: defaultChannelLabels["68"],
+    frequencyMhz: "156.425",
+    streamPath: "/api/live/68/current.mp3",
+    statusPath: "/api/live/68/status",
+  },
 ];
 let currentChannelLabels = { ...defaultChannelLabels };
 

@@ -28,7 +28,7 @@ CHANNEL_METADATA = {
     "72": ChannelMetadata("72", "Ship-to-ship", 156.625),
     "74": ChannelMetadata("74", "Port Operations", 156.725),
 }
-PUBLIC_MONITORED_CHANNELS = ("13", "14")
+PUBLIC_MONITORED_CHANNELS = ("13", "14", "68")
 
 
 def channel_label(channel: str | None) -> str | None:

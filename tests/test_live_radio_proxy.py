@@ -154,6 +154,23 @@ def test_proxy_lists_live_channels_without_upstream_urls() -> None:
     assert "http://pi.test" not in response.text
 
 
+def test_proxy_default_live_channels_include_recreational_voice_mount() -> None:
+    app = create_app(ProxySettings())
+
+    response = _run(_asgi_get(app, "/api/live/channels"))
+
+    assert response.status_code == 200
+    channels = {channel["channel"]: channel for channel in response.json()["channels"]}
+    assert channels["68"] == {
+        "channel": "68",
+        "label": "Recreational",
+        "frequencyMhz": "156.425",
+        "streamPath": "/api/live/68/current.mp3",
+        "statusPath": "/api/live/68/status",
+    }
+    assert "192.168.1.114" not in response.text
+
+
 def test_proxy_channel_live_stream_uses_requested_mount() -> None:
     requests = []
 

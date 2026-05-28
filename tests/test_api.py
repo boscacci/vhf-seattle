@@ -219,7 +219,11 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
         "limit": 5,
         "offset": 0,
         "channel_counts": {"14": 1},
-        "channel_labels": {"13": "Bridge-to-bridge", "14": "VTS / Seattle Traffic"},
+        "channel_labels": {
+            "13": "Bridge-to-bridge",
+            "14": "VTS / Seattle Traffic",
+            "68": "Recreational",
+        },
     }
 
 

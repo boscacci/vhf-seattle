@@ -64,6 +64,11 @@ CAPTURE_PROFILES = {
                 label=CHANNEL_METADATA["14"].label,
                 frequency_hz=CHANNEL_METADATA["14"].frequency_hz,
             ),
+            CaptureChannel(
+                channel="68",
+                label=CHANNEL_METADATA["68"].label,
+                frequency_hz=CHANNEL_METADATA["68"].frequency_hz,
+            ),
         ),
     ),
 }

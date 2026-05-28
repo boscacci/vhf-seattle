@@ -160,9 +160,11 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
         'Talking Boats VTS / Seattle Traffic"'
         in installer
     )
+    assert '--icecast-output "68:/talkingboats-68.mp3:Talking Boats Recreational"' in installer
     assert "--icecast-source-password" in installer
-    assert "<sources>2</sources>" in installer
+    assert "<sources>3</sources>" in installer
     assert "<mount-name>/talkingboats-13.mp3</mount-name>" in installer
+    assert "<mount-name>/talkingboats-68.mp3</mount-name>" in installer
     assert (
         "<mount-name>${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}</mount-name>"
         in installer
