@@ -71,6 +71,14 @@ ALLOWED_AIS_FIELDS = {
     "observed_at",
 }
 
+ALLOWED_AIS_TRACK_FIELDS = {
+    "track_id",
+    "name",
+    "vessel_type",
+    "channel_hint",
+    "points",
+}
+
 
 class PublicExportError(ValueError):
     pass
@@ -105,6 +113,9 @@ def sanitize_public_manifest(private_manifest: Mapping[str, Any]) -> dict[str, A
         "stats": stats,
         "clips": clips,
     }
+    ais_tracks = _sanitize_ais_tracks(private_manifest.get("ais_tracks"))
+    if ais_tracks:
+        public_manifest["ais_tracks"] = ais_tracks
     assert_public_safe(public_manifest)
     return public_manifest
 
@@ -160,24 +171,34 @@ def export_recent_clip_site(
     store = UploadedClipStore(clip_db_path)
     clips = store.recent_transcribed(limit=limit, excluded_channels=PUBLIC_EXCLUDED_CHANNELS)
 
-    with _preserved_analysis_dir(output_dir) as preserved_analysis:
+    with (
+        _preserved_output_subdir(output_dir, "analysis") as preserved_analysis,
+        _preserved_output_subdir(output_dir, "clips") as preserved_clips,
+    ):
         if output_dir.exists():
             shutil.rmtree(output_dir)
         shutil.copytree(site_source_dir, output_dir)
-        _restore_analysis_dir(output_dir, preserved_analysis)
+        _restore_output_subdir(output_dir, "analysis", preserved_analysis)
+        _restore_output_subdir(output_dir, "clips", preserved_clips)
 
         clips_dir = output_dir / "clips"
         clips_dir.mkdir(exist_ok=True)
         total_clips = len(clips)
         publishable_clips = []
+        used_audio_filenames: set[str] = set()
         for index, source_clip in enumerate(clips, start=1):
             if progress:
                 progress(index, total_clips)
             public_clip = _public_clip_from_recent(source_clip)
             destination = clips_dir / public_clip["audio_public_filename"]
+            if destination.is_file() and destination.stat().st_size > 0:
+                publishable_clips.append(source_clip)
+                used_audio_filenames.add(destination.name)
+                continue
             if clip_audio_processor is None and clip_audio_quality_gate is None:
                 clip_reader.download(source_clip.key, destination)
                 publishable_clips.append(source_clip)
+                used_audio_filenames.add(destination.name)
                 continue
             with tempfile.NamedTemporaryFile(suffix=Path(source_clip.key).suffix) as handle:
                 raw_clip_path = Path(handle.name)
@@ -194,6 +215,8 @@ def export_recent_clip_site(
                 else:
                     clip_audio_processor(raw_clip_path, destination)
                 publishable_clips.append(source_clip)
+                used_audio_filenames.add(destination.name)
+        _remove_unused_public_audio(clips_dir, used_audio_filenames)
 
         public_manifest = _recent_clip_manifest(publishable_clips)
         (output_dir / "public_manifest.json").write_text(
@@ -203,18 +226,19 @@ def export_recent_clip_site(
     return public_manifest
 
 
-class _preserved_analysis_dir:
-    def __init__(self, output_dir: Path) -> None:
+class _preserved_output_subdir:
+    def __init__(self, output_dir: Path, name: str) -> None:
         self.output_dir = output_dir
+        self.name = name
         self._tempdir: tempfile.TemporaryDirectory[str] | None = None
         self.path: Path | None = None
 
     def __enter__(self) -> Path | None:
-        source = self.output_dir / "analysis"
+        source = self.output_dir / self.name
         if not source.exists():
             return None
         self._tempdir = tempfile.TemporaryDirectory()
-        self.path = Path(self._tempdir.name) / "analysis"
+        self.path = Path(self._tempdir.name) / self.name
         shutil.copytree(source, self.path)
         return self.path
 
@@ -223,13 +247,27 @@ class _preserved_analysis_dir:
             self._tempdir.cleanup()
 
 
+def _preserved_analysis_dir(output_dir: Path) -> _preserved_output_subdir:
+    return _preserved_output_subdir(output_dir, "analysis")
+
+
 def _restore_analysis_dir(output_dir: Path, preserved_analysis: Path | None) -> None:
-    if preserved_analysis is None:
+    _restore_output_subdir(output_dir, "analysis", preserved_analysis)
+
+
+def _restore_output_subdir(output_dir: Path, name: str, preserved_path: Path | None) -> None:
+    if preserved_path is None:
         return
-    destination = output_dir / "analysis"
+    destination = output_dir / name
     if destination.exists():
         shutil.rmtree(destination)
-    shutil.copytree(preserved_analysis, destination)
+    shutil.copytree(preserved_path, destination)
+
+
+def _remove_unused_public_audio(clips_dir: Path, used_filenames: set[str]) -> None:
+    for path in clips_dir.iterdir():
+        if path.is_file() and path.name not in used_filenames:
+            path.unlink()
 
 
 def _sanitize_clip(clip: Mapping[str, Any]) -> dict[str, Any]:
@@ -266,6 +304,30 @@ def _copy_allowed(source: Any, allowed_fields: set[str]) -> dict[str, Any]:
     if not isinstance(source, Mapping):
         raise PublicExportError("expected object")
     return {field: source[field] for field in allowed_fields if field in source}
+
+
+def _sanitize_ais_tracks(source: object) -> list[dict[str, Any]]:
+    if source is None:
+        return []
+    if not isinstance(source, list):
+        raise PublicExportError("ais_tracks must be a list")
+    tracks = []
+    for track in source:
+        if not isinstance(track, Mapping):
+            raise PublicExportError("ais_tracks must contain objects")
+        sanitized = _copy_allowed(track, ALLOWED_AIS_TRACK_FIELDS)
+        points = sanitized.get("points")
+        if not isinstance(points, list):
+            continue
+        sanitized_points = []
+        for point in points:
+            if isinstance(point, Mapping):
+                sanitized_points.append(_round_location(_copy_allowed(point, ALLOWED_AIS_FIELDS)))
+        if not sanitized_points:
+            continue
+        sanitized["points"] = sanitized_points
+        tracks.append(sanitized)
+    return tracks
 
 
 def _channel_counts_for_public_clips(clips: list[dict[str, Any]]) -> dict[str, int]:

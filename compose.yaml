@@ -1,0 +1,60 @@
+name: elliott-bay-vhf
+
+x-app: &app
+  build:
+    context: .
+    args:
+      INSTALL_EXTRAS: ${TALKINGBOATS_DOCKER_EXTRAS:-dev,analysis,transcribe}
+  env_file:
+    - config/optiplex.env
+  volumes:
+    - talkingboats-data:/data
+    - ./outputs:/outputs
+    - ./public-site:/app/public-site:ro
+  restart: unless-stopped
+
+services:
+  private-api:
+    <<: *app
+    command: talkingboats-api --host 0.0.0.0 --port 8034
+    ports:
+      - "8034:8034"
+
+  live-proxy:
+    <<: *app
+    command: talkingboats-live-radio-proxy --host 0.0.0.0 --port 8095
+    ports:
+      - "8095:8095"
+    depends_on:
+      - private-api
+
+  uploaded-clip-transcriber:
+    <<: *app
+    profiles: ["transcribe"]
+    command: talkingboats-transcribe-uploaded-clips --db-path /data/live-transcripts.sqlite3
+    depends_on:
+      - private-api
+
+  live-transcriber:
+    <<: *app
+    profiles: ["transcribe"]
+    command: talkingboats-live-transcriber --host 0.0.0.0 --port 8055 --sqlite-path /data/live-transcripts.sqlite3
+    ports:
+      - "8055:8055"
+
+  lexical-refresh:
+    <<: *app
+    profiles: ["jobs"]
+    restart: "no"
+    command: >
+      bash -lc 'talkingboats-analyze-transcripts
+      --db-path /data/live-transcripts.sqlite3
+      --output-dir /outputs/public-site
+      && talkingboats-export-public
+      --clip-db-path /data/live-transcripts.sqlite3
+      --raw-bucket "$${TALKINGBOATS_RAW_BUCKET}"
+      --site-source public-site
+      --output-dir /outputs/public-site'
+
+volumes:
+  talkingboats-data:

@@ -419,11 +419,75 @@ def test_recent_clip_export_preserves_existing_analysis_artifacts(tmp_path: Path
     )
 
 
+def test_recent_clip_export_reuses_existing_public_audio(tmp_path: Path) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    db_path = tmp_path / "clips.sqlite3"
+    store = UploadedClipStore(db_path)
+    request = ClipPresignRequest(
+        channel="14",
+        started_at="2026-05-24T22:08:41Z",
+        ended_at="2026-05-24T22:08:49Z",
+        duration_seconds=8.1,
+        content_type="audio/mpeg",
+        idempotency_key="real-clip",
+    )
+    key = "raw/channel=14/date=2026-05-24/real.mp3"
+    store.record_presigned_upload(key=key, request=request)
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Seattle Traffic roger.",
+                started_at="2026-05-24T22:08:41Z",
+                ended_at="2026-05-24T22:08:49Z",
+            )
+        ],
+    )
+    clip = RecentTranscribedClip(
+        key=key,
+        channel="14",
+        started_at="2026-05-24T22:08:41Z",
+        ended_at="2026-05-24T22:08:49Z",
+        duration_seconds=8.1,
+        content_type="audio/mpeg",
+        transcript="Seattle Traffic roger.",
+        segments=[],
+    )
+    output_dir = tmp_path / "output"
+    clips_dir = output_dir / "clips"
+    clips_dir.mkdir(parents=True)
+    existing_filename = _public_audio_filename(clip)
+    (clips_dir / existing_filename).write_bytes(b"already processed")
+    (clips_dir / "stale.mp3").write_bytes(b"stale")
+    reader = FakeClipReader({key: b"should not be downloaded"})
+    processor = RecordingAudioProcessor()
+
+    manifest = export_recent_clip_site(
+        clip_db_path=db_path,
+        site_source_dir=site_source,
+        output_dir=output_dir,
+        clip_reader=reader,
+        clip_audio_processor=processor,
+        clip_audio_quality_gate=None,
+        limit=10,
+    )
+
+    assert manifest["clips"][0]["audio_public_filename"] == existing_filename
+    assert (output_dir / "clips" / existing_filename).read_bytes() == b"already processed"
+    assert not (output_dir / "clips" / "stale.mp3").exists()
+    assert reader.downloads == []
+    assert processor.calls == []
+
+
 class FakeClipReader:
     def __init__(self, objects: dict[str, bytes]) -> None:
         self.objects = objects
+        self.downloads: list[str] = []
 
     def download(self, key: str, output_path: Path) -> None:
+        self.downloads.append(key)
         output_path.write_bytes(self.objects[key])
 
 

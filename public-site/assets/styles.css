@@ -720,6 +720,163 @@ audio {
   padding: 16px;
 }
 
+.channel-bar-list {
+  display: grid;
+  gap: 10px;
+}
+
+.channel-bar-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.54fr) minmax(120px, 1fr) minmax(4ch, auto);
+  gap: 10px;
+  align-items: center;
+  min-height: 38px;
+}
+
+.channel-bar-label {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 850;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.channel-bar-track {
+  display: block;
+  height: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.channel-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--channel-color, var(--teal));
+  box-shadow: 0 0 16px color-mix(in srgb, var(--channel-color, var(--teal)), transparent 48%);
+}
+
+.channel-bar-count {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.vessel-map-panel {
+  overflow: hidden;
+}
+
+.nautical-map {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.nautical-map-svg {
+  display: block;
+  width: 100%;
+  aspect-ratio: 640 / 420;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #092a2e;
+}
+
+.nautical-water {
+  fill: #092a2e;
+}
+
+.nautical-shoreline {
+  fill: #1f352c;
+  stroke: #4f735f;
+  stroke-width: 2;
+}
+
+.nautical-harbor {
+  fill: #263f35;
+  stroke: #6e8d74;
+  stroke-width: 1.4;
+  opacity: 0.94;
+}
+
+.nautical-traffic-lane {
+  fill: none;
+  stroke: rgba(240, 184, 90, 0.42);
+  stroke-dasharray: 10 10;
+  stroke-linecap: round;
+  stroke-width: 3;
+}
+
+.nautical-gridline {
+  stroke: rgba(159, 177, 170, 0.16);
+  stroke-width: 1;
+}
+
+.nautical-label {
+  fill: rgba(242, 247, 244, 0.72);
+  font-size: 13px;
+  font-weight: 850;
+  paint-order: stroke;
+  stroke: rgba(7, 17, 15, 0.82);
+  stroke-width: 3px;
+}
+
+.vessel-track {
+  fill: none;
+  stroke: var(--channel-color, var(--teal));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+  opacity: 0.82;
+}
+
+.vessel-marker path {
+  fill: var(--channel-color, var(--teal));
+  stroke: #06110f;
+  stroke-width: 2;
+}
+
+.vessel-map-caption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.vessel-map-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.vessel-map-legend-item span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vessel-map-legend-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--channel-color, var(--teal));
+}
+
 .performance-host {
   display: grid;
   gap: 10px;
@@ -1108,6 +1265,15 @@ audio {
 
   .guide-card-body {
     grid-template-columns: 1fr;
+  }
+
+  .channel-bar-row {
+    grid-template-columns: minmax(0, 1fr) minmax(4ch, auto);
+  }
+
+  .channel-bar-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .stats {

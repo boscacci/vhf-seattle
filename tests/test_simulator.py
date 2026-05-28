@@ -48,7 +48,10 @@ def test_simulator_fixture_can_drive_public_export_without_private_leaks(tmp_pat
     rendered = json.dumps(public_manifest)
 
     assert public_manifest["stats"]["clip_count"] == 4
-    assert "ais_tracks" not in public_manifest
+    assert len(public_manifest["ais_tracks"]) > 0
+    assert "receiver_id" not in json.dumps(public_manifest["ais_tracks"])
+    assert "private_s3_key" not in json.dumps(public_manifest["ais_tracks"])
+    assert "points" in public_manifest["ais_tracks"][0]
     assert "private_s3_key" not in rendered
     assert "receiver_id" not in rendered
     assert "raw/channel=" not in rendered

@@ -324,7 +324,10 @@ async function loadLanguagePayload() {
     if (payload?.status === "missing") {
       return loadPublishedLanguagePayload();
     }
-    return payload;
+    return {
+      ...payload,
+      ais_tracks: await loadPublishedAisTracks(),
+    };
   } catch {
     return loadPublishedLanguagePayload();
   }
@@ -336,7 +339,10 @@ async function loadPublishedLanguagePayload() {
     if (!response.ok) {
       throw new Error(`lexical manifest HTTP ${response.status}`);
     }
-    return await response.json();
+    return {
+      ...(await response.json()),
+      ais_tracks: await loadPublishedAisTracks(),
+    };
   } catch {
     return {
       status: "missing",
@@ -346,8 +352,14 @@ async function loadPublishedLanguagePayload() {
       entities: [],
       topics: { status: "missing", plot_url: topicClusterFallbackUrl, items: [] },
       education: [],
+      ais_tracks: await loadPublishedAisTracks(),
     };
   }
+}
+
+async function loadPublishedAisTracks() {
+  const manifest = await loadPublishedManifest();
+  return manifest.ais_tracks || [];
 }
 
 function normalizeLivePayload(payload) {
@@ -391,6 +403,7 @@ function normalizePublishedManifest(payload) {
     },
     stats: payload.stats || fallbackManifest.stats,
     generated_at: payload.generated_at || payload.stats?.generated_at || null,
+    ais_tracks: normalizeAisTracks(payload.ais_tracks),
     clips: clips.map((clip) => ({
       id: clip.id || `${clip.channel}-${clip.started_at}`,
       public_title: clip.public_title || titleForClip(clip),
@@ -403,6 +416,51 @@ function normalizePublishedManifest(payload) {
       audio_public_filename: clip.audio_public_filename || "",
     })),
   };
+}
+
+function normalizeAisTracks(tracks) {
+  if (!Array.isArray(tracks)) {
+    return [];
+  }
+  return tracks
+    .map((track) => {
+      const points = (Array.isArray(track?.points) ? track.points : [])
+        .map(normalizeAisPoint)
+        .filter(Boolean)
+        .slice(-80);
+      if (!points.length) {
+        return null;
+      }
+      return {
+        track_id: String(track.track_id || track.mmsi || points[0].observed_at || "ais-track"),
+        name: String(track.name || track.mmsi || "Unknown vessel"),
+        vessel_type: String(track.vessel_type || "unknown"),
+        channel_hint: String(track.channel_hint || ""),
+        points,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 24);
+}
+
+function normalizeAisPoint(point) {
+  const lat = Number(point?.lat);
+  const lon = Number(point?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return null;
+  }
+  return {
+    lat,
+    lon,
+    speed_knots: finiteOrNull(point?.speed_knots),
+    course_degrees: finiteOrNull(point?.course_degrees),
+    observed_at: point?.observed_at || "",
+  };
+}
+
+function finiteOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function renderSite(payload) {
@@ -747,14 +805,24 @@ function renderLanguageDashboard(payload) {
   const frequency = payload.frequency || {};
   const terms = payload.terms || {};
   const topics = payload.topics || {};
+  const channelCounts = payload.channels || frequency.by_channel || {};
   const cards = document.createElement("div");
   cards.className = "language-grid";
   cards.append(
     languageCard("Transmissions", String(payload.source_clip_count || 0), "Analyzed transcript clips"),
-    languageCard("Channels", channelSummary(payload.channels || frequency.by_channel || {}), "VHF activity split"),
-    languageCard("Busiest hour", busiestHour(frequency.by_hour_pacific || {}), "Pacific time"),
+    languageCard("Active channels", String(Object.keys(channelCounts).length), "VHF channels in this analysis"),
+    languageCard(
+      "Busiest hours",
+      busiestHoursSummary(frequency.by_hour_pacific || {}),
+      "Top Pacific hours by analyzed transcript clips",
+    ),
     languageCard("Topic model", topicStatus(topics), "Condensed topic clusters"),
   );
+
+  const channelPanel = languagePanel("Analyzed transcript clips by VHF channel");
+  channelPanel.append(channelActivityChart(channelCounts));
+
+  const mapPanel = vesselMapPanel(payload.ais_tracks || []);
 
   const wordsPanel = languagePanel("Radio words");
   wordsPanel.append(
@@ -781,7 +849,7 @@ function renderLanguageDashboard(payload) {
     referenceIndex(payload.education || []),
   );
 
-  lexicalAnalysis.replaceChildren(cards, wordsPanel, entityPanel, topicPanel, educationPanel);
+  lexicalAnalysis.replaceChildren(cards, channelPanel, mapPanel, wordsPanel, entityPanel, topicPanel, educationPanel);
 }
 
 async function loadAndRenderPerformance({ showLoading = true } = {}) {
@@ -1428,34 +1496,269 @@ function referenceIndex(resources) {
   return wrapper;
 }
 
-function channelSummary(channels) {
-  const entries = Object.entries(channels);
+function channelActivityChart(channels) {
+  const entries = Object.entries(channels || {})
+    .map(([channel, count]) => [channel, Number(count || 0)])
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1] || compareChannels(left[0], right[0]));
+  const list = document.createElement("div");
+  list.className = "channel-bar-list";
   if (!entries.length) {
-    return "None";
+    const empty = document.createElement("p");
+    empty.className = "muted-inline";
+    empty.textContent = "No analyzed transmissions yet";
+    list.append(empty);
+    return list;
   }
-  return entries
-    .sort(([left], [right]) => compareChannels(left, right))
-    .map(([channel, count]) => `Ch ${channel}: ${count}`)
-    .join("\n");
+  const maxCount = Math.max(...entries.map(([, count]) => count));
+  list.append(
+    ...entries.map(([channel, count]) => {
+      const row = document.createElement("div");
+      row.className = "channel-bar-row";
+      row.setAttribute("aria-label", `${channelLabel(channel)}: ${count} analyzed transcript clips`);
+      const label = document.createElement("span");
+      label.className = "channel-bar-label";
+      label.textContent = channelLabel(channel);
+      const track = document.createElement("span");
+      track.className = "channel-bar-track";
+      const fill = document.createElement("span");
+      fill.className = "channel-bar-fill";
+      fill.style.width = `${Math.max(5, (count / maxCount) * 100).toFixed(1)}%`;
+      fill.style.setProperty("--channel-color", channelColorForChannel(channel));
+      track.append(fill);
+      const countLabel = document.createElement("span");
+      countLabel.className = "channel-bar-count";
+      countLabel.textContent = String(count);
+      row.append(label, track, countLabel);
+      return row;
+    }),
+  );
+  return list;
 }
 
-function busiestHour(hours) {
-  const entries = Object.entries(hours);
-  if (!entries.length) {
-    return "None";
+function vesselMapPanel(tracks) {
+  const panel = languagePanel("Elliott Bay operating picture");
+  panel.classList.add("vessel-map-panel");
+  panel.append(renderVesselMap(tracks));
+  return panel;
+}
+
+function renderVesselMap(tracks) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "nautical-map";
+  const normalizedTracks = normalizeAisTracks(tracks);
+  const svg = mapSvgElement("svg");
+  svg.classList.add("nautical-map-svg");
+  svg.setAttribute("viewBox", "0 0 640 420");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "AIS vessel positions over Elliott Bay");
+  drawNauticalBaseMap(svg);
+  drawVesselTracks(svg, normalizedTracks);
+  wrapper.append(svg);
+
+  const caption = document.createElement("div");
+  caption.className = "vessel-map-caption";
+  if (!normalizedTracks.length) {
+    caption.textContent = "AIS positions will appear when vessel track data is available.";
+  } else {
+    caption.append(...normalizedTracks.slice(0, 6).map(vesselMapLegendItem));
   }
-  entries.sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0));
-  return `${formatHourLabel(entries[0][0])} (${entries[0][1]})`;
+  wrapper.append(caption);
+  return wrapper;
+}
+
+function drawNauticalBaseMap(svg) {
+  const water = mapSvgElement("rect");
+  water.setAttribute("width", "640");
+  water.setAttribute("height", "420");
+  water.classList.add("nautical-water");
+  svg.append(water);
+
+  const shoreline = mapSvgElement("path");
+  shoreline.setAttribute(
+    "d",
+    "M404 0 C388 34 394 72 371 105 C338 151 358 189 331 226 C299 270 318 316 286 349 C263 374 250 394 244 420 L640 420 L640 0 Z",
+  );
+  shoreline.classList.add("nautical-shoreline");
+  svg.append(shoreline);
+
+  const harbor = mapSvgElement("path");
+  harbor.setAttribute(
+    "d",
+    "M421 118 L455 138 L441 175 L472 201 L454 238 L489 280 L468 319 L518 358 L503 420 L640 420 L640 68 L506 48 Z",
+  );
+  harbor.classList.add("nautical-harbor");
+  svg.append(harbor);
+
+  const lane = mapSvgElement("path");
+  lane.setAttribute("d", "M103 368 C184 303 249 247 317 191 C369 148 407 108 455 58");
+  lane.classList.add("nautical-traffic-lane");
+  svg.append(lane);
+
+  for (const latitude of [47.58, 47.60, 47.62, 47.64, 47.66]) {
+    const line = mapSvgElement("line");
+    const y = projectAisPoint({ lat: latitude, lon: mapBounds.minLon }).y;
+    line.setAttribute("x1", "0");
+    line.setAttribute("x2", "640");
+    line.setAttribute("y1", y.toFixed(1));
+    line.setAttribute("y2", y.toFixed(1));
+    line.classList.add("nautical-gridline");
+    svg.append(line);
+  }
+  for (const longitude of [-122.43, -122.40, -122.37, -122.34]) {
+    const line = mapSvgElement("line");
+    const x = projectAisPoint({ lat: mapBounds.minLat, lon: longitude }).x;
+    line.setAttribute("x1", x.toFixed(1));
+    line.setAttribute("x2", x.toFixed(1));
+    line.setAttribute("y1", "0");
+    line.setAttribute("y2", "420");
+    line.classList.add("nautical-gridline");
+    svg.append(line);
+  }
+
+  for (const label of nauticalLabels()) {
+    const text = mapSvgElement("text");
+    const point = projectAisPoint(label);
+    text.setAttribute("x", point.x.toFixed(1));
+    text.setAttribute("y", point.y.toFixed(1));
+    text.classList.add("nautical-label");
+    text.textContent = label.name;
+    svg.append(text);
+  }
+}
+
+function drawVesselTracks(svg, tracks) {
+  for (const track of tracks) {
+    const projectedPoints = track.points.map(projectAisPoint);
+    if (projectedPoints.length > 1) {
+      const line = mapSvgElement("polyline");
+      line.setAttribute(
+        "points",
+        projectedPoints.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" "),
+      );
+      line.classList.add("vessel-track");
+      line.style.setProperty("--channel-color", channelColorForChannel(track.channel_hint));
+      svg.append(line);
+    }
+
+    const latest = track.points[track.points.length - 1];
+    const markerPoint = projectedPoints[projectedPoints.length - 1];
+    const marker = mapSvgElement("g");
+    marker.classList.add("vessel-marker");
+    marker.style.setProperty("--channel-color", channelColorForChannel(track.channel_hint));
+    marker.setAttribute(
+      "transform",
+      `translate(${markerPoint.x.toFixed(1)} ${markerPoint.y.toFixed(1)}) rotate(${Number(latest.course_degrees || 0).toFixed(1)})`,
+    );
+    const hull = mapSvgElement("path");
+    hull.setAttribute("d", "M0 -11 L8 9 L0 5 L-8 9 Z");
+    marker.append(hull);
+    const title = mapSvgElement("title");
+    title.textContent = `${track.name} ${speedLabel(latest.speed_knots)}`.trim();
+    marker.append(title);
+    svg.append(marker);
+  }
+}
+
+function vesselMapLegendItem(track) {
+  const item = document.createElement("span");
+  item.className = "vessel-map-legend-item";
+  item.style.setProperty("--channel-color", channelColorForChannel(track.channel_hint));
+  const dot = document.createElement("span");
+  dot.className = "vessel-map-legend-dot";
+  const label = document.createElement("span");
+  const latest = track.points[track.points.length - 1];
+  label.textContent = `${track.name} · ${track.vessel_type} · ${speedLabel(latest.speed_knots)}`;
+  item.append(dot, label);
+  return item;
+}
+
+function speedLabel(value) {
+  const speed = Number(value);
+  if (!Number.isFinite(speed)) {
+    return "speed unknown";
+  }
+  return `${speed.toFixed(1)} kt`;
+}
+
+const mapBounds = {
+  minLat: 47.565,
+  maxLat: 47.665,
+  minLon: -122.44,
+  maxLon: -122.315,
+};
+
+function projectAisPoint(point) {
+  const x = ((point.lon - mapBounds.minLon) / (mapBounds.maxLon - mapBounds.minLon)) * 640;
+  const y = (1 - (point.lat - mapBounds.minLat) / (mapBounds.maxLat - mapBounds.minLat)) * 420;
+  return {
+    x: Math.max(0, Math.min(640, x)),
+    y: Math.max(0, Math.min(420, y)),
+  };
+}
+
+function nauticalLabels() {
+  return [
+    { name: "Elliott Bay", lat: 47.608, lon: -122.383 },
+    { name: "Smith Cove", lat: 47.632, lon: -122.394 },
+    { name: "Harbor Island", lat: 47.588, lon: -122.352 },
+  ];
+}
+
+function mapSvgElement(name) {
+  return document.createElementNS("http://www.w3.org/2000/svg", name);
+}
+
+function busiestHoursSummary(hours) {
+  const entries = topBusiestHours(hours, 2);
+  if (!entries.length) {
+    return "No analyzed transmissions yet";
+  }
+  return entries.map((entry) => `${formatHourRangeLabel(entry.hour)} (${entry.count})`).join("\n");
+}
+
+function topBusiestHours(hours, limit) {
+  return Object.entries(hours || {})
+    .map(([hour, count]) => ({ hour, hourNumber: parseHourNumber(hour), count: Number(count || 0) }))
+    .filter((entry) => Number.isFinite(entry.hourNumber) && entry.count > 0)
+    .sort((left, right) => right.count - left.count || left.hourNumber - right.hourNumber)
+    .slice(0, limit);
+}
+
+function parseHourNumber(hourText) {
+  const hour = Number(String(hourText || "").split(":")[0]);
+  if (!Number.isFinite(hour)) {
+    return NaN;
+  }
+  return ((Math.floor(hour) % 24) + 24) % 24;
+}
+
+function formatHourRangeLabel(hourText) {
+  const hour = parseHourNumber(hourText);
+  if (!Number.isFinite(hour)) {
+    return hourText || "Unknown hour";
+  }
+  const nextHour = (hour + 1) % 24;
+  if (hourPeriod(hour) === hourPeriod(nextHour)) {
+    return `${hour12(hour)}-${hour12(nextHour)} ${hourPeriod(hour)}`;
+  }
+  return `${formatHourLabel(hour)}-${formatHourLabel(nextHour)}`;
 }
 
 function formatHourLabel(hourText) {
-  const hour = Number(String(hourText || "").split(":")[0]);
+  const hour = parseHourNumber(hourText);
   if (!Number.isFinite(hour)) {
-    return hourText || "None";
+    return hourText || "Unknown hour";
   }
-  const suffix = hour >= 12 ? "PM" : "AM";
-  const hour12 = hour % 12 || 12;
-  return `${hour12} ${suffix}`;
+  return `${hour12(hour)} ${hourPeriod(hour)}`;
+}
+
+function hour12(hour) {
+  return hour % 12 || 12;
+}
+
+function hourPeriod(hour) {
+  return hour >= 12 ? "PM" : "AM";
 }
 
 function topicStatus(topics) {

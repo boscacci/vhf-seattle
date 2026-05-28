@@ -70,7 +70,10 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert "renderLanguageDashboard" in app_js
     assert "topic_clusters.html" in app_js
     assert "Suspected vessels" in app_js
-    assert "Ch ${channel}: ${count}" in app_js
+    assert "channelActivityChart" in app_js
+    assert "channel-bar-list" in app_js
+    assert "busiestHoursSummary" in app_js
+    assert "Top Pacific hours by analyzed transcript clips" in app_js
     assert "formatHourLabel" in app_js
     assert "renderExamplePlayer(clip)" in app_js
     assert "renderExamplePlayer(entity.examples?.[0] || {})" in app_js
@@ -166,12 +169,27 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert '"Static"' not in app_js
     assert "static clips" not in app_js
     assert "Tailnet Protected" not in index_html
+    assert "vesselMapPanel" in app_js
+    assert "renderVesselMap" in app_js
+    assert "ais_tracks" in app_js
+    assert "Elliott Bay operating picture" in app_js
+    assert ".vessel-map-panel" in styles_css
+    assert ".nautical-map" in styles_css
+    assert ".vessel-marker" in styles_css
     assert "bay-map" not in index_html
     assert "Nearby Signals" not in index_html
     assert "Play AIS" not in index_html
-    assert "ais_tracks" not in app_js
     assert "L.tileLayer" not in app_js
-    assert ".map-panel" not in styles_css
+
+
+def test_public_site_analysis_copy_clarifies_frequency_metrics() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "Analyzed transcript clips by VHF channel" in app_js
+    assert "Top Pacific hours by analyzed transcript clips" in app_js
+    assert "busiestHoursSummary" in app_js
+    assert "formatHourRangeLabel" in app_js
+    assert "No analyzed transmissions yet" in app_js
 
 
 def test_public_site_renders_db_clips_and_static_export_clips() -> None:

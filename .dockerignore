@@ -1,0 +1,12 @@
+.git
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+data
+outputs
+node_modules
+config/optiplex.env
+infra/opentofu/.terraform
+infra/opentofu/terraform.tfstate*
+.codex-backups
