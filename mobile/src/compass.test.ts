@@ -5,6 +5,7 @@ import {
   COMPASS_SENSOR_INTERVAL_MS,
   cardinalDirection,
   formatHeading,
+  headingFromDeviceMotionRotation,
   headingFromMagnetometer,
   magneticStrength,
   nearestCompassHeading,
@@ -34,6 +35,12 @@ describe("compass helpers", () => {
 
   it("keeps sub-degree magnetometer headings for smooth animation", () => {
     expect(preciseHeadingFromMagnetometer({ x: 10, y: 1, z: 0 })).toBeCloseTo(5.7106, 4);
+  });
+
+  it("derives heading from native fused motion yaw", () => {
+    expect(headingFromDeviceMotionRotation({ alpha: 0 })).toBe(0);
+    expect(headingFromDeviceMotionRotation({ alpha: -Math.PI / 2 })).toBe(90);
+    expect(headingFromDeviceMotionRotation({ alpha: Math.PI / 2 })).toBe(270);
   });
 
   it("rotates through the shortest compass path across north", () => {

@@ -4,6 +4,10 @@ export type MagneticVector = {
   z: number;
 };
 
+export type DeviceMotionRotation = {
+  alpha: number;
+};
+
 export type AuthMethod = {
   id: "google" | "sms_otp" | "passkey";
   label: string;
@@ -35,7 +39,8 @@ export const AUTH_METHODS: AuthMethod[] = [
 
 export function normalizeDegrees(value: number): number {
   const normalized = value % 360;
-  return normalized < 0 ? normalized + 360 : normalized;
+  const positive = normalized < 0 ? normalized + 360 : normalized;
+  return Object.is(positive, -0) ? 0 : positive;
 }
 
 export function cardinalDirection(degrees: number): string {
@@ -49,6 +54,10 @@ export function preciseHeadingFromMagnetometer(vector: MagneticVector): number {
 
 export function headingFromMagnetometer(vector: MagneticVector): number {
   return Math.round(preciseHeadingFromMagnetometer(vector));
+}
+
+export function headingFromDeviceMotionRotation(rotation: DeviceMotionRotation): number {
+  return normalizeDegrees((-rotation.alpha * 180) / Math.PI);
 }
 
 export function shortestCompassDelta(fromDegrees: number, toDegrees: number): number {

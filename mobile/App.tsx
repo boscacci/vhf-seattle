@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { Magnetometer } from "expo-sensors";
+import { DeviceMotion, Magnetometer } from "expo-sensors";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import Svg, {
   Circle,
@@ -29,6 +29,7 @@ import {
   COMPASS_ROTATION_RANGE_DEGREES,
   COMPASS_SENSOR_INTERVAL_MS,
   formatHeading,
+  headingFromDeviceMotionRotation,
   magneticStrength,
   nearestCompassHeading,
   preciseHeadingFromMagnetometer,
@@ -39,6 +40,9 @@ import { topChromeGutter } from "./src/layout";
 const initialVector: MagneticVector = { x: 0, y: 1, z: 0 };
 const initialHeading = preciseHeadingFromMagnetometer(initialVector);
 const COMPASS_UI_REFRESH_INTERVAL_MS = 66;
+const MAGNETIC_FIELD_REFRESH_INTERVAL_MS = 100;
+
+type CompassSensorSource = "seeking" | "motion" | "magnetometer" | "demo";
 
 const compassTicks = Array.from({ length: 24 }, (_, index) => {
   const degrees = index * 15;
@@ -56,15 +60,14 @@ const compassTicks = Array.from({ length: 24 }, (_, index) => {
 });
 
 export default function App() {
-  const { heading, needleRotation, sensorAvailable, vector } = useLiveCompass();
+  const { heading, needleRotation, sensorSource, vector } = useLiveCompass();
   const [signalPulse, setSignalPulse] = useState(0);
   const strength = useMemo(() => magneticStrength(vector), [vector]);
   const topGutter = useMemo(
     () => topChromeGutter(Platform.OS, NativeStatusBar.currentHeight),
     [],
   );
-  const sensorLabel =
-    sensorAvailable === null ? "Seeking sensor" : sensorAvailable ? "Compass live" : "Compass demo";
+  const sensorLabel = compassSensorLabel(sensorSource);
 
   function pingBridge() {
     setSignalPulse((value) => value + 1);
@@ -101,7 +104,7 @@ export default function App() {
                 <Text style={styles.headingText}>{formatHeading(heading)}</Text>
               </View>
               <View style={styles.liveBadge}>
-                <View style={[styles.statusDot, sensorAvailable === false && styles.statusDotMuted]} />
+                <View style={[styles.statusDot, sensorSource === "demo" && styles.statusDotMuted]} />
                 <Text style={styles.liveBadgeText}>{sensorLabel}</Text>
               </View>
             </View>
@@ -259,13 +262,28 @@ function CompassDial({ needleRotation }: { needleRotation: ReturnType<Animated.V
   );
 }
 
+function compassSensorLabel(source: CompassSensorSource): string {
+  switch (source) {
+    case "motion":
+      return "Motion fusion";
+    case "magnetometer":
+      return "Magnetometer";
+    case "demo":
+      return "Compass demo";
+    case "seeking":
+    default:
+      return "Seeking sensor";
+  }
+}
+
 function useLiveCompass() {
   const [vector, setVector] = useState<MagneticVector>(initialVector);
   const [heading, setHeading] = useState(initialHeading);
-  const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
+  const [sensorSource, setSensorSource] = useState<CompassSensorSource>("seeking");
   const rotation = useRef(new Animated.Value(initialHeading)).current;
   const continuousHeading = useRef(initialHeading);
   const lastUiRefresh = useRef(0);
+  const lastMagneticFieldRefresh = useRef(0);
 
   const needleRotation = useMemo(
     () =>
@@ -282,12 +300,12 @@ function useLiveCompass() {
       const targetHeading = nearestCompassHeading(continuousHeading.current, nextHeading);
       continuousHeading.current = targetHeading;
       Animated.spring(rotation, {
-        damping: 48,
-        mass: 0.42,
+        damping: 38,
+        mass: 0.2,
         overshootClamping: false,
         restDisplacementThreshold: 0.005,
         restSpeedThreshold: 0.005,
-        stiffness: 620,
+        stiffness: 1000,
         toValue: targetHeading,
         useNativeDriver: true,
       }).start();
@@ -297,43 +315,92 @@ function useLiveCompass() {
 
   useEffect(() => {
     let mounted = true;
-    let subscription: { remove: () => void } | null = null;
+    let motionSubscription: { remove: () => void } | null = null;
+    let magnetometerSubscription: { remove: () => void } | null = null;
 
-    Magnetometer.isAvailableAsync()
+    function updateHeading(nextHeading: number) {
+      animateNeedleToHeading(nextHeading);
+
+      const now = Date.now();
+      if (now - lastUiRefresh.current >= COMPASS_UI_REFRESH_INTERVAL_MS) {
+        lastUiRefresh.current = now;
+        setHeading(nextHeading);
+      }
+    }
+
+    function updateMagneticVector(reading: MagneticVector) {
+      const now = Date.now();
+      if (now - lastMagneticFieldRefresh.current >= MAGNETIC_FIELD_REFRESH_INTERVAL_MS) {
+        lastMagneticFieldRefresh.current = now;
+        setVector(reading);
+      }
+    }
+
+    function startMagnetometer(useForHeading: boolean) {
+      Magnetometer.isAvailableAsync()
+        .then((available) => {
+          if (!mounted) {
+            return;
+          }
+          if (!available) {
+            if (useForHeading) {
+              setSensorSource("demo");
+            }
+            return;
+          }
+
+          if (useForHeading) {
+            setSensorSource("magnetometer");
+          }
+          Magnetometer.setUpdateInterval(useForHeading ? COMPASS_SENSOR_INTERVAL_MS : MAGNETIC_FIELD_REFRESH_INTERVAL_MS);
+          magnetometerSubscription = Magnetometer.addListener((reading) => {
+            updateMagneticVector(reading);
+            if (useForHeading) {
+              updateHeading(preciseHeadingFromMagnetometer(reading));
+            }
+          });
+        })
+        .catch(() => {
+          if (mounted && useForHeading) {
+            setSensorSource("demo");
+          }
+        });
+    }
+
+    DeviceMotion.isAvailableAsync()
       .then((available) => {
         if (!mounted) {
           return;
         }
-        setSensorAvailable(available);
         if (!available) {
+          startMagnetometer(true);
           return;
         }
-        Magnetometer.setUpdateInterval(COMPASS_SENSOR_INTERVAL_MS);
-        subscription = Magnetometer.addListener((reading) => {
-          const nextHeading = preciseHeadingFromMagnetometer(reading);
-          animateNeedleToHeading(nextHeading);
 
-          const now = Date.now();
-          if (now - lastUiRefresh.current >= COMPASS_UI_REFRESH_INTERVAL_MS) {
-            lastUiRefresh.current = now;
-            setVector(reading);
-            setHeading(nextHeading);
+        setSensorSource("motion");
+        DeviceMotion.setUpdateInterval(COMPASS_SENSOR_INTERVAL_MS);
+        motionSubscription = DeviceMotion.addListener((reading) => {
+          if (reading.rotation) {
+            updateHeading(headingFromDeviceMotionRotation(reading.rotation));
           }
         });
+
+        startMagnetometer(false);
       })
       .catch(() => {
         if (mounted) {
-          setSensorAvailable(false);
+          startMagnetometer(true);
         }
       });
 
     return () => {
       mounted = false;
-      subscription?.remove();
+      motionSubscription?.remove();
+      magnetometerSubscription?.remove();
     };
   }, [animateNeedleToHeading]);
 
-  return { heading, needleRotation, sensorAvailable, vector };
+  return { heading, needleRotation, sensorSource, vector };
 }
 
 const styles = StyleSheet.create({
