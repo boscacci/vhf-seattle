@@ -31,7 +31,8 @@ const quietTransmissionDelayMs = 5000;
 const performanceHostLabel = "OptiPlex live proxy";
 const performanceRangeOptions = [
   { label: "30m", hours: 0.5 },
-  { label: "6h", hours: 6 },
+  { label: "2h", hours: 2 },
+  { label: "12h", hours: 12 },
   { label: "24h", hours: 24 },
 ];
 const pacificTimeZone = "America/Los_Angeles";
@@ -157,7 +158,7 @@ let languagePayloadLoaded = false;
 let performancePayloadLoaded = false;
 let performanceRefreshTimer = null;
 let latestPerformancePayload = null;
-let selectedPerformanceRangeHours = 6;
+let selectedPerformanceRangeHours = 2;
 let systemMediaControlsEnabled = systemMediaControlsDefault;
 let liveChannels = [
   {

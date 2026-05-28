@@ -143,6 +143,11 @@ def test_public_site_is_recent_clip_app_without_map_or_ais_controls() -> None:
     assert "performance-chart-grid" in app_js
     assert "performanceRangeOptions" in app_js
     assert "selectedPerformanceRangeHours" in app_js
+    assert '{ label: "30m", hours: 0.5 }' in app_js
+    assert '{ label: "2h", hours: 2 }' in app_js
+    assert '{ label: "12h", hours: 12 }' in app_js
+    assert '{ label: "24h", hours: 24 }' in app_js
+    assert '{ label: "6h", hours: 6 }' not in app_js
     assert "performance-range-control" in app_js
     assert "cpuUtilizationPercent" in app_js
     assert "memoryUsedPercent" in app_js
