@@ -13,7 +13,7 @@ conda_env="${TALKINGBOATS_LEXICAL_CONDA_ENV:-dell}"
 conda_bin="${TALKINGBOATS_CONDA_BIN:-/home/rob/miniforge3/condabin/conda}"
 lock_dir="${TALKINGBOATS_LEXICAL_LOCK_DIR:-outputs/.lexical-refresh.lock}"
 page_size="${TALKINGBOATS_LEXICAL_PAGE_SIZE:-500}"
-export_limit="${TALKINGBOATS_LEXICAL_EXPORT_LIMIT:-1000}"
+export_limit="${TALKINGBOATS_LEXICAL_EXPORT_LIMIT:-3000}"
 raw_bucket_output="${TALKINGBOATS_LEXICAL_RAW_BUCKET_OUTPUT:-raw_audio_bucket}"
 
 usage() {

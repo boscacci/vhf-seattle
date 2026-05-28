@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
+
 
 def test_lexical_refresh_script_regenerates_exports_and_deploys_dev() -> None:
     script = Path("scripts/refresh_lexical_analysis.sh").read_text(encoding="utf-8")
@@ -7,6 +9,10 @@ def test_lexical_refresh_script_regenerates_exports_and_deploys_dev() -> None:
     assert "TALKINGBOATS_LEXICAL_DB_PATH" in script
     assert "TALKINGBOATS_LEXICAL_OUTPUT_DIR" in script
     assert "TALKINGBOATS_LEXICAL_DEPLOY_ENV" in script
+    assert (
+        f"TALKINGBOATS_LEXICAL_EXPORT_LIMIT:-{DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT}"
+        in script
+    )
     assert "/home/rob/.local/bin:/snap/bin" in script
     assert "mkdir \"${lock_dir}\"" in script
     assert "trap cleanup EXIT" in script
