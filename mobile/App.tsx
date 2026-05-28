@@ -28,8 +28,10 @@ import Svg, {
 
 import {
   AUTH_METHODS,
+  COMPASS_NEEDLE_RESPONSE_MS,
   COMPASS_ROTATION_RANGE_DEGREES,
   COMPASS_SENSOR_INTERVAL_MS,
+  COMPASS_UI_REFRESH_INTERVAL_MS,
   formatHeading,
   headingFromDeviceMotionRotation,
   magneticStrength,
@@ -50,7 +52,6 @@ WebBrowser.maybeCompleteAuthSession();
 
 const initialVector: MagneticVector = { x: 0, y: 1, z: 0 };
 const initialHeading = preciseHeadingFromMagnetometer(initialVector);
-const COMPASS_UI_REFRESH_INTERVAL_MS = 66;
 const MAGNETIC_FIELD_REFRESH_INTERVAL_MS = 100;
 
 type CompassSensorSource = "seeking" | "motion" | "magnetometer" | "demo";
@@ -172,6 +173,22 @@ function AuthPanel({ adminAuth }: { adminAuth: ReturnType<typeof useCognitoAdmin
         </View>
       </View>
 
+      <Pressable
+        accessibilityLabel={session ? "Sign out of Cognito" : "Sign in with Cognito"}
+        accessibilityRole="button"
+        disabled={busy || !configured}
+        onPress={session ? signOut : signIn}
+        style={({ pressed }) => [
+          styles.authAction,
+          (!configured || busy) && styles.authActionDisabled,
+          pressed && configured && styles.authActionPressed,
+        ]}
+      >
+        <Text style={[styles.authActionText, (!configured || busy) && styles.authActionTextDisabled]}>
+          {busy ? "Working..." : session ? "Sign out" : "Sign in"}
+        </Text>
+      </Pressable>
+
       {session ? (
         <View style={styles.adminCard}>
           <Text style={styles.adminEmail}>{session.email}</Text>
@@ -189,21 +206,6 @@ function AuthPanel({ adminAuth }: { adminAuth: ReturnType<typeof useCognitoAdmin
       )}
 
       {error ? <Text style={styles.authError}>{error}</Text> : null}
-
-      <Pressable
-        accessibilityRole="button"
-        disabled={busy || !configured}
-        onPress={session ? signOut : signIn}
-        style={({ pressed }) => [
-          styles.authAction,
-          (!configured || busy) && styles.authActionDisabled,
-          pressed && configured && styles.authActionPressed,
-        ]}
-      >
-        <Text style={[styles.authActionText, (!configured || busy) && styles.authActionTextDisabled]}>
-          {busy ? "Working..." : session ? "Sign out" : "Sign in"}
-        </Text>
-      </Pressable>
     </View>
   );
 }
@@ -465,13 +467,13 @@ function useLiveCompass() {
     (nextHeading: number) => {
       const targetHeading = nearestCompassHeading(continuousHeading.current, nextHeading);
       continuousHeading.current = targetHeading;
-      Animated.spring(rotation, {
-        damping: 38,
-        mass: 0.2,
-        overshootClamping: false,
-        restDisplacementThreshold: 0.005,
-        restSpeedThreshold: 0.005,
-        stiffness: 1000,
+      rotation.stopAnimation();
+      if (COMPASS_NEEDLE_RESPONSE_MS === 0) {
+        rotation.setValue(targetHeading);
+        return;
+      }
+      Animated.timing(rotation, {
+        duration: COMPASS_NEEDLE_RESPONSE_MS,
         toValue: targetHeading,
         useNativeDriver: true,
       }).start();
@@ -858,7 +860,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#13dec0",
     borderRadius: 8,
     justifyContent: "center",
-    minHeight: 52,
+    minHeight: 60,
     paddingHorizontal: 14,
   },
   authActionDisabled: {
@@ -869,7 +871,7 @@ const styles = StyleSheet.create({
   },
   authActionText: {
     color: "#031514",
-    fontSize: 17,
+    fontSize: 19,
     fontWeight: "900",
   },
   authActionTextDisabled: {

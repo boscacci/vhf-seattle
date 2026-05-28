@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   AUTH_METHODS,
+  COMPASS_NEEDLE_RESPONSE_MS,
   COMPASS_SENSOR_INTERVAL_MS,
+  COMPASS_UI_REFRESH_INTERVAL_MS,
   cardinalDirection,
   formatHeading,
   headingFromDeviceMotionRotation,
@@ -52,6 +54,8 @@ describe("compass helpers", () => {
 
   it("samples quickly enough for responsive phone rotation", () => {
     expect(COMPASS_SENSOR_INTERVAL_MS).toBeLessThanOrEqual(20);
+    expect(COMPASS_UI_REFRESH_INTERVAL_MS).toBeLessThanOrEqual(16);
+    expect(COMPASS_NEEDLE_RESPONSE_MS).toBe(0);
   });
 
   it("formats readable headings", () => {

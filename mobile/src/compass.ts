@@ -17,6 +17,8 @@ export type AuthMethod = {
 const CARDINALS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
 
 export const COMPASS_SENSOR_INTERVAL_MS = 16;
+export const COMPASS_UI_REFRESH_INTERVAL_MS = 16;
+export const COMPASS_NEEDLE_RESPONSE_MS = 0;
 export const COMPASS_ROTATION_RANGE_DEGREES = 36000;
 
 export const AUTH_METHODS: AuthMethod[] = [
