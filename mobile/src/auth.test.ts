@@ -10,6 +10,13 @@ import {
   readCognitoAuthConfig,
 } from "./auth";
 
+const toBase64Url = (value: unknown) =>
+  globalThis
+    .btoa(JSON.stringify(value))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+
 describe("Cognito auth config", () => {
   it("stays disabled until the public Cognito app config exists", () => {
     expect(readCognitoAuthConfig({})).toBeNull();
@@ -113,14 +120,10 @@ describe("Cognito authorization rules", () => {
   });
 
   it("decodes Cognito JWT claims", () => {
-    const payload = Buffer.from(
-      JSON.stringify({
-        "cognito:groups": [SUPER_ADMIN_GROUP],
-        email: DEFAULT_APPROVED_EMAIL,
-      }),
-      "utf8",
-    )
-      .toString("base64url");
+    const payload = toBase64Url({
+      "cognito:groups": [SUPER_ADMIN_GROUP],
+      email: DEFAULT_APPROVED_EMAIL,
+    });
 
     expect(decodeJwtClaims(`ignored.${payload}.ignored`)).toEqual({
       "cognito:groups": [SUPER_ADMIN_GROUP],

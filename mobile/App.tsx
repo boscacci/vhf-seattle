@@ -273,7 +273,8 @@ export default function App() {
 
   return (
     <View style={styles.shell}>
-      <ExpoStatusBar backgroundColor="#041411" style="light" translucent />
+      <NativeStatusBar backgroundColor="#041411" barStyle="light-content" translucent />
+      <ExpoStatusBar style="light" />
       <SafeAreaView style={[styles.safeArea, { paddingTop: topGutter }]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.titleSection}>
@@ -1429,12 +1430,20 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   compassWrap: {
-    ...StyleSheet.absoluteFillObject,
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
     borderRadius: 999,
     overflow: "hidden",
   },
   fixedNorthNeedleLayer: {
-    ...StyleSheet.absoluteFillObject,
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
     zIndex: 2,
   },
   metricGrid: {

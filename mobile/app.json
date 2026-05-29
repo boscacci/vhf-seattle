@@ -35,7 +35,8 @@
     },
     "plugins": [
       "expo-web-browser",
-      "expo-location"
+      "expo-location",
+      "expo-status-bar"
     ]
   }
 }
