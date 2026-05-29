@@ -10,8 +10,8 @@ stable services.
 ```mermaid
 flowchart LR
   antenna["Window VHF antenna"]
-  sdr["RTL-SDR<br/>marine VHF receiver"]
-  pi["Raspberry Pi edge node<br/>rtl_fm, Icecast, activity clips"]
+  sdr["RTL-SDR pair<br/>voice net + AIS"]
+  pi["Raspberry Pi edge node<br/>RTLSDR-Airband, AIS-catcher, Icecast, activity clips"]
   lan["Private LAN / Wi-Fi"]
   optiplex["OptiPlex home server<br/>API, SQLite, transcription, export"]
   s3raw["Private S3 raw audio<br/>raw/ expires, hall-of-fame/ retained"]
@@ -43,12 +43,13 @@ The normal path is:
 antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> AWS public edge
 ```
 
-- **RF and USB:** the antenna feeds the RTL-SDR, and the SDR feeds samples to the
-  Raspberry Pi over USB. Keep this physically simple: short antenna jumpers,
-  stable power, and enough ventilation.
-- **Pi edge work:** the Pi runs `rtl_fm`, speech-band cleanup, squelch/gating,
-  Icecast MP3 output, rolling WAV buffers, and activity clip detection. It can
-  keep short retry/debug buffers locally under `/opt/talkingboats/spool`.
+- **RF and USB:** the antenna feeds the RTL-SDR receivers, and the SDRs feed
+  samples to the Raspberry Pi over USB. Keep this physically simple: short
+  antenna jumpers, stable power, and enough ventilation.
+- **Pi edge work:** the Pi runs RTLSDR-Airband for the lower-block voice net,
+  AIS-catcher for live AIS, speech-band cleanup, squelch/gating, Icecast MP3
+  output, rolling WAV buffers, and activity clip detection. It can keep short
+  retry/debug buffers locally under `/opt/talkingboats/spool`.
 - **LAN handoff:** the Pi reaches the OptiPlex over private Wi-Fi/LAN. The
   current Pi is reached from the OptiPlex at `192.168.1.114`; mDNS names can be
   stale, so verify the live address before changing receiver or telemetry
@@ -136,11 +137,19 @@ Better marine antenna if placement is easy:
 
 ## Channel Plan
 
+- Voice dongle: center at `156.675 MHz`, sample at `2.56 MS/s`, and demodulate
+  the balanced 12-channel profile: `05A`, `06`, `09`, `13`, `14`, `16`, `22A`,
+  `67`, `68`, `69`, `71`, and `72`.
+- AIS dongle: AIS-catcher handles AIS 1 / AIS 2 near `162 MHz`, serves its live
+  map on the Pi, and optionally feeds AIS-catcher's community map. The dev web
+  app embeds that AIS-catcher viewer through the live proxy. Use a unique
+  RTL-SDR serial when available; otherwise set the voice and AIS device indexes
+  for the observed Pi order. The Pi wrapper sets the web viewer station identity
+  to `Elliott Bay VHF`, links it to `https://robertboscacci.com`, and shares an
+  approximate Elliott Bay location with the local viewer by default.
 - VHF 68, `156.425 MHz`: Fun Channel for pleasure-craft working traffic.
 - VHF 14, `156.700 MHz`: Super Business Channel for Seattle Traffic / Puget Sound
   VTS.
-- AIS has a browser map renderer and historical NOAA ERDDAP import helper, but
-  it is not live-streaming into the dev payload yet.
 
 ## Local Compute Roles
 

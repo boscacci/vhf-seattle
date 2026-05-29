@@ -28,10 +28,12 @@ locals {
     ".",
     "-",
   )
-  origin_id          = "s3-public-site"
-  dev_origin_id      = "s3-dev-public-site"
-  live_origin_id     = "live-radio-proxy"
-  dev_live_origin_id = "dev-live-radio-proxy"
+  site_cert_validation_domains     = toset([local.site_fqdn])
+  dev_site_cert_validation_domains = toset([local.dev_site_fqdn])
+  origin_id                        = "s3-public-site"
+  dev_origin_id                    = "s3-dev-public-site"
+  live_origin_id                   = "live-radio-proxy"
+  dev_live_origin_id               = "dev-live-radio-proxy"
   dev_live_origin_domain_name = coalesce(
     var.dev_live_origin_domain_name,
     var.live_origin_domain_name,
@@ -185,19 +187,24 @@ resource "aws_acm_certificate" "site" {
 }
 
 resource "aws_route53_record" "site_cert_validation" {
-  for_each = {
-    for dvo in aws_acm_certificate.site.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  }
+  for_each = local.site_cert_validation_domains
 
   zone_id = data.aws_route53_zone.root.zone_id
-  name    = each.value.name
-  type    = each.value.type
-  ttl     = 60
-  records = [each.value.record]
+  name = one([
+    for dvo in aws_acm_certificate.site.domain_validation_options : dvo.resource_record_name
+    if dvo.domain_name == each.value
+  ])
+  type = one([
+    for dvo in aws_acm_certificate.site.domain_validation_options : dvo.resource_record_type
+    if dvo.domain_name == each.value
+  ])
+  ttl = 60
+  records = [
+    one([
+      for dvo in aws_acm_certificate.site.domain_validation_options : dvo.resource_record_value
+      if dvo.domain_name == each.value
+    ])
+  ]
 
   allow_overwrite = true
 }
@@ -287,6 +294,28 @@ resource "aws_cloudfront_distribution" "site" {
     allowed_methods          = ["GET", "HEAD", "OPTIONS"]
     cached_methods           = ["GET", "HEAD"]
     compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/clips/playback"
+    target_origin_id         = local.live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/clips/audio"
+    target_origin_id         = local.live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = false
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
     origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
   }
@@ -592,19 +621,24 @@ resource "aws_acm_certificate" "dev_site" {
 }
 
 resource "aws_route53_record" "dev_site_cert_validation" {
-  for_each = {
-    for dvo in aws_acm_certificate.dev_site.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  }
+  for_each = local.dev_site_cert_validation_domains
 
   zone_id = data.aws_route53_zone.root.zone_id
-  name    = each.value.name
-  type    = each.value.type
-  ttl     = 60
-  records = [each.value.record]
+  name = one([
+    for dvo in aws_acm_certificate.dev_site.domain_validation_options : dvo.resource_record_name
+    if dvo.domain_name == each.value
+  ])
+  type = one([
+    for dvo in aws_acm_certificate.dev_site.domain_validation_options : dvo.resource_record_type
+    if dvo.domain_name == each.value
+  ])
+  ttl = 60
+  records = [
+    one([
+      for dvo in aws_acm_certificate.dev_site.domain_validation_options : dvo.resource_record_value
+      if dvo.domain_name == each.value
+    ])
+  ]
 
   allow_overwrite = true
 }
@@ -687,7 +721,40 @@ resource "aws_cloudfront_distribution" "dev_site" {
   }
 
   ordered_cache_behavior {
+    path_pattern             = "/api/clips/playback"
+    target_origin_id         = local.dev_live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/clips/audio"
+    target_origin_id         = local.dev_live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = false
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
     path_pattern             = "/api/analysis/lexical"
+    target_origin_id         = local.dev_live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/ais-catcher/*"
     target_origin_id         = local.dev_live_origin_id
     viewer_protocol_policy   = "redirect-to-https"
     allowed_methods          = ["GET", "HEAD", "OPTIONS"]

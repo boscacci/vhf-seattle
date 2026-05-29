@@ -42,6 +42,9 @@ The clip console is public without a manual token. The same `public-site/` UI
 reads recent transcripts, short-lived playback URLs, live status, and the current
 read-only live audio stream. It must not expose write endpoints, retune controls,
 raw ingest presigning, private network URLs, or arbitrary internal proxying.
+Playback URLs are intentionally short-lived. Browser code should refresh those
+URLs through the public clip playback refresh route instead of embedding raw
+object keys or depending on stale presigned links.
 
 The performance telemetry endpoint is dev-only and gated by configured dev
 hostnames or the dev CloudFront live-origin request. Its public response is a
@@ -58,6 +61,17 @@ The private API handles:
 - operator playback presigning;
 - live-radio proxying;
 - public recent-clip export generation.
+
+AIS-catcher stays outside the private API in this pass. The live proxy exposes
+the Pi's AIS-catcher web viewer only to dev/local hosts and strips cookies and
+authorization headers before forwarding requests.
+
+The AIS-catcher viewer is a larger browser surface than the native clip console:
+it runs third-party web UI code, loads map assets, and shows the approximate
+receiver station when `TALKINGBOATS_AIS_SHARE_LOC=on`. Keep it off production
+until it is isolated behind its own origin or reviewed as a same-origin embed.
+Do not expose AIS-catcher control, metrics, or Prometheus paths publicly unless
+they have an explicit read-only threat review.
 
 Protect write/admin paths with LAN/Tailscale/VPN plus service-held credentials.
 Do not require an operator to manually paste tokens into the browser.

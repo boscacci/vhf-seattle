@@ -5,7 +5,26 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-Channel = Literal["05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74"]
+Channel = Literal[
+    "05A",
+    "06",
+    "09",
+    "10",
+    "13",
+    "14",
+    "16",
+    "22A",
+    "66A",
+    "67",
+    "68",
+    "69",
+    "71",
+    "72",
+    "73",
+    "74",
+    "77",
+    "78A",
+]
 
 
 class ClipPresignRequest(BaseModel):

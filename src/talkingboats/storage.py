@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import UTC
+from typing import Any
 
 import boto3
+from botocore.exceptions import ClientError
 
 from talkingboats.config import Settings
 from talkingboats.schemas import ClipPresignRequest
@@ -53,6 +55,38 @@ class S3AudioStorage:
             Params={"Bucket": self.settings.raw_bucket, "Key": key},
             ExpiresIn=self.settings.playback_presign_seconds,
         )
+
+    def playback_exists(self, key: str) -> bool:
+        if not is_allowed_audio_key(key):
+            raise ValueError("playback key must be in raw/ or hall-of-fame/")
+        if not self.settings.raw_bucket:
+            raise RuntimeError("TALKINGBOATS_RAW_BUCKET is not configured")
+        try:
+            self.client.head_object(Bucket=self.settings.raw_bucket, Key=key)
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            code = error.get("Code", "")
+            status_code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if status_code == 404 or code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise RuntimeError(f"playback object check failed: {code or status_code}") from exc
+        return True
+
+    def open_playback(self, key: str) -> Any:
+        if not is_allowed_audio_key(key):
+            raise ValueError("playback key must be in raw/ or hall-of-fame/")
+        if not self.settings.raw_bucket:
+            raise RuntimeError("TALKINGBOATS_RAW_BUCKET is not configured")
+        try:
+            response = self.client.get_object(Bucket=self.settings.raw_bucket, Key=key)
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            code = error.get("Code", "")
+            status_code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if status_code == 404 or code in {"404", "NoSuchKey", "NotFound"}:
+                raise FileNotFoundError(key) from exc
+            raise RuntimeError(f"playback object read failed: {code or status_code}") from exc
+        return response["Body"]
 
 
 def raw_clip_key(request: ClipPresignRequest) -> str:

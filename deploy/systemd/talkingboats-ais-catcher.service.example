@@ -1,0 +1,19 @@
+[Unit]
+Description=Talking Boats AIS-catcher receiver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/talkingboats/live-radio.env
+ExecStart=/opt/talkingboats/bin/talkingboats-ais-catcher
+Restart=always
+RestartSec=5
+SyslogIdentifier=talkingboats-ais-catcher
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+CPUQuota=35%
+
+[Install]
+WantedBy=multi-user.target

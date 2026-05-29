@@ -171,6 +171,33 @@ def test_proxy_default_live_channels_include_recreational_voice_mount() -> None:
     assert "192.168.1.114" not in response.text
 
 
+def test_proxy_default_live_channels_match_balanced_voice_net_mounts() -> None:
+    app = create_app(ProxySettings())
+
+    response = _run(_asgi_get(app, "/api/live/channels"))
+
+    assert response.status_code == 200
+    channels = {channel["channel"]: channel for channel in response.json()["channels"]}
+    assert set(channels) == {
+        "05A",
+        "06",
+        "09",
+        "13",
+        "14",
+        "16",
+        "22A",
+        "67",
+        "68",
+        "69",
+        "71",
+        "72",
+    }
+    assert channels["05A"]["streamPath"] == "/api/live/05A/current.mp3"
+    assert channels["22A"]["statusPath"] == "/api/live/22A/status"
+    assert channels["72"]["label"] == "Ship-to-ship"
+    assert "192.168.1.114" not in response.text
+
+
 def test_proxy_channel_live_stream_uses_requested_mount() -> None:
     requests = []
 
@@ -356,6 +383,93 @@ def test_proxy_recent_clips_endpoint_is_public_read_only() -> None:
     assert response.json() == {"clips": [{"transcript": "hello"}]}
 
 
+def test_proxy_clip_playback_refresh_endpoint_is_public_read_only() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert (
+            str(request.url)
+            == "http://private-api.test/api/clips/playback?channel=14&started_at=2026-05-20T19%3A12%3A00Z"
+        )
+        assert "authorization" not in request.headers
+        assert "cookie" not in request.headers
+        assert "x-talkingboats-operator-token" not in request.headers
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "application/json",
+                "Set-Cookie": "talkingboats_operator_token=private-token",
+            },
+            json={
+                "channel": "14",
+                "started_at": "2026-05-20T19:12:00Z",
+                "playback_url": "https://s3.example.test/playback",
+                "playback_expires_in_seconds": 300,
+            },
+        )
+
+    app = create_app(
+        ProxySettings(private_api_url="http://private-api.test"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_get(
+            app,
+            "/api/clips/playback?channel=14&started_at=2026-05-20T19%3A12%3A00Z",
+            headers={
+                "Authorization": "Bearer private-token",
+                "Cookie": "talkingboats_operator_token=private-token",
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+    assert "set-cookie" not in response.headers
+    assert response.json()["playback_expires_in_seconds"] == 300
+
+
+def test_proxy_clip_audio_endpoint_is_public_read_only() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert (
+            str(request.url)
+            == "http://private-api.test/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00Z"
+        )
+        assert "authorization" not in request.headers
+        assert "cookie" not in request.headers
+        assert "x-talkingboats-operator-token" not in request.headers
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "audio/mpeg",
+                "Cache-Control": "no-store",
+                "Set-Cookie": "talkingboats_operator_token=private-token",
+            },
+            content=b"same-origin-mp3",
+        )
+
+    app = create_app(
+        ProxySettings(private_api_url="http://private-api.test"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_get(
+            app,
+            "/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00Z",
+            headers={
+                "Authorization": "Bearer private-token",
+                "Cookie": "talkingboats_operator_token=private-token",
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in response.headers
+    assert response.content == b"same-origin-mp3"
+
+
 def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "http://private-api.test/api/analysis/lexical"
@@ -371,6 +485,72 @@ def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "source_clip_count": 1, "entities": []}
+
+
+def test_proxy_ais_catcher_viewer_is_dev_only_and_public_safe() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://pi.test:8100/"
+        assert "authorization" not in request.headers
+        assert "cookie" not in request.headers
+        assert "x-talkingboats-operator-token" not in request.headers
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "text/html; charset=utf-8",
+                "Set-Cookie": "talkingboats_operator_token=private-token",
+            },
+            text="<html><head><title>AIS-catcher</title></head><body>map</body></html>",
+        )
+
+    app = create_app(
+        ProxySettings(ais_catcher_base_url="http://pi.test:8100"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_get(
+            app,
+            "/ais-catcher/",
+            headers={
+                "Host": "vhf-dev.robertboscacci.com",
+                "Authorization": "Bearer private-token",
+                "Cookie": "talkingboats_operator_token=private-token",
+            },
+        )
+    )
+    prod_response = _run(
+        _asgi_get(app, "/ais-catcher/", headers={"Host": "vhf.robertboscacci.com"})
+    )
+
+    assert response.status_code == 200
+    assert '<base href="/ais-catcher/" />' in response.text
+    assert "set-cookie" not in response.headers
+    assert prod_response.status_code == 404
+
+
+def test_proxy_ais_catcher_subpaths_and_redirects_stay_under_dev_prefix() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://pi.test:8100/assets/app.js?v=1"
+        return httpx.Response(
+            302,
+            headers={"Location": "/"},
+        )
+
+    app = create_app(
+        ProxySettings(ais_catcher_base_url="http://pi.test:8100/"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_get(
+            app,
+            "/ais-catcher/assets/app.js?v=1",
+            headers={"Host": "vhf-dev.robertboscacci.com"},
+        )
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/ais-catcher/"
 
 
 def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:

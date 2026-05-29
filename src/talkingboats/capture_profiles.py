@@ -4,7 +4,7 @@ import argparse
 import json
 from dataclasses import dataclass
 
-from talkingboats.channel_metadata import CHANNEL_METADATA
+from talkingboats.channel_metadata import CHANNEL_METADATA, VOICE_NET_BALANCED_CHANNELS
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,7 @@ class CaptureProfile:
     mode: str
     channels: tuple[CaptureChannel, ...]
     center_frequency_hz: int | None = None
+    sample_rate_hz: int | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ CAPTURE_PROFILES = {
         name="elliott_bay",
         mode="multichannel",
         center_frequency_hz=156_675_000,
+        sample_rate_hz=2_560_000,
         channels=(
             CaptureChannel(
                 channel="13",
@@ -71,6 +73,20 @@ CAPTURE_PROFILES = {
             ),
         ),
     ),
+    "voice_net_balanced": CaptureProfile(
+        name="voice_net_balanced",
+        mode="multichannel",
+        center_frequency_hz=156_675_000,
+        sample_rate_hz=2_560_000,
+        channels=tuple(
+            CaptureChannel(
+                channel=channel,
+                label=CHANNEL_METADATA[channel].label,
+                frequency_hz=CHANNEL_METADATA[channel].frequency_hz,
+            )
+            for channel in VOICE_NET_BALANCED_CHANNELS
+        ),
+    ),
 }
 
 
@@ -80,6 +96,10 @@ def render_rtlsdr_airband_config(
     output_root: str,
     icecast_output: AirbandIcecastOutput | None = None,
     icecast_outputs: tuple[AirbandIcecastOutput, ...] = (),
+    device_index: int = 0,
+    device_serial: str | None = None,
+    squelch_threshold: float | None = None,
+    squelch_snr_threshold: float | None = None,
 ) -> str:
     if profile.mode != "multichannel" or profile.center_frequency_hz is None:
         raise ValueError("only multichannel profiles can be rendered as RTLSDR-Airband config")
@@ -92,6 +112,7 @@ def render_rtlsdr_airband_config(
       freq = {channel.frequency_hz};
       modulation = "nfm";
       label = "vhf-{channel.channel.lower()}";
+{_render_channel_squelch(squelch_threshold, squelch_snr_threshold)}
       outputs:
       (
 {_render_channel_outputs(channel, cleaned_output_root, selected_icecast_outputs)}
@@ -105,10 +126,11 @@ def render_rtlsdr_airband_config(
 devices:
 ({{
   type = "rtlsdr";
-  index = 0;
+{_render_device_identifier(device_index, device_serial)}
   gain = 28;
   correction = 0;
   mode = "multichannel";
+{_render_sample_rate(profile.sample_rate_hz)}
   centerfreq = {profile.center_frequency_hz};
   channels:
   (
@@ -150,6 +172,32 @@ def _render_channel_outputs(
     return ",\n".join(outputs)
 
 
+def _render_device_identifier(device_index: int, device_serial: str | None) -> str:
+    if device_serial:
+        return f"  serial = {_config_string(device_serial)};"
+    return f"  index = {device_index};"
+
+
+def _render_sample_rate(sample_rate_hz: int | None) -> str:
+    return f"  sample_rate = {sample_rate_hz};" if sample_rate_hz else ""
+
+
+def _render_channel_squelch(
+    squelch_threshold: float | None,
+    squelch_snr_threshold: float | None,
+) -> str:
+    lines = []
+    if squelch_threshold is not None:
+        lines.append(f"      squelch_threshold = {_airband_number(squelch_threshold)};")
+    if squelch_snr_threshold is not None:
+        lines.append(f"      squelch_snr_threshold = {_airband_number(squelch_snr_threshold)};")
+    return "\n".join(lines)
+
+
+def _airband_number(value: float) -> str:
+    return str(int(value)) if value.is_integer() else f"{value:.1f}"
+
+
 def _config_string(value: str) -> str:
     return json.dumps(value)
 
@@ -162,6 +210,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Render Talking Boats capture profile configs.")
     parser.add_argument("--profile", choices=sorted(CAPTURE_PROFILES), required=True)
     parser.add_argument("--output-root", default="/opt/talkingboats/spool/airband")
+    parser.add_argument("--device-index", type=int, default=0)
+    parser.add_argument("--device-serial")
+    parser.add_argument("--squelch-threshold", type=float)
+    parser.add_argument("--squelch-snr-threshold", type=float)
     parser.add_argument("--icecast-channel")
     parser.add_argument("--icecast-host", default="127.0.0.1")
     parser.add_argument("--icecast-port", type=int, default=8000)
@@ -213,6 +265,10 @@ def main() -> None:
             output_root=args.output_root,
             icecast_output=icecast_output,
             icecast_outputs=tuple(icecast_outputs),
+            device_index=args.device_index,
+            device_serial=args.device_serial,
+            squelch_threshold=args.squelch_threshold,
+            squelch_snr_threshold=args.squelch_snr_threshold,
         )
     )
 

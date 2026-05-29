@@ -219,27 +219,49 @@ sudo scripts/repair_pi_user_sd.sh /dev/sdc
 
 ## Pi Live Radio Smoke
 
-After an RTL-SDR and antenna are plugged into the Pi, verify the dongle:
+After the RTL-SDR receivers and antenna are plugged into the Pi, verify the
+dongles and write down their serials:
 
 ```bash
 ssh rob@talkingboats-pi.local rtl_test -t
+ssh rob@talkingboats-pi.local AIS-catcher -l
 ```
 
 Install the capture services from a repo checkout on the Pi:
 
 ```bash
+sudo scripts/install_ais_catcher_pi.sh
 sudo deploy/pi/install_live_radio.sh
 ```
 
 The installer creates a root-only `/etc/talkingboats/live-radio.env`, configures
 Icecast with generated local source credentials, and starts:
 
-- `talkingboats-edge-live-radio-stream.service`: one `rtl_fm` process teed
-  through the Pi edge detector and then to Icecast MP3.
-- `talkingboats-profile-capture.service`: default debug profile that records
-  VHF 14 for fast transcription feedback.
+- `talkingboats-profile-capture.service`: profile-driven voice capture. With
+  RTLSDR-Airband installed, the default profile becomes the balanced 12-channel
+  voice net centered at `156.675 MHz` and sampled at `2.56 MS/s`; without it,
+  the debug profile records VHF 14 for fast transcription feedback.
 - `talkingboats-spool-uploader.service`: uploads completed multichannel spool
   files when durable upload env vars are present.
+- `talkingboats-ais-catcher.service`: AIS decode on the configured AIS dongle,
+  serving the AIS-catcher live web map on the Pi and feeding AIS-catcher's
+  community map feed when enabled.
+
+Set the dongle serials in `/etc/talkingboats/live-radio.env` before enabling the
+full two-dongle profile:
+
+```bash
+TALKINGBOATS_VOICE_SDR_SERIAL=voice-dongle-serial
+TALKINGBOATS_VOICE_DEVICE_INDEX=0
+TALKINGBOATS_AIS_SDR_SERIAL=ais-dongle-serial
+TALKINGBOATS_AIS_DEVICE_INDEX=1
+TALKINGBOATS_AIS_WEB_PORT=8100
+TALKINGBOATS_AIS_COMMUNITY_FEED=anonymous
+```
+
+Serials are preferred. If the RTL-SDRs still both report `00000001`, set
+`TALKINGBOATS_VOICE_DEVICE_INDEX` and `TALKINGBOATS_AIS_DEVICE_INDEX` for the
+observed device order; the defaults are voice index `0` and AIS index `1`.
 
 For a continuous signal check, override the frequency before the first install,
 for example VHF 14:
@@ -256,6 +278,9 @@ Keep the cheap, real-time radio work on the Pi. This is a design goal, not a
 fallback or bug:
 
 - SDR demodulation with `rtl_fm`.
+- Balanced multichannel voice capture with RTLSDR-Airband on the lower marine
+  block.
+- AIS decode with AIS-catcher on the second dongle around `162 MHz`.
 - Live mono MP3 encoding for debug streaming.
 - RMS activity detection on raw PCM before encoding.
 - Bounded clip spooling under `/opt/talkingboats/spool/clips`.
@@ -309,6 +334,21 @@ TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS=30
 TALKINGBOATS_CAPTURE_LIVE_MOUNT=/talkingboats-live.mp3
 TALKINGBOATS_CAPTURE_STATUS_PATH=/opt/talkingboats/live-radio/current-status.json
 ```
+
+The balanced voice-net profile demodulates 12 voice channels in one RTLSDR-Airband
+process:
+
+```bash
+TALKINGBOATS_CAPTURE_PROFILE=voice_net_balanced
+TALKINGBOATS_VOICE_SDR_SERIAL=voice-dongle-serial
+TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=-35
+TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=20
+```
+
+It writes split-on-transmission files under
+`/opt/talkingboats/spool/airband/{05A,06,09,13,14,16,22A,67,68,69,71,72}`.
+The browser-facing Icecast mounts stay limited to VHF 13, 14, 16, and 68 while
+the spool uploader sends active clips for transcription.
 
 The default local rolling buffer is five-minute WAV segments with 24-hour
 retention. Raw audio uploaded to the private S3 `raw/` prefix is governed by the
@@ -443,11 +483,14 @@ tailscale funnel --bg --https=10000 http://127.0.0.1:8095
 ```
 
 The proxy serves the same `public-site/` UI for direct origin checks, forwards
-only the read-only recent-clip API call to the private API, and exposes a
-read-only current receiver stream plus per-channel streams for the continuously
-monitored VHF channels. CloudFront routes the public app to:
+only read-only public API calls to the private API, and exposes a read-only
+current receiver stream plus per-channel streams for the continuously monitored
+VHF channels. CloudFront routes the public app to:
 
 ```text
+https://vhf.robertboscacci.com/api/clips/recent
+https://vhf.robertboscacci.com/api/analysis/lexical
+https://vhf-dev.robertboscacci.com/ais-catcher/
 https://vhf.robertboscacci.com/api/live/current.mp3
 https://vhf.robertboscacci.com/api/live/13/current.mp3
 https://vhf.robertboscacci.com/api/live/14/current.mp3
@@ -489,6 +532,32 @@ waiting state until the next transmission comes through.
 
 The simple `talkingboats-live-radio-stream.service` remains installed as an
 escape hatch, but the installer disables it so only one process owns the SDR.
+
+## Live AIS
+
+AIS uses the second RTL-SDR so it does not compete with the voice-net dongle.
+AIS-catcher is started with the configured serial/device index, exposes its
+built-in live web map on the Pi, and can feed the AIS-catcher community map:
+
+```bash
+TALKINGBOATS_AIS_SDR_SERIAL=ais-dongle-serial
+TALKINGBOATS_AIS_DEVICE_INDEX=1
+TALKINGBOATS_AIS_WEB_PORT=8100
+TALKINGBOATS_AIS_COMMUNITY_FEED=anonymous
+TALKINGBOATS_AIS_SHARING_KEY=
+```
+
+Set `TALKINGBOATS_AIS_COMMUNITY_FEED=off` to keep AIS-catcher local-only, or set
+`TALKINGBOATS_AIS_COMMUNITY_FEED=key` with `TALKINGBOATS_AIS_SHARING_KEY` if the
+station should use a registered AIS-catcher sharing key.
+
+```text
+/ais-catcher/
+```
+
+The live proxy exposes that viewer only on dev/local hosts and strips viewer
+cookies, authorization headers, and upstream `Set-Cookie` headers. The prod site
+hides the AIS tab; tighter clip-to-vessel integration can build on this later.
 
 ## Public Export
 

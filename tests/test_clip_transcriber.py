@@ -211,6 +211,25 @@ def test_uploaded_clip_store_ignores_duplicate_idempotency_key(tmp_path) -> None
     assert [clip.key for clip in pending] == [first_key]
 
 
+def test_uploaded_clip_store_returns_newest_pending_first(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    older_key = "raw/channel=13/date=2026-05-24/20260524T210000Z-first.mp3"
+    newer_key = "raw/channel=14/date=2026-05-24/20260524T213000Z-second.mp3"
+    store.record_presigned_upload(
+        key=older_key,
+        request=_clip_request(channel="13", started_at="2026-05-24T21:00:00Z"),
+    )
+    store.record_presigned_upload(
+        key=newer_key,
+        request=_clip_request(channel="14", started_at="2026-05-24T21:30:00Z"),
+    )
+
+    pending = store.pending_uploads(limit=1)
+
+    assert [clip.key for clip in pending] == [newer_key]
+
+
 def test_recent_transcribed_clips_returns_newest_with_segments(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)

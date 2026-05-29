@@ -4,6 +4,8 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -17,7 +19,26 @@ from typing import Literal, Protocol
 
 from talkingboats.audio_processing import build_ffmpeg_upload_mp3_command
 
-ALLOWED_CHANNELS = {"05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74"}
+ALLOWED_CHANNELS = {
+    "05A",
+    "06",
+    "09",
+    "10",
+    "13",
+    "14",
+    "16",
+    "22A",
+    "66A",
+    "67",
+    "68",
+    "69",
+    "71",
+    "72",
+    "73",
+    "74",
+    "77",
+    "78A",
+}
 CONTENT_TYPES = {
     ".aac": "audio/aac",
     ".flac": "audio/flac",
@@ -26,7 +47,26 @@ CONTENT_TYPES = {
     ".ogg": "audio/ogg",
     ".wav": "audio/wav",
 }
-Channel = Literal["05A", "13", "14", "16", "22A", "66A", "68", "69", "71", "72", "74"]
+Channel = Literal[
+    "05A",
+    "06",
+    "09",
+    "10",
+    "13",
+    "14",
+    "16",
+    "22A",
+    "66A",
+    "67",
+    "68",
+    "69",
+    "71",
+    "72",
+    "73",
+    "74",
+    "77",
+    "78A",
+]
 
 
 class StatResult(Protocol):
@@ -54,10 +94,17 @@ UploadFunc = Callable[..., UploadResult]
 Runner = Callable[..., object]
 
 
+class ClipPreparationError(Exception):
+    """Raised when local clip preparation fails before any upload attempt."""
+
+
 def infer_spool_channel(path: Path) -> Channel:
     for part in reversed(path.parts):
-        if part in ALLOWED_CHANNELS:
-            return part  # type: ignore[return-value]
+        if channel := _normalize_spool_channel(part):
+            return channel
+        for token in re.split(r"[^A-Za-z0-9]+", part):
+            if channel := _normalize_spool_channel(token):
+                return channel
     raise ValueError(f"could not infer channel from path: {path}")
 
 
@@ -96,7 +143,7 @@ def discover_completed_audio_files(
                 ),
             )
         )
-    return clips
+    return sorted(clips, key=lambda clip: clip.started_at, reverse=True)
 
 
 def upload_spooled_clip(*, api_url: str, ingest_token: str, clip: SpooledAudioClip) -> UploadResult:
@@ -153,23 +200,45 @@ def process_spool_once(
     mp3_bitrate: str = "64k",
     ffmpeg_path: str = "ffmpeg",
     runner: Runner = subprocess.run,
+    failed_root: Path | None = None,
+    max_files: int | None = 100,
 ) -> int:
     uploaded = 0
     now = now or datetime.now(UTC)
-    for clip in discover_completed_audio_files(
+    failed_root = failed_root or spool_root.parent / f"{spool_root.name}-failed"
+    clips = discover_completed_audio_files(
         spool_root=spool_root,
         now=now,
         min_age_seconds=min_age_seconds,
         stat_func=stat_func,
-    ):
-        with prepared_spooled_clip_for_upload(
-            clip,
-            audio_filter=audio_filter,
-            mp3_bitrate=mp3_bitrate,
-            ffmpeg_path=ffmpeg_path,
-            runner=runner,
-        ) as upload_clip:
-            result = upload_func(api_url=api_url, ingest_token=ingest_token, clip=upload_clip)
+    )
+    if max_files is not None:
+        clips = clips[: max(0, max_files)]
+    for clip in clips:
+        try:
+            with prepared_spooled_clip_for_upload(
+                clip,
+                audio_filter=audio_filter,
+                mp3_bitrate=mp3_bitrate,
+                ffmpeg_path=ffmpeg_path,
+                runner=runner,
+            ) as upload_clip:
+                result = upload_func(api_url=api_url, ingest_token=ingest_token, clip=upload_clip)
+        except ClipPreparationError as exc:
+            failed_path = quarantine_spooled_clip(
+                clip=clip,
+                spool_root=spool_root,
+                failed_root=failed_root,
+                error=exc,
+            )
+            _log_event(
+                "spool_clip_quarantined",
+                channel=clip.channel,
+                audio_file=clip.audio_path.name,
+                failed_file=str(failed_path),
+                error=f"{type(exc.__cause__ or exc).__name__}: {exc.__cause__ or exc}",
+            )
+            continue
         uploaded += 1
         _log_event(
             "spool_clip_uploaded",
@@ -200,16 +269,19 @@ def prepared_spooled_clip_for_upload(
 
     with tempfile.TemporaryDirectory(prefix="talkingboats-spool-upload-") as tempdir:
         upload_path = Path(tempdir) / f"{clip.audio_path.stem}-edge.mp3"
-        runner(
-            build_ffmpeg_upload_mp3_command(
-                clip.audio_path,
-                upload_path,
-                bitrate=mp3_bitrate,
-                audio_filter=resolved_filter,
-                ffmpeg_path=ffmpeg_path,
-            ),
-            check=True,
-        )
+        try:
+            runner(
+                build_ffmpeg_upload_mp3_command(
+                    clip.audio_path,
+                    upload_path,
+                    bitrate=mp3_bitrate,
+                    audio_filter=resolved_filter,
+                    ffmpeg_path=ffmpeg_path,
+                ),
+                check=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - daemon quarantines this local input.
+            raise ClipPreparationError(f"{type(exc).__name__}: {exc}") from exc
         yield replace(
             clip,
             audio_path=upload_path,
@@ -241,6 +313,17 @@ def main() -> None:
         "--ffmpeg-path",
         default=os.getenv("TALKINGBOATS_EDGE_UPLOAD_FFMPEG_PATH", "ffmpeg"),
     )
+    failed_root = os.getenv("TALKINGBOATS_SPOOL_FAILED_ROOT")
+    parser.add_argument(
+        "--failed-root",
+        type=Path,
+        default=Path(failed_root) if failed_root else None,
+    )
+    parser.add_argument(
+        "--max-files-per-poll",
+        type=int,
+        default=int(os.getenv("TALKINGBOATS_SPOOL_MAX_FILES_PER_POLL", "100")),
+    )
     parser.add_argument("--delete-after-upload", action="store_true")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
@@ -261,6 +344,8 @@ def main() -> None:
                 audio_filter=args.audio_filter,
                 mp3_bitrate=args.mp3_bitrate,
                 ffmpeg_path=args.ffmpeg_path,
+                failed_root=args.failed_root,
+                max_files=args.max_files_per_poll,
             )
             _log_event("spool_uploader_poll", uploaded=uploaded)
         except Exception as exc:  # noqa: BLE001 - keep daemon retrying.
@@ -271,10 +356,25 @@ def main() -> None:
 
 
 def _started_at_from_filename(path: Path) -> datetime | None:
-    for token in path.stem.replace("-", "_").split("_"):
+    tokens = path.stem.replace("-", "_").split("_")
+    for index, token in enumerate(tokens):
         if len(token) == 16 and token.endswith("Z") and "T" in token:
             try:
                 return datetime.strptime(token, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+            except ValueError:
+                return None
+        if (
+            len(token) == 8
+            and token.isdigit()
+            and index + 1 < len(tokens)
+            and len(tokens[index + 1]) == 6
+            and tokens[index + 1].isdigit()
+        ):
+            try:
+                return datetime.strptime(
+                    f"{token}{tokens[index + 1]}",
+                    "%Y%m%d%H%M%S",
+                ).replace(tzinfo=UTC)
             except ValueError:
                 return None
     return None
@@ -292,6 +392,56 @@ def _optional_audio_filter(value: str | None) -> str | None:
     if not stripped or stripped.lower() in {"0", "false", "no", "none", "off", "disabled"}:
         return None
     return stripped
+
+
+def quarantine_spooled_clip(
+    *,
+    clip: SpooledAudioClip,
+    spool_root: Path,
+    failed_root: Path,
+    error: BaseException,
+) -> Path:
+    try:
+        relative_path = clip.audio_path.relative_to(spool_root)
+    except ValueError:
+        relative_path = Path(clip.audio_path.name)
+    failed_path = _unique_failed_path(failed_root / relative_path)
+    failed_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(clip.audio_path), str(failed_path))
+    sidecar = failed_path.with_suffix(f"{failed_path.suffix}.error.json")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "channel": clip.channel,
+                "error": f"{type(error.__cause__ or error).__name__}: {error.__cause__ or error}",
+                "failed_at": _format_utc(datetime.now(UTC)),
+                "source": str(relative_path),
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return failed_path
+
+
+def _unique_failed_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    return path.with_name(f"{path.stem}-{digest}{path.suffix}")
+
+
+def _normalize_spool_channel(value: str) -> Channel | None:
+    channel = value.strip().upper()
+    if channel in ALLOWED_CHANNELS:
+        return channel  # type: ignore[return-value]
+    if (channel.isdigit() and len(channel) == 1) or (
+        len(channel) == 2 and channel[0].isdigit() and channel[1].isalpha()
+    ):
+        channel = f"0{channel}"
+    if channel in ALLOWED_CHANNELS:
+        return channel  # type: ignore[return-value]
+    return None
 
 
 def _format_utc(value: datetime) -> str:

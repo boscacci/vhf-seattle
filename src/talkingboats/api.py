@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import AsyncIterator
 from pathlib import Path as FilePath
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 import uvicorn
@@ -163,6 +163,7 @@ async def recent_clips(
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
     offset: Annotated[int, Query(ge=0)] = 0,
     channel: Annotated[str | None, Query(min_length=1, max_length=8)] = None,
+    channels: Annotated[list[str] | None, Query()] = None,
 ) -> dict[str, object]:
     if clip_store is None:
         return {
@@ -178,8 +179,13 @@ async def recent_clips(
         excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
     )
     clip_count = sum(channel_counts.values())
-    filtered_clip_count = channel_counts.get(channel, clip_count) if channel else clip_count
-    if channel and channel.upper() in PUBLIC_EXCLUDED_CHANNELS:
+    selected_channels = _requested_public_channels(channel=channel, channels=channels)
+    filtered_clip_count = (
+        sum(channel_counts.get(selected_channel, 0) for selected_channel in selected_channels)
+        if selected_channels
+        else clip_count
+    )
+    if (channel or channels) and not selected_channels:
         return {
             "clips": [],
             "clip_count": clip_count,
@@ -193,16 +199,21 @@ async def recent_clips(
     for clip in clip_store.recent_transcribed(
         limit=limit,
         offset=offset,
-        channel=channel,
+        channel=channel if not channels else None,
+        channels=selected_channels,
         excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
     ):
         try:
+            if not storage.playback_exists(clip.key):
+                continue
             playback_url = storage.presign_playback(clip.key)
         except RuntimeError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(exc),
             ) from exc
+        except ValueError:
+            continue
         clips.append(
             {
                 "channel": clip.channel,
@@ -226,6 +237,93 @@ async def recent_clips(
         "channel_counts": channel_counts,
         "channel_labels": public_monitored_channel_labels(channel_counts),
     }
+
+
+@app.get(
+    "/api/clips/playback",
+)
+async def public_clip_playback_url(
+    settings: Annotated[Settings, Depends(get_settings)],
+    storage: Annotated[S3AudioStorage, Depends(get_storage)],
+    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+    channel: Annotated[str, Query(min_length=1, max_length=8)],
+    started_at: Annotated[str, Query(min_length=1, max_length=64)],
+) -> dict[str, object]:
+    clip = public_playback_clip(clip_store, channel=channel, started_at=started_at)
+    try:
+        if not storage.playback_exists(clip.key):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found")
+        playback_url = storage.presign_playback(clip.key)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
+    return {
+        "channel": clip.channel,
+        "started_at": clip.started_at,
+        "playback_url": playback_url,
+        "playback_expires_in_seconds": settings.playback_presign_seconds,
+    }
+
+
+@app.get(
+    "/api/clips/audio",
+)
+async def public_clip_audio(
+    storage: Annotated[S3AudioStorage, Depends(get_storage)],
+    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+    channel: Annotated[str, Query(min_length=1, max_length=8)],
+    started_at: Annotated[str, Query(min_length=1, max_length=64)],
+) -> StreamingResponse:
+    clip = public_playback_clip(clip_store, channel=channel, started_at=started_at)
+    try:
+        body = storage.open_playback(clip.key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
+    return StreamingResponse(
+        iter_playback_body(body),
+        media_type=clip.content_type,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def public_playback_clip(
+    clip_store: UploadedClipStore | None,
+    *,
+    channel: str,
+    started_at: str,
+):
+    if clip_store is None or channel.upper() in PUBLIC_EXCLUDED_CHANNELS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found")
+    clip = clip_store.transcribed_clip_for_public_playback(
+        channel=channel,
+        started_at=started_at,
+        excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+    )
+    if clip is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found")
+    return clip
+
+
+def iter_playback_body(body: Any):
+    try:
+        for chunk in body.iter_chunks(chunk_size=64 * 1024):
+            if chunk:
+                yield chunk
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
 
 
 @app.get(
@@ -318,6 +416,23 @@ async def _iter_upstream_audio(url: str) -> AsyncIterator[bytes]:
         async for chunk in response.aiter_bytes():
             if chunk:
                 yield chunk
+
+
+def _requested_public_channels(
+    *,
+    channel: str | None,
+    channels: list[str] | None,
+) -> list[str]:
+    excluded = {excluded_channel.upper() for excluded_channel in PUBLIC_EXCLUDED_CHANNELS}
+    requested: list[str] = []
+    for value in [channel, *(channels or [])]:
+        if value is None:
+            continue
+        for part in value.split(","):
+            normalized = part.strip()
+            if normalized and normalized.upper() not in excluded and normalized not in requested:
+                requested.append(normalized)
+    return requested
 
 
 def main() -> None:

@@ -21,6 +21,50 @@ def test_elliott_bay_profile_monitors_selected_marine_voice_channels() -> None:
     assert [channel.channel for channel in profile.channels] == ["13", "14", "68"]
 
 
+def test_voice_net_balanced_profile_monitors_twelve_lower_block_channels() -> None:
+    profile = CAPTURE_PROFILES["voice_net_balanced"]
+
+    assert profile.mode == "multichannel"
+    assert profile.center_frequency_hz == 156_675_000
+    assert profile.sample_rate_hz == 2_560_000
+    assert [channel.channel for channel in profile.channels] == [
+        "05A",
+        "06",
+        "09",
+        "13",
+        "14",
+        "16",
+        "22A",
+        "67",
+        "68",
+        "69",
+        "71",
+        "72",
+    ]
+
+
+def test_voice_net_airband_config_pins_device_serial_sample_rate_and_squelch() -> None:
+    config = render_rtlsdr_airband_config(
+        CAPTURE_PROFILES["voice_net_balanced"],
+        output_root="/opt/talkingboats/spool/airband",
+        device_serial="VOICE123",
+        squelch_threshold=-35.0,
+        squelch_snr_threshold=20.0,
+    )
+
+    assert 'serial = "VOICE123";' in config
+    assert "index = 0;" not in config
+    assert "sample_rate = 2560000;" in config
+    assert "centerfreq = 156675000;" in config
+    assert config.count('type = "file";') == 12
+    assert config.count("squelch_threshold = -35;") == 12
+    assert config.count("squelch_snr_threshold = 20;") == 12
+    assert "freq = 156250000;" in config
+    assert "freq = 156800000;" in config
+    assert "freq = 157100000;" in config
+    assert 'label = "vhf-05a";' in config
+
+
 def test_elliott_bay_airband_config_writes_channel_mp3_spool_outputs() -> None:
     config = render_rtlsdr_airband_config(
         CAPTURE_PROFILES["elliott_bay"],

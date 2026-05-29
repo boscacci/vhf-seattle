@@ -9,7 +9,18 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert '--exclude "public_manifest.json"' in script
     assert '--exclude "clips/*"' in script
     assert '--exclude "analysis/*"' in script
-    assert '"/" "/index.html" "/assets/*" "/favicon.svg"' in script
+    for path in (
+        '"/"',
+        '"/index.html"',
+        '"/assets/*"',
+        '"/favicon.svg"',
+        '"/clips/*"',
+        '"/live/*"',
+        '"/ais/*"',
+        '"/analysis/index.html"',
+        '"/performance/*"',
+    ):
+        assert path in script
     assert "dev_public_site_bucket" in script
     assert "cloudfront create-invalidation" in script
     assert "enforce_branch_hygiene" in script
@@ -23,14 +34,17 @@ def test_full_public_deploy_supports_external_tofu_state_dir() -> None:
     assert 'cd "${tofu_dir}"' in script
 
 
-def test_deploy_scripts_fail_fast_when_tofu_outputs_are_missing() -> None:
+def test_deploy_scripts_discover_existing_aws_targets_when_tofu_outputs_are_missing() -> None:
     for path in ("scripts/deploy_static_shell.sh", "scripts/deploy_public_site.sh"):
         script = Path(path).read_text(encoding="utf-8")
 
-        assert "tofu_output_raw()" in script
+        assert "deploy_output_raw()" in script
+        assert "fallback_output_raw()" in script
         assert "No outputs found" in script
         assert "OpenTofu output" in script
-        assert 'bucket="$(tofu_output_raw "${bucket_output}")"' in script
+        assert "aws sts get-caller-identity" in script
+        assert "aws cloudfront list-distributions" in script
+        assert 'bucket="$(deploy_output_raw "${bucket_output}")"' in script
 
 
 def test_mobile_auth_env_writer_uses_tofu_outputs_and_gitignored_local_file() -> None:
@@ -56,7 +70,7 @@ def test_google_cognito_setup_script_keeps_provider_secret_out_of_state() -> Non
     assert "create-identity-provider" in script
     assert "update-identity-provider" in script
     assert "update-user-pool-client" in script
-    assert "--supported-identity-providers Google" in script
+    assert "--supported-identity-providers Google" not in script
     assert "client_secret" not in main_tf
     assert "ignore_changes = [supported_identity_providers]" in main_tf
 

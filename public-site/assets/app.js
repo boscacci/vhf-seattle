@@ -1,15 +1,21 @@
 const clipPageSize = 6;
 const liveClipUrl = `/api/clips/recent?limit=${clipPageSize}`;
+const clipPlaybackUrl = "/api/clips/playback";
+const clipAudioUrl = "/api/clips/audio";
 const manifestUrl = "/public_manifest.json";
 const lexicalAnalysisUrl = "/api/analysis/lexical";
 const lexicalManifestUrl = "/analysis/lexical.json";
 const performanceUrl = "/api/live/performance";
+const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353&zoom=13&setcoord=false&welcome=false&tab=map";
 const topicClusterFallbackUrl = "/analysis/topic_clusters.html";
 const liveChannelsUrl = "/api/live/channels";
+const liveQueueUrl = "/api/clips/recent?limit=24";
 const defaultLiveStreamUrl = "/api/live/current.mp3";
 const systemMediaControlsStorageKey = "talkingboats.systemMediaControls";
-const systemMediaControlsDefault = false;
+const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();
 const unknownPlaybackTimeLabel = "—";
+const everythingLiveChannel = "everything";
+const everythingInitialQueueLimit = 3;
 const liveDspProfile = window.location.hostname === "vhf-dev.robertboscacci.com" ? "warm_voice" : "";
 const languageDashboardEnabled = [
   "vhf.robertboscacci.com",
@@ -24,8 +30,29 @@ const liveLanguageAnalysisEnabled = window.location.hostname !== "vhf.robertbosc
 const performanceDashboardEnabled = ["vhf-dev.robertboscacci.com", "localhost", "127.0.0.1", ""].includes(
   window.location.hostname,
 );
+const aisDashboardEnabled = !["vhf.robertboscacci.com"].includes(
+  window.location.hostname,
+);
+const tabRouteSegments = {
+  clips: "clips",
+  live: "live",
+  map: "ais",
+  language: "analysis",
+  performance: "performance",
+};
+const tabRouteAliases = {
+  clips: "clips",
+  live: "live",
+  ais: "map",
+  map: "map",
+  analysis: "language",
+  language: "language",
+  performance: "performance",
+};
 const liveStatusPollMs = 2000;
 const liveActivityPollMs = 15000;
+const liveQueuePollMs = 5000;
+const clipPlaybackRefreshLeadMs = 45000;
 const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
 const performanceHostLabel = "OptiPlex live proxy";
@@ -62,17 +89,21 @@ const pacificShortTimeFormatter = new Intl.DateTimeFormat("en-US", {
 });
 const defaultChannelLabels = {
   "05A": "VTS / Port Ops",
+  "06": "Intership Safety",
+  "09": "Calling / Commercial",
   "13": "Bridge-to-bridge",
   "14": "VTS / Seattle Traffic",
   "16": "Distress / Calling",
   "22A": "USCG Liaison",
   "66A": "Port Operations",
+  "67": "Commercial / Bridge",
   "68": "Recreational",
   "69": "Non-commercial",
   "71": "Non-commercial",
   "72": "Ship-to-ship",
   "74": "Port Operations",
 };
+const monitoredAnalysisChannels = ["05A", "06", "09", "13", "14", "16", "22A", "67", "68", "69", "71", "72"];
 
 const fallbackManifest = {
   site: {
@@ -88,11 +119,14 @@ const fallbackManifest = {
 };
 const channelColors = {
   "05A": "#78dcca",
+  "06": "#67e8f9",
+  "09": "#f9a8d4",
   "13": "#6ab8ff",
   "14": "#40e0bf",
   "16": "#ff7777",
   "22A": "#f0b85a",
   "66A": "#c084fc",
+  "67": "#fca5a5",
   "68": "#8bd867",
   "69": "#f58fb2",
   "71": "#a5b4fc",
@@ -109,6 +143,7 @@ const stats = document.querySelector("#stats");
 const tabs = [...document.querySelectorAll(".tab")];
 const languageTab = document.querySelector("#tab-language");
 const performanceTab = document.querySelector("#tab-performance");
+const mapTab = document.querySelector("#tab-map");
 const panels = {
   clips: document.querySelector("#panel-clips"),
   live: document.querySelector("#panel-live"),
@@ -122,6 +157,7 @@ const liveLastCommunication = document.querySelector("#live-last-communication")
 const liveLatency = document.querySelector("#live-latency");
 const liveChannel = document.querySelector("#live-channel");
 const liveChannelPicker = document.querySelector("#live-channel-picker");
+const liveQueuePanel = document.querySelector("#live-queue");
 const liveFrequency = document.querySelector("#live-frequency");
 const liveSignalDot = document.querySelector("#live-signal-dot");
 const waveformPanel = document.querySelector("#waveform-panel");
@@ -132,7 +168,7 @@ const playLiveSymbol = playLiveButton?.querySelector(".play-symbol");
 const systemMediaControlsToggle = document.querySelector("#system-media-controls");
 const systemMediaNote = document.querySelector("#system-media-note");
 const mapStatus = document.querySelector("#map-status");
-const aisMapDashboard = document.querySelector("#ais-map-dashboard");
+const aisCatcherFrame = document.querySelector("#ais-catcher-frame");
 const languageStatus = document.querySelector("#language-status");
 const lexicalAnalysis = document.querySelector("#lexical-analysis");
 const performanceStatus = document.querySelector("#performance-status");
@@ -146,6 +182,12 @@ let liveActivityAbortController = null;
 let lastLiveStatusId = null;
 let latestLiveStatus = null;
 let lastCommunicationByChannel = {};
+let liveQueue = [];
+let liveQueueSeenClipIds = new Set();
+let currentLiveQueueClip = null;
+let everythingQueueEnabled = false;
+let everythingQueueStartedAtMs = 0;
+let everythingQueueSeeded = false;
 let audioContext = null;
 let analyser = null;
 let analyserSource = null;
@@ -153,9 +195,9 @@ let waveformData = null;
 let waveformAnimationId = null;
 let currentClipPlayback = null;
 let quietSince = null;
-let selectedChannel = "all";
+let selectedChannels = new Set();
 let selectedClipPage = 1;
-let selectedLiveChannel = "14";
+let selectedLiveChannel = everythingLiveChannel;
 let activeTab = "clips";
 let mapPayloadLoaded = false;
 let languagePayloadLoaded = false;
@@ -163,8 +205,29 @@ let performancePayloadLoaded = false;
 let performanceRefreshTimer = null;
 let latestPerformancePayload = null;
 let selectedPerformanceRangeHours = 2;
-let systemMediaControlsEnabled = systemMediaControlsDefault;
+let systemMediaControlsEnabled = initialSystemMediaControlsEnabled();
 let liveChannels = [
+  {
+    channel: "05A",
+    label: defaultChannelLabels["05A"],
+    frequencyMhz: "156.250",
+    streamPath: "/api/live/05A/current.mp3",
+    statusPath: "/api/live/05A/status",
+  },
+  {
+    channel: "06",
+    label: defaultChannelLabels["06"],
+    frequencyMhz: "156.300",
+    streamPath: "/api/live/06/current.mp3",
+    statusPath: "/api/live/06/status",
+  },
+  {
+    channel: "09",
+    label: defaultChannelLabels["09"],
+    frequencyMhz: "156.450",
+    streamPath: "/api/live/09/current.mp3",
+    statusPath: "/api/live/09/status",
+  },
   {
     channel: "13",
     label: defaultChannelLabels["13"],
@@ -180,26 +243,68 @@ let liveChannels = [
     statusPath: "/api/live/14/status",
   },
   {
+    channel: "16",
+    label: defaultChannelLabels["16"],
+    frequencyMhz: "156.800",
+    streamPath: "/api/live/16/current.mp3",
+    statusPath: "/api/live/16/status",
+  },
+  {
+    channel: "22A",
+    label: defaultChannelLabels["22A"],
+    frequencyMhz: "157.100",
+    streamPath: "/api/live/22A/current.mp3",
+    statusPath: "/api/live/22A/status",
+  },
+  {
+    channel: "67",
+    label: defaultChannelLabels["67"],
+    frequencyMhz: "156.375",
+    streamPath: "/api/live/67/current.mp3",
+    statusPath: "/api/live/67/status",
+  },
+  {
     channel: "68",
     label: defaultChannelLabels["68"],
     frequencyMhz: "156.425",
     streamPath: "/api/live/68/current.mp3",
     statusPath: "/api/live/68/status",
   },
+  {
+    channel: "69",
+    label: defaultChannelLabels["69"],
+    frequencyMhz: "156.475",
+    streamPath: "/api/live/69/current.mp3",
+    statusPath: "/api/live/69/status",
+  },
+  {
+    channel: "71",
+    label: defaultChannelLabels["71"],
+    frequencyMhz: "156.575",
+    streamPath: "/api/live/71/current.mp3",
+    statusPath: "/api/live/71/status",
+  },
+  {
+    channel: "72",
+    label: defaultChannelLabels["72"],
+    frequencyMhz: "156.625",
+    streamPath: "/api/live/72/current.mp3",
+    statusPath: "/api/live/72/status",
+  },
 ];
 let currentChannelLabels = { ...defaultChannelLabels };
-
-try {
-  systemMediaControlsEnabled = window.localStorage.getItem(systemMediaControlsStorageKey) === "enabled";
-} catch {
-  systemMediaControlsEnabled = systemMediaControlsDefault;
-}
 
 if (languageTab) {
   languageTab.hidden = !languageDashboardEnabled;
 }
 if (performanceTab) {
   performanceTab.hidden = !performanceDashboardEnabled;
+}
+if (mapTab) {
+  mapTab.hidden = !aisDashboardEnabled;
+}
+if (panels.map) {
+  panels.map.hidden = !aisDashboardEnabled;
 }
 
 configureLiveAudioElement();
@@ -218,11 +323,29 @@ refreshButton.addEventListener("click", () => {
 
 channelFilter.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target : null;
-  const button = target?.closest(".channel-filter-option");
-  if (!button || !channelFilter.contains(button)) {
+  const action = target?.closest(".channel-filter-action");
+  if (!action || !channelFilter.contains(action)) {
     return;
   }
-  selectedChannel = button.dataset.channel || "all";
+  selectedChannels.clear();
+  selectedClipPage = 1;
+  loadAndRender();
+});
+
+channelFilter.addEventListener("change", (event) => {
+  const input = event.target instanceof HTMLInputElement ? event.target : null;
+  if (!input?.classList.contains("channel-filter-checkbox")) {
+    return;
+  }
+  const channel = input.dataset.channel;
+  if (!channel) {
+    return;
+  }
+  if (input.checked) {
+    selectedChannels.add(channel);
+  } else {
+    selectedChannels.delete(channel);
+  }
   selectedClipPage = 1;
   loadAndRender();
 });
@@ -253,8 +376,12 @@ window.addEventListener("pagehide", () => {
   }
 });
 
+window.addEventListener("popstate", () => {
+  activateTab(tabFromLocation(), { updateRoute: false });
+});
+
 liveAudio.addEventListener("playing", () => {
-  liveStatus.textContent = "Streaming";
+  liveStatus.textContent = isEverythingLiveMode() ? "Playing queued transmission" : "Streaming";
   setLivePlayButton("pause");
   updateLiveMediaSession("playing");
 });
@@ -264,18 +391,30 @@ liveAudio.addEventListener("waiting", () => {
 });
 
 liveAudio.addEventListener("pause", () => {
+  if (isEverythingLiveMode() && everythingQueueEnabled) {
+    renderEverythingQueuePanel();
+    return;
+  }
   setLivePlayButton("play");
   liveStatus.textContent = "Paused";
   updateLiveMediaSession("paused");
 });
 
 liveAudio.addEventListener("error", () => {
+  if (isEverythingLiveMode()) {
+    handleEverythingClipEnded();
+    return;
+  }
   liveStatus.textContent = "Reconnecting";
   updateLiveMediaSession("none");
   scheduleLiveReconnect();
 });
 
 liveAudio.addEventListener("ended", () => {
+  if (isEverythingLiveMode()) {
+    handleEverythingClipEnded();
+    return;
+  }
   liveStatus.textContent = "Reconnecting";
   updateLiveMediaSession("none");
   scheduleLiveReconnect();
@@ -302,10 +441,12 @@ async function loadClipPayload() {
 
 function clipRequestUrl() {
   const offset = `offset=${clipOffset()}`;
-  if (selectedChannel === "all") {
+  const channels = selectedChannelValues();
+  if (!channels.length) {
     return `${liveClipUrl}&${offset}`;
   }
-  return `${liveClipUrl}&${offset}&channel=${encodeURIComponent(selectedChannel)}`;
+  const channelParams = channels.map((channel) => `channels=${encodeURIComponent(channel)}`).join("&");
+  return `${liveClipUrl}&${offset}&${channelParams}`;
 }
 
 async function loadPublishedManifest() {
@@ -333,10 +474,7 @@ async function loadLanguagePayload() {
     if (payload?.status === "missing") {
       return loadPublishedLanguagePayload();
     }
-    return {
-      ...payload,
-      ais_tracks: await loadPublishedAisTracks(),
-    };
+    return payload;
   } catch {
     return loadPublishedLanguagePayload();
   }
@@ -348,10 +486,7 @@ async function loadPublishedLanguagePayload() {
     if (!response.ok) {
       throw new Error(`lexical manifest HTTP ${response.status}`);
     }
-    return {
-      ...(await response.json()),
-      ais_tracks: await loadPublishedAisTracks(),
-    };
+    return response.json();
   } catch {
     return {
       status: "missing",
@@ -361,14 +496,8 @@ async function loadPublishedLanguagePayload() {
       entities: [],
       topics: { status: "missing", plot_url: topicClusterFallbackUrl, items: [] },
       education: [],
-      ais_tracks: await loadPublishedAisTracks(),
     };
   }
-}
-
-async function loadPublishedAisTracks() {
-  const manifest = await loadPublishedManifest();
-  return manifest.ais_tracks || [];
 }
 
 function normalizeLivePayload(payload) {
@@ -398,6 +527,7 @@ function normalizeLivePayload(payload) {
       transcript_public: clip.transcript || "",
       playback_url: clip.playback_url || "",
       playback_expires_in_seconds: clip.playback_expires_in_seconds,
+      playback_issued_at_ms: Date.now(),
     })),
   };
 }
@@ -412,7 +542,6 @@ function normalizePublishedManifest(payload) {
     },
     stats: payload.stats || fallbackManifest.stats,
     generated_at: payload.generated_at || payload.stats?.generated_at || null,
-    ais_tracks: normalizeAisTracks(payload.ais_tracks),
     clips: clips.map((clip) => ({
       id: clip.id || `${clip.channel}-${clip.started_at}`,
       public_title: clip.public_title || titleForClip(clip),
@@ -425,51 +554,6 @@ function normalizePublishedManifest(payload) {
       audio_public_filename: clip.audio_public_filename || "",
     })),
   };
-}
-
-function normalizeAisTracks(tracks) {
-  if (!Array.isArray(tracks)) {
-    return [];
-  }
-  return tracks
-    .map((track) => {
-      const points = (Array.isArray(track?.points) ? track.points : [])
-        .map(normalizeAisPoint)
-        .filter(Boolean)
-        .slice(-80);
-      if (!points.length) {
-        return null;
-      }
-      return {
-        track_id: String(track.track_id || track.mmsi || points[0].observed_at || "ais-track"),
-        name: String(track.name || track.mmsi || "Unknown vessel"),
-        vessel_type: String(track.vessel_type || "unknown"),
-        channel_hint: String(track.channel_hint || ""),
-        points,
-      };
-    })
-    .filter(Boolean)
-    .slice(0, 24);
-}
-
-function normalizeAisPoint(point) {
-  const lat = Number(point?.lat);
-  const lon = Number(point?.lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    return null;
-  }
-  return {
-    lat,
-    lon,
-    speed_knots: finiteOrNull(point?.speed_knots),
-    course_degrees: finiteOrNull(point?.course_degrees),
-    observed_at: point?.observed_at || "",
-  };
-}
-
-function finiteOrNull(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
 }
 
 function renderSite(payload) {
@@ -516,53 +600,119 @@ function renderStats(payload, clips) {
 }
 
 function renderChannelFilter(payload) {
+  const wasOpen = channelFilter.querySelector(".channel-filter-menu")?.open;
   const channelCounts = payload.stats?.channel_counts || countBy(payload.clips || [], (clip) => clip.channel || "?");
   const configuredChannels = Object.keys(payload.stats?.channel_labels || payload.channel_labels || {});
   const channels = [...new Set([...Object.keys(channelCounts), ...configuredChannels])].sort(compareChannels);
-  if (selectedChannel !== "all" && !channels.includes(selectedChannel)) {
-    channels.push(selectedChannel);
+  for (const channel of selectedChannelValues()) {
+    if (!channels.includes(channel)) {
+      channels.push(channel);
+    }
   }
-  const buttons = [
-    channelFilterButton("all", "All", channelFilterDetail("all", totalAvailableClipsFromCounts(channelCounts))),
-    ...channels.map((channel) => channelFilterButton(channel, `VHF ${channel}`, channelFilterDetail(channel, channelCounts[channel]))),
-  ];
-  channelFilter.replaceChildren(...buttons);
+  channels.sort(compareChannels);
+
+  const menu = document.createElement("details");
+  menu.className = "channel-filter-menu";
+  menu.open = Boolean(wasOpen);
+
+  const trigger = document.createElement("summary");
+  trigger.className = "channel-filter-trigger";
+  const triggerLabel = document.createElement("span");
+  triggerLabel.className = "channel-filter-trigger-label";
+  triggerLabel.textContent = "Channels";
+  const triggerSummary = document.createElement("span");
+  triggerSummary.className = "channel-filter-trigger-summary";
+  triggerSummary.textContent = formatChannelFilterSummary(channelCounts);
+  trigger.append(triggerLabel, triggerSummary);
+
+  const panel = document.createElement("div");
+  panel.className = "channel-filter-panel";
+  panel.setAttribute("role", "group");
+  panel.setAttribute("aria-labelledby", "channel-filter-label");
+
+  const allAction = document.createElement("button");
+  allAction.type = "button";
+  allAction.className = "channel-filter-action";
+  allAction.setAttribute("aria-pressed", String(selectedChannels.size === 0));
+  const allName = document.createElement("span");
+  allName.className = "channel-filter-name";
+  allName.textContent = "All channels";
+  const allDetail = document.createElement("span");
+  allDetail.className = "channel-filter-detail";
+  allDetail.textContent = channelClipCountText(totalAvailableClipsFromCounts(channelCounts));
+  allAction.append(allName, allDetail);
+
+  const options = document.createElement("div");
+  options.className = "channel-filter-options";
+  options.replaceChildren(...channels.map((channel) => channelFilterOption(channel, channelCounts[channel])));
+  panel.append(allAction, options);
+  menu.append(trigger, panel);
+  channelFilter.replaceChildren(menu);
 }
 
-function channelFilterDetail(channel, count) {
-  const clipCount = Number(count || 0);
-  const label = channel === "all" ? "All channels" : currentChannelLabels[channel] || defaultChannelLabels[channel] || "";
-  if (!clipCount) {
-    return label;
+function channelFilterOption(channel, count) {
+  const selected = selectedChannels.has(channel);
+  const option = document.createElement("label");
+  option.className = "channel-filter-option";
+  option.setAttribute("aria-checked", String(selected));
+  option.style.setProperty("--channel-color", channelColorForChannel(channel));
+  if (selected) {
+    option.classList.add("is-active");
   }
-  const noun = clipCount === 1 ? "clip" : "clips";
-  return `${label} · ${clipCount} ${noun}`;
-}
 
-function channelFilterButton(value, label, detail) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "channel-filter-option";
-  button.dataset.channel = value;
-  button.setAttribute("aria-pressed", String(value === selectedChannel));
-  if (value === selectedChannel) {
-    button.classList.add("is-active");
-  }
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.className = "channel-filter-checkbox";
+  input.dataset.channel = channel;
+  input.checked = selected;
+
+  const swatch = document.createElement("span");
+  swatch.className = "channel-filter-swatch";
+  swatch.setAttribute("aria-hidden", "true");
+
+  const copy = document.createElement("span");
+  copy.className = "channel-filter-copy";
   const name = document.createElement("span");
   name.className = "channel-filter-name";
-  name.textContent = label;
+  name.textContent = `VHF ${channel}`;
   const detailText = document.createElement("span");
   detailText.className = "channel-filter-detail";
-  detailText.textContent = detail;
-  button.append(name, detailText);
-  return button;
+  detailText.textContent = channelFilterDetail(channel);
+  const frequency = document.createElement("span");
+  frequency.className = "channel-filter-frequency";
+  const frequencyText = frequencyForChannel(channel);
+  frequency.textContent = [frequencyText ? `${frequencyText} MHz` : "", channelClipCountText(count)]
+    .filter(Boolean)
+    .join(" · ");
+  copy.append(name, detailText, frequency);
+
+  option.append(input, swatch, copy);
+  return option;
+}
+
+function channelFilterDetail(channel) {
+  const label = currentChannelLabels[channel] || defaultChannelLabels[channel] || "Unlabeled";
+  return label;
+}
+
+function formatChannelFilterSummary(channelCounts) {
+  const channels = selectedChannelValues();
+  if (!channels.length) {
+    return `All channels · ${channelClipCountText(totalAvailableClipsFromCounts(channelCounts))}`;
+  }
+  const selectedCount = channels.reduce((total, channel) => total + Number(channelCounts?.[channel] || 0), 0);
+  const countText = channelClipCountText(selectedCount);
+  if (channels.length === 1) {
+    return `${channelLabel(channels[0])} · ${countText}`;
+  }
+  return `${channels.length} channels selected · ${countText}`;
 }
 
 function filterClipsByChannel(clips) {
-  if (selectedChannel === "all") {
+  if (!selectedChannels.size) {
     return clips;
   }
-  return clips.filter((clip) => clip.channel === selectedChannel);
+  return clips.filter((clip) => selectedChannels.has(clip.channel));
 }
 
 function paginateClips(clips) {
@@ -578,7 +728,10 @@ function renderClips(clips) {
   if (!clips.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "No transcribed clips are available yet.";
+    empty.textContent =
+      selectedChannels.size === 0
+        ? "No playable clips are available yet."
+        : "No playable clips are available for the selected channels.";
     clipList.replaceChildren(empty);
     return;
   }
@@ -672,7 +825,11 @@ async function loadLiveChannels() {
       throw new Error("live channels unavailable");
     }
     liveChannels = channels;
-    if (payload.defaultChannel && liveChannels.some((item) => item.channel === payload.defaultChannel)) {
+    if (
+      selectedLiveChannel !== everythingLiveChannel &&
+      payload.defaultChannel &&
+      liveChannels.some((item) => item.channel === payload.defaultChannel)
+    ) {
       selectedLiveChannel = payload.defaultChannel;
     }
   } catch {
@@ -682,7 +839,8 @@ async function loadLiveChannels() {
     currentChannelLabels[channel.channel] = channel.label;
   }
   renderLiveChannelPicker();
-  if (liveAudio.src) {
+  renderEverythingQueuePanel();
+  if (liveAudio.src && !isEverythingLiveMode()) {
     liveAudio.src = liveStreamUrl();
     liveAudio.load();
   }
@@ -705,25 +863,45 @@ function renderLiveChannelPicker() {
     return;
   }
   liveChannelPicker.replaceChildren();
+  liveChannelPicker.append(liveChannelOptionButton(everythingChannelOption()));
   for (const channel of liveChannels) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "live-channel-option";
-    button.classList.toggle("is-active", channel.channel === selectedLiveChannel);
-    button.dataset.channel = channel.channel;
-    button.textContent = channelLabel(channel.channel);
-    button.title = channelLabel(channel.channel);
-    button.setAttribute("aria-pressed", String(channel.channel === selectedLiveChannel));
-    button.addEventListener("click", () => selectLiveChannel(channel.channel));
-    liveChannelPicker.append(button);
+    liveChannelPicker.append(liveChannelOptionButton(channel));
   }
+}
+
+function everythingChannelOption() {
+  return {
+    channel: everythingLiveChannel,
+    label: "Everything",
+    frequencyMhz: "",
+    streamPath: "",
+    statusPath: "",
+  };
+}
+
+function liveChannelOptionButton(channel) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "live-channel-option";
+  button.classList.toggle("is-active", channel.channel === selectedLiveChannel);
+  button.classList.toggle("is-everything", channel.channel === everythingLiveChannel);
+  button.dataset.channel = channel.channel;
+  button.textContent = channelLabel(channel.channel);
+  button.title =
+    channel.channel === everythingLiveChannel
+      ? "Queue transmissions from all monitored live channels"
+      : channelLabel(channel.channel);
+  button.setAttribute("aria-pressed", String(channel.channel === selectedLiveChannel));
+  button.addEventListener("click", () => selectLiveChannel(channel.channel));
+  return button;
 }
 
 function selectLiveChannel(channel) {
   if (!channel || channel === selectedLiveChannel) {
     return;
   }
-  const wasPlaying = !liveAudio.paused;
+  const wasPlaying = !liveAudio.paused || everythingQueueEnabled;
+  stopEverythingQueue({ clearQueue: true });
   selectedLiveChannel = channel;
   lastLiveStatusId = null;
   renderLiveChannelPicker();
@@ -731,9 +909,26 @@ function selectLiveChannel(channel) {
   pollLiveActivity();
   liveAudio.pause();
   updateLiveMediaSession(wasPlaying ? "playing" : "paused");
-  liveStatus.textContent = wasPlaying ? "Reconnecting" : "Warming stream";
+  liveStatus.textContent = wasPlaying
+    ? isEverythingLiveMode()
+      ? "Starting everything queue"
+      : "Reconnecting"
+    : isEverythingLiveMode()
+      ? "Everything queue ready"
+      : "Warming stream";
   drawWaitingFrame({ showWaiting: false });
   pollLiveStatus();
+  if (isEverythingLiveMode()) {
+    liveAudio.removeAttribute("src");
+    liveAudio.load();
+    renderEverythingQueuePanel();
+    if (wasPlaying) {
+      connectEverythingLive();
+    } else {
+      prepareLiveAudio();
+    }
+    return;
+  }
   if (wasPlaying) {
     liveAudio.src = withCacheBust(liveStreamUrl());
     liveAudio.load();
@@ -744,6 +939,9 @@ function selectLiveChannel(channel) {
 }
 
 function findLiveChannel(channel) {
+  if (channel === everythingLiveChannel) {
+    return everythingChannelOption();
+  }
   const selected = liveChannels.find((item) => item.channel === channel);
   if (selected) {
     return selected;
@@ -751,13 +949,59 @@ function findLiveChannel(channel) {
   return { channel, label: defaultChannelLabels[channel] || "", frequencyMhz: "" };
 }
 
-function activateTab(name) {
-  if (name === "language" && !languageDashboardEnabled) {
+function isEverythingLiveMode() {
+  return selectedLiveChannel === everythingLiveChannel;
+}
+
+function normalizeTabName(name) {
+  return tabRouteAliases[String(name || "").toLowerCase()] || "clips";
+}
+
+function tabFromLocation() {
+  const url = new URL(window.location.href);
+  const tabParam = url.searchParams.get("tab");
+  const hashSegment = url.hash.replace(/^#\/?/, "");
+  const pathSegments = url.pathname.split("/").filter(Boolean);
+  const pathSegment = pathSegments[pathSegments.length - 1] || "";
+  return normalizeTabName(tabParam || hashSegment || pathSegment || "clips");
+}
+
+function tabRouteUrl(name) {
+  const url = new URL(window.location.href);
+  const routeSegment = tabRouteSegments[name] || tabRouteSegments.clips;
+  url.pathname = `/${routeSegment}/`;
+  url.search = "";
+  url.hash = "";
+  return url;
+}
+
+function updateTabRoute(name, { replaceRoute = false } = {}) {
+  if (!window.history || typeof window.history.pushState !== "function") {
     return;
+  }
+  const nextUrl = tabRouteUrl(name);
+  if (nextUrl.href === window.location.href) {
+    return;
+  }
+  const method = replaceRoute ? "replaceState" : "pushState";
+  window.history[method]({ tab: name }, "", nextUrl);
+}
+
+function enabledTabName(name) {
+  if (name === "language" && !languageDashboardEnabled) {
+    return "clips";
   }
   if (name === "performance" && !performanceDashboardEnabled) {
-    return;
+    return "clips";
   }
+  if (name === "map" && !aisDashboardEnabled) {
+    return "clips";
+  }
+  return name;
+}
+
+function activateTab(name, { updateRoute = true, replaceRoute = false } = {}) {
+  name = enabledTabName(normalizeTabName(name));
   activeTab = name;
   tabs.forEach((tab) => {
     tab.classList.toggle("is-active", tab.dataset.tab === name);
@@ -790,6 +1034,9 @@ function activateTab(name) {
   } else {
     stopPerformancePolling();
   }
+  if (updateRoute) {
+    updateTabRoute(name, { replaceRoute });
+  }
 }
 
 async function loadAndRenderLanguage() {
@@ -803,39 +1050,23 @@ async function loadAndRenderLanguage() {
 }
 
 async function loadAndRenderMap({ showLoading = true } = {}) {
-  if (!mapStatus || !aisMapDashboard) {
+  if (!mapStatus || !aisCatcherFrame) {
     return;
   }
   if (showLoading || !mapPayloadLoaded) {
     mapStatus.textContent = "Loading AIS...";
   }
-  const manifest = await loadPublishedManifest();
   mapPayloadLoaded = true;
-  renderAisMapDashboard(manifest);
+  renderAisCatcherFrame();
 }
 
-function renderAisMapDashboard(manifest) {
-  const tracks = normalizeAisTracks(manifest.ais_tracks);
-  mapStatus.textContent = tracks.length
-    ? `${tracks.length} AIS vessel ${tracks.length === 1 ? "track" : "tracks"}`
-    : "No AIS vessel positions received yet";
-
-  const generatedAt = manifest.generated_at || manifest.stats?.generated_at || null;
-  const cards = document.createElement("div");
-  cards.className = "language-grid map-summary-grid";
-  cards.append(
-    languageCard("AIS tracks", String(tracks.length), "Vessel positions in the public manifest"),
-    languageCard(
-      "Last update",
-      generatedAt ? shortTime(generatedAt) : "None",
-      generatedAt ? `Manifest generated ${formatDateTime(generatedAt)}` : "Waiting for first AIS publish",
-    ),
-  );
-
-  const panel = languagePanel("Elliott Bay AIS map");
-  panel.classList.add("vessel-map-panel");
-  panel.append(renderVesselMap(tracks));
-  aisMapDashboard.replaceChildren(cards, panel);
+function renderAisCatcherFrame() {
+  const expectedSrc = new URL(aisCatcherFrameUrl, window.location.href).href;
+  if (aisCatcherFrame.src !== expectedSrc) {
+    aisCatcherFrame.src = aisCatcherFrameUrl;
+  }
+  aisCatcherFrame.title = "AIS-catcher live map";
+  mapStatus.textContent = "Showing AIS-catcher live map";
 }
 
 function renderLanguageDashboard(payload) {
@@ -850,13 +1081,12 @@ function renderLanguageDashboard(payload) {
   const frequency = payload.frequency || {};
   const terms = payload.terms || {};
   const topics = payload.topics || {};
-  const channelCounts = payload.channels || frequency.by_channel || {};
-  const aisTracks = payload.ais_tracks || [];
+  const channelCounts = channelCountsWithMonitoredChannels(payload.channels || frequency.by_channel || {});
   const cards = document.createElement("div");
   cards.className = "language-grid";
   cards.append(
     languageCard("Transmissions", String(payload.source_clip_count || 0), "Analyzed transcript clips"),
-    languageCard("Active channels", activeChannelSummary(channelCounts, aisTracks), "Radio channels plus AIS vessel tracks"),
+    languageCard("Active channels", activeChannelSummary(channelCounts), "Radio channels in analyzed clips"),
     languageCard(
       "Busiest hours",
       busiestHoursSummary(frequency.by_hour_pacific || {}),
@@ -978,14 +1208,30 @@ function performanceHostPanel(host, index) {
   title.textContent = role;
   const cards = document.createElement("div");
   cards.className = "performance-grid";
-  const memory = host?.memory || {};
   const disks = host?.disks || [];
-  const thermal = host?.thermal || {};
+  const cpuSummary = performanceSummaryMetric(host, "cpuUtilizationPercent", "%", "cpu");
+  const memorySummary = performanceSummaryMetric(host, "memoryUsedPercent", "%", "memory");
+  const thermalSummary = performanceSummaryMetric(host, "thermalTemperatureC", " C", "thermal");
   cards.append(
-    performanceCard("CPU utilization", cpuUtilizationSummary(host), cpuCaption(host), hostStatus(host, "cpu")),
-    performanceCard("Memory", percentLabel(memory.usedPercent), bytesLabel(memory.availableBytes, "available"), memory.status),
+    performanceCard(
+      "CPU utilization",
+      cpuSummary.label,
+      performanceWindowCaption(cpuSummary.samples, `${host?.cpuCount || "?"} logical CPUs`),
+      cpuSummary.status,
+    ),
+    performanceCard(
+      "Memory",
+      memorySummary.label,
+      performanceWindowCaption(memorySummary.samples),
+      memorySummary.status,
+    ),
     performanceCard("Disk", diskSummary(disks), "Most used filesystem", worstItemStatus(disks)),
-    performanceCard("Thermals", thermalSummary(thermal), thermalCaption(thermal), thermal.status),
+    performanceCard(
+      "Thermals",
+      thermalSummary.label,
+      performanceWindowCaption(thermalSummary.samples),
+      thermalSummary.status,
+    ),
   );
   const charts = document.createElement("div");
   charts.className = "performance-chart-grid";
@@ -1181,39 +1427,49 @@ function emptyPerformanceState() {
   return empty;
 }
 
-function cpuUtilizationSummary(host) {
-  return percentLabel(host?.cpu?.utilizationPercent);
-}
-
-function cpuCaption(host) {
-  return `1-minute load average: ${formatLoad(host?.load || {})}; ${host?.cpuCount || "?"} logical CPUs`;
-}
-
 function hostStatus(host, key) {
   return host?.[key]?.status || "unknown";
 }
 
-function formatLoad(load) {
-  if (!Number.isFinite(Number(load.perCpu))) {
-    return "Unknown";
-  }
-  return `${Number(load.perCpu).toFixed(2)}x/core`;
+function performanceSummaryMetric(host, field, suffix, statusKey) {
+  const samples = performanceSummarySamples(host, field);
+  const value = averageMetricValue(samples);
+  return {
+    samples,
+    value,
+    label: formatMetricChartValue(value, suffix),
+    status: performanceSummaryStatus(field, value, hostStatus(host, statusKey)),
+  };
 }
 
-function thermalSummary(thermal) {
-  const temperature = Number(thermal?.temperatureC);
-  if (!Number.isFinite(temperature)) {
-    return "Unknown";
-  }
-  return `${temperature.toFixed(1)} C`;
+function performanceSummarySamples(host, field) {
+  return performanceMetricSamples(host?.history, field);
 }
 
-function thermalCaption(thermal) {
-  const throttled = thermal?.throttled || "unknown";
-  if (throttled === "0x0") {
-    return "No throttling reported";
+function performanceSummaryStatus(field, value, fallbackStatus = "unknown") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallbackStatus;
   }
-  return `Throttled: ${throttled}`;
+  if (field === "thermalTemperatureC") {
+    return thresholdStatus(number, 70, 85);
+  }
+  return thresholdStatus(number, 75, 90);
+}
+
+function thresholdStatus(value, watchAt, highAt) {
+  if (value >= highAt) {
+    return "high";
+  }
+  if (value >= watchAt) {
+    return "watch";
+  }
+  return "ok";
+}
+
+function performanceWindowCaption(samples, extra = "") {
+  const base = samples.length ? "Average over selected window" : "No samples in selected window";
+  return extra ? `${base}; ${extra}` : base;
 }
 
 function diskSummary(disks) {
@@ -1250,21 +1506,6 @@ function percentLabel(value) {
   return `${number.toFixed(1)}%`;
 }
 
-function bytesLabel(value, suffix) {
-  const bytes = Number(value);
-  if (!Number.isFinite(bytes)) {
-    return suffix ? `Unknown ${suffix}` : "Unknown";
-  }
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let amount = bytes;
-  let unitIndex = 0;
-  while (amount >= 1024 && unitIndex < units.length - 1) {
-    amount /= 1024;
-    unitIndex += 1;
-  }
-  return `${amount.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]} ${suffix || ""}`.trim();
-}
-
 function languageCard(label, value, caption) {
   const card = document.createElement("article");
   card.className = "language-card";
@@ -1288,10 +1529,20 @@ function languagePanel(titleText) {
   return section;
 }
 
-function activeChannelSummary(channelCounts, aisTracks) {
+function activeChannelSummary(channelCounts) {
   const vhfCount = Object.keys(channelCounts || {}).length;
-  const aisCount = normalizeAisTracks(aisTracks).length;
-  return `VHF ${vhfCount}\nAIS ${aisCount}`;
+  return `VHF ${vhfCount}`;
+}
+
+function channelCountsWithMonitoredChannels(channelCounts) {
+  const merged = {};
+  for (const channel of monitoredAnalysisChannels) {
+    merged[channel] = 0;
+  }
+  for (const [channel, count] of Object.entries(channelCounts || {})) {
+    merged[channel] = Number(count || 0);
+  }
+  return merged;
 }
 
 function termSection(title, items) {
@@ -1382,6 +1633,10 @@ function renderExamplePlayer(example) {
     stopOtherAudio(audio);
     currentClipPlayback = audio;
     clearBrowserMediaSession();
+    refreshClipAudioPlayback(example, audio, time);
+  });
+  audio.addEventListener("error", () => {
+    refreshClipAudioPlayback(example, audio, time, { force: true });
   });
   audio.addEventListener("pause", () => {
     if (currentClipPlayback === audio) {
@@ -1414,17 +1669,25 @@ function stopAllAudio() {
 
 function suspendLiveView() {
   stopLiveStatusPolling();
-  stopLiveActivityPolling();
   stopWaveform();
   if (shouldPreserveLiveAudioSession()) {
+    if (isEverythingLiveMode() && everythingQueueEnabled) {
+      startLiveActivityPolling();
+    } else {
+      stopLiveActivityPolling();
+    }
     updateLiveMediaSession("playing");
     return;
   }
+  stopLiveActivityPolling();
   closeLiveAudioStream();
 }
 
 function shouldPreserveLiveAudioSession() {
-  return systemMediaControlsEnabled && liveAudio.src && !liveAudio.paused;
+  if (isEverythingLiveMode() && everythingQueueEnabled) {
+    return true;
+  }
+  return Boolean(liveAudio.src && !liveAudio.paused);
 }
 
 function stopCurrentClipPlayback() {
@@ -1574,7 +1837,6 @@ function referenceIndex(resources) {
 function channelActivityChart(channels) {
   const entries = Object.entries(channels || {})
     .map(([channel, count]) => [channel, Number(count || 0)])
-    .filter(([, count]) => count > 0)
     .sort((left, right) => right[1] - left[1] || compareChannels(left[0], right[0]));
   const list = document.createElement("div");
   list.className = "channel-bar-list";
@@ -1585,7 +1847,7 @@ function channelActivityChart(channels) {
     list.append(empty);
     return list;
   }
-  const maxCount = Math.max(...entries.map(([, count]) => count));
+  const maxCount = Math.max(1, ...entries.map(([, count]) => count));
   list.append(
     ...entries.map(([channel, count]) => {
       const row = document.createElement("div");
@@ -1598,7 +1860,7 @@ function channelActivityChart(channels) {
       track.className = "channel-bar-track";
       const fill = document.createElement("span");
       fill.className = "channel-bar-fill";
-      fill.style.width = `${Math.max(5, (count / maxCount) * 100).toFixed(1)}%`;
+      fill.style.width = count > 0 ? `${Math.max(5, (count / maxCount) * 100).toFixed(1)}%` : "0%";
       fill.style.setProperty("--channel-color", channelColorForChannel(channel));
       track.append(fill);
       const countLabel = document.createElement("span");
@@ -1609,172 +1871,6 @@ function channelActivityChart(channels) {
     }),
   );
   return list;
-}
-
-function renderVesselMap(tracks) {
-  const wrapper = document.createElement("div");
-  wrapper.className = "nautical-map";
-  const normalizedTracks = normalizeAisTracks(tracks);
-  const svg = mapSvgElement("svg");
-  svg.classList.add("nautical-map-svg");
-  svg.setAttribute("viewBox", "0 0 640 420");
-  svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", "AIS vessel positions over Elliott Bay");
-  drawNauticalBaseMap(svg);
-  drawVesselTracks(svg, normalizedTracks);
-  wrapper.append(svg);
-
-  const caption = document.createElement("div");
-  caption.className = "vessel-map-caption";
-  if (!normalizedTracks.length) {
-    caption.textContent = "No AIS vessel positions received yet. Receiver tracks will appear here after the first AIS publish.";
-  } else {
-    caption.append(...normalizedTracks.slice(0, 6).map(vesselMapLegendItem));
-  }
-  wrapper.append(caption);
-  return wrapper;
-}
-
-function drawNauticalBaseMap(svg) {
-  const water = mapSvgElement("rect");
-  water.setAttribute("width", "640");
-  water.setAttribute("height", "420");
-  water.classList.add("nautical-water");
-  svg.append(water);
-
-  const shoreline = mapSvgElement("path");
-  shoreline.setAttribute(
-    "d",
-    "M404 0 C388 34 394 72 371 105 C338 151 358 189 331 226 C299 270 318 316 286 349 C263 374 250 394 244 420 L640 420 L640 0 Z",
-  );
-  shoreline.classList.add("nautical-shoreline");
-  svg.append(shoreline);
-
-  const harbor = mapSvgElement("path");
-  harbor.setAttribute(
-    "d",
-    "M421 118 L455 138 L441 175 L472 201 L454 238 L489 280 L468 319 L518 358 L503 420 L640 420 L640 68 L506 48 Z",
-  );
-  harbor.classList.add("nautical-harbor");
-  svg.append(harbor);
-
-  const lane = mapSvgElement("path");
-  lane.setAttribute("d", "M103 368 C184 303 249 247 317 191 C369 148 407 108 455 58");
-  lane.classList.add("nautical-traffic-lane");
-  svg.append(lane);
-
-  for (const latitude of [47.58, 47.60, 47.62, 47.64, 47.66]) {
-    const line = mapSvgElement("line");
-    const y = projectAisPoint({ lat: latitude, lon: mapBounds.minLon }).y;
-    line.setAttribute("x1", "0");
-    line.setAttribute("x2", "640");
-    line.setAttribute("y1", y.toFixed(1));
-    line.setAttribute("y2", y.toFixed(1));
-    line.classList.add("nautical-gridline");
-    svg.append(line);
-  }
-  for (const longitude of [-122.43, -122.40, -122.37, -122.34]) {
-    const line = mapSvgElement("line");
-    const x = projectAisPoint({ lat: mapBounds.minLat, lon: longitude }).x;
-    line.setAttribute("x1", x.toFixed(1));
-    line.setAttribute("x2", x.toFixed(1));
-    line.setAttribute("y1", "0");
-    line.setAttribute("y2", "420");
-    line.classList.add("nautical-gridline");
-    svg.append(line);
-  }
-
-  for (const label of nauticalLabels()) {
-    const text = mapSvgElement("text");
-    const point = projectAisPoint(label);
-    text.setAttribute("x", point.x.toFixed(1));
-    text.setAttribute("y", point.y.toFixed(1));
-    text.classList.add("nautical-label");
-    text.textContent = label.name;
-    svg.append(text);
-  }
-}
-
-function drawVesselTracks(svg, tracks) {
-  for (const track of tracks) {
-    const projectedPoints = track.points.map(projectAisPoint);
-    if (projectedPoints.length > 1) {
-      const line = mapSvgElement("polyline");
-      line.setAttribute(
-        "points",
-        projectedPoints.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" "),
-      );
-      line.classList.add("vessel-track");
-      line.style.setProperty("--channel-color", channelColorForChannel(track.channel_hint));
-      svg.append(line);
-    }
-
-    const latest = track.points[track.points.length - 1];
-    const markerPoint = projectedPoints[projectedPoints.length - 1];
-    const marker = mapSvgElement("g");
-    marker.classList.add("vessel-marker");
-    marker.style.setProperty("--channel-color", channelColorForChannel(track.channel_hint));
-    marker.setAttribute(
-      "transform",
-      `translate(${markerPoint.x.toFixed(1)} ${markerPoint.y.toFixed(1)}) rotate(${Number(latest.course_degrees || 0).toFixed(1)})`,
-    );
-    const hull = mapSvgElement("path");
-    hull.setAttribute("d", "M0 -11 L8 9 L0 5 L-8 9 Z");
-    marker.append(hull);
-    const title = mapSvgElement("title");
-    title.textContent = `${track.name} ${speedLabel(latest.speed_knots)}`.trim();
-    marker.append(title);
-    svg.append(marker);
-  }
-}
-
-function vesselMapLegendItem(track) {
-  const item = document.createElement("span");
-  item.className = "vessel-map-legend-item";
-  item.style.setProperty("--channel-color", channelColorForChannel(track.channel_hint));
-  const dot = document.createElement("span");
-  dot.className = "vessel-map-legend-dot";
-  const label = document.createElement("span");
-  const latest = track.points[track.points.length - 1];
-  label.textContent = `${track.name} · ${track.vessel_type} · ${speedLabel(latest.speed_knots)}`;
-  item.append(dot, label);
-  return item;
-}
-
-function speedLabel(value) {
-  const speed = Number(value);
-  if (!Number.isFinite(speed)) {
-    return "speed unknown";
-  }
-  return `${speed.toFixed(1)} kt`;
-}
-
-const mapBounds = {
-  minLat: 47.565,
-  maxLat: 47.665,
-  minLon: -122.44,
-  maxLon: -122.315,
-};
-
-function projectAisPoint(point) {
-  const x = ((point.lon - mapBounds.minLon) / (mapBounds.maxLon - mapBounds.minLon)) * 640;
-  const y = (1 - (point.lat - mapBounds.minLat) / (mapBounds.maxLat - mapBounds.minLat)) * 420;
-  return {
-    x: Math.max(0, Math.min(640, x)),
-    y: Math.max(0, Math.min(420, y)),
-  };
-}
-
-function nauticalLabels() {
-  return [
-    { name: "Elliott Bay", lat: 47.608, lon: -122.383 },
-    { name: "Smith Cove", lat: 47.632, lon: -122.394 },
-    { name: "Harbor Island", lat: 47.588, lon: -122.352 },
-  ];
-}
-
-function mapSvgElement(name) {
-  return document.createElementNS("http://www.w3.org/2000/svg", name);
 }
 
 function busiestHoursSummary(hours) {
@@ -1891,6 +1987,32 @@ function updateSystemMediaControlsUi() {
   }
 }
 
+function initialSystemMediaControlsEnabled() {
+  try {
+    const storedSystemMediaControls = window.localStorage.getItem(systemMediaControlsStorageKey);
+    if (storedSystemMediaControls === "enabled") {
+      return true;
+    }
+    if (storedSystemMediaControls === "disabled") {
+      return false;
+    }
+  } catch {
+    // Some private browsing modes can reject localStorage reads.
+  }
+  return systemMediaControlsDefault;
+}
+
+function defaultSystemMediaControlsEnabled() {
+  return isAndroidAudioEnvironment();
+}
+
+function isAndroidAudioEnvironment() {
+  const userAgentData = navigator.userAgentData;
+  const userAgent = navigator.userAgent || "";
+  const platform = `${userAgentData?.platform || ""} ${navigator.platform || ""}`;
+  return operatingSystemNameFromUserAgent(userAgent, platform) === "Android";
+}
+
 function systemMediaEnvironmentLabel() {
   const userAgentData = navigator.userAgentData;
   const userAgent = navigator.userAgent || "";
@@ -1985,8 +2107,12 @@ function updateLiveMediaSession(playbackState = liveAudio.paused ? "paused" : "p
     if ("MediaMetadata" in window) {
       navigator.mediaSession.metadata = new window.MediaMetadata({
         title: "Elliott Bay VHF",
-        artist: channelLabel(selectedLiveChannel),
-        album: "Live radio",
+        artist: isEverythingLiveMode()
+          ? currentLiveQueueClip
+            ? channelLabel(currentLiveQueueClip.channel)
+            : "Everything"
+          : channelLabel(selectedLiveChannel),
+        album: isEverythingLiveMode() ? "Everything queue" : "Live radio",
       });
     }
     navigator.mediaSession.playbackState = playbackState;
@@ -2005,6 +2131,15 @@ function updateLiveMediaSession(playbackState = liveAudio.paused ? "paused" : "p
 }
 
 function prepareLiveAudio() {
+  if (isEverythingLiveMode()) {
+    configureEverythingQueueAudioElement({ muted: true });
+    liveStatus.textContent = "Everything queue ready";
+    setLivePlayButton("play");
+    drawWaitingFrame({ showWaiting: true });
+    renderLiveStatus(everythingChannelOption());
+    updateLiveMediaSession("paused");
+    return;
+  }
   const url = liveStreamUrl();
   liveAudio.crossOrigin = "anonymous";
   liveAudio.preload = "auto";
@@ -2022,6 +2157,7 @@ function prepareLiveAudio() {
 function closeLiveAudioStream() {
   clearTimeout(liveRetryTimer);
   liveRetryTimer = null;
+  stopEverythingQueue({ clearQueue: true });
   liveAudio.pause();
   liveAudio.muted = true;
   liveAudio.removeAttribute("src");
@@ -2050,6 +2186,19 @@ function setLivePlayButton(mode) {
 }
 
 function toggleLivePlayback() {
+  if (isEverythingLiveMode()) {
+    if (everythingQueueEnabled) {
+      stopEverythingQueue({ clearQueue: false });
+      liveAudio.pause();
+      setLivePlayButton("play");
+      liveStatus.textContent = "Everything queue paused";
+      renderEverythingQueuePanel();
+      updateLiveMediaSession("paused");
+      return;
+    }
+    connectEverythingLive();
+    return;
+  }
   if (!liveAudio.paused) {
     liveAudio.pause();
     return;
@@ -2058,6 +2207,9 @@ function toggleLivePlayback() {
 }
 
 async function connectLive() {
+  if (isEverythingLiveMode()) {
+    return connectEverythingLive();
+  }
   clearTimeout(liveRetryTimer);
   setLivePlayButton("connecting");
   liveStatus.textContent = "Connecting live stream";
@@ -2081,6 +2233,36 @@ async function connectLive() {
     liveAudio.muted = true;
     setLivePlayButton("play");
     liveStatus.textContent = "Press play";
+  }
+}
+
+async function connectEverythingLive() {
+  clearTimeout(liveRetryTimer);
+  everythingQueueEnabled = true;
+  if (!everythingQueueStartedAtMs) {
+    everythingQueueStartedAtMs = Date.now();
+  }
+  configureEverythingQueueAudioElement();
+  setLivePlayButton("pause");
+  liveStatus.textContent = "Waiting for queued transmission";
+  drawWaitingFrame({ showWaiting: true });
+  renderLiveStatus(everythingChannelOption());
+  try {
+    ensureAudioAnalyser();
+    if (audioContext?.state === "suspended") {
+      await audioContext.resume();
+    }
+    startWaveform();
+    stopOtherAudio(liveAudio);
+    await pollEverythingQueue({ playIfIdle: false, seedRecent: true });
+    if (!currentLiveQueueClip) {
+      await playNextEverythingQueueClip();
+    }
+  } catch {
+    liveStatus.textContent = "Everything queue waiting";
+  } finally {
+    renderEverythingQueuePanel();
+    updateLiveMediaSession(everythingQueueEnabled ? "playing" : "paused");
   }
 }
 
@@ -2123,6 +2305,9 @@ function liveStreamUrl() {
 }
 
 function rawLiveStreamUrl() {
+  if (isEverythingLiveMode()) {
+    return currentLiveQueueClip?.playback_url || "";
+  }
   if (selectedLiveChannel === "14") {
     return defaultLiveStreamUrl;
   }
@@ -2138,15 +2323,26 @@ function withDspProfile(url) {
 }
 
 function liveStatusUrl() {
+  if (isEverythingLiveMode()) {
+    return "";
+  }
   return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;
 }
 
 function lastCommunicationUrl() {
+  if (isEverythingLiveMode()) {
+    return liveQueueUrl;
+  }
   return `/api/clips/recent?limit=1&channel=${encodeURIComponent(selectedLiveChannel)}`;
 }
 
 async function pollLiveStatus() {
   if (panels.live.hidden) {
+    return;
+  }
+  if (isEverythingLiveMode()) {
+    renderLiveStatus(everythingChannelOption());
+    liveStatusTimer = setTimeout(pollLiveStatus, liveStatusPollMs);
     return;
   }
   liveStatusAbortController?.abort();
@@ -2178,12 +2374,20 @@ async function pollLiveStatus() {
 }
 
 async function pollLiveActivity() {
-  if (panels.live.hidden) {
+  const shouldPollHiddenEverythingQueue = isEverythingLiveMode() && everythingQueueEnabled;
+  if (panels.live.hidden && !shouldPollHiddenEverythingQueue) {
     return;
   }
   liveActivityAbortController?.abort();
   liveActivityAbortController = new AbortController();
   try {
+    if (isEverythingLiveMode()) {
+      if (!everythingQueueEnabled) {
+        return;
+      }
+      await pollEverythingQueue({ signal: liveActivityAbortController.signal });
+      return;
+    }
     const response = await fetch(lastCommunicationUrl(), {
       cache: "no-store",
       signal: liveActivityAbortController.signal,
@@ -2203,17 +2407,220 @@ async function pollLiveActivity() {
     }
   } catch (error) {
     if (error.name !== "AbortError") {
-      liveLastCommunication.textContent = `Last ${selectedLiveChannel}: unavailable`;
+      liveLastCommunication.textContent = isEverythingLiveMode()
+        ? "Queue: unavailable"
+        : `Last ${selectedLiveChannel}: unavailable`;
     }
   } finally {
     renderLiveTelemetry();
-    if (!panels.live.hidden) {
-      liveActivityTimer = setTimeout(pollLiveActivity, liveActivityPollMs);
+    if (!panels.live.hidden || shouldPollHiddenEverythingQueue) {
+      liveActivityTimer = setTimeout(
+        pollLiveActivity,
+        isEverythingLiveMode() ? liveQueuePollMs : liveActivityPollMs,
+      );
     }
   }
 }
 
+async function pollEverythingQueue({
+  signal = null,
+  playIfIdle = true,
+  seedRecent = false,
+} = {}) {
+  const response = await fetch(liveQueueUrl, {
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(`everything queue HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  const clips = Array.isArray(payload.clips) ? payload.clips : [];
+  if (seedRecent && !everythingQueueSeeded) {
+    enqueueEverythingClips(clips, { includeBackfill: true });
+    everythingQueueSeeded = true;
+  } else {
+    enqueueEverythingClips(clips);
+  }
+  renderLiveTelemetry();
+  renderEverythingQueuePanel();
+  if (playIfIdle && everythingQueueEnabled && !currentLiveQueueClip && liveAudio.paused) {
+    await playNextEverythingQueueClip();
+  }
+}
+
+function enqueueEverythingClips(clips, { includeBackfill = false } = {}) {
+  let normalizedClips = clips
+    .map(normalizeEverythingQueueClip)
+    .filter(Boolean);
+  if (includeBackfill) {
+    normalizedClips = mostRecentEverythingQueueClips(normalizedClips, everythingInitialQueueLimit);
+  } else {
+    normalizedClips = normalizedClips.filter(isEverythingQueueClipAfterStart);
+  }
+  normalizedClips.sort((left, right) => queueClipTime(left) - queueClipTime(right));
+  for (const clip of normalizedClips) {
+    if (liveQueueSeenClipIds.has(clip.id)) {
+      continue;
+    }
+    liveQueueSeenClipIds.add(clip.id);
+    liveQueue.push(clip);
+  }
+  liveQueue.sort((left, right) => queueClipTime(left) - queueClipTime(right));
+  trimEverythingQueueSeenIds();
+}
+
+function mostRecentEverythingQueueClips(clips, limit) {
+  return [...clips]
+    .sort((left, right) => queueClipRelevantTime(right) - queueClipRelevantTime(left))
+    .slice(0, limit);
+}
+
+function isEverythingQueueClipAfterStart(clip) {
+  if (!everythingQueueStartedAtMs) {
+    return true;
+  }
+  return queueClipRelevantTime(clip) >= everythingQueueStartedAtMs;
+}
+
+function normalizeEverythingQueueClip(clip) {
+  const playbackUrl = audioUrlForClip(clip || {});
+  const audioUrl = clipAudioRequestUrl(clip || {}) || playbackUrl;
+  const channel = String(clip?.channel || "").toUpperCase();
+  if (!audioUrl || !channel) {
+    return null;
+  }
+  return {
+    id: everythingQueueClipId(clip, playbackUrl),
+    channel,
+    channel_label: clip.channel_label || defaultChannelLabels[channel] || "",
+    started_at: clip.started_at || "",
+    ended_at: clip.ended_at || "",
+    duration_seconds: clip.duration_seconds,
+    audio_url: audioUrl,
+    playback_url: playbackUrl,
+    playback_expires_in_seconds: clip.playback_expires_in_seconds,
+    playback_issued_at_ms: Date.now(),
+  };
+}
+
+function everythingQueueClipId(clip, playbackUrl) {
+  const stablePlaybackPath = String(playbackUrl || "").split("?")[0];
+  return String(
+    clip?.key ||
+      clip?.id ||
+      [clip?.channel, clip?.started_at, clip?.ended_at, clip?.audio_public_filename, stablePlaybackPath]
+        .filter(Boolean)
+        .join("|"),
+  );
+}
+
+function queueClipTime(clip) {
+  const value = clip?.started_at || clip?.ended_at || "";
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : Date.now();
+}
+
+function queueClipRelevantTime(clip) {
+  const value = clip?.ended_at || clip?.started_at || "";
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : Date.now();
+}
+
+function trimEverythingQueueSeenIds() {
+  if (liveQueueSeenClipIds.size <= 500) {
+    return;
+  }
+  liveQueueSeenClipIds = new Set([...liveQueueSeenClipIds].slice(-300));
+  if (currentLiveQueueClip) {
+    liveQueueSeenClipIds.add(currentLiveQueueClip.id);
+  }
+  for (const clip of liveQueue) {
+    liveQueueSeenClipIds.add(clip.id);
+  }
+}
+
+async function playNextEverythingQueueClip() {
+  if (!everythingQueueEnabled || !isEverythingLiveMode()) {
+    return;
+  }
+  currentLiveQueueClip = liveQueue.shift() || null;
+  renderLiveStatus(everythingChannelOption());
+  renderEverythingQueuePanel();
+  if (!currentLiveQueueClip) {
+    liveStatus.textContent = "Waiting for queued transmission";
+    setLivePlayButton("pause");
+    drawWaitingFrame({ showWaiting: true });
+    updateLiveMediaSession("playing");
+    return;
+  }
+  const playbackUrl = clipAudioRequestUrl(currentLiveQueueClip) || currentLiveQueueClip.audio_url;
+  if (!playbackUrl) {
+    currentLiveQueueClip = null;
+    liveStatus.textContent = "Skipping queued transmission";
+    renderEverythingQueuePanel();
+    window.setTimeout(() => {
+      playNextEverythingQueueClip();
+    }, 250);
+    return;
+  }
+  const clipUrl = withCacheBust(playbackUrl);
+  configureEverythingQueueAudioElement();
+  if (liveAudio.getAttribute("src") !== clipUrl) {
+    liveAudio.src = clipUrl;
+    liveAudio.load();
+  }
+  liveStatus.textContent = `Playing ${channelLabel(currentLiveQueueClip.channel)}`;
+  setLivePlayButton("pause");
+  renderLiveTelemetry();
+  updateLiveMediaSession("playing");
+  try {
+    await liveAudio.play();
+  } catch {
+    currentLiveQueueClip = null;
+    liveStatus.textContent = "Skipping queued transmission";
+    renderEverythingQueuePanel();
+    window.setTimeout(() => {
+      playNextEverythingQueueClip();
+    }, 250);
+  }
+}
+
+function configureEverythingQueueAudioElement({ muted = false } = {}) {
+  liveAudio.crossOrigin = "anonymous";
+  liveAudio.preload = "auto";
+  liveAudio.muted = muted;
+}
+
+function handleEverythingClipEnded() {
+  currentLiveQueueClip = null;
+  if (!everythingQueueEnabled) {
+    setLivePlayButton("play");
+    renderEverythingQueuePanel();
+    return;
+  }
+  playNextEverythingQueueClip();
+}
+
+function stopEverythingQueue({ clearQueue = false } = {}) {
+  everythingQueueEnabled = false;
+  currentLiveQueueClip = null;
+  if (clearQueue) {
+    liveQueue = [];
+    liveQueueSeenClipIds = new Set();
+    everythingQueueStartedAtMs = 0;
+    everythingQueueSeeded = false;
+  }
+  renderEverythingQueuePanel();
+}
+
 function renderLiveStatus(status) {
+  if (isEverythingLiveMode()) {
+    liveChannel.textContent = "Everything";
+    liveFrequency.textContent = "Queued active transmissions across monitored channels";
+    renderLiveTelemetry();
+    return;
+  }
   const channel = status?.channel || selectedLiveChannel;
   liveChannel.textContent = channel ? channelLabel(channel) : "Current SDR feed";
   liveFrequency.textContent = status?.frequencyMhz ? `${status.frequencyMhz} MHz` : "";
@@ -2221,6 +2628,20 @@ function renderLiveStatus(status) {
 }
 
 function renderLiveTelemetry() {
+  if (isEverythingLiveMode()) {
+    const activeClip = currentLiveQueueClip || liveQueue[0] || null;
+    const heardAt = lastCommunicationTime(activeClip);
+    liveLastCommunication.textContent = currentLiveQueueClip
+      ? `Playing Ch ${currentLiveQueueClip.channel}: ${formatRelativeAge(heardAt)}`
+      : liveQueue.length
+        ? `Queue: ${liveQueue.length} waiting`
+        : everythingQueueEnabled
+          ? "Queue: listening across channels"
+          : "Queue: ready";
+    liveLatency.textContent = formatEverythingQueueDelay(activeClip);
+    renderEverythingQueuePanel();
+    return;
+  }
   const clip = lastCommunicationByChannel[selectedLiveChannel];
   const heardAt = lastCommunicationTime(clip);
   liveLastCommunication.textContent = heardAt
@@ -2229,8 +2650,54 @@ function renderLiveTelemetry() {
   liveLatency.textContent = formatLiveLatency(latestLiveStatus?.streamDelaySeconds);
 }
 
+function renderEverythingQueuePanel() {
+  if (!liveQueuePanel) {
+    return;
+  }
+  liveQueuePanel.hidden = !isEverythingLiveMode();
+  if (liveQueuePanel.hidden) {
+    liveQueuePanel.replaceChildren();
+    return;
+  }
+  const mode = liveQueueItem(
+    everythingQueueEnabled ? "Everything mode on" : "Everything mode ready",
+    "All channels feed one playback queue",
+  );
+  const nowPlaying = currentLiveQueueClip
+    ? liveQueueItem("Now playing", channelLabel(currentLiveQueueClip.channel))
+    : liveQueueItem("Now playing", everythingQueueEnabled ? "Waiting for queued transmission" : "Press Play to start");
+  const waiting = liveQueueItem("Queued", `${liveQueue.length} transmission${liveQueue.length === 1 ? "" : "s"}`);
+  liveQueuePanel.replaceChildren(mode, nowPlaying, waiting);
+}
+
+function liveQueueItem(label, value) {
+  const item = document.createElement("span");
+  item.className = "live-queue-item";
+  const name = document.createElement("span");
+  name.className = "live-queue-label";
+  name.textContent = label;
+  const detail = document.createElement("span");
+  detail.className = "live-queue-value";
+  detail.textContent = value;
+  item.append(name, detail);
+  return item;
+}
+
 function lastCommunicationTime(clip) {
   return clip?.ended_at || clip?.started_at || null;
+}
+
+function formatEverythingQueueDelay(clip) {
+  const heardAt = lastCommunicationTime(clip);
+  if (!heardAt) {
+    return `Queue delay: ${liveQueue.length} waiting`;
+  }
+  const heardTime = new Date(heardAt).getTime();
+  if (!Number.isFinite(heardTime)) {
+    return `Queue delay: ${liveQueue.length} waiting`;
+  }
+  const seconds = Math.max(0, Math.round((Date.now() - heardTime) / 1000));
+  return `Queue delay: about ${formatDurationSeconds(seconds)} behind antenna; ${liveQueue.length} waiting`;
 }
 
 function formatLiveLatency(delay) {
@@ -2245,6 +2712,21 @@ function formatLiveLatency(delay) {
 function formatDelaySeconds(value) {
   const rounded = Math.max(0, Math.round(Number(value)));
   return `${rounded}s`;
+}
+
+function formatDurationSeconds(seconds) {
+  const rounded = Math.max(0, Math.round(Number(seconds)));
+  if (rounded < 60) {
+    return `${rounded}s`;
+  }
+  const minutes = Math.floor(rounded / 60);
+  const remainingSeconds = rounded % 60;
+  if (minutes < 60) {
+    return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 function formatRelativeAge(value) {
@@ -2268,6 +2750,9 @@ function formatRelativeAge(value) {
 }
 
 function withCacheBust(url) {
+  if (!url || isSignedPlaybackUrl(url)) {
+    return url;
+  }
   const joiner = url.includes("?") ? "&" : "?";
   return `${url}${joiner}t=${Date.now()}`;
 }
@@ -2382,16 +2867,20 @@ function renderWaveform(data, { isReceiving, rms }) {
 
   const centerY = height / 2;
   const amplitude = Math.max(0.08, Math.min(1, rms * 7));
+  const hasAudibleWaveform = rms > 0.002;
+  const waveformGain = isReceiving ? 1 : quietWaveformGain(rms);
   context.lineWidth = isReceiving ? 2.5 * ratio : 1.6 * ratio;
-  context.strokeStyle = isReceiving ? "#40e0bf" : "rgba(244, 179, 80, 0.72)";
-  context.shadowColor = isReceiving ? "rgba(64, 224, 191, 0.7)" : "rgba(244, 179, 80, 0.35)";
-  context.shadowBlur = isReceiving ? 12 * ratio : 8 * ratio;
+  context.strokeStyle = hasAudibleWaveform ? "#40e0bf" : "rgba(244, 179, 80, 0.72)";
+  context.shadowColor = hasAudibleWaveform ? "rgba(64, 224, 191, 0.7)" : "rgba(244, 179, 80, 0.35)";
+  context.shadowBlur = hasAudibleWaveform ? 12 * ratio : 8 * ratio;
   context.beginPath();
   for (let index = 0; index < data.length; index += 1) {
     const x = (index / (data.length - 1)) * width;
     const normalized = (data[index] - 128) / 128;
     const idleSweep = Math.sin(index / 18 + performance.now() / 420) * 0.045;
-    const y = centerY + (isReceiving ? normalized * height * 0.42 : idleSweep * amplitude * height);
+    const y =
+      centerY +
+      (hasAudibleWaveform ? normalized * waveformGain * height * 0.38 : idleSweep * amplitude * height);
     if (index === 0) {
       context.moveTo(x, y);
     } else {
@@ -2402,6 +2891,11 @@ function renderWaveform(data, { isReceiving, rms }) {
   context.shadowBlur = 0;
 }
 
+function quietWaveformGain(rms) {
+  const safeRms = Math.max(Number(rms) || 0, 0.001);
+  return Math.min(10, Math.max(3, 0.08 / safeRms));
+}
+
 function audioUrlForClip(clip) {
   if (clip.playback_url) {
     return clip.playback_url;
@@ -2410,6 +2904,118 @@ function audioUrlForClip(clip) {
     return `/clips/${encodeURIComponent(clip.audio_public_filename)}`;
   }
   return "";
+}
+
+function clipPlaybackRequestUrl(clip) {
+  if (!clip?.playback_url || !clip.channel || !clip.started_at) {
+    return "";
+  }
+  const params = new URLSearchParams({
+    channel: String(clip.channel),
+    started_at: String(clip.started_at),
+  });
+  return `${clipPlaybackUrl}?${params.toString()}`;
+}
+
+function clipAudioRequestUrl(clip) {
+  if (!clip?.channel || !clip.started_at) {
+    return "";
+  }
+  const params = new URLSearchParams({
+    channel: String(clip.channel),
+    started_at: String(clip.started_at),
+  });
+  return `${clipAudioUrl}?${params.toString()}`;
+}
+
+function playbackUrlExpiresAtMs(clip) {
+  const issuedAt = Number(clip?.playback_issued_at_ms || 0);
+  const expiresInSeconds = Number(clip?.playback_expires_in_seconds || 0);
+  if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresInSeconds)) {
+    return 0;
+  }
+  if (issuedAt <= 0 || expiresInSeconds <= 0) {
+    return 0;
+  }
+  return issuedAt + expiresInSeconds * 1000;
+}
+
+function shouldRefreshPlaybackUrl(clip, { force = false } = {}) {
+  if (!clip?.playback_url || !clipPlaybackRequestUrl(clip)) {
+    return false;
+  }
+  if (force) {
+    return true;
+  }
+  const expiresAt = playbackUrlExpiresAtMs(clip);
+  return !expiresAt || Date.now() + clipPlaybackRefreshLeadMs >= expiresAt;
+}
+
+async function refreshPlaybackUrl(clip) {
+  const requestUrl = clipPlaybackRequestUrl(clip);
+  if (!requestUrl) {
+    throw new Error("clip playback refresh unavailable");
+  }
+  const response = await fetch(requestUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`clip playback refresh HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  if (!payload?.playback_url) {
+    throw new Error("clip playback refresh missing URL");
+  }
+  clip.playback_url = payload.playback_url;
+  clip.playback_expires_in_seconds = payload.playback_expires_in_seconds;
+  clip.playback_issued_at_ms = Date.now();
+  return clip.playback_url;
+}
+
+async function ensureFreshPlaybackUrl(clip, options = {}) {
+  if (shouldRefreshPlaybackUrl(clip, options)) {
+    return refreshPlaybackUrl(clip);
+  }
+  return audioUrlForClip(clip);
+}
+
+async function refreshClipAudioPlayback(example, audio, time, options = {}) {
+  if (!example?.playback_url || audio.dataset.refreshingPlayback === "true") {
+    return;
+  }
+  if (!shouldRefreshPlaybackUrl(example, options)) {
+    return;
+  }
+  audio.dataset.refreshingPlayback = "true";
+  const shouldResume = !audio.paused;
+  const previousTimeText = time.textContent;
+  time.textContent = "Refreshing...";
+  try {
+    const refreshedUrl = await ensureFreshPlaybackUrl(example, { force: true });
+    if (refreshedUrl && audio.src !== refreshedUrl) {
+      audio.src = refreshedUrl;
+      audio.load();
+    }
+    if (shouldResume) {
+      await audio.play();
+    }
+    time.textContent = previousTimeText;
+  } catch {
+    time.textContent = shouldResume ? "Tap play to retry" : previousTimeText;
+  } finally {
+    delete audio.dataset.refreshingPlayback;
+  }
+}
+
+function isSignedPlaybackUrl(url) {
+  try {
+    const parsed = new URL(url, window.location.href);
+    return (
+      parsed.searchParams.has("X-Amz-Signature") ||
+      parsed.searchParams.has("Signature") ||
+      parsed.searchParams.has("AWSAccessKeyId")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function formatPlaybackTime(seconds, { unknownLabel = unknownPlaybackTimeLabel } = {}) {
@@ -2430,6 +3036,9 @@ function titleForClip(clip) {
 }
 
 function channelLabel(channel) {
+  if (String(channel || "").toLowerCase() === everythingLiveChannel) {
+    return "Everything";
+  }
   const channelText = `VHF ${channel || "?"}`;
   const label = currentChannelLabels[channel] || "";
   return label ? `${channelText} · ${label}` : channelText;
@@ -2467,25 +3076,53 @@ function channelLabelsForPayload(payload) {
   return labels;
 }
 
+function selectedChannelValues() {
+  return [...selectedChannels].sort(compareChannels);
+}
+
+function frequencyForChannel(channel) {
+  return liveChannels.find((liveChannel) => liveChannel.channel === channel)?.frequencyMhz || "";
+}
+
+function channelClipCountText(count) {
+  const clipCount = Number(count || 0);
+  const noun = clipCount === 1 ? "clip" : "clips";
+  return `${clipCount.toLocaleString()} ${noun}`;
+}
+
+function selectedChannelStatusScope() {
+  const channels = selectedChannelValues();
+  if (!channels.length) {
+    return "";
+  }
+  if (channels.length === 1) {
+    return ` for ${channelLabel(channels[0])}`;
+  }
+  return " for selected channels";
+}
+
 function statusText(payload, clips, filteredTotal) {
   if (!filteredTotal) {
-    return selectedChannel === "all" ? "No clips yet" : `No clips for ${channelLabel(selectedChannel)} yet`;
+    return selectedChannels.size === 0 ? "No clips yet" : "No clips for the selected channels yet";
   }
-  const selectedLabel = selectedChannel === "all" ? "" : `${channelLabel(selectedChannel)} `;
+  const scopeText = selectedChannelStatusScope();
   const pageText =
     clips.length === filteredTotal ? `${clips.length}` : `${clips.length} of ${filteredTotal}`;
   const clipNoun = filteredTotal === 1 ? "clip" : "clips";
   if (payload.source === "live") {
-    return `${pageText} ${selectedLabel}${clipNoun} from the live DB`;
+    return `${pageText} ${clipNoun}${scopeText} from the live DB`;
   }
   const generated = payload.generated_at ? ` · exported ${formatDateTime(payload.generated_at)}` : "";
-  return `${pageText} ${selectedLabel}published ${clipNoun}${generated}`;
+  return `${pageText} published ${clipNoun}${scopeText}${generated}`;
 }
 
 function filteredClipCount(payload, clips) {
-  if (selectedChannel !== "all") {
+  if (selectedChannels.size) {
     const channelCounts = payload.stats?.channel_counts;
-    return Number(channelCounts?.[selectedChannel] ?? payload.stats?.filtered_clip_count ?? clips.length);
+    if (channelCounts) {
+      return selectedChannelValues().reduce((total, channel) => total + Number(channelCounts[channel] || 0), 0);
+    }
+    return Number(payload.stats?.filtered_clip_count ?? clips.length);
   }
   return Number(payload.stats?.filtered_clip_count ?? totalDatabaseClips(payload, clips));
 }
@@ -2550,3 +3187,4 @@ function shortTime(value) {
 
 loadLiveChannels();
 loadAndRender();
+activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false });

@@ -89,7 +89,8 @@ run_debug_profile() {
 }
 
 run_elliott_bay_profile() {
-  local config_path="${airband_config_dir}/rtl_airband-elliott-bay.conf"
+  local config_name="${1:-rtl_airband-elliott-bay.conf}"
+  local config_path="${airband_config_dir}/${config_name}"
   if [[ ! -x "${airband_binary}" ]]; then
     echo "RTLSDR-Airband is not installed or executable: ${airband_binary}" >&2
     echo "Run scripts/install_rtlsdr_airband_pi.sh on the Pi, then restart this service." >&2
@@ -108,7 +109,10 @@ case "${profile}" in
     run_debug_profile
     ;;
   elliott_bay)
-    run_elliott_bay_profile
+    run_elliott_bay_profile "rtl_airband-elliott-bay.conf"
+    ;;
+  voice_net_balanced)
+    run_elliott_bay_profile "rtl_airband-voice-net-balanced.conf"
     ;;
   *)
     echo "Unsupported TALKINGBOATS_CAPTURE_PROFILE: ${profile}" >&2

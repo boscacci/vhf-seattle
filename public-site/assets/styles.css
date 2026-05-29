@@ -206,6 +206,10 @@ button {
   min-width: 0;
 }
 
+.tab-panel[hidden] {
+  display: none !important;
+}
+
 .section-heading {
   display: flex;
   align-items: end;
@@ -238,45 +242,168 @@ button {
 }
 
 .channel-filter {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
+  position: relative;
+  width: min(520px, 100%);
   min-width: 0;
 }
 
-.channel-filter-option {
+.channel-filter-menu {
+  position: relative;
+  width: 100%;
+}
+
+.channel-filter-trigger {
+  position: relative;
   display: grid;
-  align-content: center;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 36px 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.channel-filter-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.channel-filter-trigger::after {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 0;
+  height: 0;
+  border-top: 7px solid var(--muted);
+  border-right: 6px solid transparent;
+  border-left: 6px solid transparent;
+  content: "";
+  transform: translateY(-35%);
+  transition: transform 160ms ease;
+}
+
+.channel-filter-menu[open] .channel-filter-trigger::after {
+  transform: translateY(-65%) rotate(180deg);
+}
+
+.channel-filter-trigger-label,
+.channel-filter-name {
+  min-width: 0;
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.channel-filter-trigger-summary {
+  grid-column: 1 / -1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.channel-filter-panel {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 10px;
+  width: min(520px, calc(100vw - 48px));
+  max-height: min(68vh, 560px);
+  margin-top: 8px;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 92%, #ffffff 8%);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+}
+
+.channel-filter-action {
+  display: grid;
   gap: 2px;
-  min-height: 42px;
-  min-width: 112px;
-  padding: 7px 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
   color: var(--ink);
   background: var(--panel-strong);
   text-align: left;
 }
 
-.channel-filter-option.is-active {
+.channel-filter-action[aria-pressed="true"] {
   color: #06110f;
   border-color: transparent;
   background: var(--teal);
 }
 
-.channel-filter-name {
-  font-size: 0.86rem;
-  line-height: 1.1;
+.channel-filter-action[aria-pressed="true"] .channel-filter-detail {
+  color: rgba(6, 17, 15, 0.72);
 }
 
-.channel-filter-detail {
+.channel-filter-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.channel-filter-option {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  cursor: pointer;
+}
+
+.channel-filter-option.is-active {
+  border-color: var(--channel-color);
+  background: color-mix(in srgb, var(--channel-color) 18%, var(--panel-strong));
+}
+
+.channel-filter-checkbox {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--teal);
+}
+
+.channel-filter-swatch {
+  width: 9px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--channel-color);
+}
+
+.channel-filter-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.channel-filter-detail,
+.channel-filter-frequency {
+  min-width: 0;
   color: var(--muted);
   font-size: 0.66rem;
   font-weight: 800;
   line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .channel-filter-option.is-active .channel-filter-detail {
-  color: rgba(6, 17, 15, 0.72);
+  color: color-mix(in srgb, var(--ink) 72%, var(--muted));
 }
 
 .clip-list {
@@ -401,9 +528,17 @@ audio {
 
 .live-heading {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 0.62fr);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);
   align-items: start;
-  margin-bottom: 20px;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.live-header-stack {
+  display: grid;
+  justify-items: end;
+  gap: 12px;
+  min-width: 0;
 }
 
 .live-telemetry {
@@ -421,12 +556,26 @@ audio {
   margin: 0;
 }
 
+.live-monitor-grid {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(280px, 360px);
+  align-items: stretch;
+  gap: 18px;
+}
+
+.live-control-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
 .tuner-display {
   display: flex;
   align-items: center;
   gap: 12px;
   min-height: 92px;
-  margin-bottom: 18px;
+  margin-bottom: 0;
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -477,7 +626,7 @@ audio {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  margin-bottom: 18px;
+  margin-bottom: 0;
 }
 
 .live-channel-option {
@@ -495,10 +644,53 @@ audio {
   background: var(--teal);
 }
 
+.live-channel-option.is-everything {
+  grid-column: 1 / -1;
+}
+
+.live-queue {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.live-queue[hidden] {
+  display: none !important;
+}
+
+.live-queue-item {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.live-queue-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.live-queue-value {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
 .waveform-panel {
   position: relative;
-  height: clamp(154px, 22vw, 220px);
-  margin-bottom: 18px;
+  height: clamp(240px, 32vw, 420px);
+  min-height: 100%;
+  margin-bottom: 0;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -545,8 +737,10 @@ audio {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
-  margin-top: 14px;
+  width: 100%;
+  margin-top: 0;
 }
 
 .live-play-button {
@@ -656,22 +850,17 @@ audio {
 }
 
 .language-dashboard,
-.map-dashboard,
-.performance-dashboard {
+.performance-dashboard,
+.ais-catcher-shell {
   display: grid;
   gap: 14px;
 }
 
 .language-grid,
-.map-summary-grid,
 .performance-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-}
-
-.map-summary-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .language-card,
@@ -773,114 +962,25 @@ audio {
   text-align: right;
 }
 
-.vessel-map-panel {
-  overflow: hidden;
+.ais-catcher-shell {
+  min-height: min(78vh, 840px);
 }
 
-.nautical-map {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-}
-
-.nautical-map-svg {
+.ais-catcher-frame {
   display: block;
   width: 100%;
-  aspect-ratio: 640 / 420;
-  overflow: hidden;
+  min-height: min(78vh, 840px);
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #092a2e;
+  background: #07110f;
 }
 
-.nautical-water {
-  fill: #092a2e;
-}
-
-.nautical-shoreline {
-  fill: #1f352c;
-  stroke: #4f735f;
-  stroke-width: 2;
-}
-
-.nautical-harbor {
-  fill: #263f35;
-  stroke: #6e8d74;
-  stroke-width: 1.4;
-  opacity: 0.94;
-}
-
-.nautical-traffic-lane {
-  fill: none;
-  stroke: rgba(240, 184, 90, 0.42);
-  stroke-dasharray: 10 10;
-  stroke-linecap: round;
-  stroke-width: 3;
-}
-
-.nautical-gridline {
-  stroke: rgba(159, 177, 170, 0.16);
-  stroke-width: 1;
-}
-
-.nautical-label {
-  fill: rgba(242, 247, 244, 0.72);
-  font-size: 13px;
-  font-weight: 850;
-  paint-order: stroke;
-  stroke: rgba(7, 17, 15, 0.82);
-  stroke-width: 3px;
-}
-
-.vessel-track {
-  fill: none;
-  stroke: var(--channel-color, var(--teal));
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 3;
-  opacity: 0.82;
-}
-
-.vessel-marker path {
-  fill: var(--channel-color, var(--teal));
-  stroke: #06110f;
-  stroke-width: 2;
-}
-
-.vessel-map-caption {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.map-data-note {
+  max-width: 780px;
+  margin: 12px 0 0;
   color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.35;
-}
-
-.vessel-map-legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  max-width: 100%;
-  padding: 3px 8px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.035);
-}
-
-.vessel-map-legend-item span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.vessel-map-legend-dot {
-  width: 9px;
-  height: 9px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: var(--channel-color, var(--teal));
+  font-size: 0.88rem;
+  line-height: 1.5;
 }
 
 .performance-host {
@@ -1254,7 +1354,6 @@ audio {
 	  .clip-list,
 	  .live-grid,
 	  .language-grid,
-	  .map-summary-grid,
 	  .performance-host-grid,
   .performance-grid,
   .topic-list,
@@ -1287,6 +1386,15 @@ audio {
   .stats {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  .live-monitor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .waveform-panel {
+    min-height: 0;
+    height: clamp(180px, 42vw, 300px);
+  }
 }
 
 @media (max-width: 600px) {
@@ -1309,12 +1417,18 @@ audio {
   }
 
   .live-heading {
-    grid-template-columns: minmax(0, 1fr) minmax(138px, 0.78fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
 
+  .live-header-stack {
+    justify-items: stretch;
+  }
+
   .live-telemetry {
+    justify-items: start;
     font-size: 0.72rem;
+    text-align: left;
   }
 
   .status-text {
@@ -1322,20 +1436,30 @@ audio {
   }
 
   .live-telemetry .status-text {
-    text-align: right;
+    text-align: left;
+  }
+
+  .live-queue {
+    grid-template-columns: 1fr;
   }
 
   .live-actions {
     align-items: stretch;
+    flex-wrap: wrap;
+    justify-content: stretch;
   }
 
   .live-play-button {
+    flex: 1 1 148px;
     min-width: 126px;
     min-height: 60px;
   }
 
   .system-media-block {
-    max-width: min(48vw, 230px);
+    justify-items: start;
+    max-width: none;
+    margin-left: 0;
+    text-align: left;
   }
 
   .clip-controls {
@@ -1344,12 +1468,21 @@ audio {
   }
 
   .channel-filter {
-    justify-content: stretch;
     width: 100%;
   }
 
+  .channel-filter-panel {
+    position: static;
+    width: 100%;
+    max-height: none;
+  }
+
+  .channel-filter-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .channel-filter-option {
-    flex: 1 1 140px;
+    min-height: 56px;
   }
 
   .stats {

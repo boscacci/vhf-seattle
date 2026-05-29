@@ -6,6 +6,7 @@ import contextlib
 import json
 import math
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -17,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import uvicorn
@@ -27,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from talkingboats.audio_dsp import build_ffmpeg_dsp_command, dsp_profile_for_name
+from talkingboats.channel_metadata import CHANNEL_METADATA, VOICE_NET_BALANCED_CHANNELS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLIP_CONSOLE_DIR = REPO_ROOT / "public-site"
@@ -271,68 +274,57 @@ class ChannelPreset:
         }
 
 
-DEFAULT_CHANNELS = (
+_CHANNEL_PRESET_IDS = {
+    "05A": "vts_05a",
+    "06": "intership_06",
+    "09": "calling_09",
+    "13": "bridge_13",
+    "14": "vts_14",
+    "16": "safety_16",
+    "22A": "uscg_22a",
+    "67": "commercial_67",
+    "68": "recreation_68",
+    "69": "noncommercial_69",
+    "71": "noncommercial_71",
+    "72": "ship_72",
+}
+_CHANNEL_DESCRIPTIONS = {
+    "05A": "Puget Sound traffic and port coordination.",
+    "06": "Intership safety calls.",
+    "09": "Calling and commercial traffic.",
+    "13": "Navigation safety between commercial vessels.",
+    "14": "Vessel traffic and harbor movements.",
+    "16": "Safety hailing and distress watch.",
+    "22A": "Coast Guard working broadcasts after hailing.",
+    "67": "Commercial and bridge coordination.",
+    "68": "Local recreational vessel traffic.",
+    "69": "Non-commercial vessel traffic.",
+    "71": "Non-commercial vessel traffic.",
+    "72": "Ship-to-ship working traffic.",
+}
+DEFAULT_CHANNELS = tuple(
     ChannelPreset(
-        id="vts_14",
-        channel="14",
-        label="VTS / Seattle Traffic",
-        frequency_hz=156_700_000,
-        description="Vessel traffic and harbor movements.",
-    ),
-    ChannelPreset(
-        id="vts_05a",
-        channel="05A",
-        label="VTS / Port Ops",
-        frequency_hz=156_250_000,
-        description="Puget Sound traffic and port coordination.",
-    ),
-    ChannelPreset(
-        id="bridge_13",
-        channel="13",
-        label="Bridge-to-bridge",
-        frequency_hz=156_650_000,
-        description="Navigation safety between commercial vessels.",
-    ),
-    ChannelPreset(
-        id="safety_16",
-        channel="16",
-        label="Distress / Calling",
-        frequency_hz=156_800_000,
-        description="Safety hailing and distress watch.",
-    ),
-    ChannelPreset(
-        id="uscg_22a",
-        channel="22A",
-        label="USCG Liaison",
-        frequency_hz=157_100_000,
-        description="Coast Guard working broadcasts after hailing.",
-    ),
-    ChannelPreset(
-        id="port_66a",
-        channel="66A",
-        label="Port Operations",
-        frequency_hz=156_325_000,
-        description="Harbor and commercial operations.",
-    ),
-    ChannelPreset(
-        id="recreation_68",
-        channel="68",
-        label="Recreational",
-        frequency_hz=156_425_000,
-        description="Local recreational vessel traffic.",
-    ),
+        id=_CHANNEL_PRESET_IDS[channel],
+        channel=metadata.channel,
+        label=metadata.label,
+        frequency_hz=metadata.frequency_hz,
+        description=_CHANNEL_DESCRIPTIONS[channel],
+    )
+    for channel in VOICE_NET_BALANCED_CHANNELS
+    if (metadata := CHANNEL_METADATA.get(channel)) is not None
 )
 
 
 def _default_channel_stream_urls() -> dict[str, tuple[str, ...]]:
-    return {
-        "13": ("http://192.168.1.114:8000/talkingboats-13.mp3",),
-        "14": (
-            "http://192.168.1.114:8000/talkingboats-live.mp3",
-            "http://192.168.1.114:8000/talkingboats-14.mp3",
-        ),
-        "68": ("http://192.168.1.114:8000/talkingboats-68.mp3",),
+    channels = {
+        channel: (f"http://192.168.1.114:8000/talkingboats-{channel.lower()}.mp3",)
+        for channel in VOICE_NET_BALANCED_CHANNELS
     }
+    channels["14"] = (
+        "http://192.168.1.114:8000/talkingboats-live.mp3",
+        "http://192.168.1.114:8000/talkingboats-14.mp3",
+    )
+    return channels
 
 
 @dataclass(frozen=True)
@@ -348,6 +340,9 @@ class ProxySettings:
     receiver_status_url: str = "http://192.168.1.114:8050/current-status.json"
     transcript_url: str = "http://127.0.0.1:8055/api/live-transcript"
     private_api_url: str = "http://192.168.1.247:8034"
+    ais_catcher_base_url: str = "http://192.168.1.114:8100"
+    ais_catcher_dev_hosts: tuple[str, ...] = PERFORMANCE_DEV_HOSTS
+    ais_catcher_dev_origin_hosts: tuple[str, ...] = PERFORMANCE_DEV_ORIGIN_HOSTS
     active_channel_id: str = "recreation_68"
     retune_ssh_target: str = "192.168.1.114"
     pi_env_path: str = "/etc/talkingboats/live-radio.env"
@@ -392,6 +387,16 @@ class ProxySettings:
                 "TALKINGBOATS_PROXY_PRIVATE_API_URL",
                 cls.private_api_url,
             ),
+            ais_catcher_base_url=os.environ.get(
+                "TALKINGBOATS_PROXY_AIS_CATCHER_BASE_URL",
+                cls.ais_catcher_base_url,
+            ),
+            ais_catcher_dev_hosts=_env_csv("TALKINGBOATS_PROXY_AIS_CATCHER_DEV_HOSTS")
+            or cls.ais_catcher_dev_hosts,
+            ais_catcher_dev_origin_hosts=_env_csv(
+                "TALKINGBOATS_PROXY_AIS_CATCHER_DEV_ORIGIN_HOSTS"
+            )
+            or cls.ais_catcher_dev_origin_hosts,
             active_channel_id=os.environ.get(
                 "TALKINGBOATS_PROXY_ACTIVE_CHANNEL_ID",
                 cls.active_channel_id,
@@ -757,9 +762,32 @@ def create_app(
     async def recent_clips(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/clips/recent", settings, client_factory)
 
+    @app.get("/api/clips/playback")
+    async def clip_playback(request: Request) -> Response:
+        return await _proxy_private_api(request, "/api/clips/playback", settings, client_factory)
+
+    @app.get("/api/clips/audio")
+    async def clip_audio(request: Request) -> Response:
+        return await _proxy_private_api(request, "/api/clips/audio", settings, client_factory)
+
     @app.get("/api/analysis/lexical")
     async def lexical_analysis(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/analysis/lexical", settings, client_factory)
+
+    @app.api_route(
+        "/ais-catcher",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    @app.api_route(
+        "/ais-catcher/{proxy_path:path}",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    async def ais_catcher_viewer(request: Request, proxy_path: str = "") -> Response:
+        if not _ais_catcher_host_allowed(request, settings):
+            raise HTTPException(status_code=404, detail="AIS-catcher map is dev-only")
+        return await _proxy_ais_catcher(request, proxy_path, settings, client_factory)
 
     @app.get("/api/live/current.mp3")
     async def current_live_stream(dsp: str | None = None) -> StreamingResponse:
@@ -925,12 +953,33 @@ def _live_status_payload(preset: ChannelPreset) -> dict[str, object]:
 
 
 def _performance_host_allowed(request: Request, settings: ProxySettings) -> bool:
+    return _dev_host_allowed(
+        request,
+        dev_hosts=settings.performance_dev_hosts,
+        dev_origin_hosts=settings.performance_dev_origin_hosts,
+    )
+
+
+def _ais_catcher_host_allowed(request: Request, settings: ProxySettings) -> bool:
+    return _dev_host_allowed(
+        request,
+        dev_hosts=settings.ais_catcher_dev_hosts,
+        dev_origin_hosts=settings.ais_catcher_dev_origin_hosts,
+    )
+
+
+def _dev_host_allowed(
+    request: Request,
+    *,
+    dev_hosts: tuple[str, ...],
+    dev_origin_hosts: tuple[str, ...],
+) -> bool:
     host = request.headers.get("host", "")
     hostname = host.rsplit("@", 1)[-1].split(":", 1)[0].lower()
-    if hostname in {allowed.lower() for allowed in settings.performance_dev_hosts}:
+    if hostname in {allowed.lower() for allowed in dev_hosts}:
         return True
     environment = request.headers.get("x-talkingboats-environment", "").lower()
-    origin_hosts = {allowed.lower() for allowed in settings.performance_dev_origin_hosts}
+    origin_hosts = {allowed.lower() for allowed in dev_origin_hosts}
     return environment == "dev" and hostname in origin_hosts
 
 
@@ -1403,9 +1452,12 @@ def _shell_asset_response(relative_path: str) -> Response:
 def _preset_for_stream_url(stream_url: str) -> ChannelPreset | None:
     normalized = stream_url.lower()
     stream_channel_markers = {
-        "bridge_13": ("-13.", "/13.", "channel=13"),
-        "vts_14": ("-14.", "/14.", "channel=14"),
-        "recreation_68": ("-68.", "/68.", "channel=68"),
+        preset.id: (
+            f"-{preset.channel.lower()}.",
+            f"/{preset.channel.lower()}.",
+            f"channel={preset.channel.lower()}",
+        )
+        for preset in DEFAULT_CHANNELS
     }
     for channel_id, markers in stream_channel_markers.items():
         if any(marker in normalized for marker in markers):
@@ -1656,6 +1708,109 @@ async def _proxy_private_api(
         status_code=upstream.status_code,
         headers=response_headers,
     )
+
+
+async def _proxy_ais_catcher(
+    request: Request,
+    proxy_path: str,
+    settings: ProxySettings,
+    client_factory: ClientFactory,
+) -> Response:
+    target_url = _ais_catcher_target_url(
+        settings.ais_catcher_base_url,
+        proxy_path,
+        request.url.query,
+    )
+    async with client_factory() as client:
+        try:
+            upstream = await client.request(
+                request.method,
+                target_url,
+                headers=_ais_catcher_request_headers(request),
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="AIS-catcher viewer unavailable") from exc
+
+    content = upstream.content
+    content_type = upstream.headers.get("content-type", "")
+    if "text/html" in content_type.lower() and upstream.status_code < 400:
+        content = _rewrite_ais_catcher_html(content, upstream.encoding or "utf-8")
+
+    response_headers = _ais_catcher_response_headers(upstream, settings.ais_catcher_base_url)
+    return Response(
+        content=content,
+        status_code=upstream.status_code,
+        headers=response_headers,
+    )
+
+
+def _ais_catcher_target_url(base_url: str, proxy_path: str, query: str) -> str:
+    base = base_url.rstrip("/")
+    suffix = proxy_path.lstrip("/")
+    target_url = f"{base}/{suffix}" if suffix else f"{base}/"
+    if query:
+        target_url = f"{target_url}?{query}"
+    return target_url
+
+
+def _ais_catcher_request_headers(request: Request) -> dict[str, str]:
+    allowed_headers = {"accept", "accept-language", "range", "user-agent"}
+    return {
+        name: value
+        for name, value in request.headers.items()
+        if name.lower() in allowed_headers
+    }
+
+
+def _ais_catcher_response_headers(upstream: httpx.Response, base_url: str) -> dict[str, str]:
+    allowed_headers = {"content-type", "etag", "last-modified", "location"}
+    response_headers = {
+        name: value
+        for name, value in upstream.headers.items()
+        if name.lower() in allowed_headers
+    }
+    location = response_headers.get("location") or response_headers.get("Location")
+    if location:
+        response_headers["Location"] = _rewrite_ais_catcher_location(location, base_url)
+        response_headers.pop("location", None)
+    response_headers["Cache-Control"] = "no-store"
+    response_headers["Pragma"] = "no-cache"
+    response_headers["Expires"] = "0"
+    return response_headers
+
+
+def _rewrite_ais_catcher_html(content: bytes, encoding: str) -> bytes:
+    text = content.decode(encoding, errors="replace")
+    text = re.sub(
+        r'((?:href|src|action)=["\'])/(?!/)',
+        r"\1/ais-catcher/",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"url\(/(?!/)", "url(/ais-catcher/", text, flags=re.IGNORECASE)
+    if "<base " not in text.lower():
+        text = re.sub(
+            r"(<head\b[^>]*>)",
+            r'\1\n    <base href="/ais-catcher/" />',
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return text.encode(encoding)
+
+
+def _rewrite_ais_catcher_location(location: str, base_url: str) -> str:
+    if location.startswith("/ais-catcher"):
+        return location
+    if location.startswith("/"):
+        return f"/ais-catcher{location}"
+    parsed_location = urlsplit(location)
+    parsed_base = urlsplit(base_url)
+    if parsed_location.scheme and parsed_location.netloc == parsed_base.netloc:
+        path = parsed_location.path or "/"
+        query = f"?{parsed_location.query}" if parsed_location.query else ""
+        return f"/ais-catcher{path}{query}"
+    return location
 
 
 async def _run_retuner(

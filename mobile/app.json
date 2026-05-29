@@ -10,11 +10,16 @@
     "backgroundColor": "#041411",
     "ios": {
       "bundleIdentifier": "com.robertboscacci.elliottbayvhf",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Elliott Bay VHF needs location access to display GPS elevation."
+      }
     },
     "android": {
       "package": "com.robertboscacci.elliottbayvhf",
       "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
         "HIGH_SAMPLING_RATE_SENSORS"
       ],
       "adaptiveIcon": {
@@ -29,7 +34,8 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-location"
     ]
   }
 }

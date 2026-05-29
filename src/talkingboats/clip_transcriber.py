@@ -143,7 +143,7 @@ class UploadedClipStore:
                     error
                 FROM uploaded_clips
                 WHERE status IN ({placeholders})
-                ORDER BY created_at ASC, id ASC
+                ORDER BY started_at DESC, id DESC
                 LIMIT ?
                 """,
                 (*statuses, limit),
@@ -263,6 +263,7 @@ class UploadedClipStore:
         limit: int,
         offset: int = 0,
         channel: str | None = None,
+        channels: Iterable[str] | None = None,
         excluded_channels: tuple[str, ...] = (),
     ) -> list[RecentTranscribedClip]:
         if limit <= 0:
@@ -275,9 +276,11 @@ class UploadedClipStore:
             "trim(transcript) != ''",
         ]
         params: list[object] = []
-        if channel:
-            filters.append("channel = ?")
-            params.append(channel)
+        selected_channels = _unique_channels([channel] if channel else channels)
+        if selected_channels:
+            placeholders = ", ".join("?" for _ in selected_channels)
+            filters.append(f"channel IN ({placeholders})")
+            params.extend(selected_channels)
         if excluded_channels:
             placeholders = ", ".join("?" for _ in excluded_channels)
             filters.append(f"channel NOT IN ({placeholders})")
@@ -317,6 +320,64 @@ class UploadedClipStore:
                 )
             )
         return clips
+
+    def transcribed_clip_for_public_playback(
+        self,
+        *,
+        channel: str,
+        started_at: str,
+        excluded_channels: tuple[str, ...] = (),
+    ) -> RecentTranscribedClip | None:
+        try:
+            normalized_started_at = _format_utc(_parse_utc(started_at))
+        except ValueError:
+            return None
+        if channel.upper() in {excluded.upper() for excluded in excluded_channels}:
+            return None
+        filters = [
+            "status = 'transcribed'",
+            "transcript IS NOT NULL",
+            "trim(transcript) != ''",
+            "channel = ?",
+            "started_at = ?",
+        ]
+        params: list[object] = [channel, normalized_started_at]
+        if excluded_channels:
+            placeholders = ", ".join("?" for _ in excluded_channels)
+            filters.append(f"channel NOT IN ({placeholders})")
+            params.extend(excluded_channels)
+        where_clause = "\n                    AND ".join(filters)
+        with sqlite3.connect(self.path) as connection:
+            row = connection.execute(
+                f"""
+                SELECT
+                    key,
+                    channel,
+                    started_at,
+                    ended_at,
+                    duration_seconds,
+                    content_type,
+                    transcript
+                FROM uploaded_clips
+                WHERE {where_clause}
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            ).fetchone()
+        if row is None:
+            return None
+        key, channel, started_at, ended_at, duration_seconds, content_type, transcript = row
+        return RecentTranscribedClip(
+            key=key,
+            channel=channel,
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_seconds=duration_seconds,
+            content_type=content_type,
+            transcript=transcript,
+            segments=self.segments_for_clip(key),
+        )
 
     def transcribed_channel_counts(
         self,
@@ -431,6 +492,12 @@ class UploadedClipStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_uploaded_clips_status_channel_started
                 ON uploaded_clips(status, channel, started_at DESC)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_uploaded_clips_status_started
+                ON uploaded_clips(status, started_at DESC, id DESC)
                 """
             )
             connection.execute(
@@ -756,6 +823,19 @@ def _env_float(name: str, default: float) -> float:
 def _env_int(name: str, default: int) -> int:
     value = os.getenv(name)
     return int(value) if value is not None else default
+
+
+def _unique_channels(channels: Iterable[str] | None) -> list[str]:
+    if channels is None:
+        return []
+    selected: list[str] = []
+    seen: set[str] = set()
+    for channel in channels:
+        normalized = channel.strip()
+        if normalized and normalized not in seen:
+            selected.append(normalized)
+            seen.add(normalized)
+    return selected
 
 
 def _is_likely_static_hallucination(text: str) -> bool:

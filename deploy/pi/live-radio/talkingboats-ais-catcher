@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+device_args=()
+if [[ -n "${TALKINGBOATS_AIS_SDR_SERIAL:-}" ]]; then
+  device_args=(-d "${TALKINGBOATS_AIS_SDR_SERIAL}")
+else
+  device_args=("-d:${TALKINGBOATS_AIS_DEVICE_INDEX:-1}")
+fi
+
+sharing_args=()
+case "${TALKINGBOATS_AIS_COMMUNITY_FEED:-anonymous}" in
+  off|false|0|no)
+    ;;
+  key)
+    if [[ -z "${TALKINGBOATS_AIS_SHARING_KEY:-}" ]]; then
+      echo "TALKINGBOATS_AIS_SHARING_KEY is required when TALKINGBOATS_AIS_COMMUNITY_FEED=key" >&2
+      exit 64
+    fi
+    sharing_args=(-X "${TALKINGBOATS_AIS_SHARING_KEY}")
+    ;;
+  anonymous|on|true|1|yes)
+    if [[ -n "${TALKINGBOATS_AIS_SHARING_KEY:-}" ]]; then
+      sharing_args=(-X "${TALKINGBOATS_AIS_SHARING_KEY}")
+    else
+      sharing_args=(-X)
+    fi
+    ;;
+  *)
+    echo "Unsupported TALKINGBOATS_AIS_COMMUNITY_FEED: ${TALKINGBOATS_AIS_COMMUNITY_FEED}" >&2
+    exit 64
+    ;;
+esac
+
+web_args=(
+  -N "${TALKINGBOATS_AIS_WEB_PORT:-8100}"
+  station "${TALKINGBOATS_AIS_STATION_NAME:-Elliott Bay VHF}"
+  station_link "${TALKINGBOATS_AIS_STATION_LINK:-https://robertboscacci.com}"
+  lat "${TALKINGBOATS_AIS_LAT:-47.6190158}"
+  lon "${TALKINGBOATS_AIS_LON:--122.3595353}"
+  share_loc "${TALKINGBOATS_AIS_SHARE_LOC:-on}"
+)
+
+exec /usr/local/bin/AIS-catcher \
+  "${device_args[@]}" \
+  "${sharing_args[@]}" \
+  -o 0 \
+  "${web_args[@]}"

@@ -259,9 +259,18 @@ def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) 
     assert clip["public_title"] == "VHF 14 - May 24, 2026 3:08 PM PDT"
     assert clip["audio_public_filename"].endswith(".mp3")
     assert manifest["stats"]["channel_labels"] == {
+        "05A": "VTS / Port Ops",
+        "06": "Intership Safety",
+        "09": "Calling / Commercial",
         "13": "Bridge-to-bridge",
         "14": "VTS / Seattle Traffic",
+        "16": "Distress / Calling",
+        "22A": "USCG Liaison",
+        "67": "Commercial / Bridge",
         "68": "Recreational",
+        "69": "Non-commercial",
+        "71": "Non-commercial",
+        "72": "Ship-to-ship",
     }
     exported_audio = tmp_path / "output" / "clips" / clip["audio_public_filename"]
     assert processor.calls == [(processor.calls[0][0], exported_audio)]

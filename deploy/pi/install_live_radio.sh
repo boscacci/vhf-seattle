@@ -39,9 +39,18 @@ install -d -m 0755 \
   "${app_root}/src" \
   "${spool_root}" \
   "${record_root}" \
+  "${airband_spool_root}/05A" \
+  "${airband_spool_root}/06" \
+  "${airband_spool_root}/09" \
   "${airband_spool_root}/13" \
   "${airband_spool_root}/14" \
+  "${airband_spool_root}/16" \
+  "${airband_spool_root}/22A" \
+  "${airband_spool_root}/67" \
   "${airband_spool_root}/68" \
+  "${airband_spool_root}/69" \
+  "${airband_spool_root}/71" \
+  "${airband_spool_root}/72" \
   /etc/talkingboats \
   /etc/systemd/system
 
@@ -56,6 +65,9 @@ install -m 0755 \
 install -m 0755 \
   "${repo_root}/deploy/pi/live-radio/talkingboats-profile-capture" \
   /opt/talkingboats/bin/talkingboats-profile-capture
+install -m 0755 \
+  "${repo_root}/deploy/pi/live-radio/talkingboats-ais-catcher" \
+  /opt/talkingboats/bin/talkingboats-ais-catcher
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-live-radio-stream.service.example" \
   /etc/systemd/system/talkingboats-live-radio-stream.service
@@ -68,6 +80,9 @@ install -m 0644 \
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-spool-uploader.service.example" \
   /etc/systemd/system/talkingboats-spool-uploader.service
+install -m 0644 \
+  "${repo_root}/deploy/systemd/talkingboats-ais-catcher.service.example" \
+  /etc/systemd/system/talkingboats-ais-catcher.service
 generate_password() {
   openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_'
 }
@@ -122,6 +137,20 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_AIRBAND_BINARY=%q\n' "/usr/local/bin/rtl_airband"
     printf 'TALKINGBOATS_AIRBAND_CONFIG_DIR=%q\n' "/etc/talkingboats"
     printf 'TALKINGBOATS_MULTICHANNEL_SPOOL_DIR=%q\n' "${airband_spool_root}"
+    printf 'TALKINGBOATS_VOICE_DEVICE_INDEX=%q\n' "0"
+    printf 'TALKINGBOATS_VOICE_SDR_SERIAL=%q\n' ""
+    printf 'TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=%q\n' "-35"
+    printf 'TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=%q\n' "20"
+    printf 'TALKINGBOATS_AIS_SDR_SERIAL=%q\n' ""
+    printf 'TALKINGBOATS_AIS_DEVICE_INDEX=%q\n' "1"
+    printf 'TALKINGBOATS_AIS_WEB_PORT=%q\n' "8100"
+    printf 'TALKINGBOATS_AIS_COMMUNITY_FEED=%q\n' "anonymous"
+    printf 'TALKINGBOATS_AIS_SHARING_KEY=%q\n' ""
+    printf 'TALKINGBOATS_AIS_STATION_NAME=%q\n' "Elliott Bay VHF"
+    printf 'TALKINGBOATS_AIS_STATION_LINK=%q\n' "https://robertboscacci.com"
+    printf 'TALKINGBOATS_AIS_LAT=%q\n' "47.6190158"
+    printf 'TALKINGBOATS_AIS_LON=%q\n' "-122.3595353"
+    printf 'TALKINGBOATS_AIS_SHARE_LOC=%q\n' "on"
     printf 'TALKINGBOATS_ICECAST_SOURCE_PASSWORD=%q\n' "$(generate_password)"
     printf 'TALKINGBOATS_ICECAST_RELAY_PASSWORD=%q\n' "$(generate_password)"
     printf 'TALKINGBOATS_ICECAST_ADMIN_PASSWORD=%q\n' "$(generate_password)"
@@ -185,11 +214,27 @@ append_env_if_missing TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS "5"
 append_env_if_missing TALKINGBOATS_AIRBAND_BINARY "/usr/local/bin/rtl_airband"
 append_env_if_missing TALKINGBOATS_AIRBAND_CONFIG_DIR "/etc/talkingboats"
 append_env_if_missing TALKINGBOATS_MULTICHANNEL_SPOOL_DIR "${airband_spool_root}"
+append_env_if_missing TALKINGBOATS_VOICE_DEVICE_INDEX "0"
+append_env_if_missing TALKINGBOATS_VOICE_SDR_SERIAL ""
+append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_THRESHOLD "-35"
+append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD "20"
+append_env_if_missing TALKINGBOATS_AIS_SDR_SERIAL ""
+append_env_if_missing TALKINGBOATS_AIS_DEVICE_INDEX "1"
+append_env_if_missing TALKINGBOATS_AIS_WEB_PORT "8100"
+append_env_if_missing TALKINGBOATS_AIS_COMMUNITY_FEED "anonymous"
+append_env_if_missing TALKINGBOATS_AIS_SHARING_KEY ""
+append_env_if_missing TALKINGBOATS_AIS_STATION_NAME "Elliott Bay VHF"
+append_env_if_missing TALKINGBOATS_AIS_STATION_LINK "https://robertboscacci.com"
+append_env_if_missing TALKINGBOATS_AIS_LAT "47.6190158"
+append_env_if_missing TALKINGBOATS_AIS_LON "-122.3595353"
+append_env_if_missing TALKINGBOATS_AIS_SHARE_LOC "on"
 append_env_if_missing TALKINGBOATS_ICECAST_NETRC "/etc/talkingboats/icecast.netrc"
 append_env_if_missing TALKINGBOATS_ICECAST_SOURCE_PASSWORD "$(generate_password)"
 append_env_if_missing TALKINGBOATS_ICECAST_RELAY_PASSWORD "$(generate_password)"
 append_env_if_missing TALKINGBOATS_ICECAST_ADMIN_PASSWORD "$(generate_password)"
 replace_env_if_value TALKINGBOATS_EDGE_MIN_CLIP_SECONDS "0.7" "1.0"
+replace_env_if_value TALKINGBOATS_AIS_LAT "47.6062" "47.6190158"
+replace_env_if_value TALKINGBOATS_AIS_LON "-122.347" "-122.3595353"
 replace_env_if_value TALKINGBOATS_EDGE_PRE_ROLL_SECONDS "0.7" "0"
 replace_env_if_value TALKINGBOATS_EDGE_POST_ROLL_SECONDS "1.2" "0.3"
 replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600" "5000"
@@ -208,7 +253,8 @@ set +a
 : "${TALKINGBOATS_ICECAST_ADMIN_PASSWORD:?missing admin password}"
 
 if [[ -x "${TALKINGBOATS_AIRBAND_BINARY:-/usr/local/bin/rtl_airband}" ]]; then
-  replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "debug" "elliott_bay"
+  replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "debug" "voice_net_balanced"
+  replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "elliott_bay" "voice_net_balanced"
 fi
 
 icecast_netrc="${TALKINGBOATS_ICECAST_NETRC:-/etc/talkingboats/icecast.netrc}"
@@ -228,17 +274,36 @@ if id "${service_user}" >/dev/null 2>&1; then
   chmod 0775 /opt/talkingboats/spool "${spool_root}" "${record_root}" "${airband_spool_root}"
 fi
 
+squelch_args=()
+if [[ -n "${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD:-}" ]]; then
+  squelch_args+=(--squelch-snr-threshold "${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD}")
+elif [[ -n "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD:-}" ]]; then
+  squelch_args+=(--squelch-threshold "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD}")
+fi
+
 PYTHONPATH="${app_root}/src" python3 -m talkingboats.capture_profiles \
-  --profile elliott_bay \
+  --profile voice_net_balanced \
   --output-root "${airband_spool_root}" \
+  --device-index "${TALKINGBOATS_VOICE_DEVICE_INDEX:-0}" \
+  --device-serial "${TALKINGBOATS_VOICE_SDR_SERIAL:-}" \
+  "${squelch_args[@]}" \
   --icecast-host "${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}" \
   --icecast-port "${TALKINGBOATS_ICECAST_PORT:-8000}" \
+  --icecast-output "05A:/talkingboats-05a.mp3:Talking Boats VTS / Port Ops" \
+  --icecast-output "06:/talkingboats-06.mp3:Talking Boats Intership Safety" \
+  --icecast-output "09:/talkingboats-09.mp3:Talking Boats Calling / Commercial" \
   --icecast-output "13:/talkingboats-13.mp3:Talking Boats Bridge-to-bridge" \
   --icecast-output "14:${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}:Talking Boats VTS / Seattle Traffic" \
+  --icecast-output "16:/talkingboats-16.mp3:Talking Boats Distress / Calling" \
+  --icecast-output "22A:/talkingboats-22a.mp3:Talking Boats USCG Liaison" \
+  --icecast-output "67:/talkingboats-67.mp3:Talking Boats Commercial / Bridge" \
   --icecast-output "68:/talkingboats-68.mp3:Talking Boats Recreational" \
+  --icecast-output "69:/talkingboats-69.mp3:Talking Boats Non-commercial" \
+  --icecast-output "71:/talkingboats-71.mp3:Talking Boats Non-commercial" \
+  --icecast-output "72:/talkingboats-72.mp3:Talking Boats Ship-to-ship" \
   --icecast-source-password "${TALKINGBOATS_ICECAST_SOURCE_PASSWORD}" \
-  > /etc/talkingboats/rtl_airband-elliott-bay.conf
-chmod 0600 /etc/talkingboats/rtl_airband-elliott-bay.conf
+  > /etc/talkingboats/rtl_airband-voice-net-balanced.conf
+chmod 0600 /etc/talkingboats/rtl_airband-voice-net-balanced.conf
 
 if [[ -f /etc/icecast2/icecast.xml && ! -f /etc/icecast2/icecast.xml.talkingboats.bak ]]; then
   cp -a /etc/icecast2/icecast.xml /etc/icecast2/icecast.xml.talkingboats.bak
@@ -249,12 +314,12 @@ cat > /etc/icecast2/icecast.xml <<EOF
   <location>LAN</location>
   <admin>rob@localhost</admin>
   <limits>
-    <clients>12</clients>
-    <sources>3</sources>
+    <clients>48</clients>
+    <sources>16</sources>
     <queue-size>524288</queue-size>
     <client-timeout>30</client-timeout>
     <header-timeout>15</header-timeout>
-    <source-timeout>10</source-timeout>
+    <source-timeout>300</source-timeout>
     <burst-on-connect>1</burst-on-connect>
     <burst-size>65535</burst-size>
   </limits>
@@ -272,6 +337,21 @@ cat > /etc/icecast2/icecast.xml <<EOF
     <header name="Access-Control-Allow-Origin" value="*" />
   </http-headers>
   <mount type="normal">
+    <mount-name>/talkingboats-05a.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-06.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-09.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
     <mount-name>/talkingboats-13.mp3</mount-name>
     <public>0</public>
     <burst-size>65535</burst-size>
@@ -282,7 +362,37 @@ cat > /etc/icecast2/icecast.xml <<EOF
     <burst-size>65535</burst-size>
   </mount>
   <mount type="normal">
+    <mount-name>/talkingboats-16.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-22a.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-67.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
     <mount-name>/talkingboats-68.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-69.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-71.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-72.mp3</mount-name>
     <public>0</public>
     <burst-size>65535</burst-size>
   </mount>
@@ -327,6 +437,12 @@ systemctl restart icecast2.service
 systemctl disable --now talkingboats-live-radio-stream.service 2>/dev/null || true
 systemctl disable --now talkingboats-edge-live-radio-stream.service 2>/dev/null || true
 systemctl enable --now talkingboats-spool-uploader.service
+if [[ -n "${TALKINGBOATS_AIS_SDR_SERIAL:-}" || -n "${TALKINGBOATS_AIS_DEVICE_INDEX:-}" ]]; then
+  systemctl enable --now talkingboats-ais-catcher.service
+else
+  systemctl disable --now talkingboats-ais-catcher.service 2>/dev/null || true
+  echo "AIS services installed but disabled; set TALKINGBOATS_AIS_SDR_SERIAL or TALKINGBOATS_AIS_DEVICE_INDEX and rerun."
+fi
 systemctl enable --now talkingboats-profile-capture.service
 
 echo "Talking Boats capture profile installed."

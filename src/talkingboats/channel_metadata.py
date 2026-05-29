@@ -17,18 +17,39 @@ class ChannelMetadata:
 
 CHANNEL_METADATA = {
     "05A": ChannelMetadata("05A", "VTS / Port Ops", 156.250),
+    "06": ChannelMetadata("06", "Intership Safety", 156.300),
+    "09": ChannelMetadata("09", "Calling / Commercial", 156.450),
+    "10": ChannelMetadata("10", "Commercial", 156.500),
     "13": ChannelMetadata("13", "Bridge-to-bridge", 156.650),
     "14": ChannelMetadata("14", "VTS / Seattle Traffic", 156.700),
     "16": ChannelMetadata("16", "Distress / Calling", 156.800),
     "22A": ChannelMetadata("22A", "USCG Liaison", 157.100),
     "66A": ChannelMetadata("66A", "Port Operations", 156.325),
+    "67": ChannelMetadata("67", "Commercial / Bridge", 156.375),
     "68": ChannelMetadata("68", "Recreational", 156.425),
     "69": ChannelMetadata("69", "Non-commercial", 156.475),
     "71": ChannelMetadata("71", "Non-commercial", 156.575),
     "72": ChannelMetadata("72", "Ship-to-ship", 156.625),
+    "73": ChannelMetadata("73", "Port Operations", 156.675),
     "74": ChannelMetadata("74", "Port Operations", 156.725),
+    "77": ChannelMetadata("77", "Ship-to-ship", 156.875),
+    "78A": ChannelMetadata("78A", "Non-commercial", 156.925),
 }
-PUBLIC_MONITORED_CHANNELS = ("13", "14", "68")
+VOICE_NET_BALANCED_CHANNELS = (
+    "05A",
+    "06",
+    "09",
+    "13",
+    "14",
+    "16",
+    "22A",
+    "67",
+    "68",
+    "69",
+    "71",
+    "72",
+)
+PUBLIC_MONITORED_CHANNELS = VOICE_NET_BALANCED_CHANNELS
 
 
 def channel_label(channel: str | None) -> str | None:

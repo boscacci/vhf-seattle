@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_public_site_is_recent_clip_app_with_dedicated_ais_map() -> None:
+def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
@@ -9,9 +9,19 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_map() -> None:
     assert "limit=${clipPageSize}" in app_js
     assert "channel-filter" in index_html
     assert '<select id="channel-filter"' not in index_html
-    assert 'id="channel-filter" class="channel-filter" role="group"' in index_html
+    assert 'id="channel-filter" class="channel-filter channel-multiselect"' in index_html
+    assert "<summary" not in index_html
     assert "renderChannelFilter" in app_js
-    assert "selectedChannel" in app_js
+    assert "selectedChannels" in app_js
+    assert "selectedChannelValues" in app_js
+    assert "formatChannelFilterSummary" in app_js
+    assert "channel-filter-trigger" in app_js
+    assert "channel-filter-panel" in app_js
+    assert "channel-filter-checkbox" in app_js
+    assert "channel-filter-swatch" in app_js
+    assert "channel-filter-frequency" in app_js
+    assert "channel-filter-action" in app_js
+    assert "channels=${encodeURIComponent(channel)}" in app_js
     assert "clipPageSize = 6" in app_js
     assert "selectedClipPage" in app_js
     assert "offset=${clipOffset()}" in app_js
@@ -23,10 +33,10 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_map() -> None:
     assert ".clip-list {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);" in styles_css
     assert "break-inside: avoid;" in styles_css
     assert "min-height: 244px" not in styles_css
-    assert "channelFilterButton" in app_js
+    assert "channelFilterButton" not in app_js
     assert "channel-filter-option" in app_js
-    assert "aria-pressed" in app_js
-    assert "button.dataset.channel" in app_js
+    assert "aria-checked" in app_js
+    assert "input.dataset.channel" in app_js
     assert "optionForChannel" not in app_js
     assert "configuredChannels" in app_js
     assert "Bridge-to-bridge" in app_js
@@ -49,11 +59,17 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_map() -> None:
     assert "Seattle Marine Radio" not in index_html
     assert "Clip Review" in index_html
     assert "Live Monitor" in index_html
-    assert "AIS Map" in index_html
+    assert "Map" in index_html
+    assert ">AIS<" not in index_html
+    assert "Elliott Bay Vessel Map" in index_html
     assert 'id="tab-map" type="button" data-tab="map"' in index_html
     assert "panel-map" in index_html
-    assert "ais-map-dashboard" in index_html
+    assert "ais-catcher-frame" in index_html
     assert "map-status" in index_html
+    assert "map-data-note" in index_html
+    assert "local AIS receiver" in index_html
+    assert "AIS-catcher" in index_html
+    assert "shared public map" in index_html
     assert "Analysis" in index_html
     assert "Analysis Dashboard" in index_html
     assert 'id="tab-language" type="button" data-tab="language" hidden' in index_html
@@ -84,12 +100,16 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_map() -> None:
     assert "renderExamplePlayer(entity.examples?.[0] || {})" in app_js
     assert "audioUrlForClip(example)" in app_js
     assert "example-player" in app_js
+    assert "No playable clips are available" in app_js
     assert "loadedmetadata" in app_js
     assert 'className = "example-play"' not in app_js
     assert "📻" in Path("public-site/favicon.svg").read_text(encoding="utf-8")
     assert ".example-player" in styles_css
     assert ".example-play {" not in styles_css
     assert ".channel-filter-option" in styles_css
+    assert ".channel-filter-trigger" in styles_css
+    assert ".channel-filter-panel" in styles_css
+    assert ".channel-filter-swatch" in styles_css
     assert ".entity-list" in styles_css
     assert "columns: 2 300px;" in styles_css
     assert "Why they say it this way" in app_js
@@ -138,7 +158,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_map() -> None:
     assert "startPerformancePolling" in app_js
     assert "stopPerformancePolling" in app_js
     assert "CPU utilization" in app_js
-    assert "1-minute load average" in app_js
+    assert "1-minute load average" not in app_js
+    assert "Average over selected window" in app_js
     assert "OptiPlex live proxy" in app_js
     assert "Raspberry Pi edge radio" in app_js
     assert "Thermals" in app_js
@@ -181,16 +202,28 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_map() -> None:
     assert "static clips" not in app_js
     assert "Tailnet Protected" not in index_html
     assert "loadAndRenderMap" in app_js
-    assert "renderAisMapDashboard" in app_js
-    assert "renderVesselMap" in app_js
-    assert "ais_tracks" in app_js
-    assert "Elliott Bay AIS map" in app_js
-    assert "No AIS vessel positions received yet" in app_js
+    assert (
+        'const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353'
+        '&zoom=13&setcoord=false&welcome=false&tab=map";'
+    ) in app_js
+    assert "renderAisCatcherFrame" in app_js
+    assert "aisCatcherFrame.src = aisCatcherFrameUrl;" in app_js
+    assert 'aisCatcherFrame.title = "AIS-catcher live map";' in app_js
+    assert 'mapStatus.textContent = "Showing AIS-catcher live map";' in app_js
+    assert ".tab-panel[hidden]" in styles_css
+    assert "/api/ais/tracks" not in app_js
+    assert "loadLiveAisTracks" not in app_js
+    assert "mapPayloadWithLiveAis" not in app_js
+    assert "renderAisMapDashboard" not in app_js
+    assert "renderVesselMap" not in app_js
+    assert "No AIS vessel positions received yet" not in app_js
+    assert "Vessel positions in the public manifest" not in app_js
     assert "lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel" in app_js
     assert "lexicalAnalysis.replaceChildren(cards, channelPanel, mapPanel" not in app_js
-    assert ".vessel-map-panel" in styles_css
-    assert ".nautical-map" in styles_css
-    assert ".vessel-marker" in styles_css
+    assert ".ais-catcher-frame" in styles_css
+    assert ".vessel-map-panel" not in styles_css
+    assert ".nautical-map" not in styles_css
+    assert ".vessel-marker" not in styles_css
     assert "bay-map" not in index_html
     assert "Nearby Signals" not in index_html
     assert "Play AIS" not in index_html
@@ -206,15 +239,28 @@ def test_public_site_analysis_copy_clarifies_frequency_metrics() -> None:
     assert "formatHourRangeLabel" in app_js
     assert "No analyzed transmissions yet" in app_js
     assert "activeChannelSummary" in app_js
-    assert "AIS vessel tracks" in app_js
-    assert "Radio channels plus AIS vessel tracks" in app_js
+    assert "return `VHF ${vhfCount}`" in app_js
+    assert "Radio channels in analyzed clips" in app_js
+    assert "monitoredAnalysisChannels" in app_js
+    assert "channelCountsWithMonitoredChannels" in app_js
+    assert '["05A", "06", "09", "13", "14", "16", "22A", "67", "68", "69", "71", "72"]' in app_js
 
 
 def test_public_site_performance_metric_values_average_selected_window() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert "averageMetricValue(samples)" in app_js
+    assert 'performanceSummaryMetric(host, "cpuUtilizationPercent", "%", "cpu")' in app_js
+    assert 'performanceSummaryMetric(host, "memoryUsedPercent", "%", "memory")' in app_js
+    assert 'performanceSummaryMetric(host, "thermalTemperatureC", " C", "thermal")' in app_js
+    assert "performanceSummarySamples(host, field)" in app_js
+    assert "status: performanceSummaryStatus(field, value" in app_js
+    assert "performanceWindowCaption(cpuSummary.samples" in app_js
+    assert "performanceWindowCaption(memorySummary.samples)" in app_js
+    assert "performanceWindowCaption(thermalSummary.samples)" in app_js
     assert "Average over selected window" in app_js
+    assert "percentLabel(memory.usedPercent)" not in app_js
+    assert "thermalSummary(thermal)" not in app_js
     assert "latest?.value" not in app_js
 
 
@@ -223,6 +269,12 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
 
     assert "playback_url" in app_js
     assert "audio_public_filename" in app_js
+    assert 'const clipPlaybackUrl = "/api/clips/playback";' in app_js
+    assert "playback_issued_at_ms: Date.now()" in app_js
+    assert "shouldRefreshPlaybackUrl" in app_js
+    assert "refreshPlaybackUrl" in app_js
+    assert "ensureFreshPlaybackUrl" in app_js
+    assert "isSignedPlaybackUrl" in app_js
     assert "transcript" in app_js
     assert "transcript_public" in app_js
     assert "formatDateTime" in app_js
@@ -240,6 +292,42 @@ def test_public_site_uses_same_origin_live_api_urls() -> None:
     assert 'return `/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`;' in app_js
     assert 'return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;' in app_js
     assert "return withDspProfile(url);" in app_js
+
+
+def test_public_site_hides_ais_tab_in_production() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+
+    assert "aisDashboardEnabled" in app_js
+    assert "mapTab.hidden = !aisDashboardEnabled" in app_js
+    assert 'name === "map" && !aisDashboardEnabled' in app_js
+    assert "panels.map.hidden = !aisDashboardEnabled" in app_js
+    assert 'id="tab-map" type="button" data-tab="map" hidden' in index_html
+
+
+def test_public_site_tabs_have_linkable_routes() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    deploy_shell = Path("scripts/deploy_static_shell.sh").read_text(encoding="utf-8")
+    deploy_full = Path("scripts/deploy_public_site.sh").read_text(encoding="utf-8")
+
+    assert 'clips: "clips"' in app_js
+    assert 'live: "live"' in app_js
+    assert 'map: "ais"' in app_js
+    assert 'language: "analysis"' in app_js
+    assert 'performance: "performance"' in app_js
+    assert "tabFromLocation()" in app_js
+    assert "updateTabRoute(name" in app_js
+    assert "window.addEventListener(\"popstate\"" in app_js
+    assert "activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false })" in app_js
+    for route in ("clips", "live", "ais", "analysis", "performance"):
+        assert f'"{route}/index.html"' in deploy_shell
+        assert f'"{route}/index.html"' in deploy_full
+        assert f'"{route}/"' in deploy_shell
+        assert f'"{route}/"' in deploy_full
+        assert f'"{route}"' in deploy_shell
+        assert f'"{route}"' in deploy_full
+    assert "aws s3api put-object" in deploy_shell
+    assert "aws s3api put-object" in deploy_full
 
 
 def test_public_site_stops_other_audio_before_playing_clip_or_live_radio() -> None:
@@ -270,10 +358,26 @@ def test_public_site_preserves_opted_in_live_audio_session_across_navigation() -
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert "function shouldPreserveLiveAudioSession()" in app_js
+    assert "return Boolean(liveAudio.src && !liveAudio.paused);" in app_js
     assert "suspendLiveView();" in app_js
     assert "if (shouldPreserveLiveAudioSession())" in app_js
     assert "System media controls can keep live radio playing" in app_js
     assert "navigator.mediaSession.playbackState = playbackState" in app_js
+
+
+def test_public_site_defaults_system_media_controls_on_android() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();" in app_js
+    assert "let systemMediaControlsEnabled = initialSystemMediaControlsEnabled();" in app_js
+    assert "function initialSystemMediaControlsEnabled()" in app_js
+    assert "window.localStorage.getItem(systemMediaControlsStorageKey)" in app_js
+    assert 'storedSystemMediaControls === "enabled"' in app_js
+    assert 'storedSystemMediaControls === "disabled"' in app_js
+    assert "function defaultSystemMediaControlsEnabled()" in app_js
+    assert "return isAndroidAudioEnvironment();" in app_js
+    assert "function isAndroidAudioEnvironment()" in app_js
+    assert 'return operatingSystemNameFromUserAgent(userAgent, platform) === "Android";' in app_js
 
 
 def test_public_site_uses_native_audio_controls_for_clip_playback_and_metadata() -> None:
@@ -283,6 +387,8 @@ def test_public_site_uses_native_audio_controls_for_clip_playback_and_metadata()
     assert "audio.controls = true" in app_js
     assert 'audio.preload = "metadata"' in app_js
     assert "audio.src = audioUrl" in app_js
+    assert "refreshClipAudioPlayback(example, audio, time)" in app_js
+    assert 'audio.addEventListener("error"' in app_js
     assert 'audio.addEventListener("play"' in app_js
     assert 'audio.addEventListener("loadedmetadata"' in app_js
     assert "formatPlaybackTime(example.duration_seconds" in app_js
@@ -306,8 +412,8 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert 'id="system-media-controls"' in index_html
-    assert "systemMediaControlsDefault = false" in app_js
-    assert "systemMediaControlsEnabled = systemMediaControlsDefault" in app_js
+    assert "systemMediaControlsDefault = defaultSystemMediaControlsEnabled()" in app_js
+    assert "systemMediaControlsEnabled = initialSystemMediaControlsEnabled()" in app_js
     assert "talkingboats.systemMediaControls" in app_js
     assert "function updateSystemMediaControlsUi()" in app_js
     assert "playLiveButton.disabled = !systemMediaControlsEnabled;" not in app_js
@@ -328,6 +434,123 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
     assert ".system-media-toggle" in styles_css
 
 
+def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert 'id="live-queue" class="live-queue"' in index_html
+    assert 'const everythingLiveChannel = "everything";' in app_js
+    assert "let selectedLiveChannel = everythingLiveChannel;" in app_js
+    assert "live-header-stack" in index_html
+    assert index_html.index('class="live-actions"') < index_html.index('class="tuner-display"')
+    assert ".live-header-stack" in styles_css
+    assert "const liveQueuePollMs = 5000;" in app_js
+    assert 'const liveQueueUrl = "/api/clips/recent?limit=24";' in app_js
+    assert "const everythingInitialQueueLimit = 3;" in app_js
+    assert "let liveQueue = [];" in app_js
+    assert "let currentLiveQueueClip = null;" in app_js
+    assert "let everythingQueueEnabled = false;" in app_js
+    assert "let everythingQueueStartedAtMs = 0;" in app_js
+    assert "let everythingQueueSeeded = false;" in app_js
+    assert "isEverythingLiveMode()" in app_js
+    assert "renderEverythingQueuePanel" in app_js
+    assert "pollEverythingQueue" in app_js
+    assert "enqueueEverythingClips" in app_js
+    assert "seedRecent = false" in app_js
+    assert "includeBackfill = false" in app_js
+    assert "mostRecentEverythingQueueClips(normalizedClips, everythingInitialQueueLimit)" in app_js
+    assert "isEverythingQueueClipAfterStart(clip)" in app_js
+    assert "await pollEverythingQueue({ playIfIdle: false, seedRecent: true });" in app_js
+    assert (
+        'if (isEverythingLiveMode()) {\n'
+        "      if (!everythingQueueEnabled) {\n"
+        "        return;\n"
+        "      }\n"
+        "      await pollEverythingQueue({ signal: liveActivityAbortController.signal });\n"
+        "      return;\n"
+        "    }"
+    ) in app_js
+    assert "playNextEverythingQueueClip" in app_js
+    assert "handleEverythingClipEnded" in app_js
+    assert "configureEverythingQueueAudioElement" in app_js
+    assert 'liveAudio.crossOrigin = "anonymous"' in app_js
+    assert "liveQueue.shift()" in app_js
+    assert "clipAudioRequestUrl(currentLiveQueueClip)" in app_js
+    assert 'String(playbackUrl || "").split("?")[0]' in app_js
+    assert "Everything" in app_js
+    assert "Queued active transmissions across monitored channels" in app_js
+    assert "Queue delay" in app_js
+    assert "Waiting for queued transmission" in app_js
+    assert 'if (isEverythingLiveMode()) {\n    return connectEverythingLive();\n  }' in app_js
+    assert (
+        'if (isEverythingLiveMode()) {\n'
+        "    handleEverythingClipEnded();\n"
+        "    return;\n"
+        "  }"
+    ) in app_js
+    assert ".live-queue" in styles_css
+    assert ".live-queue-item" in styles_css
+
+
+def test_public_site_everything_mode_uses_same_origin_audio_for_waveform_samples() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert 'const clipAudioUrl = "/api/clips/audio";' in app_js
+    assert "clipAudioRequestUrl(currentLiveQueueClip)" in app_js
+    assert "currentLiveQueueClip.audio_url" in app_js
+    assert "ensureAudioAnalyser();" in app_js
+    assert "await audioContext.resume();" in app_js
+    assert 'liveAudio.crossOrigin = "anonymous";' in app_js
+    assert "startWaveform();" in app_js
+
+
+def test_public_site_waveform_amplifies_quiet_real_audio_without_changing_playback() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "const hasAudibleWaveform = rms > 0.002;" in app_js
+    assert "const waveformGain = isReceiving ? 1 : quietWaveformGain(rms);" in app_js
+    assert "function quietWaveformGain(rms)" in app_js
+    assert "Math.min(10, Math.max(3, 0.08 / safeRms))" in app_js
+    assert "hasAudibleWaveform ? normalized * waveformGain * height * 0.38" in app_js
+    assert "liveAudio.volume" not in app_js
+
+
+def test_public_site_everything_queue_survives_live_panel_navigation() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert (
+        "if (isEverythingLiveMode() && everythingQueueEnabled) {\n"
+        "    return true;\n"
+        "  }"
+    ) in app_js
+    assert (
+        "if (isEverythingLiveMode() && everythingQueueEnabled) {\n"
+        "      startLiveActivityPolling();\n"
+        "    } else {\n"
+        "      stopLiveActivityPolling();\n"
+        "    }"
+    ) in app_js
+    assert (
+        "const shouldPollHiddenEverythingQueue = "
+        "isEverythingLiveMode() && everythingQueueEnabled;"
+    ) in app_js
+    assert "if (panels.live.hidden && !shouldPollHiddenEverythingQueue)" in app_js
+
+
+def test_public_site_live_monitor_desktop_layout_prioritizes_waveform() -> None:
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "live-monitor-grid" in index_html
+    assert "live-control-panel" in index_html
+    assert index_html.index('id="waveform-panel"') < index_html.index('class="live-control-panel"')
+    assert ".live-monitor-grid" in styles_css
+    assert "grid-template-columns: minmax(420px, 1fr) minmax(280px, 360px);" in styles_css
+    assert "height: clamp(240px, 32vw, 420px);" in styles_css
+    assert "@media (max-width: 900px)" in styles_css
+
+
 def test_public_site_warms_live_stream_and_acknowledges_play_immediately() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
@@ -342,7 +565,7 @@ def test_public_site_warms_live_stream_and_acknowledges_play_immediately() -> No
     assert "connectLive();" in app_js
     assert "} else {\n    prepareLiveAudio();" in app_js
     assert (
-        "if (liveAudio.src) {\n"
+        "if (liveAudio.src && !isEverythingLiveMode()) {\n"
         "    liveAudio.src = liveStreamUrl();\n"
         "    liveAudio.load();"
     ) in app_js

@@ -11,6 +11,16 @@ from talkingboats.lexical_analysis import write_cached_lexical_analysis
 
 
 class FakeStorage:
+    def __init__(
+        self,
+        *,
+        missing_playback_keys: set[str] | None = None,
+        playback_content: bytes = b"mp3-data",
+    ) -> None:
+        self.missing_playback_keys = missing_playback_keys or set()
+        self.playback_content = playback_content
+        self.opened_playback_keys: list[str] = []
+
     def presign_raw_upload(self, request):
         return (
             f"raw/channel={request.channel}/date=2026-05-20/fake.mp3",
@@ -21,6 +31,32 @@ class FakeStorage:
         if not key.startswith(("raw/", "hall-of-fame/")):
             raise ValueError("playback key must be in raw/ or hall-of-fame/")
         return "https://s3.example.test/playback"
+
+    def playback_exists(self, key):
+        if not key.startswith(("raw/", "hall-of-fame/")):
+            raise ValueError("playback key must be in raw/ or hall-of-fame/")
+        return key not in self.missing_playback_keys
+
+    def open_playback(self, key):
+        if not key.startswith(("raw/", "hall-of-fame/")):
+            raise ValueError("playback key must be in raw/ or hall-of-fame/")
+        if key in self.missing_playback_keys:
+            raise FileNotFoundError(key)
+        self.opened_playback_keys.append(key)
+        return FakePlaybackBody(self.playback_content)
+
+
+class FakePlaybackBody:
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+        self.closed = False
+
+    def iter_chunks(self, chunk_size: int):
+        assert chunk_size > 0
+        yield self.content
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_ingest_presign_requires_ingest_token() -> None:
@@ -124,6 +160,182 @@ def test_recent_clips_are_public_read_only_with_playback_urls(tmp_path) -> None:
     assert body["channel_labels"]["14"] == "VTS / Seattle Traffic"
 
 
+def test_recent_clips_skip_missing_playback_objects(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    missing_key = "raw/channel=68/date=2026-05-20/missing.mp3"
+    playable_key = "raw/channel=68/date=2026-05-20/playable.mp3"
+    client = _client(
+        clip_db_path=db_path,
+        storage=FakeStorage(missing_playback_keys={missing_key}),
+    )
+    store = UploadedClipStore(db_path)
+    for key, minute, text in [
+        (missing_key, 13, "This audio object is gone"),
+        (playable_key, 12, "This audio object is present"),
+    ]:
+        started_at = datetime(2026, 5, 20, 19, minute, tzinfo=UTC)
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel="68").model_copy(
+                update={
+                    "started_at": started_at,
+                    "idempotency_key": f"radio-event-{minute}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=text,
+                    started_at=f"2026-05-20T19:{minute}:00Z",
+                    ended_at=f"2026-05-20T19:{minute}:04Z",
+                )
+            ],
+        )
+
+    response = client.get("/api/clips/recent?limit=5&channel=68")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [clip["transcript"] for clip in body["clips"]] == ["This audio object is present"]
+    assert missing_key not in response.text
+    assert playable_key not in response.text
+
+
+def test_public_clip_playback_url_can_be_refreshed_without_exposing_key(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    started_at = datetime(2026, 5, 20, 19, 12, tzinfo=UTC)
+    key = "raw/channel=14/date=2026-05-20/fake.mp3"
+    store.record_presigned_upload(
+        key=key,
+        request=_clip_presign(channel="14").model_copy(update={"started_at": started_at}),
+    )
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Seattle Traffic inbound for Elliott Bay",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    response = client.get(
+        "/api/clips/playback?"
+        "channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["channel"] == "14"
+    assert body["started_at"] == "2026-05-20T19:12:00Z"
+    assert body["playback_url"] == "https://s3.example.test/playback"
+    assert body["playback_expires_in_seconds"] == 300
+    assert "key" not in body
+    assert key not in response.text
+
+
+def test_public_clip_audio_streams_same_origin_playback_without_exposing_key(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    storage = FakeStorage(playback_content=b"same-origin-mp3")
+    client = _client(clip_db_path=db_path, storage=storage)
+    store = UploadedClipStore(db_path)
+    started_at = datetime(2026, 5, 20, 19, 12, tzinfo=UTC)
+    key = "raw/channel=14/date=2026-05-20/fake.mp3"
+    store.record_presigned_upload(
+        key=key,
+        request=_clip_presign(channel="14").model_copy(update={"started_at": started_at}),
+    )
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Seattle Traffic inbound for Elliott Bay",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    response = client.get(
+        "/api/clips/audio?"
+        "channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"same-origin-mp3"
+    assert response.headers["content-type"].startswith("audio/mpeg")
+    assert response.headers["cache-control"] == "no-store"
+    assert storage.opened_playback_keys == [key]
+    assert key.encode() not in response.content
+
+
+def test_public_clip_playback_url_rejects_missing_playback_object(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    started_at = datetime(2026, 5, 20, 19, 12, tzinfo=UTC)
+    key = "raw/channel=14/date=2026-05-20/missing.mp3"
+    client = _client(
+        clip_db_path=db_path,
+        storage=FakeStorage(missing_playback_keys={key}),
+    )
+    store = UploadedClipStore(db_path)
+    store.record_presigned_upload(
+        key=key,
+        request=_clip_presign(channel="14").model_copy(update={"started_at": started_at}),
+    )
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Seattle Traffic inbound for Elliott Bay",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    response = client.get(
+        "/api/clips/playback?"
+        "channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
+    )
+
+    assert response.status_code == 404
+    assert key not in response.text
+
+
+def test_public_clip_playback_url_rejects_excluded_channels(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=WX/date=2026-05-20/noaa.mp3"
+    request = _clip_presign(channel="14").model_copy(
+        update={"channel": "WX", "idempotency_key": "radio-event-wx"}
+    )
+    store.record_presigned_upload(key=key, request=request)
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="NOAA weather radio",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    response = client.get(
+        "/api/clips/playback?"
+        "channel=WX&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
+    )
+
+    assert response.status_code == 404
+    assert key not in response.text
+
+
 def test_recent_clips_reports_total_counts_and_supports_offsets(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     client = _client(clip_db_path=db_path)
@@ -162,6 +374,44 @@ def test_recent_clips_reports_total_counts_and_supports_offsets(tmp_path) -> Non
     assert body["limit"] == 6
     assert body["offset"] == 6
     assert body["channel_counts"] == {"14": 4, "68": 4}
+
+
+def test_recent_clips_can_filter_by_multiple_channels(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    channels = ["13", "14", "68", "72"]
+    for index, channel in enumerate(channels):
+        started_at = datetime(2026, 5, 20, 19, index, tzinfo=UTC)
+        key = f"raw/channel={channel}/date=2026-05-20/fake-{index}.mp3"
+        request = _clip_presign(channel=channel).model_copy(
+            update={
+                "started_at": started_at,
+                "ended_at": started_at + timedelta(seconds=5),
+                "idempotency_key": f"radio-event-multi-{index}",
+            }
+        )
+        store.record_presigned_upload(key=key, request=request)
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"Clip {channel}",
+                    started_at=f"2026-05-20T19:{index:02d}:00Z",
+                    ended_at=f"2026-05-20T19:{index:02d}:04Z",
+                )
+            ],
+        )
+
+    response = client.get("/api/clips/recent?limit=10&channels=13&channels=68")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [clip["channel"] for clip in body["clips"]] == ["68", "13"]
+    assert [clip["transcript"] for clip in body["clips"]] == ["Clip 68", "Clip 13"]
+    assert body["clip_count"] == 4
+    assert body["filtered_clip_count"] == 2
+    assert body["channel_counts"] == {"13": 1, "14": 1, "68": 1, "72": 1}
 
 
 def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
@@ -220,9 +470,18 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
         "offset": 0,
         "channel_counts": {"14": 1},
         "channel_labels": {
+            "05A": "VTS / Port Ops",
+            "06": "Intership Safety",
+            "09": "Calling / Commercial",
             "13": "Bridge-to-bridge",
             "14": "VTS / Seattle Traffic",
             "68": "Recreational",
+            "16": "Distress / Calling",
+            "22A": "USCG Liaison",
+            "67": "Commercial / Bridge",
+            "69": "Non-commercial",
+            "71": "Non-commercial",
+            "72": "Ship-to-ship",
         },
     }
 
@@ -344,7 +603,11 @@ class AsgiTestClient:
         return response
 
 
-def _client(*, clip_db_path: Path | None = None) -> AsgiTestClient:
+def _client(
+    *,
+    clip_db_path: Path | None = None,
+    storage: FakeStorage | None = None,
+) -> AsgiTestClient:
     app.dependency_overrides.clear()
 
     async def override_settings() -> Settings:
@@ -376,7 +639,7 @@ def _client(*, clip_db_path: Path | None = None) -> AsgiTestClient:
         )
 
     async def override_storage() -> FakeStorage:
-        return FakeStorage()
+        return storage or FakeStorage()
 
     app.dependency_overrides[get_settings] = override_settings
     app.dependency_overrides[get_storage] = override_storage

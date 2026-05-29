@@ -61,6 +61,7 @@ class Settings:
                     frequency_mhz=CHANNEL_METADATA["14"].frequency_mhz,
                     stream_url=os.getenv("TALKINGBOATS_LIVE_14_URL"),
                 ),
+                "16": _live_channel_from_metadata("16", os.getenv("TALKINGBOATS_LIVE_16_URL")),
                 "68": _live_channel_from_metadata("68", os.getenv("TALKINGBOATS_LIVE_68_URL")),
             },
         )

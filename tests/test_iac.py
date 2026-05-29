@@ -112,9 +112,9 @@ def test_deploy_script_uses_opentofu_cli_only() -> None:
     deploy_script = Path("scripts/deploy_public_site.sh").read_text(encoding="utf-8")
 
     assert 'tofu output -raw "${output_name}"' in deploy_script
-    assert 'bucket="$(tofu_output_raw "${bucket_output}")"' in deploy_script
-    assert 'distribution_id="$(tofu_output_raw "${distribution_output}")"' in deploy_script
-    assert 'fqdn="$(tofu_output_raw "${fqdn_output}")"' in deploy_script
+    assert 'bucket="$(deploy_output_raw "${bucket_output}")"' in deploy_script
+    assert 'distribution_id="$(deploy_output_raw "${distribution_output}")"' in deploy_script
+    assert 'fqdn="$(deploy_output_raw "${fqdn_output}")"' in deploy_script
     assert "terraform " not in deploy_script.lower()
 
 
@@ -130,10 +130,36 @@ def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
     assert 'https_port             = var.live_origin_https_port' in main_tf
     assert 'path_pattern             = "/api/live/*"' in main_tf
     assert 'path_pattern             = "/api/clips/recent"' in main_tf
+    assert 'path_pattern             = "/api/clips/playback"' in main_tf
+    assert 'path_pattern             = "/api/clips/audio"' in main_tf
     assert 'path_pattern             = "/api/analysis/lexical"' in main_tf
-    assert main_tf.count("target_origin_id         = local.live_origin_id") == 3
-    assert main_tf.count("target_origin_id         = local.dev_live_origin_id") == 3
+    assert 'path_pattern             = "/ais-catcher/*"' in main_tf
+    prod_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "site")
+    dev_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "dev_site")
+    assert 'path_pattern             = "/ais-catcher/*"' not in prod_distribution
+    assert 'path_pattern             = "/ais-catcher/*"' in dev_distribution
+    assert main_tf.count("target_origin_id         = local.live_origin_id") == 5
+    assert main_tf.count("target_origin_id         = local.dev_live_origin_id") == 6
     assert "origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id" in main_tf
+
+
+def test_opentofu_uses_static_certificate_validation_record_keys() -> None:
+    main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+
+    prod_record = _resource_block(main_tf, "aws_route53_record", "site_cert_validation")
+    dev_record = _resource_block(main_tf, "aws_route53_record", "dev_site_cert_validation")
+
+    assert re.search(r"site_cert_validation_domains\s+=\s+toset\(\[local\.site_fqdn\]\)", main_tf)
+    assert re.search(
+        r"dev_site_cert_validation_domains\s+=\s+toset\(\[local\.dev_site_fqdn\]\)",
+        main_tf,
+    )
+    assert "for_each = local.site_cert_validation_domains" in prod_record
+    assert "for_each = local.dev_site_cert_validation_domains" in dev_record
+    assert "if dvo.domain_name == each.value" in prod_record
+    assert "if dvo.domain_name == each.value" in dev_record
+    assert "dvo.domain_name =>" not in prod_record
+    assert "dvo.domain_name =>" not in dev_record
 
 
 def test_dev_cloudfront_marks_live_origin_requests_as_dev_only() -> None:

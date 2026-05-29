@@ -58,6 +58,17 @@ def test_spool_uploader_infers_channel_from_directory() -> None:
     assert infer_spool_channel(Path("/opt/talkingboats/spool/airband/14/file.wav")) == "14"
 
 
+def test_spool_uploader_infers_channel_from_vhf_filename() -> None:
+    assert (
+        infer_spool_channel(Path("/opt/talkingboats/spool/airband/vhf-67_20260529_004440.mp3"))
+        == "67"
+    )
+    assert (
+        infer_spool_channel(Path("/opt/talkingboats/spool/airband/vhf-05A_20260529_004440.mp3"))
+        == "05A"
+    )
+
+
 def test_spool_uploader_optimizes_clip_before_upload(tmp_path) -> None:
     channel_dir = tmp_path / "14"
     channel_dir.mkdir()
@@ -101,9 +112,95 @@ def test_spool_uploader_optimizes_clip_before_upload(tmp_path) -> None:
     _, _, clip, uploaded_bytes = uploaded[0]
     assert clip.audio_path.suffix == ".mp3"
     assert clip.content_type == "audio/mpeg"
-    assert clip.idempotency_key.startswith("spool-v1:14:2026-05-28T00:47:00Z:")
+    assert clip.idempotency_key.startswith("spool-v1:14:2026-05-28T00:46:17Z:")
     assert uploaded_bytes == b"edge optimized mp3"
     assert not clip.audio_path.exists()
+
+
+def test_spool_uploader_prioritizes_recent_files_when_limited(tmp_path) -> None:
+    old_dir = tmp_path / "13"
+    new_dir = tmp_path / "14"
+    old_dir.mkdir()
+    new_dir.mkdir()
+    old = old_dir / "vhf-13_20260528_004617.mp3"
+    new = new_dir / "vhf-14_20260528_004700.mp3"
+    old.write_bytes(b"old audio")
+    new.write_bytes(b"new audio")
+    uploaded = []
+
+    def fake_upload(*, api_url, ingest_token, clip):
+        uploaded.append(clip.audio_path.name)
+        return UploadResult(
+            bucket="bucket",
+            key=f"raw/channel={clip.channel}/clip.mp3",
+            bytes_uploaded=9,
+        )
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=False,
+        now=datetime(2026, 5, 28, 0, 49, tzinfo=UTC),
+        stat_func=lambda path: FakeStat(
+            size=path.stat().st_size,
+            mtime=datetime(2026, 5, 28, 0, 48, tzinfo=UTC).timestamp(),
+        ),
+        upload_func=fake_upload,
+        max_files=1,
+    )
+
+    assert count == 1
+    assert uploaded == [new.name]
+
+
+def test_spool_uploader_quarantines_failed_preparation_and_continues(tmp_path) -> None:
+    failed_root = tmp_path / "failed"
+    bad_dir = tmp_path / "13"
+    good_dir = tmp_path / "14"
+    bad_dir.mkdir()
+    good_dir.mkdir()
+    bad = bad_dir / "vhf-13_20260528_004617.mp3"
+    good = good_dir / "vhf-14_20260528_004700.mp3"
+    bad.write_bytes(b"bad mp3")
+    good.write_bytes(b"good mp3")
+    old_timestamp = datetime(2026, 5, 28, 0, 48, tzinfo=UTC).timestamp()
+    uploaded = []
+
+    def fake_run(command, *, check):
+        if str(bad) in command:
+            raise subprocess.CalledProcessError(returncode=1, cmd=command)
+        Path(command[-1]).write_bytes(b"edge optimized mp3")
+
+    def fake_upload(*, api_url, ingest_token, clip):
+        uploaded.append(clip.audio_path.name)
+        return UploadResult(
+            bucket="bucket",
+            key=f"raw/channel={clip.channel}/optimized.mp3",
+            bytes_uploaded=18,
+        )
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=True,
+        now=datetime(2026, 5, 28, 0, 49, tzinfo=UTC),
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        upload_func=fake_upload,
+        audio_filter="highpass=f=250,acompressor=threshold=0.06",
+        ffmpeg_path="ffmpeg",
+        runner=fake_run,
+        failed_root=failed_root,
+    )
+
+    assert count == 1
+    assert uploaded == ["vhf-14_20260528_004700-edge.mp3"]
+    assert not bad.exists()
+    assert (failed_root / "13" / bad.name).read_bytes() == b"bad mp3"
+    assert not good.exists()
 
 
 def test_spool_uploader_imports_without_pydantic() -> None:

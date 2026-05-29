@@ -150,7 +150,10 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
         'replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600" "5000"'
         in installer
     )
-    assert 'replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "debug" "elliott_bay"' in installer
+    assert (
+        'replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "debug" "voice_net_balanced"'
+        in installer
+    )
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX" not in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS "5"' in installer
     assert "talkingboats.capture_profiles" in installer
@@ -162,15 +165,93 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     )
     assert '--icecast-output "68:/talkingboats-68.mp3:Talking Boats Recreational"' in installer
     assert "--icecast-source-password" in installer
-    assert "<sources>3</sources>" in installer
+    assert "<clients>48</clients>" in installer
+    assert "<sources>16</sources>" in installer
+    assert "<source-timeout>300</source-timeout>" in installer
     assert "<mount-name>/talkingboats-13.mp3</mount-name>" in installer
     assert "<mount-name>/talkingboats-68.mp3</mount-name>" in installer
     assert (
         "<mount-name>${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}</mount-name>"
         in installer
     )
-    assert "chmod 0600 /etc/talkingboats/rtl_airband-elliott-bay.conf" in installer
+    assert "chmod 0600 /etc/talkingboats/rtl_airband-voice-net-balanced.conf" in installer
     assert 'talkingboats-upload-spooled-clips = "talkingboats.spool_uploader:main"' in pyproject
+
+
+def test_pi_installer_adds_serial_pinned_voice_and_ais_catcher_service() -> None:
+    installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
+    profile_unit = Path("deploy/systemd/talkingboats-profile-capture.service.example").read_text(
+        encoding="utf-8"
+    )
+    ais_catcher_unit = Path(
+        "deploy/systemd/talkingboats-ais-catcher.service.example"
+    ).read_text(encoding="utf-8")
+    ais_catcher_wrapper = Path("deploy/pi/live-radio/talkingboats-ais-catcher").read_text(
+        encoding="utf-8"
+    )
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+
+    assert "TALKINGBOATS_VOICE_SDR_SERIAL" in installer
+    assert "TALKINGBOATS_VOICE_DEVICE_INDEX" in installer
+    assert "TALKINGBOATS_AIS_SDR_SERIAL" in installer
+    assert "TALKINGBOATS_AIS_DEVICE_INDEX" in installer
+    assert "TALKINGBOATS_AIS_WEB_PORT" in installer
+    assert "TALKINGBOATS_AIS_COMMUNITY_FEED" in installer
+    assert "TALKINGBOATS_AIS_SHARING_KEY" in installer
+    assert "TALKINGBOATS_AIS_STATION_NAME" in installer
+    assert "TALKINGBOATS_AIS_STATION_LINK" in installer
+    assert "TALKINGBOATS_AIS_LAT" in installer
+    assert "TALKINGBOATS_AIS_LON" in installer
+    assert "TALKINGBOATS_AIS_SHARE_LOC" in installer
+    assert "talkingboats-ais-catcher.service" in installer
+    assert "talkingboats-ais-uploader.service" not in installer
+    assert "--profile voice_net_balanced" in installer
+    assert "--device-index" in installer
+    assert "--device-serial" in installer
+    assert "rtl_airband-voice-net-balanced.conf" in installer
+    assert "talkingboats-ais-catcher" in ais_catcher_unit
+    assert not Path("deploy/systemd/talkingboats-ais-uploader.service.example").exists()
+    assert not Path("deploy/pi/live-radio/talkingboats-ais-uploader").exists()
+    assert "TALKINGBOATS_AIS_SDR_SERIAL" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_DEVICE_INDEX:-1" in ais_catcher_wrapper
+    assert '"-d:${TALKINGBOATS_AIS_DEVICE_INDEX:-1}"' in ais_catcher_wrapper
+    assert "-N \"${TALKINGBOATS_AIS_WEB_PORT:-8100}\"" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_COMMUNITY_FEED" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_SHARING_KEY" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_STATION_NAME:-Elliott Bay VHF" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_STATION_LINK:-https://robertboscacci.com" in ais_catcher_wrapper
+    assert "station \"${TALKINGBOATS_AIS_STATION_NAME:-Elliott Bay VHF}\"" in ais_catcher_wrapper
+    assert (
+        "station_link "
+        "\"${TALKINGBOATS_AIS_STATION_LINK:-https://robertboscacci.com}\""
+        in ais_catcher_wrapper
+    )
+    assert "lat \"${TALKINGBOATS_AIS_LAT:-47.6190158}\"" in ais_catcher_wrapper
+    assert "lon \"${TALKINGBOATS_AIS_LON:--122.3595353}\"" in ais_catcher_wrapper
+    assert "share_loc \"${TALKINGBOATS_AIS_SHARE_LOC:-on}\"" in ais_catcher_wrapper
+    assert "sharing_args=(-X)" in ais_catcher_wrapper
+    assert 'sharing_args=(-X "${TALKINGBOATS_AIS_SHARING_KEY}")' in ais_catcher_wrapper
+    assert "-X off" not in ais_catcher_wrapper
+    assert "MSGFORMAT JSON_FULL" not in ais_catcher_wrapper
+    assert "CPUQuota=35%" in ais_catcher_unit
+    assert "talkingboats.ais_uploader" not in pyproject
+    assert "EnvironmentFile=/etc/talkingboats/live-radio.env" in profile_unit
+
+
+def test_pi_installer_streams_every_balanced_voice_net_channel_to_icecast() -> None:
+    installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
+    expected_channels = ("05A", "06", "09", "13", "14", "16", "22A", "67", "68", "69", "71", "72")
+
+    assert "<sources>16</sources>" in installer
+    for channel in expected_channels:
+        mount_channel = channel.lower()
+        mount = (
+            "${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}"
+            if channel == "14"
+            else f"/talkingboats-{mount_channel}.mp3"
+        )
+        assert f'--icecast-output "{channel}:' in installer
+        assert f"<mount-name>{mount}</mount-name>" in installer
 
 
 def test_live_radio_audio_filter_is_flagged_and_default_on() -> None:

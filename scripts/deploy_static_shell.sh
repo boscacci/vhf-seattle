@@ -29,14 +29,110 @@ worktree_is_dirty() {
 tofu_output_raw() {
   local output_name="$1"
   local value
-  value="$(cd "${tofu_dir}" && tofu output -raw "${output_name}" 2>&1)"
-  local status=$?
-  if [[ ${status} -ne 0 || -z "${value}" || "${value}" == *"No outputs found"* ]]; then
+  if ! value="$(cd "${tofu_dir}" && tofu output -raw "${output_name}" 2>&1)"; then
     echo "OpenTofu output '${output_name}' is unavailable in ${tofu_dir}." >&2
-    echo "Run with a populated state directory via TALKINGBOATS_TOFU_DIR, or refresh/apply the stack first." >&2
-    exit 1
+    printf '%s\n' "${value}" >&2
+    return 1
+  fi
+  if [[ -z "${value}" || "${value}" == *"No outputs found"* ]]; then
+    echo "OpenTofu output '${output_name}' is unavailable in ${tofu_dir}." >&2
+    if [[ -n "${value}" ]]; then
+      printf '%s\n' "${value}" >&2
+    fi
+    return 1
   fi
   printf '%s' "${value}"
+}
+
+aws_account_id() {
+  aws sts get-caller-identity --query Account --output text
+}
+
+cloudfront_distribution_for_alias() {
+  local fqdn="$1"
+  local distribution_id
+  distribution_id="$(
+    aws cloudfront list-distributions \
+      --query "DistributionList.Items[?Aliases.Items && contains(Aliases.Items, '${fqdn}')].Id | [0]" \
+      --output text
+  )"
+  if [[ -z "${distribution_id}" || "${distribution_id}" == "None" ]]; then
+    echo "Could not find CloudFront distribution for alias ${fqdn}." >&2
+    exit 1
+  fi
+  printf '%s' "${distribution_id}"
+}
+
+fallback_site_fqdn() {
+  case "$1" in
+    dev) printf '%s' "${TALKINGBOATS_DEV_SITE_FQDN:-vhf-dev.robertboscacci.com}" ;;
+    prod) printf '%s' "${TALKINGBOATS_SITE_FQDN:-vhf.robertboscacci.com}" ;;
+    *) return 1 ;;
+  esac
+}
+
+fallback_output_raw() {
+  local output_name="$1"
+  local account_id
+  case "${output_name}" in
+    dev_site_fqdn)
+      fallback_site_fqdn dev
+      ;;
+    site_fqdn)
+      fallback_site_fqdn prod
+      ;;
+    dev_public_site_bucket)
+      account_id="$(aws_account_id)"
+      printf '%s' "${TALKINGBOATS_DEV_PUBLIC_SITE_BUCKET:-talkingboats-dev-talkingboats-${account_id}-public}"
+      ;;
+    public_site_bucket)
+      account_id="$(aws_account_id)"
+      printf '%s' "${TALKINGBOATS_PUBLIC_SITE_BUCKET:-talkingboats-talkingboats-${account_id}-public}"
+      ;;
+    dev_cloudfront_distribution_id)
+      if [[ -n "${TALKINGBOATS_DEV_CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
+        printf '%s' "${TALKINGBOATS_DEV_CLOUDFRONT_DISTRIBUTION_ID}"
+      else
+        cloudfront_distribution_for_alias "$(fallback_site_fqdn dev)"
+      fi
+      ;;
+    cloudfront_distribution_id)
+      if [[ -n "${TALKINGBOATS_CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
+        printf '%s' "${TALKINGBOATS_CLOUDFRONT_DISTRIBUTION_ID}"
+      else
+        cloudfront_distribution_for_alias "$(fallback_site_fqdn prod)"
+      fi
+      ;;
+    *)
+      echo "No fallback mapping for OpenTofu output '${output_name}'." >&2
+      exit 1
+      ;;
+  esac
+}
+
+deploy_output_raw() {
+  local output_name="$1"
+  local value
+  if value="$(tofu_output_raw "${output_name}")"; then
+    printf '%s' "${value}"
+    return
+  fi
+  fallback_output_raw "${output_name}"
+}
+
+upload_route_indexes() {
+  local source_dir="$1"
+  local target_bucket="$2"
+  local route_shell_path
+  for route_shell_path in "${route_shell_paths[@]}"; do
+    aws s3api put-object \
+      --bucket "${target_bucket}" \
+      --key "${route_shell_path}" \
+      --body "${source_dir}/index.html" \
+      --content-type "text/html" \
+      --cache-control "no-store" \
+      --output json
+  done
 }
 
 enforce_branch_hygiene() {
@@ -79,7 +175,43 @@ environment="$1"
 site_source="${2:-public-site}"
 tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
 branch="$(current_git_branch)"
-invalidate_paths=( "/" "/index.html" "/assets/*" "/favicon.svg" )
+route_index_paths=(
+  "clips/index.html"
+  "live/index.html"
+  "ais/index.html"
+  "analysis/index.html"
+  "performance/index.html"
+)
+route_direct_paths=(
+  "clips/"
+  "clips"
+  "live/"
+  "live"
+  "ais/"
+  "ais"
+  "analysis/"
+  "analysis"
+  "performance/"
+  "performance"
+)
+route_shell_paths=( "${route_index_paths[@]}" "${route_direct_paths[@]}" )
+invalidate_paths=(
+  "/"
+  "/index.html"
+  "/assets/*"
+  "/favicon.svg"
+  "/clips"
+  "/clips/*"
+  "/live"
+  "/live/*"
+  "/ais"
+  "/ais/*"
+  "/analysis"
+  "/analysis/"
+  "/analysis/index.html"
+  "/performance"
+  "/performance/*"
+)
 sync_excludes=( --exclude "public_manifest.json" --exclude "clips/*" --exclude "analysis/*" )
 
 if [[ ! -d "${site_source}" ]]; then
@@ -106,12 +238,13 @@ esac
 
 enforce_branch_hygiene "${environment}" "${branch}"
 
-bucket="$(tofu_output_raw "${bucket_output}")"
-distribution_id="$(tofu_output_raw "${distribution_output}")"
-fqdn="$(tofu_output_raw "${fqdn_output}")"
+bucket="$(deploy_output_raw "${bucket_output}")"
+distribution_id="$(deploy_output_raw "${distribution_output}")"
+fqdn="$(deploy_output_raw "${fqdn_output}")"
 
 echo "Deploying static shell ${site_source} from ${branch} to ${environment}: https://${fqdn}"
 aws s3 sync "${site_source}" "s3://${bucket}/" "${sync_excludes[@]}"
+upload_route_indexes "${site_source}" "${bucket}"
 aws cloudfront create-invalidation \
   --distribution-id "${distribution_id}" \
   --paths "${invalidate_paths[@]}" \

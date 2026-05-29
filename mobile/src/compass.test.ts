@@ -3,10 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   AUTH_METHODS,
   COMPASS_NEEDLE_RESPONSE_MS,
+  COMPASS_NORTH_NEEDLE_ROTATION_DEGREES,
   COMPASS_SENSOR_INTERVAL_MS,
   COMPASS_UI_REFRESH_INTERVAL_MS,
   cardinalDirection,
   clampedCompassGimbalTilt,
+  compassBodyRotationForHeading,
+  compassBodyRotationOutputRange,
   formatHeading,
   headingFromDeviceMotionRotation,
   headingFromMagnetometer,
@@ -64,6 +67,13 @@ describe("compass helpers", () => {
     expect(nearestCompassHeading(725, 2)).toBe(722);
   });
 
+  it("keeps the north needle fixed while the compass body rotates under it", () => {
+    expect(COMPASS_NORTH_NEEDLE_ROTATION_DEGREES).toBe(0);
+    expect(compassBodyRotationForHeading(64)).toBe(-64);
+    expect(compassBodyRotationForHeading(370)).toBe(-370);
+    expect(compassBodyRotationOutputRange(36000)).toEqual(["36000deg", "-36000deg"]);
+  });
+
   it("samples quickly enough for responsive phone rotation", () => {
     expect(COMPASS_SENSOR_INTERVAL_MS).toBeLessThanOrEqual(20);
     expect(COMPASS_UI_REFRESH_INTERVAL_MS).toBeLessThanOrEqual(16);
@@ -72,6 +82,7 @@ describe("compass helpers", () => {
 
   it("formats readable headings", () => {
     expect(formatHeading(267.6)).toBe("268 W");
+    expect(formatHeading(359.6)).toBe("0 N");
   });
 
   it("measures magnetic vector strength", () => {

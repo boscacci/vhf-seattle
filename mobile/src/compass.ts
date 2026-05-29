@@ -23,6 +23,7 @@ export const COMPASS_UI_REFRESH_INTERVAL_MS = 16;
 export const COMPASS_NEEDLE_RESPONSE_MS = 0;
 export const COMPASS_ROTATION_RANGE_DEGREES = 36000;
 export const COMPASS_GIMBAL_MAX_TILT_DEGREES = 16;
+export const COMPASS_NORTH_NEEDLE_ROTATION_DEGREES = 0;
 
 export const AUTH_METHODS: AuthMethod[] = [
   {
@@ -92,9 +93,21 @@ export function nearestCompassHeading(currentDegrees: number, targetDegrees: num
   return currentDegrees + shortestCompassDelta(currentDegrees, targetDegrees);
 }
 
+export function compassBodyRotationForHeading(headingDegrees: number): number {
+  return -headingDegrees;
+}
+
+export function compassBodyRotationOutputRange(maxDegrees: number): [string, string] {
+  return [
+    `${compassBodyRotationForHeading(-maxDegrees)}deg`,
+    `${compassBodyRotationForHeading(maxDegrees)}deg`,
+  ];
+}
+
 export function formatHeading(degrees: number): string {
   const normalized = normalizeDegrees(degrees);
-  return `${Math.round(normalized)} ${cardinalDirection(normalized)}`;
+  const rounded = Math.round(normalized) % 360;
+  return `${rounded} ${cardinalDirection(normalized)}`;
 }
 
 export function magneticStrength(vector: MagneticVector): number {
