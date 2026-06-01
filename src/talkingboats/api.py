@@ -21,6 +21,13 @@ from talkingboats.asr_feedback import (
     DEFAULT_OUTPUT_DIR,
 )
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
+from talkingboats.clip_search import (
+    SearchIndexUnavailable,
+    read_search_index,
+)
+from talkingboats.clip_search import (
+    search_clips as search_index_clips,
+)
 from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import Settings
 from talkingboats.durable_events import (
@@ -112,6 +119,9 @@ app = FastAPI(
 SHARED_UI_DIR = FilePath(__file__).resolve().parents[2] / "public-site"
 PUBLISHED_LEXICAL_PATH = (
     FilePath(__file__).resolve().parents[2] / "outputs/public-site/analysis/lexical.json"
+)
+PUBLISHED_SEARCH_INDEX_PATH = (
+    FilePath(__file__).resolve().parents[2] / "outputs/public-site/analysis/search_index.json"
 )
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
 if SHARED_UI_DIR.exists():
@@ -520,6 +530,43 @@ async def lexical_analysis(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
+
+
+@app.get(
+    "/api/clips/search",
+)
+async def clip_search(
+    settings: Annotated[Settings, Depends(get_settings)],
+    q: Annotated[str, Query(min_length=1, max_length=240)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    recency: Annotated[str, Query(min_length=1, max_length=8)] = "7d",
+) -> dict[str, object]:
+    index_path = _search_index_path(settings)
+    try:
+        return search_index_clips(
+            read_search_index(index_path),
+            query=q,
+            limit=limit,
+            recency=recency,
+        )
+    except SearchIndexUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="clip search index is not ready",
+        ) from exc
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"clip search embedding model is unavailable: {exc.name or type(exc).__name__}",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _search_index_path(settings: Settings) -> FilePath:
+    if settings.clip_store_backend == "dynamodb":
+        return PUBLISHED_SEARCH_INDEX_PATH
+    return settings.public_site_dir / "analysis/search_index.json"
 
 
 @app.post(

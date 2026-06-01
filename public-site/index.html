@@ -25,6 +25,9 @@
         <button class="tab" id="tab-live" type="button" data-tab="live">
           Live Monitor
         </button>
+        <button class="tab" id="tab-search" type="button" data-tab="search">
+          Search
+        </button>
         <button class="tab" id="tab-map" type="button" data-tab="map" hidden>
           Map
         </button>
@@ -61,6 +64,36 @@
         </div>
         <div id="clips" class="clip-list"></div>
         <nav id="clip-pagination" class="clip-pagination" aria-label="Clip pages"></nav>
+      </section>
+
+      <section class="tab-panel" id="panel-search" aria-labelledby="tab-search" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Semantic retrieval</p>
+            <h2>Clip Search</h2>
+          </div>
+          <p id="clip-search-status" class="status-text" aria-live="polite">Ready</p>
+        </div>
+        <section class="clip-search-panel" aria-label="Vector search">
+          <form id="clip-search-form" class="clip-search-form">
+            <label class="clip-search-field">
+              <span>Search transcript meaning</span>
+              <input
+                id="clip-search-query"
+                name="q"
+                type="search"
+                autocomplete="off"
+                placeholder="tug barge, pilot transfer, ferry wake..."
+              />
+            </label>
+            <button class="primary" type="submit">Search clips</button>
+          </form>
+          <div class="clip-search-options">
+            <div id="clip-search-recency" class="clip-search-control" aria-label="Search recency"></div>
+            <div id="clip-search-limit" class="clip-search-control" aria-label="Search result count"></div>
+          </div>
+        </section>
+        <div id="clip-search-results" class="clip-search-results"></div>
       </section>
 
       <section class="tab-panel" id="panel-live" aria-labelledby="tab-live" hidden>

@@ -87,6 +87,10 @@ def test_generate_lexical_analysis_counts_terms_entities_and_writes_cache(tmp_pa
     assert payload["topics"]["status"] == "skipped"
     assert payload["topics"]["reason"] == "not enough documents for BERTopic"
     assert payload["topics"]["plot_url"] == "/analysis/topic_clusters.html"
+    assert (output_dir / "analysis" / "search_index.json").exists()
+    search_index = json.loads((output_dir / "analysis" / "search_index.json").read_text())
+    assert search_index["status"] == "skipped"
+    assert search_index["source_clip_count"] == 0
     assert payload["education_guide"][0]["title"] == "Seattle Traffic is the coordinator"
     assert "VHF 14" in payload["education_guide"][0]["why_it_matters"]
     assert "sail plan" in payload["education_guide"][0]["what_it_explains"].lower()
@@ -456,9 +460,11 @@ def test_bertopic_model_is_configured_for_condensed_topic_count(
         for index in range(40)
     ]
 
+    search_index_path = tmp_path / "search_index.json"
     payload = lexical_analysis._build_topics(
         clips,
         html_output_path=tmp_path / "topic_clusters.html",
+        search_index_output_path=search_index_path,
     )
 
     bertopic_kwargs = captured["bertopic_kwargs"]
@@ -478,6 +484,15 @@ def test_bertopic_model_is_configured_for_condensed_topic_count(
     assert html_options["config"]["scrollZoom"] is True
     assert html_options["config"]["responsive"] is True
     assert html_options["config"]["displayModeBar"] is True
+    search_index = json.loads(search_index_path.read_text(encoding="utf-8"))
+    assert search_index["status"] == "ok"
+    assert search_index["embedding_model"] == "sentence-transformers/all-MiniLM-L6-v2"
+    assert search_index["vector_dimension"] == 3
+    assert search_index["source_clip_count"] == 40
+    assert search_index["clips"][0]["channel"] == "14"
+    assert search_index["clips"][0]["started_at"] == "2026-05-26T00:00:00Z"
+    assert search_index["clips"][0]["embedding"] == [0.0, 1.0, 2.0]
+    assert "raw/channel" not in search_index_path.read_text(encoding="utf-8")
     assert html_options["config"]["doubleClick"] == "reset"
     assert payload["status"] == "ok"
     assert len(payload["items"]) <= lexical_analysis.MAX_BERTOPIC_TOPICS

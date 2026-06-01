@@ -53,7 +53,13 @@ PERFORMANCE_DEV_HOSTS = (
     "",
 )
 PERFORMANCE_DEV_ORIGIN_HOSTS = ("optiplex.tailbea63b.ts.net",)
-PERFORMANCE_PUBLIC_ROLES = ("OptiPlex live proxy", "Raspberry Pi edge radio")
+OPTIPLEX_PERFORMANCE_ROLE = "OptiPlex ASR Box"
+PI_PERFORMANCE_ROLE = "Raspberry Pi Decoder"
+PERFORMANCE_PUBLIC_ROLES = (OPTIPLEX_PERFORMANCE_ROLE, PI_PERFORMANCE_ROLE)
+PERFORMANCE_ROLE_ALIASES = {
+    "OptiPlex live proxy": OPTIPLEX_PERFORMANCE_ROLE,
+    "Raspberry Pi edge radio": PI_PERFORMANCE_ROLE,
+}
 PERFORMANCE_PUBLIC_STATUSES = {"ok", "watch", "high", "unknown"}
 TAILSCALE_IDENTITY_HEADER = "tailscale-user-login"
 TAILNET_DEV_PROXY_HEADER = "x-talkingboats-tailnet-dev"
@@ -237,7 +243,7 @@ statuses.append(thermal.get("status", "unknown"))
 print(
     json.dumps(
         {
-            "role": "Raspberry Pi edge radio",
+            "role": "Raspberry Pi Decoder",
             "reachable": True,
             "status": worst_status([str(status) for status in statuses]),
             "cpuCount": os.cpu_count() or 1,
@@ -815,6 +821,10 @@ def create_app(
     async def lexical_analysis(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/analysis/lexical", settings, client_factory)
 
+    @app.get("/api/clips/search")
+    async def clip_search(request: Request) -> Response:
+        return await _proxy_private_api(request, "/api/clips/search", settings, client_factory)
+
     @app.api_route(
         "/ais-catcher",
         methods=["GET", "HEAD"],
@@ -1154,10 +1164,14 @@ def _performance_history_key(host: dict[str, object], index: int) -> str:
 def _performance_history_role(host: dict[str, object], index: int) -> str:
     role = host.get("role")
     if isinstance(role, str) and 0 < len(role) <= 80 and "://" not in role:
-        return role
+        return _public_performance_role(role)
     if index < len(PERFORMANCE_PUBLIC_ROLES):
         return PERFORMANCE_PUBLIC_ROLES[index]
     return f"Telemetry host {index + 1}"
+
+
+def _public_performance_role(role: str) -> str:
+    return PERFORMANCE_ROLE_ALIASES.get(role, role)
 
 
 def _performance_history_sample(
@@ -1280,7 +1294,7 @@ def _local_performance_host_snapshot() -> dict[str, object]:
     ]
     return {
         "status": _worst_status(statuses),
-        "role": "OptiPlex live proxy",
+        "role": OPTIPLEX_PERFORMANCE_ROLE,
         "reachable": True,
         "cpuCount": os.cpu_count() or 1,
         "cpu": cpu,
@@ -1462,7 +1476,7 @@ def _pi_performance_snapshot(settings: ProxySettings) -> dict[str, object]:
         return _unknown_pi_performance_snapshot()
     if not isinstance(payload, dict):
         return _unknown_pi_performance_snapshot()
-    payload["role"] = "Raspberry Pi edge radio"
+    payload["role"] = _public_performance_role(str(payload.get("role") or PI_PERFORMANCE_ROLE))
     payload["reachable"] = True
     payload.setdefault("status", "unknown")
     payload.setdefault("cpuCount", 1)
@@ -1476,7 +1490,7 @@ def _pi_performance_snapshot(settings: ProxySettings) -> dict[str, object]:
 
 def _unknown_pi_performance_snapshot() -> dict[str, object]:
     return {
-        "role": "Raspberry Pi edge radio",
+        "role": PI_PERFORMANCE_ROLE,
         "reachable": False,
         "status": "unknown",
         "cpuCount": 1,

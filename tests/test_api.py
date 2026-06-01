@@ -1,5 +1,7 @@
 import asyncio
 import json
+import sys
+import types
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -783,6 +785,91 @@ def test_public_lexical_analysis_uses_published_json_in_dynamo_mode(
 
     assert response.status_code == 200
     assert response.json() == published
+
+
+def test_public_clip_search_returns_vector_ranked_audio_results(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    search_index = {
+        "status": "ok",
+        "generated_at": "2026-06-01T18:00:00Z",
+        "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+        "vector_dimension": 2,
+        "source_clip_count": 3,
+        "clips": [
+            {
+                "channel": "14",
+                "started_at": "2026-06-01T17:58:00Z",
+                "ended_at": "2026-06-01T17:58:12Z",
+                "duration_seconds": 12,
+                "content_type": "audio/mpeg",
+                "transcript": "Seattle Traffic, tug and barge northbound.",
+                "embedding": [0.99, 0.01],
+            },
+            {
+                "channel": "13",
+                "started_at": "2026-05-30T17:58:00Z",
+                "ended_at": "2026-05-30T17:58:10Z",
+                "duration_seconds": 10,
+                "content_type": "audio/mpeg",
+                "transcript": "Bridge to bridge passing arrangement.",
+                "embedding": [0.2, 0.8],
+            },
+            {
+                "channel": "14",
+                "started_at": "2026-04-01T17:58:00Z",
+                "ended_at": "2026-04-01T17:58:08Z",
+                "duration_seconds": 8,
+                "content_type": "audio/mpeg",
+                "transcript": "Old tug and barge archive.",
+                "embedding": [1.0, 0.0],
+            },
+        ],
+    }
+    index_path = tmp_path / "search_index.json"
+    index_path.write_text(json.dumps(search_index), encoding="utf-8")
+    monkeypatch.setattr("talkingboats.api.PUBLISHED_SEARCH_INDEX_PATH", index_path)
+
+    class FakeSentenceTransformer:
+        def __init__(self, model_name: str) -> None:
+            assert model_name == "sentence-transformers/all-MiniLM-L6-v2"
+
+        def encode(self, documents: list[str], *, show_progress_bar: bool) -> list[list[float]]:
+            assert documents == ["tug barge"]
+            assert show_progress_bar is False
+            return [[1.0, 0.0]]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=FakeSentenceTransformer),
+    )
+    client = _client(clip_store_backend="dynamodb")
+
+    response = client.get("/api/clips/search?q=tug%20barge&limit=2&recency=30d")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["query"] == "tug barge"
+    assert payload["recency"] == "30d"
+    assert payload["count"] == 2
+    assert payload["index"]["source_clip_count"] == 3
+    assert payload["results"][0]["transcript"] == "Seattle Traffic, tug and barge northbound."
+    assert payload["results"][0]["audio_url"].startswith("/api/clips/audio?")
+    assert payload["results"][0]["score"] > payload["results"][1]["score"]
+    assert "Old tug and barge archive" not in response.text
+    assert "raw/channel" not in response.text
+
+
+def test_public_clip_search_reports_missing_index(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("talkingboats.api.PUBLISHED_SEARCH_INDEX_PATH", tmp_path / "missing.json")
+    client = _client(clip_store_backend="dynamodb")
+
+    response = client.get("/api/clips/search?q=barge")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "clip search index is not ready"
 
 
 def test_operator_live_channels_do_not_expose_upstream_urls() -> None:

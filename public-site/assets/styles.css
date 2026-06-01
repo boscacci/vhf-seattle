@@ -151,7 +151,7 @@ h3 {
   top: 0;
   z-index: 2;
   display: grid;
-  grid-template-columns: auto auto auto auto auto 1fr;
+  grid-template-columns: auto auto auto auto auto auto 1fr;
   gap: 8px;
   align-items: center;
   margin: 0 0 18px;
@@ -261,6 +261,67 @@ button {
   justify-content: flex-end;
   gap: 10px;
   margin: -4px 0 16px;
+}
+
+.clip-search-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel), var(--bg) 12%);
+}
+
+.clip-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.clip-search-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.clip-search-field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--panel-strong);
+}
+
+.clip-search-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.clip-search-control {
+  min-width: min(100%, 280px);
+}
+
+.clip-search-results {
+  display: grid;
+  gap: 12px;
+}
+
+.search-result-card {
+  border-color: color-mix(in srgb, var(--blue) 42%, var(--line));
+}
+
+.search-score-pill {
+  color: #06110f;
+  border-color: transparent;
+  background: var(--blue);
 }
 
 .clip-display-controls {
@@ -1330,6 +1391,7 @@ audio {
 }
 
 .performance-chart {
+  position: relative;
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -1389,6 +1451,47 @@ audio {
 
 .performance-chart-dot {
   fill: var(--chart-line, var(--teal));
+}
+
+.performance-chart-hover-line {
+  stroke: color-mix(in srgb, var(--ink) 68%, transparent);
+  stroke-dasharray: 3 3;
+  stroke-width: 1;
+}
+
+.performance-chart-hover-dot {
+  fill: var(--bg);
+  stroke: var(--chart-line, var(--teal));
+  stroke-width: 1.8;
+}
+
+.performance-chart-hit-area {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.performance-chart-tooltip {
+  position: absolute;
+  z-index: 1;
+  top: 54px;
+  transform: translateX(-50%);
+  max-width: min(240px, calc(100% - 16px));
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--panel-strong) 94%, black);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+  font-size: 0.74rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.performance-chart-tooltip[hidden] {
+  display: none !important;
 }
 
 .performance-chart.is-cpu {
@@ -1767,6 +1870,15 @@ audio {
   .clip-controls {
     align-items: stretch;
     justify-content: stretch;
+  }
+
+  .clip-search-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .clip-search-options {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .clip-display-controls,

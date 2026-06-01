@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from talkingboats.clip_search import build_search_index, skipped_search_index, write_search_index
 from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 from talkingboats.security import assert_public_safe
 
@@ -464,6 +465,8 @@ def generate_lexical_analysis(
     topic_payload = _build_topics(
         clips,
         html_output_path=analysis_dir / "topic_clusters.html",
+        search_index_output_path=analysis_dir / "search_index.json",
+        generated_at=generated_at_text,
     )
     payload["topics"] = topic_payload
     assert_public_safe(payload)
@@ -725,14 +728,25 @@ def _build_topics(
     clips: list[TranscriptClip],
     *,
     html_output_path: Path,
+    search_index_output_path: Path | None = None,
+    generated_at: str | None = None,
     min_topic_documents: int = 40,
 ) -> dict[str, Any]:
-    documents = [clip.transcript for clip in clips if clip.transcript.strip()]
+    topic_clips = [clip for clip in clips if clip.transcript.strip()]
+    documents = [clip.transcript for clip in topic_clips]
     if len(documents) < min_topic_documents:
         _write_placeholder_topic_html(
             html_output_path,
             "Not enough transcript documents for BERTopic yet.",
         )
+        if search_index_output_path is not None:
+            write_search_index(
+                search_index_output_path,
+                skipped_search_index(
+                    "not enough documents for BERTopic",
+                    generated_at=generated_at,
+                ),
+            )
         return {
             "status": "skipped",
             "reason": "not enough documents for BERTopic",
@@ -749,6 +763,14 @@ def _build_topics(
             html_output_path,
             f"BERTopic dependencies are not installed: {exc.name or type(exc).__name__}.",
         )
+        if search_index_output_path is not None:
+            write_search_index(
+                search_index_output_path,
+                skipped_search_index(
+                    f"BERTopic unavailable: {exc.name or type(exc).__name__}",
+                    generated_at=generated_at,
+                ),
+            )
         return {
             "status": "skipped",
             "reason": f"BERTopic unavailable: {exc.name or type(exc).__name__}",
@@ -772,6 +794,17 @@ def _build_topics(
         topics, _ = topic_model.fit_transform(documents, embeddings=embeddings)
         topic_labels = _topic_labels_by_id(topic_model, topics, documents)
         coordinates = umap_model.fit_transform(embeddings)
+        if search_index_output_path is not None:
+            write_search_index(
+                search_index_output_path,
+                build_search_index(
+                    clips=topic_clips,
+                    embeddings=embeddings,
+                    topics=topics,
+                    topic_labels=topic_labels,
+                    generated_at=generated_at,
+                ),
+            )
         marker_colors = [_topic_color(topic_id) for topic_id in topics]
         figure = go.Figure(
             data=[
@@ -858,6 +891,14 @@ def _build_topics(
             html_output_path,
             f"BERTopic analysis could not complete: {type(exc).__name__}.",
         )
+        if search_index_output_path is not None:
+            write_search_index(
+                search_index_output_path,
+                skipped_search_index(
+                    f"BERTopic failed: {type(exc).__name__}: {exc}",
+                    generated_at=generated_at,
+                ),
+            )
         return {
             "status": "skipped",
             "reason": f"BERTopic failed: {type(exc).__name__}: {exc}",

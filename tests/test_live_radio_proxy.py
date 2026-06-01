@@ -499,6 +499,36 @@ def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:
     assert response.json() == {"status": "ok", "source_clip_count": 1, "entities": []}
 
 
+def test_proxy_clip_search_endpoint_is_public_read_only() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == (
+            "http://private-api.test/api/clips/search?q=barge&limit=5&recency=24h"
+        )
+        assert "x-talkingboats-operator-token" not in request.headers
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "query": "barge",
+                "count": 1,
+                "results": [{"channel": "14", "started_at": "2026-06-01T18:00:00Z"}],
+            },
+        )
+
+    app = create_app(
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(_asgi_get(app, "/api/clips/search?q=barge&limit=5&recency=24h"))
+
+    assert response.status_code == 200
+    assert response.json()["query"] == "barge"
+
+
 def test_proxy_operator_session_endpoint_is_not_exposed() -> None:
     app = create_app(ProxySettings(private_api_url="http://private-api.test"))
 
@@ -832,7 +862,7 @@ def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
     assert dev_response.status_code == 200
     assert dev_origin_response.status_code == 200
     dev_payload = dev_response.json()
-    assert dev_payload["host"]["role"] == "OptiPlex live proxy"
+    assert dev_payload["host"]["role"] == "OptiPlex ASR Box"
     assert "services" not in dev_payload
     assert "internalUrl" not in dev_response.text
     assert "talkingboats-live-radio-proxy" not in dev_response.text
@@ -851,7 +881,7 @@ def test_proxy_performance_endpoint_keeps_public_timeseries_history(tmp_path: Pa
             "generatedAt": "2026-05-26T20:00:00Z",
             "hosts": [
                 {
-                    "role": "OptiPlex live proxy",
+                "role": "OptiPlex ASR Box",
                     "cpu": {"utilizationPercent": 11.0, "status": "ok"},
                     "memory": {"usedPercent": 21.0, "status": "ok"},
                     "thermal": {"temperatureC": 41.0, "throttled": "0x0", "status": "ok"},
@@ -864,7 +894,7 @@ def test_proxy_performance_endpoint_keeps_public_timeseries_history(tmp_path: Pa
             "generatedAt": "2026-05-26T20:00:10Z",
             "hosts": [
                 {
-                    "role": "OptiPlex live proxy",
+                    "role": "OptiPlex ASR Box",
                     "cpu": {"utilizationPercent": 19.5, "status": "ok"},
                     "memory": {"usedPercent": 27.5, "status": "ok"},
                     "thermal": {"temperatureC": 43.5, "throttled": "0x0", "status": "ok"},
@@ -929,7 +959,7 @@ def test_proxy_performance_history_store_uses_memory_and_sqlite_windows(tmp_path
             "generatedAt": generated_at,
             "hosts": [
                 {
-                    "role": "OptiPlex live proxy",
+                    "role": "OptiPlex ASR Box",
                     "cpu": {"utilizationPercent": value, "status": "ok"},
                     "memory": {"usedPercent": value + 10, "status": "ok"},
                     "thermal": {"temperatureC": value + 30, "throttled": "0x0", "status": "ok"},
@@ -1063,7 +1093,7 @@ def test_proxy_performance_snapshot_combines_optiplex_and_pi(monkeypatch) -> Non
     monkeypatch.setattr(
         "talkingboats.live_radio_proxy._pi_performance_snapshot",
         lambda _settings: {
-            "role": "Raspberry Pi edge radio",
+            "role": "Raspberry Pi Decoder",
             "status": "watch",
             "cpuCount": 4,
             "cpu": {"utilizationPercent": 62.5, "status": "ok"},
@@ -1079,10 +1109,10 @@ def test_proxy_performance_snapshot_combines_optiplex_and_pi(monkeypatch) -> Non
     assert snapshot["status"] == "watch"
     assert "services" not in snapshot
     assert [host["role"] for host in snapshot["hosts"]] == [
-        "OptiPlex live proxy",
-        "Raspberry Pi edge radio",
+        "OptiPlex ASR Box",
+        "Raspberry Pi Decoder",
     ]
-    assert snapshot["host"]["role"] == "OptiPlex live proxy"
+    assert snapshot["host"]["role"] == "OptiPlex ASR Box"
     assert snapshot["hosts"][0]["thermal"]["temperatureC"] == 45.0
     assert snapshot["hosts"][1]["thermal"]["temperatureC"] == 37.0
 
@@ -1109,7 +1139,7 @@ def test_proxy_pi_performance_snapshot_reads_public_safe_ssh_json(monkeypatch) -
             {
                 "returncode": 0,
                 "stdout": (
-                    '{"role":"Raspberry Pi edge radio","status":"ok","cpuCount":4,'
+                    '{"role":"Raspberry Pi Decoder","status":"ok","cpuCount":4,'
                     '"cpu":{"utilizationPercent":7.5,"status":"ok"},'
                     '"load":{"oneMinute":0.43,"perCpu":0.11,"status":"ok"},'
                     '"memory":{"usedPercent":32.1,"status":"ok"},'
@@ -1127,7 +1157,7 @@ def test_proxy_pi_performance_snapshot_reads_public_safe_ssh_json(monkeypatch) -
     assert calls[0][:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=2"]
     assert "talkingboats-pi" in calls[0]
     assert calls[0][-2:] == ["python3", "-"]
-    assert snapshot["role"] == "Raspberry Pi edge radio"
+    assert snapshot["role"] == "Raspberry Pi Decoder"
     assert snapshot["thermal"]["temperatureC"] == 37.0
     assert "talkingboats-pi" not in str(snapshot)
     assert "TALKINGBOATS" not in str(snapshot)
@@ -1141,7 +1171,7 @@ def test_proxy_pi_performance_snapshot_degrades_when_ssh_fails(monkeypatch) -> N
 
     snapshot = _pi_performance_snapshot(ProxySettings())
 
-    assert snapshot["role"] == "Raspberry Pi edge radio"
+    assert snapshot["role"] == "Raspberry Pi Decoder"
     assert snapshot["status"] == "unknown"
     assert snapshot["reachable"] is False
 

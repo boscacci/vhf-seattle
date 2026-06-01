@@ -303,6 +303,17 @@ resource "aws_cloudfront_distribution" "site" {
   }
 
   ordered_cache_behavior {
+    path_pattern             = "/api/clips/search"
+    target_origin_id         = local.live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
     path_pattern             = "/api/clips/playback"
     target_origin_id         = local.live_origin_id
     viewer_protocol_policy   = "redirect-to-https"
@@ -642,6 +653,17 @@ resource "aws_cloudfront_distribution" "dev_site" {
 
   ordered_cache_behavior {
     path_pattern             = "/api/clips/recent"
+    target_origin_id         = local.dev_live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/clips/search"
     target_origin_id         = local.dev_live_origin_id
     viewer_protocol_policy   = "redirect-to-https"
     allowed_methods          = ["GET", "HEAD", "OPTIONS"]

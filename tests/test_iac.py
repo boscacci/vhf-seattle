@@ -157,6 +157,7 @@ def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
     assert 'https_port             = var.live_origin_https_port' in main_tf
     assert 'path_pattern             = "/api/live/*"' in main_tf
     assert 'path_pattern             = "/api/clips/recent"' in main_tf
+    assert 'path_pattern             = "/api/clips/search"' in main_tf
     assert 'path_pattern             = "/api/clips/playback"' in main_tf
     assert 'path_pattern             = "/api/clips/audio"' in main_tf
     assert 'path_pattern             = "/api/clips/corrections*"' not in main_tf
@@ -169,13 +170,13 @@ def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
     dev_aaaa_record = _resource_block(main_tf, "aws_route53_record", "dev_site_aaaa")
     assert 'path_pattern             = "/ais-catcher/*"' not in prod_distribution
     assert 'path_pattern             = "/ais-catcher/*"' in dev_distribution
-    assert main_tf.count("target_origin_id         = local.live_origin_id") == 5
+    assert main_tf.count("target_origin_id         = local.live_origin_id") == 6
     assert 'path_pattern             = "/api/clips/corrections*"' not in prod_distribution
     assert 'path_pattern             = "/api/operator/session*"' not in prod_distribution
     assert 'path_pattern             = "/api/clips/corrections*"' not in dev_distribution
     assert 'path_pattern             = "/api/operator/session*"' not in dev_distribution
     assert 'enabled             = false' in dev_distribution
-    assert main_tf.count("target_origin_id         = local.dev_live_origin_id") == 6
+    assert main_tf.count("target_origin_id         = local.dev_live_origin_id") == 7
     assert "origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id" in main_tf
     assert (
         "origin_request_policy_id = aws_cloudfront_origin_request_policy.operator_api.id"

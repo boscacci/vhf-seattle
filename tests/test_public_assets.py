@@ -87,6 +87,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "Seattle Marine Radio" not in index_html
     assert "Clip Review" in index_html
     assert "Live Monitor" in index_html
+    assert "Search" in index_html
+    assert 'id="tab-search" type="button" data-tab="search"' in index_html
+    assert "panel-search" in index_html
+    assert "clip-search-form" in index_html
+    assert "clip-search-results" in index_html
     assert "Map" in index_html
     assert ">AIS<" not in index_html
     assert "Elliott Bay Vessel Map" in index_html
@@ -116,6 +121,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "languageDashboardEnabled" in app_js
     assert '"vhf.robertboscacci.com"' in app_js
     assert "/api/analysis/lexical" in app_js
+    assert 'const clipSearchUrl = "/api/clips/search";' in app_js
     assert "/analysis/lexical.json" in app_js
     assert (
         'const liveLanguageAnalysisEnabled = window.location.hostname !== '
@@ -211,12 +217,18 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "CPU utilization" in app_js
     assert "1-minute load average" not in app_js
     assert "Average over selected window" in app_js
-    assert "OptiPlex live proxy" in app_js
-    assert "Raspberry Pi edge radio" in app_js
+    assert "OptiPlex ASR Box" in app_js
+    assert "Raspberry Pi Decoder" in app_js
+    assert "OptiPlex live proxy" not in app_js
+    assert "Raspberry Pi edge radio" not in app_js
     assert "Thermals" in app_js
     assert "performance-host-grid" in app_js
     assert "performanceHostPanel" in app_js
     assert "performanceMetricChart" in app_js
+    assert "attachPerformanceChartTooltip" in app_js
+    assert "performance-chart-tooltip" in app_js
+    assert "performance-chart-hover-line" in app_js
+    assert "performance-chart-hover-dot" in app_js
     assert "performance-chart-grid" in app_js
     assert "performanceRangeOptions" in app_js
     assert "selectedPerformanceRangeHours" in app_js
@@ -239,7 +251,12 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'document.createElementNS("http://www.w3.org/2000/svg", "svg")' in app_js
     assert ".performance-chart-grid" in styles_css
     assert ".performance-chart-svg" in styles_css
+    assert ".performance-chart-tooltip" in styles_css
+    assert ".performance-chart-hover-line" in styles_css
     assert ".performance-range-control" in styles_css
+    assert ".clip-search-panel" in styles_css
+    assert ".clip-search-form" in styles_css
+    assert ".search-result-card" in styles_css
     assert "serviceList" not in app_js
     assert "Services" not in app_js
     assert "Overall" not in app_js
@@ -476,6 +493,7 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     deploy_full = Path("scripts/deploy_public_site.sh").read_text(encoding="utf-8")
 
     assert 'clips: "clips"' in app_js
+    assert 'search: "search"' in app_js
     assert 'live: "live"' in app_js
     assert 'map: "ais"' in app_js
     assert 'language: "analysis"' in app_js
@@ -486,7 +504,7 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert "updateTabRoute(name" in app_js
     assert "window.addEventListener(\"popstate\"" in app_js
     assert "activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false })" in app_js
-    for route in ("clips", "live", "ais", "analysis", "performance", "operator"):
+    for route in ("clips", "search", "live", "ais", "analysis", "performance", "operator"):
         assert f'"{route}/index.html"' in deploy_shell
         assert f'"{route}/index.html"' in deploy_full
         assert f'"{route}/"' in deploy_shell

@@ -36,6 +36,9 @@ const server = createServer(async (request, response) => {
       }
       return sendJson(response, recentClipPayload(url));
     }
+    if (url.pathname === "/api/clips/search") {
+      return sendJson(response, searchPayload(url));
+    }
     if (url.pathname === "/api/asr-feedback/status") {
       return sendJson(response, asrFeedbackStatusPayload());
     }
@@ -374,6 +377,59 @@ try {
     if (speechTraining.bodyText.includes("Export JSONL") || speechTraining.bodyText.includes("Nightly training")) {
       throw new Error(`performance speech training panel kept bulky operator actions: ${JSON.stringify(speechTraining)}`);
     }
+    const desktopPerformanceContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    let performanceHover = null;
+    try {
+      const desktopPerformancePage = await desktopPerformanceContext.newPage();
+      await desktopPerformancePage.goto(`${baseUrl}/search/`);
+      await desktopPerformancePage.getByLabel("Search transcript meaning").fill("tug barge");
+      await desktopPerformancePage.getByRole("button", { name: "Search clips", exact: true }).click();
+      await desktopPerformancePage.locator(".search-result-card").first().waitFor({ state: "visible", timeout: 10000 });
+      const searchResult = await desktopPerformancePage.evaluate(() => ({
+        status: document.querySelector("#clip-search-status")?.textContent || "",
+        resultCount: document.querySelectorAll(".search-result-card").length,
+        firstTranscript: document.querySelector(".search-result-card blockquote")?.textContent || "",
+        audioCount: document.querySelectorAll(".search-result-card audio").length,
+      }));
+      if (!searchResult.status.includes("semantic matches") || searchResult.resultCount < 1) {
+        throw new Error(`search results did not render: ${JSON.stringify(searchResult)}`);
+      }
+      if (!searchResult.firstTranscript.includes("Smoke search")) {
+        throw new Error(`search result transcript did not come from search API: ${JSON.stringify(searchResult)}`);
+      }
+      if (searchResult.audioCount < 1) {
+        throw new Error(`search result audio controls did not render: ${JSON.stringify(searchResult)}`);
+      }
+      await desktopPerformancePage.getByRole("button", { name: "Performance" }).click();
+      const firstChart = desktopPerformancePage.locator(".performance-chart-svg").first();
+      await firstChart.waitFor({ state: "visible", timeout: 10000 });
+      await firstChart.scrollIntoViewIfNeeded();
+      const box = await firstChart.boundingBox();
+      if (!box) {
+        throw new Error("performance chart did not have a bounding box");
+      }
+      await desktopPerformancePage.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.45);
+      await desktopPerformancePage.waitForTimeout(250);
+      performanceHover = await desktopPerformancePage.evaluate(() => ({
+        tooltip: document.querySelector(".performance-chart-tooltip:not([hidden])")?.textContent || "",
+        tooltipCount: document.querySelectorAll(".performance-chart-tooltip").length,
+        visibleTooltipCount: document.querySelectorAll(".performance-chart-tooltip:not([hidden])").length,
+        chartCount: document.querySelectorAll(".performance-chart").length,
+        lineCount: document.querySelectorAll(".performance-chart-line").length,
+        hitAreaCount: document.querySelectorAll(".performance-chart-hit-area").length,
+        hoverLine: Boolean(document.querySelector(".performance-chart-hover-line:not([hidden])")),
+        hoverDot: Boolean(document.querySelector(".performance-chart-hover-dot:not([hidden])")),
+        hostTitles: [...document.querySelectorAll(".performance-host h3")].map((heading) => heading.textContent || ""),
+      }));
+      if (!performanceHover.tooltip.includes("%") || !performanceHover.hoverLine || !performanceHover.hoverDot) {
+        throw new Error(`performance hover tooltip did not render: ${JSON.stringify(performanceHover)}`);
+      }
+      if (!performanceHover.hostTitles.includes("OptiPlex ASR Box")) {
+        throw new Error(`performance host labels were not updated: ${JSON.stringify(performanceHover)}`);
+      }
+    } finally {
+      await desktopPerformanceContext.close();
+    }
     console.log(
       JSON.stringify(
         {
@@ -389,6 +445,7 @@ try {
             afterFlip: clipControlsAfterFlip,
           },
           speechTraining,
+          performanceHover,
         },
         null,
         2,
@@ -434,6 +491,41 @@ function recentClip(index) {
   };
 }
 
+function searchPayload(url) {
+  const query = url.searchParams.get("q") || "";
+  return {
+    status: "ok",
+    query,
+    recency: url.searchParams.get("recency") || "7d",
+    limit: Number(url.searchParams.get("limit") || 10),
+    count: 2,
+    index: {
+      generated_at: "2026-06-01T18:30:00Z",
+      source_clip_count: 72,
+    },
+    results: [
+      {
+        channel: "14",
+        channel_label: "VTS / Seattle Traffic",
+        started_at: audioStartedAt,
+        ended_at: "2026-05-31T20:00:15Z",
+        duration_seconds: 15,
+        transcript: `Smoke search result for ${query}`,
+        score: 0.93,
+      },
+      {
+        channel: "13",
+        channel_label: "Bridge-to-bridge",
+        started_at: "2026-05-31T19:58:00Z",
+        ended_at: "2026-05-31T19:58:10Z",
+        duration_seconds: 10,
+        transcript: "Smoke search bridge result",
+        score: 0.81,
+      },
+    ],
+  };
+}
+
 function asrFeedbackStatusPayload() {
   return {
     status: "ok",
@@ -465,7 +557,7 @@ function performancePayload() {
     generatedAt,
     hosts: [
       {
-        role: "OptiPlex live proxy",
+        role: "OptiPlex ASR Box",
         cpuCount: 8,
         cpuUtilizationPercent: 10,
         memoryUsedPercent: 44,
@@ -533,8 +625,12 @@ async function sendStatic(response, pathname) {
     relativePath === "/" ||
     relativePath === "/clips/" ||
     relativePath === "/clips" ||
+    relativePath === "/search/" ||
+    relativePath === "/search" ||
     relativePath === "/operator/" ||
     relativePath === "/operator" ||
+    relativePath === "/performance/" ||
+    relativePath === "/performance" ||
     relativePath === "/analysis/" ||
     relativePath === "/analysis"
   ) {

@@ -198,6 +198,7 @@ tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
 branch="$(current_git_branch)"
 route_index_paths=(
   "clips/index.html"
+  "search/index.html"
   "live/index.html"
   "ais/index.html"
   "analysis/index.html"
@@ -207,6 +208,8 @@ route_index_paths=(
 route_direct_paths=(
   "clips/"
   "clips"
+  "search/"
+  "search"
   "live/"
   "live"
   "ais/"

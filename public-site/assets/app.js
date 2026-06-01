@@ -2,6 +2,7 @@ const defaultClipPageSize = 6;
 const clipPageSizeOptions = [6, 12, 24, 48];
 const clipPlaybackUrl = "/api/clips/playback";
 const clipAudioUrl = "/api/clips/audio";
+const clipSearchUrl = "/api/clips/search";
 const clipCorrectionsUrl = "/api/clips/corrections";
 const manifestUrl = "/public_manifest.json";
 const lexicalAnalysisUrl = "/api/analysis/lexical";
@@ -17,6 +18,14 @@ const systemMediaControlsStorageKey = "talkingboats.systemMediaControls";
 const recentClipsCacheKeyPrefix = "talkingboats.recentClipsCache.v1";
 const recentClipsCacheMaxAgeMs = 5 * 60 * 1000;
 const recentClipPlaceholderLimit = 6;
+const searchRecencyOptions = [
+  { label: "24h", value: "24h" },
+  { label: "7d", value: "7d" },
+  { label: "30d", value: "30d" },
+  { label: "90d", value: "90d" },
+  { label: "All", value: "all" },
+];
+const searchLimitOptions = [5, 10, 20, 50];
 const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();
 const unknownPlaybackTimeLabel = "—";
 const everythingLiveChannel = "everything";
@@ -46,6 +55,7 @@ const operatorReviewEnabled =
   window.location.pathname.startsWith("/operator") && privateAppHost;
 const tabRouteSegments = {
   clips: "clips",
+  search: "search",
   live: "live",
   map: "ais",
   language: "analysis",
@@ -53,6 +63,7 @@ const tabRouteSegments = {
 };
 const tabRouteAliases = {
   clips: "clips",
+  search: "search",
   live: "live",
   ais: "map",
   map: "map",
@@ -67,7 +78,12 @@ const clipStatsPollMs = 10000;
 const clipPlaybackRefreshLeadMs = 45000;
 const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
-const performanceHostLabel = "OptiPlex live proxy";
+const performanceHostLabel = "OptiPlex ASR Box";
+const fallbackDecoderHostLabel = "Raspberry Pi Decoder";
+const legacyPerformanceRoleLabels = new Map([
+  [["OptiPlex", "live", "proxy"].join(" "), performanceHostLabel],
+  [["Raspberry", "Pi", "edge", "radio"].join(" "), fallbackDecoderHostLabel],
+]);
 const performanceRangeOptions = [
   { label: "30m", hours: 0.5 },
   { label: "2h", hours: 2 },
@@ -158,8 +174,15 @@ const tabs = [...document.querySelectorAll(".tab")];
 const languageTab = document.querySelector("#tab-language");
 const performanceTab = document.querySelector("#tab-performance");
 const mapTab = document.querySelector("#tab-map");
+const searchStatus = document.querySelector("#clip-search-status");
+const searchForm = document.querySelector("#clip-search-form");
+const searchQuery = document.querySelector("#clip-search-query");
+const searchRecencyControl = document.querySelector("#clip-search-recency");
+const searchLimitControl = document.querySelector("#clip-search-limit");
+const searchResults = document.querySelector("#clip-search-results");
 const panels = {
   clips: document.querySelector("#panel-clips"),
+  search: document.querySelector("#panel-search"),
   live: document.querySelector("#panel-live"),
   map: document.querySelector("#panel-map"),
   language: document.querySelector("#panel-language"),
@@ -232,6 +255,10 @@ let performancePayloadLoaded = false;
 let performanceRefreshTimer = null;
 let latestPerformancePayload = null;
 let selectedPerformanceRangeHours = 2;
+let selectedSearchRecency = "7d";
+let selectedSearchLimit = 10;
+let latestSearchPayload = null;
+let searchRequestSequence = 0;
 let systemMediaControlsEnabled = initialSystemMediaControlsEnabled();
 let liveChannels = [
   {
@@ -337,6 +364,7 @@ if (panels.map) {
 configureLiveAudioElement();
 clearBrowserMediaSession();
 updateSystemMediaControlsUi();
+renderSearchControls();
 
 refreshButton.addEventListener("click", () => {
   if (activeTab === "performance") {
@@ -346,6 +374,11 @@ refreshButton.addEventListener("click", () => {
   } else {
     loadAndRender();
   }
+});
+
+searchForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  performClipSearch();
 });
 
 channelFilter.addEventListener("click", (event) => {
@@ -489,6 +522,158 @@ async function loadClipPayload(requestUrl = clipRequestUrl()) {
   } catch {
     return loadPublishedManifest();
   }
+}
+
+function renderSearchControls() {
+  renderSegmentedSearchControl(searchRecencyControl, "Recency", searchRecencyOptions, selectedSearchRecency, (value) => {
+    selectedSearchRecency = value;
+    if (searchQuery?.value.trim()) {
+      performClipSearch();
+    } else {
+      renderSearchControls();
+    }
+  });
+  renderSegmentedSearchControl(
+    searchLimitControl,
+    "Top N",
+    searchLimitOptions.map((value) => ({ label: String(value), value: String(value) })),
+    String(selectedSearchLimit),
+    (value) => {
+      selectedSearchLimit = Number(value);
+      if (searchQuery?.value.trim()) {
+        performClipSearch();
+      } else {
+        renderSearchControls();
+      }
+    },
+  );
+}
+
+function renderSegmentedSearchControl(container, labelText, options, selectedValue, onSelect) {
+  if (!container) {
+    return;
+  }
+  const group = document.createElement("div");
+  group.className = "clip-control-group";
+  const label = document.createElement("span");
+  label.className = "clip-control-label";
+  label.textContent = labelText;
+  const segmented = document.createElement("div");
+  segmented.className = "clip-segmented-control";
+  options.forEach((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "clip-segment-button";
+    button.textContent = option.label;
+    button.setAttribute("aria-pressed", String(option.value === selectedValue));
+    button.addEventListener("click", () => onSelect(option.value));
+    segmented.append(button);
+  });
+  group.append(label, segmented);
+  container.replaceChildren(group);
+}
+
+async function performClipSearch() {
+  if (!searchQuery || !searchStatus || !searchResults) {
+    return;
+  }
+  const query = searchQuery.value.trim();
+  if (!query) {
+    searchStatus.textContent = "Enter a search string";
+    renderEmptySearchState();
+    return;
+  }
+  const requestId = ++searchRequestSequence;
+  searchStatus.textContent = "Searching clips...";
+  searchResults.setAttribute("aria-busy", "true");
+  searchResults.replaceChildren(...renderClipPlaceholders().slice(0, Math.min(3, selectedSearchLimit)));
+  try {
+    const params = new URLSearchParams({
+      q: query,
+      limit: String(selectedSearchLimit),
+      recency: selectedSearchRecency,
+    });
+    const response = await fetch(`${clipSearchUrl}?${params.toString()}`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`clip search HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    if (requestId !== searchRequestSequence) {
+      return;
+    }
+    latestSearchPayload = payload;
+    renderSearchResults(payload);
+  } catch {
+    if (requestId !== searchRequestSequence) {
+      return;
+    }
+    searchResults.removeAttribute("aria-busy");
+    searchResults.replaceChildren(emptySearchMessage("Search is not ready yet."));
+    searchStatus.textContent = "Search unavailable";
+  }
+}
+
+function renderEmptySearchState() {
+  if (!searchStatus || !searchResults) {
+    return;
+  }
+  searchResults.removeAttribute("aria-busy");
+  searchResults.replaceChildren(emptySearchMessage("Enter a search string to find related clips."));
+}
+
+function renderSearchResults(payload) {
+  if (!searchStatus || !searchResults) {
+    return;
+  }
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+  searchResults.removeAttribute("aria-busy");
+  if (!results.length) {
+    searchResults.replaceChildren(emptySearchMessage("No matching clips in that window."));
+    searchStatus.textContent = `No matches for "${payload?.query || ""}"`;
+    return;
+  }
+  searchResults.replaceChildren(...results.map(renderSearchResultCard));
+  searchStatus.textContent = `${formatCountNoun(results.length, "semantic match", "semantic matches")} · ${searchRecencyLabel(payload?.recency)}`;
+}
+
+function renderSearchResultCard(result) {
+  const clip = {
+    channel: result.channel,
+    channel_label: result.channel_label,
+    started_at: result.started_at,
+    ended_at: result.ended_at,
+    duration_seconds: result.duration_seconds,
+    transcript_public: result.transcript || "",
+  };
+  const article = renderClipCard(clip);
+  article.classList.add("search-result-card");
+  const player = renderExamplePlayer(clip);
+  if (player) {
+    article.append(player);
+  }
+  const score = renderPill(`${Math.round(Number(result.score || 0) * 100)}% match`);
+  score.classList.add("search-score-pill");
+  article.querySelector(".clip-meta")?.append(score);
+  return article;
+}
+
+function emptySearchMessage(text) {
+  const empty = document.createElement("p");
+  empty.className = "muted-inline";
+  empty.textContent = text;
+  return empty;
+}
+
+function searchRecencyLabel(value) {
+  return (
+    {
+      "24h": "last 24h",
+      "7d": "last 7d",
+      "30d": "last 30d",
+      "90d": "last 90d",
+      all: "all indexed clips",
+    }[value] || "last 7d"
+  );
 }
 
 function renderClipLoadingState() {
@@ -1634,6 +1819,12 @@ function activateTab(name, { updateRoute = true, replaceRoute = false } = {}) {
   if (name === "language" && !languagePayloadLoaded) {
     loadAndRenderLanguage();
   }
+  if (name === "search") {
+    renderSearchControls();
+    if (!latestSearchPayload) {
+      renderEmptySearchState();
+    }
+  }
   if (name === "map") {
     loadAndRenderMap({ showLoading: !mapPayloadLoaded });
   }
@@ -1925,9 +2116,13 @@ function performanceHosts(payload) {
 
 function hostRole(host, index) {
   if (host?.role) {
-    return host.role;
+    return performanceRoleLabel(host.role);
   }
-  return index === 0 ? performanceHostLabel : "Raspberry Pi edge radio";
+  return index === 0 ? performanceHostLabel : fallbackDecoderHostLabel;
+}
+
+function performanceRoleLabel(role) {
+  return legacyPerformanceRoleLabels.get(String(role)) || role;
 }
 
 function performanceHostPanel(host, index) {
@@ -2027,12 +2222,17 @@ function performanceMetricChart(label, history, field, suffix, className) {
   svg.setAttribute("viewBox", "0 0 320 124");
   svg.setAttribute("role", "img");
   svg.setAttribute("aria-label", `${label} time series`);
-  drawPerformanceMetricChart(svg, samples, suffix);
+  const chartState = drawPerformanceMetricChart(svg, samples, suffix);
+
+  const tooltip = document.createElement("span");
+  tooltip.className = "performance-chart-tooltip";
+  tooltip.hidden = true;
+  attachPerformanceChartTooltip(chart, svg, tooltip, samples, suffix, chartState);
 
   const caption = document.createElement("span");
   caption.className = "performance-chart-caption";
   caption.textContent = performanceChartCaption(samples);
-  chart.append(heading, svg, caption);
+  chart.append(heading, svg, tooltip, caption);
   return chart;
 }
 
@@ -2094,7 +2294,7 @@ function drawPerformanceMetricChart(svg, samples, suffix) {
     empty.classList.add("performance-chart-empty");
     empty.textContent = "Waiting for samples";
     svg.append(empty);
-    return;
+    return { points: [], hoverLine: null, hoverDot: null };
   }
   const points = samples.map((sample, index) => {
     const x = left + (samples.length === 1 ? plotWidth : (index / (samples.length - 1)) * plotWidth);
@@ -2118,6 +2318,65 @@ function drawPerformanceMetricChart(svg, samples, suffix) {
   dot.setAttribute("r", "2.2");
   dot.classList.add("performance-chart-dot");
   svg.append(dot);
+  const hoverLine = performanceSvgElement("line");
+  hoverLine.setAttribute("y1", String(top));
+  hoverLine.setAttribute("y2", String(height - bottom));
+  hoverLine.classList.add("performance-chart-hover-line");
+  hoverLine.hidden = true;
+  const hoverDot = performanceSvgElement("circle");
+  hoverDot.setAttribute("r", "3.4");
+  hoverDot.classList.add("performance-chart-hover-dot");
+  hoverDot.hidden = true;
+  const hitArea = performanceSvgElement("rect");
+  hitArea.setAttribute("x", String(left));
+  hitArea.setAttribute("y", String(top));
+  hitArea.setAttribute("width", String(plotWidth));
+  hitArea.setAttribute("height", String(plotHeight));
+  hitArea.classList.add("performance-chart-hit-area");
+  svg.append(hoverLine, hoverDot, hitArea);
+  return { points, hoverLine, hoverDot };
+}
+
+function attachPerformanceChartTooltip(chart, svg, tooltip, samples, suffix, chartState) {
+  if (!samples.length || !chartState.points.length) {
+    return;
+  }
+  const setHover = (event) => {
+    const bounds = svg.getBoundingClientRect();
+    const x = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * 320;
+    const nearest = nearestPerformancePoint(chartState.points, x);
+    const sample = samples[nearest.index];
+    chartState.hoverLine.hidden = false;
+    chartState.hoverDot.hidden = false;
+    chartState.hoverLine.setAttribute("x1", nearest.point.x.toFixed(1));
+    chartState.hoverLine.setAttribute("x2", nearest.point.x.toFixed(1));
+    chartState.hoverDot.setAttribute("cx", nearest.point.x.toFixed(1));
+    chartState.hoverDot.setAttribute("cy", nearest.point.y.toFixed(1));
+    tooltip.removeAttribute("hidden");
+    tooltip.textContent = `${formatMetricChartValue(sample.value, suffix)} · ${formatPerformanceDateTime(sample.generatedAt)}`;
+    tooltip.style.left = `${Math.max(8, Math.min(bounds.width - 8, (nearest.point.x / 320) * bounds.width)).toFixed(1)}px`;
+  };
+  svg.addEventListener("mousemove", setHover);
+  svg.addEventListener("mouseenter", setHover);
+  svg.addEventListener("pointermove", setHover);
+  chart.addEventListener("mousemove", setHover);
+  chart.addEventListener("mouseenter", setHover);
+  chart.addEventListener("pointermove", setHover);
+  chart.addEventListener("mouseleave", () => {
+    chartState.hoverLine.hidden = true;
+    chartState.hoverDot.hidden = true;
+    tooltip.setAttribute("hidden", "");
+  });
+}
+
+function nearestPerformancePoint(points, x) {
+  return points.reduce(
+    (nearest, point, index) => {
+      const distance = Math.abs(point.x - x);
+      return distance < nearest.distance ? { point, index, distance } : nearest;
+    },
+    { point: points[0], index: 0, distance: Math.abs(points[0].x - x) },
+  );
 }
 
 function performanceSvgElement(name) {
