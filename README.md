@@ -469,7 +469,7 @@ Run captions from the OptiPlex against the Pi Icecast stream:
 
 ```bash
 conda run -n dell talkingboats-live-transcriber \
-  --stream-url http://talkingboats-pi.local:8000/talkingboats-live.mp3 \
+  --stream-url http://192.168.1.114:8000/talkingboats-live.mp3 \
   --host 0.0.0.0 \
   --port 8055 \
   --model-size turbo \
@@ -477,6 +477,11 @@ conda run -n dell talkingboats-live-transcriber \
   --device cpu \
   --compute-type int8
 ```
+
+For the long-running user service, install
+`deploy/systemd/talkingboats-live-transcriber.service.example`; it pins the Pi
+stream URL and uses the same lower-priority `CPUQuota=125%` guardrail as the
+uploaded-clip transcriber.
 
 The transcriber uses `faster-whisper` with Whisper `turbo` by default because it
 is a practical open-source CPU path for this hardware. It uses local beam search
