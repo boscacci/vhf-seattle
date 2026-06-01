@@ -1,4 +1,13 @@
+import tomllib
 from pathlib import Path
+
+
+def test_asr_feedback_training_extra_includes_audio_decoders() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    asr_train_deps = pyproject["project"]["optional-dependencies"]["asr-train"]
+
+    assert any(dep.startswith("librosa") for dep in asr_train_deps)
+    assert any(dep.startswith("soundfile") for dep in asr_train_deps)
 
 
 def test_asr_feedback_nightly_script_uses_lock_and_restarts_transcriber() -> None:

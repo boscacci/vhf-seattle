@@ -434,9 +434,32 @@ try {
     let defaultRangeState = null;
     let shortRangeState = null;
     let longRangeState = null;
+    let searchDefaultState = null;
     try {
       const desktopPerformancePage = await desktopPerformanceContext.newPage();
       await desktopPerformancePage.goto(`${baseUrl}/search/`);
+      searchDefaultState = await desktopPerformancePage.evaluate(() => ({
+        activeRecency: document
+          .querySelector("#clip-search-recency .clip-segment-button.is-active")
+          ?.textContent?.trim() || "",
+        activeLimit: document
+          .querySelector("#clip-search-limit .clip-segment-button.is-active")
+          ?.textContent?.trim() || "",
+        pressedRecency: document
+          .querySelector("#clip-search-recency .clip-segment-button[aria-pressed='true']")
+          ?.textContent?.trim() || "",
+        pressedLimit: document
+          .querySelector("#clip-search-limit .clip-segment-button[aria-pressed='true']")
+          ?.textContent?.trim() || "",
+      }));
+      if (
+        searchDefaultState.activeRecency !== "7d" ||
+        searchDefaultState.activeLimit !== "10" ||
+        searchDefaultState.pressedRecency !== "7d" ||
+        searchDefaultState.pressedLimit !== "10"
+      ) {
+        throw new Error(`search defaults were not visibly selected: ${JSON.stringify(searchDefaultState)}`);
+      }
       await desktopPerformancePage.getByLabel("Search transcript meaning").fill("tug barge");
       await desktopPerformancePage.getByRole("button", { name: "Search clips", exact: true }).click();
       await desktopPerformancePage.locator(".search-result-card").first().waitFor({ state: "visible", timeout: 10000 });
@@ -560,6 +583,7 @@ try {
             afterFlip: clipControlsAfterFlip,
           },
           speechTraining,
+          searchDefaultState,
           performanceHover,
           defaultRangeState,
           shortRangeState,

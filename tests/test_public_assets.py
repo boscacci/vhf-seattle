@@ -122,6 +122,9 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert '"vhf.robertboscacci.com"' in app_js
     assert "/api/analysis/lexical" in app_js
     assert 'const clipSearchUrl = "/api/clips/search";' in app_js
+    assert 'let selectedSearchRecency = "7d";' in app_js
+    assert "let selectedSearchLimit = 10;" in app_js
+    assert 'button.classList.toggle("is-active", option.value === selectedValue);' in app_js
     assert "/analysis/lexical.json" in app_js
     assert (
         'const liveLanguageAnalysisEnabled = window.location.hostname !== '

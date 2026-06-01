@@ -32,6 +32,8 @@ transcribe = [
 asr-train = [
     "accelerate>=0.33,<2",
     "datasets>=2.19,<4",
+    "librosa>=0.10,<1",
+    "soundfile>=0.12,<1",
     "torch>=2.2,<3",
     "transformers>=4.45,<5",
 ]

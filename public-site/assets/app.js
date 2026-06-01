@@ -569,6 +569,7 @@ function renderSegmentedSearchControl(container, labelText, options, selectedVal
     button.type = "button";
     button.className = "clip-segment-button";
     button.textContent = option.label;
+    button.classList.toggle("is-active", option.value === selectedValue);
     button.setAttribute("aria-pressed", String(option.value === selectedValue));
     button.addEventListener("click", () => onSelect(option.value));
     segmented.append(button);
