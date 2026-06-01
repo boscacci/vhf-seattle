@@ -10,6 +10,9 @@ bucket and invalidates the shell paths. It does not remove remote-only files,
 so generated clips, analysis artifacts, and manifests already in the bucket are
 preserved.
 
+Dev shell deploys also allow archive/no-git deploy copies. Prod shell deploys
+still require the main branch and a clean worktree.
+
 Examples:
   scripts/deploy_static_shell.sh dev public-site
   scripts/deploy_static_shell.sh prod public-site
@@ -148,6 +151,10 @@ enforce_branch_hygiene() {
 
   case "${environment}" in
     dev)
+      if [[ "${branch}" == "unknown" ]]; then
+        echo "Allowing dev shell deploy from archive/no-git source." >&2
+        return
+      fi
       if [[ ! "${branch}" =~ ${dev_allowed_branch_regex} ]]; then
         echo "Refusing dev shell deploy from branch '${branch}'." >&2
         exit 1

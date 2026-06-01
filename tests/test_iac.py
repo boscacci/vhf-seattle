@@ -124,6 +124,7 @@ def test_public_site_deploy_script_enforces_branch_environment_hygiene() -> None
     assert "TALKINGBOATS_ALLOW_CROSS_ENV_DEPLOY" in deploy_script
     assert 'prod_expected_branch="main"' in deploy_script
     assert 'dev_allowed_branch_regex="^(dev|main|codex/.+|feature/.+)$"' in deploy_script
+    assert 'if [[ "${branch}" == "unknown" ]]; then' in deploy_script
     assert "Refusing prod deploy from dirty worktree" in deploy_script
     assert "Refusing prod deploy from branch" in deploy_script
 

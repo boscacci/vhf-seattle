@@ -10,6 +10,7 @@ invalidates that environment's CloudFront distribution.
 
 Branch hygiene:
   dev  deploys are allowed from dev, main, codex/*, or feature/* branches.
+       Archive/no-git deploy copies are allowed for dev only.
   prod deploys are allowed only from main and require a clean worktree.
 
 Set TALKINGBOATS_ALLOW_CROSS_ENV_DEPLOY=1 only for an intentional emergency
@@ -153,6 +154,10 @@ enforce_branch_hygiene() {
 
   case "${environment}" in
     dev)
+      if [[ "${branch}" == "unknown" ]]; then
+        echo "Allowing dev deploy from archive/no-git source." >&2
+        return
+      fi
       if [[ ! "${branch}" =~ ${dev_allowed_branch_regex} ]]; then
         echo "Refusing dev deploy from branch '${branch}'." >&2
         echo "Use dev, main, codex/*, or feature/*, or set TALKINGBOATS_ALLOW_CROSS_ENV_DEPLOY=1." >&2

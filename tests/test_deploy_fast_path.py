@@ -47,6 +47,18 @@ def test_deploy_scripts_discover_existing_aws_targets_when_tofu_outputs_are_miss
         assert 'bucket="$(deploy_output_raw "${bucket_output}")"' in script
 
 
+def test_deploy_scripts_allow_archive_sources_for_dev_only() -> None:
+    for path in ("scripts/deploy_static_shell.sh", "scripts/deploy_public_site.sh"):
+        script = Path(path).read_text(encoding="utf-8")
+
+        assert 'if [[ "${branch}" == "unknown" ]]; then' in script
+        assert "Allowing dev" in script
+        assert (
+            "Refusing prod deploy from branch" in script
+            or "Refusing prod shell deploy from branch" in script
+        )
+
+
 def test_mobile_auth_env_writer_uses_tofu_outputs_and_gitignored_local_file() -> None:
     script = Path("scripts/write_mobile_auth_env.sh").read_text(encoding="utf-8")
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
