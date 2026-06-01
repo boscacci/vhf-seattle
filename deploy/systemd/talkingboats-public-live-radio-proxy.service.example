@@ -1,0 +1,18 @@
+[Unit]
+Description=Elliott Bay VHF public read-only live radio proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rob/repos/elliott-bay-vhf
+EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/.env
+Environment=TALKINGBOATS_PROXY_PRIVATE_API_URL=http://127.0.0.1:8034
+Environment=TALKINGBOATS_PROXY_TAILNET_DEV_ROUTES_ENABLED=false
+Environment=TALKINGBOATS_PROXY_PERFORMANCE_BACKGROUND_ENABLED=false
+ExecStart=/home/rob/miniforge3/condabin/conda run -n dell talkingboats-live-radio-proxy --host 127.0.0.1 --port 8096
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

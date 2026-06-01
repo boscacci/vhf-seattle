@@ -373,7 +373,10 @@ def test_proxy_recent_clips_endpoint_is_public_read_only() -> None:
         return httpx.Response(200, json={"clips": [{"transcript": "hello"}]})
 
     app = create_app(
-        ProxySettings(private_api_url="http://private-api.test"),
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -407,7 +410,10 @@ def test_proxy_clip_playback_refresh_endpoint_is_public_read_only() -> None:
         )
 
     app = create_app(
-        ProxySettings(private_api_url="http://private-api.test"),
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -448,7 +454,10 @@ def test_proxy_clip_audio_endpoint_is_public_read_only() -> None:
         )
 
     app = create_app(
-        ProxySettings(private_api_url="http://private-api.test"),
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -477,7 +486,10 @@ def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:
         return httpx.Response(200, json={"status": "ok", "source_clip_count": 1, "entities": []})
 
     app = create_app(
-        ProxySettings(private_api_url="http://private-api.test"),
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -495,12 +507,40 @@ def test_proxy_operator_session_endpoint_is_not_exposed() -> None:
     assert response.status_code in {404, 405}
 
 
+def test_proxy_tailnet_dev_write_routes_are_disabled_by_default() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("public proxy must not forward tailnet-dev write routes")
+
+    app = create_app(
+        ProxySettings(private_api_url="http://private-api.test"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_post(
+            app,
+            "/api/clips/corrections",
+            headers={
+                "Host": "vhf-dev.robertboscacci.com",
+                "X-TalkingBoats-Tailnet-Dev": "1",
+                "Content-Type": "application/json",
+            },
+            content=b'{"channel":"14"}',
+        )
+    )
+
+    assert response.status_code in {404, 405}
+
+
 def test_proxy_transcript_correction_requires_tailnet_dev_proxy_marker() -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("private API should not be reached without tailnet dev marker")
 
     app = create_app(
-        ProxySettings(private_api_url="http://private-api.test"),
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -538,7 +578,10 @@ def test_proxy_transcript_correction_forwards_tailnet_dev_request_and_strips_aut
         )
 
     app = create_app(
-        ProxySettings(private_api_url="http://private-api.test"),
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -568,7 +611,10 @@ def test_proxy_transcript_correction_export_requires_tailnet_dev_proxy_marker() 
         raise AssertionError("private API should not be reached without tailnet dev marker")
 
     app = create_app(
-        ProxySettings(private_api_url="http://private-api.test"),
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -599,7 +645,10 @@ def test_proxy_ais_catcher_viewer_is_dev_only_and_public_safe() -> None:
         )
 
     app = create_app(
-        ProxySettings(ais_catcher_base_url="http://pi.test:8100"),
+        ProxySettings(
+            ais_catcher_base_url="http://pi.test:8100",
+            tailnet_dev_routes_enabled=True,
+        ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -633,7 +682,10 @@ def test_proxy_ais_catcher_subpaths_and_redirects_stay_under_dev_prefix() -> Non
         )
 
     app = create_app(
-        ProxySettings(ais_catcher_base_url="http://pi.test:8100/"),
+        ProxySettings(
+            ais_catcher_base_url="http://pi.test:8100/",
+            tailnet_dev_routes_enabled=True,
+        ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -679,7 +731,10 @@ def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
             ],
         }
 
-    app = create_app(ProxySettings(), performance_collector=collector)
+    app = create_app(
+        ProxySettings(tailnet_dev_routes_enabled=True),
+        performance_collector=collector,
+    )
 
     dev_response = _run(
         _asgi_get(app, "/api/live/performance", headers={"Host": "vhf-dev.robertboscacci.com"})
@@ -757,7 +812,10 @@ def test_proxy_performance_endpoint_keeps_public_timeseries_history(tmp_path: Pa
         return snapshots.pop(0)
 
     app = create_app(
-        ProxySettings(performance_history_db_path=str(tmp_path / "performance.sqlite3")),
+        ProxySettings(
+            performance_history_db_path=str(tmp_path / "performance.sqlite3"),
+            tailnet_dev_routes_enabled=True,
+        ),
         performance_collector=collector,
     )
 
@@ -860,6 +918,7 @@ def test_proxy_performance_lifespan_starts_server_side_sampler(tmp_path: Path) -
     settings = ProxySettings(
         performance_history_db_path=str(tmp_path / "performance.sqlite3"),
         performance_sample_interval_seconds=3600,
+        tailnet_dev_routes_enabled=True,
     )
     app = create_app(settings, performance_collector=collector)
 

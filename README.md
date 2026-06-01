@@ -516,7 +516,8 @@ The CloudFront live origin is configurable with `live_origin_domain_name` and
 The dev vanity hostname `vhf-dev.robertboscacci.com` is not a public
 CloudFront entry point. Route53 points it at the OptiPlex Tailscale address,
 and the tailnet reverse proxy injects `X-TalkingBoats-Tailnet-Dev: 1` before
-forwarding write-capable operator requests.
+forwarding write-capable operator requests. The public Funnel target uses a
+separate read-only proxy process with tailnet dev routes disabled.
 
 `/api/live/current.mp3` keeps the stable default VHF 14 behavior. The channel
 paths proxy only their configured Icecast mounts, and `/api/live/channels`

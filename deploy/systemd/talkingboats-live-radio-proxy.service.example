@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/rob/repos/elliott-bay-vhf
 EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/.env
+Environment=TALKINGBOATS_PROXY_TAILNET_DEV_ROUTES_ENABLED=true
 ExecStart=/home/rob/miniforge3/condabin/conda run -n dell talkingboats-live-radio-proxy --host 172.20.0.1 --port 8095
 Restart=on-failure
 RestartSec=5

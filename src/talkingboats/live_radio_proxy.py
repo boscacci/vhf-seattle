@@ -352,6 +352,7 @@ class ProxySettings:
     ffmpeg_path: str = "ffmpeg"
     restart_transcriber_service: bool = True
     enable_debug_endpoints: bool = False
+    tailnet_dev_routes_enabled: bool = False
     performance_background_enabled: bool = True
     performance_sample_interval_seconds: float = PERFORMANCE_SAMPLE_INTERVAL_SECONDS
     performance_memory_history_seconds: int = PERFORMANCE_MEMORY_HISTORY_SECONDS
@@ -411,6 +412,10 @@ class ProxySettings:
             ffmpeg_path=os.environ.get("TALKINGBOATS_PROXY_FFMPEG_PATH", cls.ffmpeg_path),
             restart_transcriber_service=_env_bool("TALKINGBOATS_PROXY_RESTART_TRANSCRIBER", True),
             enable_debug_endpoints=_env_bool("TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS", False),
+            tailnet_dev_routes_enabled=_env_bool(
+                "TALKINGBOATS_PROXY_TAILNET_DEV_ROUTES_ENABLED",
+                cls.tailnet_dev_routes_enabled,
+            ),
             performance_background_enabled=_env_bool(
                 "TALKINGBOATS_PROXY_PERFORMANCE_BACKGROUND_ENABLED",
                 cls.performance_background_enabled,
@@ -773,26 +778,28 @@ def create_app(
     async def clip_audio(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/clips/audio", settings, client_factory)
 
-    @app.post("/api/clips/corrections")
-    async def clip_correction(request: Request) -> Response:
-        _require_tailnet_operator(request)
-        return await _proxy_private_api(
-            request,
-            "/api/clips/corrections",
-            settings,
-            client_factory,
-            forward_content_type=True,
-        )
+    if settings.tailnet_dev_routes_enabled:
 
-    @app.get("/api/clips/corrections/export")
-    async def clip_corrections_export(request: Request) -> Response:
-        _require_tailnet_operator(request)
-        return await _proxy_private_api(
-            request,
-            "/api/clips/corrections/export",
-            settings,
-            client_factory,
-        )
+        @app.post("/api/clips/corrections")
+        async def clip_correction(request: Request) -> Response:
+            _require_tailnet_operator(request)
+            return await _proxy_private_api(
+                request,
+                "/api/clips/corrections",
+                settings,
+                client_factory,
+                forward_content_type=True,
+            )
+
+        @app.get("/api/clips/corrections/export")
+        async def clip_corrections_export(request: Request) -> Response:
+            _require_tailnet_operator(request)
+            return await _proxy_private_api(
+                request,
+                "/api/clips/corrections/export",
+                settings,
+                client_factory,
+            )
 
     @app.get("/api/analysis/lexical")
     async def lexical_analysis(request: Request) -> Response:
@@ -809,6 +816,8 @@ def create_app(
         include_in_schema=False,
     )
     async def ais_catcher_viewer(request: Request, proxy_path: str = "") -> Response:
+        if not settings.tailnet_dev_routes_enabled:
+            raise HTTPException(status_code=404, detail="AIS-catcher map is dev-only")
         if not _ais_catcher_host_allowed(request, settings):
             raise HTTPException(status_code=404, detail="AIS-catcher map is dev-only")
         return await _proxy_ais_catcher(request, proxy_path, settings, client_factory)
@@ -831,6 +840,8 @@ def create_app(
 
     @app.get("/api/live/performance")
     async def live_performance(request: Request) -> dict[str, object]:
+        if not settings.tailnet_dev_routes_enabled:
+            raise HTTPException(status_code=404, detail="performance dashboard is dev-only")
         if not _performance_host_allowed(request, settings):
             raise HTTPException(status_code=404, detail="performance dashboard is dev-only")
         snapshot = await performance_history.payload_for_request(settings, performance_collector)

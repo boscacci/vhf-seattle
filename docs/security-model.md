@@ -75,8 +75,10 @@ they have an explicit read-only threat review.
 
 Protect write/admin paths with LAN/Tailscale/VPN plus service-held credentials.
 Transcript correction writes must arrive through the tailnet dev reverse proxy,
-which marks them with `X-TalkingBoats-Tailnet-Dev: 1`. Do not require an
-operator to manually paste tokens into the browser.
+which marks them with `X-TalkingBoats-Tailnet-Dev: 1`. The public Funnel target
+uses a separate read-only proxy process with tailnet dev routes disabled, so
+viewer-supplied marker headers are ignored there. Do not require an operator to
+manually paste tokens into the browser.
 
 The Pi-to-OptiPlex LAN path is private infrastructure. If the Pi cannot reach
 the OptiPlex, it should keep bounded local buffers and retry instead of failing

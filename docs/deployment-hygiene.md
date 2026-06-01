@@ -60,8 +60,10 @@ tailnet deployment.
 Route53 points `vhf-dev.robertboscacci.com` at the OptiPlex Tailscale address,
 not at CloudFront. The tailnet reverse proxy injects
 `X-TalkingBoats-Tailnet-Dev: 1` before write-capable operator requests reach the
-live proxy. Do not reintroduce browser bearer-token auth for the transcript
-feedback loop.
+dev live proxy. The public Funnel path uses a separate read-only live proxy
+without tailnet dev routes, so spoofed viewer headers cannot reach write
+routes. Do not reintroduce browser bearer-token auth for the transcript feedback
+loop.
 
 ## Operator Checklist
 
