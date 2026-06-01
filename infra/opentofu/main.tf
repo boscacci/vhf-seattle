@@ -244,6 +244,27 @@ resource "aws_cloudfront_origin_request_policy" "live_api" {
   }
 }
 
+resource "aws_cloudfront_origin_request_policy" "operator_api" {
+  name    = "${var.project_name}-operator-api-origin-request"
+  comment = "Forward operator auth to dev-only Elliott Bay VHF write API routes"
+
+  cookies_config {
+    cookie_behavior = "all"
+  }
+
+  headers_config {
+    header_behavior = "whitelist"
+
+    headers {
+      items = ["Content-Type", "X-TalkingBoats-Operator-Token"]
+    }
+  }
+
+  query_strings_config {
+    query_string_behavior = "all"
+  }
+}
+
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
   comment             = "Talking Boats public static site"
@@ -674,6 +695,17 @@ resource "aws_cloudfront_distribution" "dev_site" {
   }
 
   ordered_cache_behavior {
+    path_pattern             = "/api/clips/corrections*"
+    target_origin_id         = local.dev_live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.operator_api.id
+  }
+
+  ordered_cache_behavior {
     path_pattern             = "/api/analysis/lexical"
     target_origin_id         = local.dev_live_origin_id
     viewer_protocol_policy   = "redirect-to-https"
@@ -682,6 +714,17 @@ resource "aws_cloudfront_distribution" "dev_site" {
     compress                 = true
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
     origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/operator/session*"
+    target_origin_id         = local.dev_live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.operator_api.id
   }
 
   ordered_cache_behavior {

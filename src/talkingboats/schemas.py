@@ -76,6 +76,23 @@ class PlaybackUrlResponse(BaseModel):
     expires_in_seconds: int
 
 
+class TranscriptCorrectionRequest(BaseModel):
+    channel: str = Field(min_length=1, max_length=8)
+    started_at: str = Field(min_length=1, max_length=64)
+    transcript: str = Field(min_length=1, max_length=8000)
+    reviewer: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class TranscriptCorrectionResponse(BaseModel):
+    status: Literal["corrected"]
+    channel: str
+    started_at: str
+    original_transcript: str
+    corrected_transcript: str
+    transcript_reviewed: bool
+
+
 class LiveChannelResponse(BaseModel):
     channel: str
     label: str

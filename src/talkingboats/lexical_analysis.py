@@ -195,7 +195,7 @@ TOPIC_LABEL_STOPWORDS = STOPWORDS | {
 PHRASE_BUCKETS = {
     "communication_markers": re.compile(
         r"\b(roger|copy|over|out|standing by|go ahead|negative|affirmative|"
-        r"say again|switch|working channel)\b",
+        r"say again|switch|working channel|pan[- ]pan|pon[- ]pon|mayday|securite)\b",
         re.IGNORECASE,
     ),
     "movement": re.compile(
@@ -385,6 +385,21 @@ EDUCATION_GUIDE = [
         ),
     },
     {
+        "title": "PAN-PAN means urgent, not mayday",
+        "signals": "PAN-PAN, PON PON, all stations, Coast Guard, mayday, securite",
+        "what_it_explains": (
+            "The Coast Guard call is PAN-PAN, pronounced like pahn-pahn and repeated "
+            "three times so every station recognizes an urgency broadcast. ASR can render "
+            "that sound as PON PON, but the maritime procedure word is PAN-PAN."
+        ),
+        "why_it_matters": (
+            "PAN-PAN sits between routine traffic and mayday: the situation is urgent and "
+            "needs attention from all stations, but it is not yet immediate grave danger. "
+            "That is why the phrase often leads into safety information, disabled vessels, "
+            "medical concerns, or Coast Guard broadcasts to all stations."
+        ),
+    },
+    {
         "title": "Pilot and tug talk is work coordination",
         "signals": "pilot station, tug assist, container ship, cruise ship, berth, knots",
         "what_it_explains": (
@@ -481,19 +496,24 @@ def load_transcribed_clips(
             rows = connection.execute(
                 f"""
                 SELECT
-                    key,
-                    channel,
-                    started_at,
-                    ended_at,
-                    duration_seconds,
-                    content_type,
-                    transcript
+                    uploaded_clips.key,
+                    uploaded_clips.channel,
+                    uploaded_clips.started_at,
+                    uploaded_clips.ended_at,
+                    uploaded_clips.duration_seconds,
+                    uploaded_clips.content_type,
+                    COALESCE(
+                        uploaded_clip_transcript_corrections.corrected_transcript,
+                        uploaded_clips.transcript
+                    ) AS displayed_transcript
                 FROM uploaded_clips
-                WHERE status = 'transcribed'
-                    AND transcript IS NOT NULL
-                    AND trim(transcript) != ''
-                    AND channel NOT IN ({excluded})
-                ORDER BY started_at ASC, id ASC
+                LEFT JOIN uploaded_clip_transcript_corrections
+                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
+                WHERE uploaded_clips.status = 'transcribed'
+                    AND uploaded_clips.transcript IS NOT NULL
+                    AND trim(uploaded_clips.transcript) != ''
+                    AND uploaded_clips.channel NOT IN ({excluded})
+                ORDER BY uploaded_clips.started_at ASC, uploaded_clips.id ASC
                 LIMIT ? OFFSET ?
                 """,
                 (*PUBLIC_EXCLUDED_CHANNELS, batch_size, offset),

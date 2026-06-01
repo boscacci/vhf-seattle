@@ -57,6 +57,21 @@ class RecentTranscribedClip:
     content_type: str
     transcript: str
     segments: list[dict[str, str]]
+    transcript_reviewed: bool = False
+
+
+@dataclass(frozen=True)
+class TranscriptCorrection:
+    key: str
+    channel: str
+    started_at: str
+    ended_at: str | None
+    duration_seconds: float | None
+    content_type: str
+    original_transcript: str
+    corrected_transcript: str
+    reviewer: str | None
+    note: str | None
 
 
 @dataclass(frozen=True)
@@ -291,22 +306,37 @@ class UploadedClipStore:
             rows = connection.execute(
                 f"""
                 SELECT
-                    key,
-                    channel,
-                    started_at,
-                    ended_at,
-                    duration_seconds,
-                    content_type,
-                    transcript
+                    uploaded_clips.key,
+                    uploaded_clips.channel,
+                    uploaded_clips.started_at,
+                    uploaded_clips.ended_at,
+                    uploaded_clips.duration_seconds,
+                    uploaded_clips.content_type,
+                    COALESCE(
+                        uploaded_clip_transcript_corrections.corrected_transcript,
+                        uploaded_clips.transcript
+                    ) AS displayed_transcript,
+                    uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL
                 FROM uploaded_clips
+                LEFT JOIN uploaded_clip_transcript_corrections
+                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
                 WHERE {where_clause}
-                ORDER BY started_at DESC, id DESC
+                ORDER BY uploaded_clips.started_at DESC, uploaded_clips.id DESC
                 LIMIT ? OFFSET ?
                 """,
                 tuple(params),
             ).fetchall()
         clips = []
-        for key, channel, started_at, ended_at, duration_seconds, content_type, transcript in rows:
+        for (
+            key,
+            channel,
+            started_at,
+            ended_at,
+            duration_seconds,
+            content_type,
+            transcript,
+            transcript_reviewed,
+        ) in rows:
             clips.append(
                 RecentTranscribedClip(
                     key=key,
@@ -317,11 +347,212 @@ class UploadedClipStore:
                     content_type=content_type,
                     transcript=transcript,
                     segments=self.segments_for_clip(key),
+                    transcript_reviewed=bool(transcript_reviewed),
                 )
             )
         return clips
 
     def transcribed_clip_for_public_playback(
+        self,
+        *,
+        channel: str,
+        started_at: str,
+        excluded_channels: tuple[str, ...] = (),
+    ) -> RecentTranscribedClip | None:
+        try:
+            normalized_started_at = _format_utc(_parse_utc(started_at))
+        except ValueError:
+            return None
+        if channel.upper() in {excluded.upper() for excluded in excluded_channels}:
+            return None
+        filters = [
+            "status = 'transcribed'",
+            "transcript IS NOT NULL",
+            "trim(transcript) != ''",
+            "channel = ?",
+            "started_at = ?",
+        ]
+        params: list[object] = [channel, normalized_started_at]
+        if excluded_channels:
+            placeholders = ", ".join("?" for _ in excluded_channels)
+            filters.append(f"channel NOT IN ({placeholders})")
+            params.extend(excluded_channels)
+        where_clause = "\n                    AND ".join(filters)
+        with sqlite3.connect(self.path) as connection:
+            row = connection.execute(
+                f"""
+                SELECT
+                    uploaded_clips.key,
+                    uploaded_clips.channel,
+                    uploaded_clips.started_at,
+                    uploaded_clips.ended_at,
+                    uploaded_clips.duration_seconds,
+                    uploaded_clips.content_type,
+                    COALESCE(
+                        uploaded_clip_transcript_corrections.corrected_transcript,
+                        uploaded_clips.transcript
+                    ) AS displayed_transcript,
+                    uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL
+                FROM uploaded_clips
+                LEFT JOIN uploaded_clip_transcript_corrections
+                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
+                WHERE {where_clause}
+                ORDER BY uploaded_clips.id DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            ).fetchone()
+        if row is None:
+            return None
+        (
+            key,
+            channel,
+            started_at,
+            ended_at,
+            duration_seconds,
+            content_type,
+            transcript,
+            transcript_reviewed,
+        ) = row
+        return RecentTranscribedClip(
+            key=key,
+            channel=channel,
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_seconds=duration_seconds,
+            content_type=content_type,
+            transcript=transcript,
+            segments=self.segments_for_clip(key),
+            transcript_reviewed=bool(transcript_reviewed),
+        )
+
+    def correct_transcript(
+        self,
+        *,
+        channel: str,
+        started_at: str,
+        corrected_transcript: str,
+        reviewer: str | None = None,
+        note: str | None = None,
+        excluded_channels: tuple[str, ...] = (),
+    ) -> TranscriptCorrection:
+        corrected = " ".join(corrected_transcript.split())
+        if not corrected:
+            raise ValueError("corrected transcript must not be empty")
+        clip = self._raw_transcribed_clip(
+            channel=channel,
+            started_at=started_at,
+            excluded_channels=excluded_channels,
+        )
+        if clip is None:
+            raise LookupError("clip not found")
+        now = _format_utc(datetime.now(UTC))
+        reviewer_text = reviewer.strip() if reviewer else None
+        note_text = note.strip() if note else None
+        with sqlite3.connect(self.path) as connection:
+            existing = connection.execute(
+                """
+                SELECT original_transcript, reviewer
+                FROM uploaded_clip_transcript_corrections
+                WHERE clip_key = ?
+                """,
+                (clip.key,),
+            ).fetchone()
+            original_transcript = existing[0] if existing else clip.transcript
+            stored_reviewer = reviewer_text if reviewer_text is not None else (
+                existing[1] if existing else None
+            )
+            connection.execute(
+                """
+                INSERT INTO uploaded_clip_transcript_corrections (
+                    clip_key,
+                    original_transcript,
+                    corrected_transcript,
+                    reviewer,
+                    note,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(clip_key) DO UPDATE SET
+                    corrected_transcript = excluded.corrected_transcript,
+                    reviewer = excluded.reviewer,
+                    note = excluded.note,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    clip.key,
+                    original_transcript,
+                    corrected,
+                    stored_reviewer,
+                    note_text,
+                    now,
+                    now,
+                ),
+            )
+        return TranscriptCorrection(
+            key=clip.key,
+            channel=clip.channel,
+            started_at=clip.started_at,
+            ended_at=clip.ended_at,
+            duration_seconds=clip.duration_seconds,
+            content_type=clip.content_type,
+            original_transcript=original_transcript,
+            corrected_transcript=corrected,
+            reviewer=stored_reviewer,
+            note=note_text,
+        )
+
+    def transcript_corrections_for_training(self) -> list[dict[str, object]]:
+        with sqlite3.connect(self.path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    uploaded_clips.key,
+                    uploaded_clips.channel,
+                    uploaded_clips.started_at,
+                    uploaded_clips.ended_at,
+                    uploaded_clips.duration_seconds,
+                    uploaded_clips.content_type,
+                    uploaded_clip_transcript_corrections.original_transcript,
+                    uploaded_clip_transcript_corrections.corrected_transcript,
+                    uploaded_clip_transcript_corrections.reviewer,
+                    uploaded_clip_transcript_corrections.note
+                FROM uploaded_clip_transcript_corrections
+                JOIN uploaded_clips
+                    ON uploaded_clips.key = uploaded_clip_transcript_corrections.clip_key
+                ORDER BY uploaded_clip_transcript_corrections.updated_at DESC,
+                    uploaded_clip_transcript_corrections.id DESC
+                """
+            ).fetchall()
+        return [
+            {
+                "key": key,
+                "channel": channel,
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "duration_seconds": duration_seconds,
+                "content_type": content_type,
+                "original_transcript": original_transcript,
+                "corrected_transcript": corrected_transcript,
+                "reviewer": reviewer,
+                "note": note,
+            }
+            for (
+                key,
+                channel,
+                started_at,
+                ended_at,
+                duration_seconds,
+                content_type,
+                original_transcript,
+                corrected_transcript,
+                reviewer,
+                note,
+            ) in rows
+        ]
+
+    def _raw_transcribed_clip(
         self,
         *,
         channel: str,
@@ -427,12 +658,16 @@ class UploadedClipStore:
                 LIMIT 20
                 """
             ).fetchall()
+            correction_count = connection.execute(
+                "SELECT count(*) FROM uploaded_clip_transcript_corrections"
+            ).fetchone()[0]
         channel_counts: dict[str, dict[str, int]] = {}
         for channel, status, count in channel_rows:
             channel_counts.setdefault(channel, {})[status] = count
         return {
             "counts": {status: count for status, count in rows},
             "channel_counts": channel_counts,
+            "transcript_correction_count": correction_count,
             "recent": [
                 {
                     "key": key,
@@ -524,6 +759,27 @@ class UploadedClipStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_uploaded_clip_segments_clip_key
                 ON uploaded_clip_segments(clip_key)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS uploaded_clip_transcript_corrections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clip_key TEXT NOT NULL UNIQUE,
+                    original_transcript TEXT NOT NULL,
+                    corrected_transcript TEXT NOT NULL,
+                    reviewer TEXT,
+                    note TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(clip_key) REFERENCES uploaded_clips(key)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_uploaded_clip_transcript_corrections_updated
+                ON uploaded_clip_transcript_corrections(updated_at DESC, id DESC)
                 """
             )
 

@@ -51,6 +51,10 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "timeZoneName" in app_js
     assert "/api/live/current.mp3" in app_js
     assert "/api/live/channels" in app_js
+    assert 'const clipCorrectionsUrl = "/api/clips/corrections";' in app_js
+    assert 'const operatorSessionUrl = "/api/operator/session";' in app_js
+    assert "operatorReviewEnabled" in app_js
+    assert 'window.location.pathname.startsWith("/operator")' in app_js
     assert 'hostname === "vhf-dev.robertboscacci.com"' in app_js
     assert 'dsp=warm_voice' not in app_js
     assert "/public_manifest.json" in app_js
@@ -358,6 +362,7 @@ def test_public_site_performance_chart_traces_are_lightweight() -> None:
 
 def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert "playback_url" in app_js
     assert "audio_public_filename" in app_js
@@ -369,6 +374,20 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert "isSignedPlaybackUrl" in app_js
     assert "transcript" in app_js
     assert "transcript_public" in app_js
+    assert "transcript_reviewed" in app_js
+    assert "renderTranscriptCorrectionForm" in app_js
+    assert "saveTranscriptCorrection" in app_js
+    assert (
+        'summary.textContent = clip.transcript_reviewed ? "Edit correction" : "Fix transcript";'
+        in app_js
+    )
+    assert 'reviewer: "operator-ui"' in app_js
+    assert 'credentials: "include"' in app_js
+    assert 'headers: { "Content-Type": "application/json" }' in app_js
+    assert 'headers: { "X-TalkingBoats-Operator-Token": token }' in app_js
+    assert "Saved for nightly training." in app_js
+    assert ".transcript-correction" in styles_css
+    assert ".reviewed-pill" in styles_css
     assert "formatDateTime" in app_js
     assert "channelLabel" in app_js
 

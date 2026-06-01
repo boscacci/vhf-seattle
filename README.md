@@ -680,6 +680,68 @@ Use `.env` or systemd environment overrides such as
 `TALKINGBOATS_LEXICAL_DEPLOY_ENV=prod` unless you intend to promote the refreshed
 analysis to prod; the prod deploy helper still enforces a clean `main` worktree.
 
+## ASR Feedback Loop
+
+Transcript correction is built into the dev/operator clip cards. On dev or
+`/operator/`, use **Fix transcript** on a clip, save the corrected text, and the
+private API stores the original/corrected pair in SQLite. Recent clips and the
+lexical analysis read the corrected transcript immediately, while the original
+ASR output is retained as the training input.
+
+Nightly training uses the reviewed correction table as supervised ASR feedback:
+it downloads the matching raw audio from S3, writes a Hugging Face audio/text
+JSONL dataset, fine-tunes the configured Whisper checkpoint, converts the
+checkpoint to a CTranslate2 directory for `faster-whisper`, promotes
+`outputs/asr-feedback/latest-ct2`, writes
+`outputs/asr-feedback/latest_model.env`, and restarts the uploaded-clip
+transcriber. The transcriber service example loads that env file only if it
+exists, so the first training run can be installed without breaking the current
+model.
+
+Install the optional training dependencies in the OptiPlex conda env:
+
+```bash
+conda run -n dell python -m pip install -e '.[transcribe,asr-train]'
+```
+
+Install the nightly timer:
+
+```bash
+sudo install -m 0644 deploy/systemd/talkingboats-asr-feedback-train.service.example \
+  /etc/systemd/system/talkingboats-asr-feedback-train.service
+sudo install -m 0644 deploy/systemd/talkingboats-asr-feedback-train.timer.example \
+  /etc/systemd/system/talkingboats-asr-feedback-train.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now talkingboats-asr-feedback-train.timer
+```
+
+If installing as the `rob` user:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/talkingboats-asr-feedback-train.service.example \
+  ~/.config/systemd/user/talkingboats-asr-feedback-train.service
+cp deploy/systemd/talkingboats-asr-feedback-train.timer.example \
+  ~/.config/systemd/user/talkingboats-asr-feedback-train.timer
+systemctl --user daemon-reload
+systemctl --user enable --now talkingboats-asr-feedback-train.timer
+```
+
+Run one training tick manually:
+
+```bash
+scripts/train_asr_feedback_nightly.sh
+```
+
+Useful overrides:
+
+- `TALKINGBOATS_ASR_FEEDBACK_MIN_CORRECTIONS`: defaults to `20`; below that,
+  the nightly run records a skipped status and leaves the current model alone.
+- `TALKINGBOATS_ASR_FEEDBACK_BASE_MODEL`: defaults to `openai/whisper-small.en`.
+- `TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR`: defaults to `outputs/asr-feedback`.
+- `TALKINGBOATS_ASR_RESTART_SERVICE`: defaults to
+  `talkingboats-uploaded-clip-transcriber.service`.
+
 Keep branch and resource separation explicit:
 
 - Dev deploys go to the separate dev S3 origin and CloudFront distribution behind

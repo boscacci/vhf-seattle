@@ -1,0 +1,14 @@
+[Unit]
+Description=Elliott Bay VHF ASR feedback training
+After=network-online.target talkingboats-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/rob/repos/elliott-bay-vhf
+EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/.env
+ExecStart=/home/rob/repos/elliott-bay-vhf/scripts/train_asr_feedback_nightly.sh
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUWeight=15

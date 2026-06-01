@@ -271,6 +271,58 @@ def test_recent_transcribed_clips_returns_newest_with_segments(tmp_path) -> None
     assert [clip.key for clip in channel_14_clips] == [older_key]
 
 
+def test_transcript_corrections_override_recent_text_and_export_training_pairs(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-24/20260524T213000Z-pan-pan.mp3"
+    store.record_presigned_upload(
+        key=key,
+        request=_clip_request(channel="14", started_at="2026-05-24T21:30:00Z"),
+    )
+    store.mark_transcribed(
+        key,
+        [_segment("PON PON all stations", "2026-05-24T21:30:00Z", "2026-05-24T21:30:03Z")],
+    )
+
+    correction = store.correct_transcript(
+        channel="14",
+        started_at="2026-05-24T21:30:00Z",
+        corrected_transcript="PAN-PAN, all stations.",
+        reviewer="rob",
+        note="marine urgency proword",
+    )
+
+    assert correction.key == key
+    assert correction.original_transcript == "PON PON all stations"
+    assert correction.corrected_transcript == "PAN-PAN, all stations."
+    clips = store.recent_transcribed(limit=10, channel="14")
+    assert clips[0].transcript == "PAN-PAN, all stations."
+    assert clips[0].transcript_reviewed is True
+
+    updated = store.correct_transcript(
+        channel="14",
+        started_at="2026-05-24T21:30:00Z",
+        corrected_transcript="PAN-PAN, PAN-PAN, all stations.",
+    )
+    assert updated.original_transcript == "PON PON all stations"
+    assert updated.corrected_transcript == "PAN-PAN, PAN-PAN, all stations."
+    exported = store.transcript_corrections_for_training()
+    assert exported == [
+        {
+            "key": key,
+            "channel": "14",
+            "started_at": "2026-05-24T21:30:00Z",
+            "ended_at": "2026-05-24T21:30:05Z",
+            "duration_seconds": 5.0,
+            "content_type": "audio/mpeg",
+            "original_transcript": "PON PON all stations",
+            "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
+            "reviewer": "rob",
+            "note": None,
+        }
+    ]
+
+
 def _clip_request(
     *,
     channel: str = "68",

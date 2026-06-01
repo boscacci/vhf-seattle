@@ -2,6 +2,8 @@ const defaultClipPageSize = 6;
 const clipPageSizeOptions = [6, 12, 24, 48];
 const clipPlaybackUrl = "/api/clips/playback";
 const clipAudioUrl = "/api/clips/audio";
+const clipCorrectionsUrl = "/api/clips/corrections";
+const operatorSessionUrl = "/api/operator/session";
 const manifestUrl = "/public_manifest.json";
 const lexicalAnalysisUrl = "/api/analysis/lexical";
 const lexicalManifestUrl = "/analysis/lexical.json";
@@ -33,6 +35,9 @@ const performanceDashboardEnabled = ["vhf-dev.robertboscacci.com", "localhost", 
 const aisDashboardEnabled = !["vhf.robertboscacci.com"].includes(
   window.location.hostname,
 );
+const operatorReviewEnabled =
+  window.location.pathname.startsWith("/operator") ||
+  ["vhf-dev.robertboscacci.com", "localhost", "127.0.0.1", ""].includes(window.location.hostname);
 const tabRouteSegments = {
   clips: "clips",
   live: "live",
@@ -532,6 +537,7 @@ function normalizeLivePayload(payload) {
       ended_at: clip.ended_at,
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript || "",
+      transcript_reviewed: Boolean(clip.transcript_reviewed),
       playback_url: clip.playback_url || "",
       playback_expires_in_seconds: clip.playback_expires_in_seconds,
       playback_issued_at_ms: Date.now(),
@@ -558,6 +564,7 @@ function normalizePublishedManifest(payload) {
       ended_at: clip.ended_at,
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript_public || clip.transcript || "",
+      transcript_reviewed: Boolean(clip.transcript_reviewed),
       audio_public_filename: clip.audio_public_filename || "",
     })),
   };
@@ -903,6 +910,12 @@ function renderClipCard(clip) {
   if (clip.duration_seconds) {
     meta.append(renderPill(`${Math.round(Number(clip.duration_seconds))}s`));
   }
+  if (clip.transcript_reviewed) {
+    const reviewed = renderPill("Reviewed");
+    reviewed.classList.add("reviewed-pill");
+    meta.append(reviewed);
+    article.classList.add("is-reviewed");
+  }
 
   const title = document.createElement("h3");
   title.textContent = titleForClip(clip);
@@ -915,7 +928,128 @@ function renderClipCard(clip) {
   if (audioUrl) {
     article.append(renderExamplePlayer(clip));
   }
+  if (operatorReviewEnabled && canReviewClip(clip)) {
+    article.append(renderTranscriptCorrectionForm(clip, transcript, article));
+  }
   return article;
+}
+
+function canReviewClip(clip) {
+  return Boolean(clip?.channel && clip?.started_at && clip?.transcript_public !== undefined);
+}
+
+function renderTranscriptCorrectionForm(clip, transcriptElement, article) {
+  const details = document.createElement("details");
+  details.className = "transcript-correction";
+
+  const summary = document.createElement("summary");
+  summary.textContent = clip.transcript_reviewed ? "Edit correction" : "Fix transcript";
+
+  const form = document.createElement("form");
+  form.className = "transcript-correction-form";
+
+  const label = document.createElement("label");
+  label.className = "transcript-correction-label";
+  label.textContent = "Corrected transcript";
+
+  const textarea = document.createElement("textarea");
+  textarea.value = clip.transcript_public || "";
+  textarea.rows = 4;
+  textarea.maxLength = 8000;
+  textarea.required = true;
+  textarea.autocapitalize = "sentences";
+  textarea.spellcheck = true;
+  label.append(textarea);
+
+  const actions = document.createElement("div");
+  actions.className = "transcript-correction-actions";
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.textContent = "Save correction";
+  const status = document.createElement("span");
+  status.className = "transcript-correction-status";
+  status.setAttribute("role", "status");
+  actions.append(save, status);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await saveTranscriptCorrection(clip, textarea.value, {
+      status,
+      save,
+      transcriptElement,
+      article,
+      summary,
+    });
+  });
+
+  form.append(label, actions);
+  details.append(summary, form);
+  return details;
+}
+
+async function saveTranscriptCorrection(clip, transcript, controls) {
+  const { status, save, transcriptElement, article, summary } = controls;
+  const corrected = transcript.trim();
+  if (!corrected) {
+    status.textContent = "Transcript cannot be empty.";
+    return;
+  }
+  save.disabled = true;
+  status.textContent = "Saving...";
+  try {
+    let response = await postTranscriptCorrection(clip, corrected);
+    if (response.status === 401 && (await ensureOperatorSession(status))) {
+      response = await postTranscriptCorrection(clip, corrected);
+    }
+    if (!response.ok) {
+      throw new Error(`correction HTTP ${response.status}`);
+    }
+    const body = await response.json();
+    clip.transcript_public = body.corrected_transcript || corrected;
+    clip.transcript_reviewed = true;
+    transcriptElement.textContent = clip.transcript_public;
+    article.classList.add("is-reviewed");
+    summary.textContent = "Edit correction";
+    status.textContent = "Saved for nightly training.";
+  } catch (error) {
+    console.error(error);
+    status.textContent = "Correction was not saved.";
+  } finally {
+    save.disabled = false;
+  }
+}
+
+function postTranscriptCorrection(clip, transcript) {
+  return fetch(clipCorrectionsUrl, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      channel: clip.channel,
+      started_at: clip.started_at,
+      transcript,
+      reviewer: "operator-ui",
+    }),
+  });
+}
+
+async function ensureOperatorSession(status) {
+  const token = window.prompt("Operator token");
+  if (!token) {
+    status.textContent = "Operator session required.";
+    return false;
+  }
+  const response = await fetch(operatorSessionUrl, {
+    method: "POST",
+    credentials: "include",
+    headers: { "X-TalkingBoats-Operator-Token": token },
+  });
+  if (!response.ok) {
+    status.textContent = "Operator sign-in failed.";
+    return false;
+  }
+  status.textContent = "Operator session ready.";
+  return true;
 }
 
 function renderPill(text) {

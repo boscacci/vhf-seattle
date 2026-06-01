@@ -770,9 +770,53 @@ def create_app(
     async def clip_audio(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/clips/audio", settings, client_factory)
 
+    @app.post("/api/clips/corrections")
+    async def clip_correction(request: Request) -> Response:
+        return await _proxy_private_api(
+            request,
+            "/api/clips/corrections",
+            settings,
+            client_factory,
+            forward_operator_auth=True,
+        )
+
+    @app.get("/api/clips/corrections/export")
+    async def clip_corrections_export(request: Request) -> Response:
+        return await _proxy_private_api(
+            request,
+            "/api/clips/corrections/export",
+            settings,
+            client_factory,
+            forward_operator_auth=True,
+        )
+
     @app.get("/api/analysis/lexical")
     async def lexical_analysis(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/analysis/lexical", settings, client_factory)
+
+    @app.post("/api/operator/session")
+    async def operator_session(request: Request) -> Response:
+        return await _proxy_private_api(
+            request,
+            "/api/operator/session",
+            settings,
+            client_factory,
+            forward_operator_auth=True,
+            forward_operator_cookie=False,
+            preserve_set_cookie=True,
+        )
+
+    @app.post("/api/operator/session/logout")
+    async def operator_session_logout(request: Request) -> Response:
+        return await _proxy_private_api(
+            request,
+            "/api/operator/session/logout",
+            settings,
+            client_factory,
+            forward_operator_auth=True,
+            forward_operator_cookie=False,
+            preserve_set_cookie=True,
+        )
 
     @app.api_route(
         "/ais-catcher",
@@ -1687,6 +1731,10 @@ async def _proxy_private_api(
     path: str,
     settings: ProxySettings,
     client_factory: ClientFactory,
+    *,
+    forward_operator_auth: bool = False,
+    forward_operator_cookie: bool = True,
+    preserve_set_cookie: bool = False,
 ) -> Response:
     target_url = f"{settings.private_api_url.rstrip('/')}{path}"
     if request.url.query:
@@ -1696,18 +1744,42 @@ async def _proxy_private_api(
             request.method,
             target_url,
             content=await request.body(),
-            headers={},
+            headers=_private_api_request_headers(
+                request,
+                forward_operator_auth,
+                forward_operator_cookie,
+            ),
         )
     response_headers = {
         name: value
         for name, value in upstream.headers.items()
         if name.lower() in {"cache-control", "content-type"}
     }
+    if preserve_set_cookie and "set-cookie" in upstream.headers:
+        response_headers["set-cookie"] = upstream.headers["set-cookie"]
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
         headers=response_headers,
     )
+
+
+def _private_api_request_headers(
+    request: Request,
+    forward_operator_auth: bool,
+    forward_operator_cookie: bool,
+) -> dict[str, str]:
+    if not forward_operator_auth:
+        return {}
+    headers: dict[str, str] = {}
+    allowed_headers = ["content-type", "x-talkingboats-operator-token"]
+    if forward_operator_cookie:
+        allowed_headers.append("cookie")
+    for name in allowed_headers:
+        value = request.headers.get(name)
+        if value:
+            headers[name] = value
+    return headers
 
 
 async def _proxy_ais_catcher(

@@ -511,6 +511,12 @@ button {
   background: color-mix(in srgb, var(--channel-color), transparent 88%);
 }
 
+.pill.reviewed-pill {
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal), transparent 42%);
+  background: color-mix(in srgb, var(--teal), transparent 86%);
+}
+
 .clip-pagination {
   display: flex;
   align-items: center;
@@ -551,6 +557,87 @@ blockquote {
   border-left: 3px solid var(--amber);
   color: #dbe5e1;
   line-height: 1.55;
+}
+
+.clip-card.is-reviewed blockquote {
+  border-left-color: var(--teal);
+}
+
+.transcript-correction {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.transcript-correction summary {
+  width: fit-content;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--teal);
+  background: var(--panel-strong);
+  font-size: 0.82rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.transcript-correction summary::-webkit-details-marker {
+  display: none;
+}
+
+.transcript-correction-form {
+  display: grid;
+  gap: 8px;
+}
+
+.transcript-correction-label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.transcript-correction textarea {
+  width: 100%;
+  min-height: 108px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.transcript-correction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.transcript-correction-actions button {
+  min-height: 38px;
+  padding: 8px 12px;
+  color: #06110f;
+  background: var(--teal);
+}
+
+.transcript-correction-actions button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.transcript-correction-status {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
 }
 
 audio {

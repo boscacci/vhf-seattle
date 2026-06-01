@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Elliott Bay VHF ASR feedback training nightly
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+Unit=talkingboats-asr-feedback-train.service
+
+[Install]
+WantedBy=timers.target

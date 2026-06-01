@@ -43,6 +43,7 @@ ALLOWED_CLIP_FIELDS = {
     "started_at",
     "duration_seconds",
     "transcript_public",
+    "transcript_reviewed",
     "audio_public_filename",
     "interestingness_score",
     "tags",
@@ -426,6 +427,7 @@ def _public_clip_from_recent(clip: RecentTranscribedClip) -> dict[str, Any]:
         "ended_at": clip.ended_at,
         "duration_seconds": clip.duration_seconds,
         "transcript_public": clip.transcript,
+        "transcript_reviewed": clip.transcript_reviewed,
         "audio_public_filename": _public_audio_filename(clip),
     }
 

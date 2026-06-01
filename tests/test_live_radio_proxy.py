@@ -487,6 +487,82 @@ def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:
     assert response.json() == {"status": "ok", "source_clip_count": 1, "entities": []}
 
 
+def test_proxy_operator_session_forwards_token_and_preserves_cookie() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://private-api.test/api/operator/session"
+        assert request.headers["x-talkingboats-operator-token"] == "operator-token"
+        assert "authorization" not in request.headers
+        assert "cookie" not in request.headers
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "application/json",
+                "Set-Cookie": "talkingboats_operator_token=private-token; HttpOnly",
+            },
+            json={"status": "ok"},
+        )
+
+    app = create_app(
+        ProxySettings(private_api_url="http://private-api.test"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_post(
+            app,
+            "/api/operator/session",
+            headers={
+                "X-TalkingBoats-Operator-Token": "operator-token",
+                "Authorization": "Bearer viewer-token",
+                "Cookie": "talkingboats_operator_token=viewer-token",
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.headers["set-cookie"] == "talkingboats_operator_token=private-token; HttpOnly"
+    assert response.json() == {"status": "ok"}
+
+
+def test_proxy_transcript_correction_forwards_operator_cookie_and_strips_upstream_cookie() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://private-api.test/api/clips/corrections"
+        assert request.headers["cookie"] == "talkingboats_operator_token=viewer-token"
+        assert request.headers["content-type"] == "application/json"
+        assert "authorization" not in request.headers
+        assert request.content == b'{"channel":"14"}'
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "application/json",
+                "Set-Cookie": "talkingboats_operator_token=private-token",
+            },
+            json={"status": "corrected"},
+        )
+
+    app = create_app(
+        ProxySettings(private_api_url="http://private-api.test"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_post(
+            app,
+            "/api/clips/corrections",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer viewer-token",
+                "Cookie": "talkingboats_operator_token=viewer-token",
+            },
+            content=b'{"channel":"14"}',
+        )
+    )
+
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
+    assert response.json() == {"status": "corrected"}
+
+
 def test_proxy_ais_catcher_viewer_is_dev_only_and_public_safe() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "http://pi.test:8100/"

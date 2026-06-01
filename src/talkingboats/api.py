@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path as FilePath
 from typing import Annotated, Any
+from urllib.parse import urlencode
 
 import httpx
 import uvicorn
@@ -22,6 +24,8 @@ from talkingboats.schemas import (
     LiveChannelsResponse,
     PlaybackUrlRequest,
     PlaybackUrlResponse,
+    TranscriptCorrectionRequest,
+    TranscriptCorrectionResponse,
 )
 from talkingboats.security import require_token
 from talkingboats.storage import S3AudioStorage
@@ -223,6 +227,7 @@ async def recent_clips(
                 "duration_seconds": clip.duration_seconds,
                 "content_type": clip.content_type,
                 "transcript": clip.transcript,
+                "transcript_reviewed": clip.transcript_reviewed,
                 "segments": clip.segments,
                 "playback_url": playback_url,
                 "playback_expires_in_seconds": settings.playback_presign_seconds,
@@ -297,6 +302,69 @@ async def public_clip_audio(
     )
 
 
+@app.post(
+    "/api/clips/corrections",
+    response_model=TranscriptCorrectionResponse,
+    dependencies=[Depends(require_operator_token)],
+)
+async def correct_clip_transcript(
+    request: TranscriptCorrectionRequest,
+    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+) -> TranscriptCorrectionResponse:
+    if clip_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="clip store unavailable",
+        )
+    try:
+        correction = clip_store.correct_transcript(
+            channel=request.channel,
+            started_at=request.started_at,
+            corrected_transcript=request.transcript,
+            reviewer=request.reviewer,
+            note=request.note,
+            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return TranscriptCorrectionResponse(
+        status="corrected",
+        channel=correction.channel,
+        started_at=correction.started_at,
+        original_transcript=correction.original_transcript,
+        corrected_transcript=correction.corrected_transcript,
+        transcript_reviewed=True,
+    )
+
+
+@app.get(
+    "/api/clips/corrections/export",
+    dependencies=[Depends(require_operator_token)],
+)
+async def export_clip_transcript_corrections(
+    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+) -> Response:
+    if clip_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="clip store unavailable",
+        )
+    lines = [
+        json.dumps(_public_training_record(correction), sort_keys=True)
+        for correction in clip_store.transcript_corrections_for_training()
+    ]
+    content = "\n".join(lines)
+    if content:
+        content += "\n"
+    return Response(
+        content=content,
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def public_playback_clip(
     clip_store: UploadedClipStore | None,
     *,
@@ -313,6 +381,23 @@ def public_playback_clip(
     if clip is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found")
     return clip
+
+
+def _public_training_record(correction: dict[str, object]) -> dict[str, object]:
+    channel = str(correction["channel"])
+    started_at = str(correction["started_at"])
+    return {
+        "audio_url": "/api/clips/audio?"
+        + urlencode({"channel": channel, "started_at": started_at}),
+        "channel": channel,
+        "started_at": started_at,
+        "duration_seconds": correction["duration_seconds"],
+        "content_type": correction["content_type"],
+        "original_text": correction["original_transcript"],
+        "text": correction["corrected_transcript"],
+        "reviewer": correction["reviewer"],
+        "note": correction["note"],
+    }
 
 
 def iter_playback_body(body: Any):

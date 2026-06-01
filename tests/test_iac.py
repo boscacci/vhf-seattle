@@ -145,13 +145,18 @@ def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
     assert 'variable "live_origin_domain_name"' in variables_tf
     assert 'default     = "optiplex.tailbea63b.ts.net"' in variables_tf
     assert 'resource "aws_cloudfront_origin_request_policy" "live_api"' in main_tf
+    assert 'resource "aws_cloudfront_origin_request_policy" "operator_api"' in main_tf
     assert 'query_string_behavior = "all"' in main_tf
+    assert 'cookie_behavior = "all"' in main_tf
+    assert 'items = ["Content-Type", "X-TalkingBoats-Operator-Token"]' in main_tf
     assert 'origin_protocol_policy = "https-only"' in main_tf
     assert 'https_port             = var.live_origin_https_port' in main_tf
     assert 'path_pattern             = "/api/live/*"' in main_tf
     assert 'path_pattern             = "/api/clips/recent"' in main_tf
     assert 'path_pattern             = "/api/clips/playback"' in main_tf
     assert 'path_pattern             = "/api/clips/audio"' in main_tf
+    assert 'path_pattern             = "/api/clips/corrections*"' in main_tf
+    assert 'path_pattern             = "/api/operator/session*"' in main_tf
     assert 'path_pattern             = "/api/analysis/lexical"' in main_tf
     assert 'path_pattern             = "/ais-catcher/*"' in main_tf
     prod_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "site")
@@ -159,8 +164,16 @@ def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
     assert 'path_pattern             = "/ais-catcher/*"' not in prod_distribution
     assert 'path_pattern             = "/ais-catcher/*"' in dev_distribution
     assert main_tf.count("target_origin_id         = local.live_origin_id") == 5
-    assert main_tf.count("target_origin_id         = local.dev_live_origin_id") == 6
+    assert 'path_pattern             = "/api/clips/corrections*"' not in prod_distribution
+    assert 'path_pattern             = "/api/operator/session*"' not in prod_distribution
+    assert 'path_pattern             = "/api/clips/corrections*"' in dev_distribution
+    assert 'path_pattern             = "/api/operator/session*"' in dev_distribution
+    assert main_tf.count("target_origin_id         = local.dev_live_origin_id") == 8
     assert "origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id" in main_tf
+    assert (
+        "origin_request_policy_id = aws_cloudfront_origin_request_policy.operator_api.id"
+        in main_tf
+    )
 
 
 def test_opentofu_uses_static_certificate_validation_record_keys() -> None:

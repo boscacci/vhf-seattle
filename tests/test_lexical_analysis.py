@@ -32,7 +32,8 @@ def test_generate_lexical_analysis_counts_terms_entities_and_writes_cache(tmp_pa
         channel="14",
         started_at="2026-05-25T22:10:00Z",
         text=(
-            "Seattle Traffic, container ship MSC Gabriella northbound Elliott Bay "
+            "PON PON, all stations. Seattle Traffic, container ship MSC Gabriella "
+            "northbound Elliott Bay "
             "making 10 knots for Pier 91, roger thank you."
         ),
     )
@@ -71,6 +72,9 @@ def test_generate_lexical_analysis_counts_terms_entities_and_writes_cache(tmp_pa
     assert ("roger", 1) in _term_pairs(
         payload["terms"]["semantic_buckets"]["communication_markers"]
     )
+    assert ("pon pon", 1) in _term_pairs(
+        payload["terms"]["semantic_buckets"]["communication_markers"]
+    )
     assert _entity(payload, "Seattle Traffic")["kind"] == "shore_station"
     assert _entity(payload, "MSC Gabriella")["kind"] == "vessel"
     assert _entity(payload, "Tug Osprey")["channels"] == {"13": 1}
@@ -85,6 +89,10 @@ def test_generate_lexical_analysis_counts_terms_entities_and_writes_cache(tmp_pa
     assert payload["education_guide"][0]["title"] == "Seattle Traffic is the coordinator"
     assert "VHF 14" in payload["education_guide"][0]["why_it_matters"]
     assert "sail plan" in payload["education_guide"][0]["what_it_explains"].lower()
+    assert any(
+        section["title"] == "PAN-PAN means urgent, not mayday"
+        for section in payload["education_guide"]
+    )
     assert any("West Waterway" in section["signals"] for section in payload["education_guide"])
     assert any(
         "pilot" in section["what_it_explains"].lower()
@@ -96,6 +104,38 @@ def test_generate_lexical_analysis_counts_terms_entities_and_writes_cache(tmp_pa
     assert json.loads((output_dir / "analysis" / "lexical.json").read_text()) == payload
     assert read_cached_lexical_analysis(db_path) == payload
     assert_public_safe(payload)
+
+
+def test_generate_lexical_analysis_uses_corrected_transcripts(tmp_path: Path) -> None:
+    db_path = tmp_path / "clips.sqlite3"
+    output_dir = tmp_path / "site"
+    store = UploadedClipStore(db_path)
+    _transcribe(
+        store,
+        key="raw/channel=14/date=2026-05-25/pan.mp3",
+        channel="14",
+        started_at="2026-05-25T22:10:00Z",
+        text="PON PON all stations",
+    )
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-05-25T22:10:00Z",
+        corrected_transcript="PAN-PAN, all stations.",
+        reviewer="rob",
+    )
+
+    payload = generate_lexical_analysis(
+        db_path=db_path,
+        output_dir=output_dir,
+        generated_at=datetime(2026, 5, 26, 1, 2, 3, tzinfo=UTC),
+    )
+
+    assert ("pan-pan", 1) in _term_pairs(
+        payload["terms"]["semantic_buckets"]["communication_markers"]
+    )
+    assert ("pon pon", 1) not in _term_pairs(
+        payload["terms"]["semantic_buckets"]["communication_markers"]
+    )
 
 
 def test_generate_lexical_analysis_cache_is_idempotent(tmp_path: Path) -> None:

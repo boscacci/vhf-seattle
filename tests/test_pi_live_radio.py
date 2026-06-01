@@ -232,7 +232,10 @@ def test_pi_installer_adds_serial_pinned_voice_and_ais_catcher_service() -> None
     assert "lon \"${TALKINGBOATS_AIS_LON:--122.3595353}\"" in ais_catcher_wrapper
     assert "share_loc \"${TALKINGBOATS_AIS_SHARE_LOC:-on}\"" in ais_catcher_wrapper
     assert "TALKINGBOATS_AIS_FRIENDS_UDP_PORT must be numeric" in ais_catcher_wrapper
-    assert 'ais_friends_args=(-u "${ais_friends_host}" "${TALKINGBOATS_AIS_FRIENDS_UDP_PORT}")' in ais_catcher_wrapper
+    assert (
+        'ais_friends_args=(-u "${ais_friends_host}" "${TALKINGBOATS_AIS_FRIENDS_UDP_PORT}")'
+        in ais_catcher_wrapper
+    )
     assert '"${ais_friends_args[@]}"' in ais_catcher_wrapper
     assert "sharing_args=(-X)" in ais_catcher_wrapper
     assert 'sharing_args=(-X "${TALKINGBOATS_AIS_SHARING_KEY}")' in ais_catcher_wrapper

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -158,6 +159,113 @@ def test_recent_clips_are_public_read_only_with_playback_urls(tmp_path) -> None:
     assert body["filtered_clip_count"] == 1
     assert body["channel_labels"]["13"] == "Bridge-to-bridge"
     assert body["channel_labels"]["14"] == "VTS / Seattle Traffic"
+
+
+def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/pan-pan.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="PON PON all stations",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    unauthenticated = client.post(
+        "/api/clips/corrections",
+        json={
+            "channel": "14",
+            "started_at": "2026-05-20T19:12:00Z",
+            "transcript": "PAN-PAN, all stations.",
+        },
+    )
+    response = client.post(
+        "/api/clips/corrections",
+        headers={"X-TalkingBoats-Operator-Token": "operator-token"},
+        json={
+            "channel": "14",
+            "started_at": "2026-05-20T19:12:00Z",
+            "transcript": "PAN-PAN, PAN-PAN, all stations.",
+            "reviewer": "rob",
+            "note": "USCG urgency marker",
+        },
+    )
+    recent = client.get("/api/clips/recent?limit=1&channel=14")
+
+    assert unauthenticated.status_code == 401
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "corrected",
+        "channel": "14",
+        "started_at": "2026-05-20T19:12:00Z",
+        "original_transcript": "PON PON all stations",
+        "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
+        "transcript_reviewed": True,
+    }
+    body = recent.json()
+    assert body["clips"][0]["transcript"] == "PAN-PAN, PAN-PAN, all stations."
+    assert body["clips"][0]["transcript_reviewed"] is True
+    assert key not in response.text
+    assert key not in recent.text
+
+
+def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/pan-pan.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="PON PON all stations",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-05-20T19:12:00Z",
+        corrected_transcript="PAN-PAN, all stations.",
+        reviewer="rob",
+        note="urgency signal",
+    )
+
+    unauthenticated = client.get("/api/clips/corrections/export")
+    response = client.get(
+        "/api/clips/corrections/export",
+        headers={"X-TalkingBoats-Operator-Token": "operator-token"},
+    )
+
+    assert unauthenticated.status_code == 401
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    records = [json.loads(line) for line in response.text.splitlines()]
+    assert records == [
+        {
+            "audio_url": (
+                "/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00Z"
+            ),
+            "channel": "14",
+            "started_at": "2026-05-20T19:12:00Z",
+            "duration_seconds": 5.0,
+            "content_type": "audio/mpeg",
+            "original_text": "PON PON all stations",
+            "text": "PAN-PAN, all stations.",
+            "reviewer": "rob",
+            "note": "urgency signal",
+        }
+    ]
+    assert key not in response.text
 
 
 def test_recent_clips_skip_missing_playback_objects(tmp_path) -> None:
