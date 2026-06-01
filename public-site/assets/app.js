@@ -499,8 +499,10 @@ async function pollClipStats() {
 }
 
 function mergeLiveClipStats(payload) {
+  let addedClipCount = 0;
   if (!currentClipPayload || currentClipPayload.source !== "live") {
     currentClipPayload = payload;
+    addedClipCount = payload.clips?.length || 0;
   } else {
     currentClipPayload = {
       ...currentClipPayload,
@@ -512,17 +514,22 @@ function mergeLiveClipStats(payload) {
     };
     if (payload.clips?.length) {
       const existingIds = new Set((currentClipPayload.clips || []).map((clip) => clip.id));
-      currentClipPayload.clips = [
-        ...payload.clips.filter((clip) => !existingIds.has(clip.id)),
-        ...(currentClipPayload.clips || []),
-      ];
+      const newClips = payload.clips.filter((clip) => !existingIds.has(clip.id));
+      addedClipCount = newClips.length;
+      if (newClips.length) {
+        currentClipPayload.clips = [...newClips, ...(currentClipPayload.clips || [])];
+      }
     }
   }
   if (activeTab === "clips" && clipOffset() === 0 && selectedChannels.size === 0) {
-    renderSite(currentClipPayload);
+    if (addedClipCount > 0) {
+      renderSite(currentClipPayload);
+    } else {
+      renderClipSummaryOnly(currentClipPayload);
+    }
     return;
   }
-  renderStats(payload, payload.clips || []);
+  renderStats(currentClipPayload || payload, currentPageClips.length ? currentPageClips : payload.clips || []);
 }
 
 function clipRequestUrl() {
@@ -588,6 +595,7 @@ async function loadPublishedLanguagePayload() {
 
 function normalizeLivePayload(payload) {
   const clips = Array.isArray(payload.clips) ? payload.clips : [];
+  const latestStartedAt = payload.latest_started_at || clips[0]?.started_at || null;
   return {
     source: "live",
     site: fallbackManifest.site,
@@ -596,6 +604,7 @@ function normalizeLivePayload(payload) {
         payload.clip_count ?? totalAvailableClipsFromCounts(payload.channel_counts) ?? clips.length,
       ),
       filtered_clip_count: Number(payload.filtered_clip_count ?? clips.length),
+      latest_started_at: latestStartedAt,
       limit: Number(payload.limit ?? selectedClipPageSize),
       offset: Number(payload.offset ?? clipOffset()),
       channel_counts: payload.channel_counts || countBy(clips, (clip) => clip.channel || "?"),
@@ -665,6 +674,19 @@ function renderSite(payload) {
   clipStatus.textContent = statusText(payload, visibleClips, filteredTotal);
 }
 
+function renderClipSummaryOnly(payload) {
+  const clips = payload.clips || [];
+  const filteredClips = filterClipsByChannel(clips);
+  const pageClips = payload.source === "live" ? filteredClips : paginateClips(filteredClips);
+  const filteredTotal = filteredClipCount(payload, filteredClips);
+  currentPageClips = pageClips;
+  currentFilteredTotal = filteredTotal;
+  const visibleClips = applyClipSortForCurrentPage(currentPageClips);
+  renderStats(payload, pageClips);
+  renderClipPagination(filteredTotal);
+  clipStatus.textContent = statusText(payload, visibleClips, filteredTotal);
+}
+
 function renderCurrentClipOrder() {
   if (!currentClipPayload) {
     loadAndRender();
@@ -682,7 +704,8 @@ function renderStats(payload, clips) {
   const channelCounts = payload.stats?.channel_counts || countBy(clips, (clip) => clip.channel || "?");
   const channelTotal = Object.keys(channelCounts).length;
   const clipTotal = totalDatabaseClips(payload, clips);
-  const latest = clips[0]?.started_at ? shortTime(clips[0].started_at) : "None";
+  const latestStartedAt = payload.stats?.latest_started_at || clips[0]?.started_at;
+  const latest = latestStartedAt ? shortTime(latestStartedAt) : "None";
   const statItems = [
     ["Clips", clipTotal],
     ["Channels", channelTotal],
@@ -964,7 +987,23 @@ function renderClips(clips) {
     clipList.replaceChildren(empty);
     return;
   }
-  clipList.replaceChildren(...clips.map(renderClipCard));
+  const existingCards = new Map(
+    [...clipList.querySelectorAll(".clip-card[data-clip-id]")].map((card) => [
+      card.dataset.clipId,
+      card,
+    ]),
+  );
+  clipList.replaceChildren(
+    ...clips.map((clip) => {
+      const clipId = clipDomId(clip);
+      const signature = clipRenderSignature(clip);
+      const existing = existingCards.get(clipId);
+      if (existing?.dataset.clipSignature === signature) {
+        return existing;
+      }
+      return renderClipCard(clip);
+    }),
+  );
 }
 
 function renderClipPagination(totalClips) {
@@ -1006,6 +1045,8 @@ function paginationButton(label, disabled, onClick) {
 function renderClipCard(clip) {
   const article = document.createElement("article");
   article.className = "clip-card";
+  article.dataset.clipId = clipDomId(clip);
+  article.dataset.clipSignature = clipRenderSignature(clip);
 
   const meta = document.createElement("div");
   meta.className = "clip-meta";
@@ -1035,6 +1076,25 @@ function renderClipCard(clip) {
     article.append(renderTranscriptCorrectionForm(clip, transcript, article));
   }
   return article;
+}
+
+function clipDomId(clip) {
+  return String(clip.id || `${clip.channel || "?"}-${clip.started_at || ""}`);
+}
+
+function clipRenderSignature(clip) {
+  return [
+    clipDomId(clip),
+    clip.channel || "",
+    clip.channel_label || "",
+    clip.started_at || "",
+    clip.ended_at || "",
+    clip.duration_seconds || "",
+    clip.transcript_public || "",
+    clip.transcript_reviewed ? "reviewed" : "unreviewed",
+    clip.playback_url ? "has-live-audio" : clip.audio_public_filename ? "has-static-audio" : "no-audio",
+    operatorReviewEnabled && canReviewClip(clip) ? "reviewable" : "read-only",
+  ].join("\u001f");
 }
 
 function canReviewClip(clip) {

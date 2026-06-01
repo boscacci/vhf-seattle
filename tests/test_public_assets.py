@@ -168,6 +168,14 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "clipStatsPollMs = 10000" in app_js
     assert "startClipStatsPolling" in app_js
     assert "pollClipStats" in app_js
+    assert "latest_started_at" in app_js
+    assert (
+        "const latestStartedAt = payload.stats?.latest_started_at || clips[0]?.started_at;"
+        in app_js
+    )
+    assert "renderClipSummaryOnly(currentClipPayload);" in app_js
+    assert "clipList.querySelectorAll(\".clip-card[data-clip-id]\")" in app_js
+    assert "existing?.dataset.clipSignature === signature" in app_js
     assert ".stat.is-live-updated" in styles_css
     assert "loadAndRenderPerformance({ showLoading: false });" in app_js
     assert "startPerformancePolling" in app_js
@@ -280,7 +288,8 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert "renderClipDisplayControlSet()" in app_js
     assert "mobileClipDisplayControls()" not in app_js
     assert "const insertAfter = Math.min(6, cards.length);" not in app_js
-    assert "clipList.replaceChildren(...clips.map(renderClipCard));" in app_js
+    assert "clipList.replaceChildren(...clips.map(renderClipCard));" not in app_js
+    assert "function clipRenderSignature(clip)" in app_js
     assert "applyClipSortForCurrentPage" in app_js
     assert "clipSortDirection === \"oldest\"" in app_js
     assert "let currentPageClips = [];" in app_js

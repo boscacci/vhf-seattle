@@ -156,6 +156,16 @@ try {
     }
     await page.getByRole("button", { name: "Clip Review" }).click();
     await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
+    await page.evaluate(() => {
+      window.__clipAudioBeforeStatsPoll = document.querySelector("#clips .clip-card audio");
+    });
+    await page.waitForTimeout(11000);
+    const clipAudioStableAfterStatsPoll = await page.evaluate(
+      () => window.__clipAudioBeforeStatsPoll === document.querySelector("#clips .clip-card audio"),
+    );
+    if (!clipAudioStableAfterStatsPoll) {
+      throw new Error("clip stats polling replaced the existing audio control");
+    }
     await page.getByRole("button", { name: "48" }).click();
     await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
     const clipControlsBeforeFlip = await page.evaluate(() => {
