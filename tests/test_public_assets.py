@@ -430,7 +430,7 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert "updateTabRoute(name" in app_js
     assert "window.addEventListener(\"popstate\"" in app_js
     assert "activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false })" in app_js
-    for route in ("clips", "live", "ais", "analysis", "performance"):
+    for route in ("clips", "live", "ais", "analysis", "performance", "operator"):
         assert f'"{route}/index.html"' in deploy_shell
         assert f'"{route}/index.html"' in deploy_full
         assert f'"{route}/"' in deploy_shell

@@ -19,6 +19,7 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
         '"/ais/*"',
         '"/analysis/index.html"',
         '"/performance/*"',
+        '"/operator/*"',
     ):
         assert path in script
     assert "dev_public_site_bucket" in script
