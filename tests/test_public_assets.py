@@ -226,6 +226,10 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "performanceHostPanel" in app_js
     assert "performanceMetricChart" in app_js
     assert "attachPerformanceChartTooltip" in app_js
+    assert "performanceChartTimeTicks" in app_js
+    assert "performance-chart-x-axis" in app_js
+    assert '{ label: "3d", hours: 72 }' in app_js
+    assert '{ label: "12h", hours: 12 }' not in app_js
     assert "performance-chart-tooltip" in app_js
     assert "performance-chart-hover-line" in app_js
     assert "performance-chart-hover-dot" in app_js
@@ -234,8 +238,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "selectedPerformanceRangeHours" in app_js
     assert '{ label: "30m", hours: 0.5 }' in app_js
     assert '{ label: "2h", hours: 2 }' in app_js
-    assert '{ label: "12h", hours: 12 }' in app_js
     assert '{ label: "24h", hours: 24 }' in app_js
+    assert '{ label: "3d", hours: 72 }' in app_js
     assert '{ label: "6h", hours: 6 }' not in app_js
     assert "performance-range-control" in app_js
     assert "loadAsrFeedbackStatus" in app_js
@@ -253,6 +257,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert ".performance-chart-svg" in styles_css
     assert ".performance-chart-tooltip" in styles_css
     assert ".performance-chart-hover-line" in styles_css
+    assert ".performance-chart-x-axis" in styles_css
+    assert ".performance-chart-x-gridline" in styles_css
     assert ".performance-range-control" in styles_css
     assert ".clip-search-panel" in styles_css
     assert ".clip-search-form" in styles_css

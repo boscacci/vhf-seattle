@@ -87,8 +87,8 @@ const legacyPerformanceRoleLabels = new Map([
 const performanceRangeOptions = [
   { label: "30m", hours: 0.5 },
   { label: "2h", hours: 2 },
-  { label: "12h", hours: 12 },
   { label: "24h", hours: 24 },
+  { label: "3d", hours: 72 },
 ];
 const pacificTimeZone = "America/Los_Angeles";
 const pacificDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
@@ -109,6 +109,12 @@ const performanceDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
   second: "2-digit",
   timeZoneName: "short",
+});
+const performanceDayTickFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: pacificTimeZone,
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
 });
 const pacificShortTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: pacificTimeZone,
@@ -496,9 +502,7 @@ async function loadAndRender() {
   } else if (!currentClipPayload || !currentPageClips.length) {
     renderClipLoadingState();
   } else {
-    renderClipDisplayControls();
-    clipList.setAttribute("aria-busy", "true");
-    clipStatus.textContent = "Refreshing clips...";
+    renderClipPagePendingState();
   }
   const payload = await loadClipPayload(requestUrl);
   if (requestId !== clipRequestSequence) {
@@ -685,6 +689,15 @@ function renderClipLoadingState() {
   clipList.setAttribute("aria-busy", "true");
   clipList.replaceChildren(...renderClipPlaceholders());
   clipStatus.textContent = "Loading recent clips...";
+}
+
+function renderClipPagePendingState() {
+  renderClipDisplayControls();
+  if (currentFilteredTotal > 0) {
+    renderClipPagination(currentFilteredTotal, { pending: true });
+  }
+  clipList.setAttribute("aria-busy", "true");
+  clipStatus.textContent = `Loading page ${selectedClipPage}...`;
 }
 
 function renderClipPlaceholders() {
@@ -1336,7 +1349,7 @@ function renderClips(clips) {
   );
 }
 
-function renderClipPagination(totalClips) {
+function renderClipPagination(totalClips, { pending = false } = {}) {
   if (!clipPagination) {
     return;
   }
@@ -1349,7 +1362,9 @@ function renderClipPagination(totalClips) {
   selectedClipPage = Math.min(Math.max(selectedClipPage, 1), totalPages);
   const pageStatus = document.createElement("span");
   pageStatus.className = "clip-page-status";
-  pageStatus.textContent = `Page ${selectedClipPage} of ${totalPages}`;
+  pageStatus.textContent = pending
+    ? `Loading page ${selectedClipPage} of ${totalPages}...`
+    : `Page ${selectedClipPage} of ${totalPages}`;
   const pageList = document.createElement("div");
   pageList.className = "pagination-pages";
   pageList.setAttribute("aria-label", "Clip pages");
@@ -1369,6 +1384,12 @@ function renderClipPagination(totalClips) {
     }),
   );
   clipPagination.hidden = false;
+  clipPagination.classList.toggle("is-pending", pending);
+  if (pending) {
+    clipPagination.setAttribute("aria-busy", "true");
+  } else {
+    clipPagination.removeAttribute("aria-busy");
+  }
   clipPagination.replaceChildren(pageStatus, pageList, actions);
 }
 
@@ -1377,20 +1398,29 @@ function clipPaginationItems(currentPage, totalPages) {
   if (totalPages <= maxPageButtons) {
     return Array.from({ length: totalPages }, (_value, index) => index + 1);
   }
-  let pages;
-  if (currentPage <= 3) {
-    pages = [1, 2, 3, 4, totalPages];
-  } else if (currentPage >= totalPages - 2) {
-    pages = [1, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
-  } else {
-    pages = [1, currentPage - 1, currentPage, currentPage + 1, totalPages];
+  const halfWindow = Math.floor(maxPageButtons / 2);
+  let startPage = currentPage - halfWindow;
+  let endPage = currentPage + halfWindow;
+  if (startPage < 1) {
+    endPage += 1 - startPage;
+    startPage = 1;
   }
+  if (endPage > totalPages) {
+    startPage -= endPage - totalPages;
+    endPage = totalPages;
+  }
+  startPage = Math.max(1, startPage);
+  endPage = Math.min(totalPages, endPage);
+  const pages = Array.from({ length: endPage - startPage + 1 }, (_value, index) => startPage + index);
   const items = [];
-  for (const page of [...new Set(pages)].sort((left, right) => left - right)) {
-    if (items.length && page - items[items.length - 1] > 1) {
-      items.push("ellipsis");
-    }
+  if (startPage > 1) {
+    items.push("ellipsis");
+  }
+  for (const page of pages) {
     items.push(page);
+  }
+  if (endPage < totalPages) {
+    items.push("ellipsis");
   }
   return items;
 }
@@ -1422,6 +1452,7 @@ function goToClipPage(pageNumber) {
     return;
   }
   selectedClipPage = nextPage;
+  renderClipPagePendingState();
   loadAndRender();
 }
 
@@ -2271,6 +2302,7 @@ function drawPerformanceMetricChart(svg, samples, suffix) {
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
   const maxValue = 100;
+  svg.dataset.windowHours = String(selectedPerformanceRangeHours);
   [0, 50, 100].forEach((tick) => {
     const y = top + plotHeight - (tick / maxValue) * plotHeight;
     const line = performanceSvgElement("line");
@@ -2296,8 +2328,11 @@ function drawPerformanceMetricChart(svg, samples, suffix) {
     svg.append(empty);
     return { points: [], hoverLine: null, hoverDot: null };
   }
-  const points = samples.map((sample, index) => {
-    const x = left + (samples.length === 1 ? plotWidth : (index / (samples.length - 1)) * plotWidth);
+  const timeWindow = performanceChartTimeWindow(samples);
+  drawPerformanceTimeAxis(svg, timeWindow, { left, right, top, bottom, width, height, plotWidth });
+  const points = samples.map((sample) => {
+    const ratio = Math.max(0, Math.min(1, (sample.time - timeWindow.start) / timeWindow.duration));
+    const x = left + ratio * plotWidth;
     const clampedValue = Math.max(0, Math.min(maxValue, sample.value));
     const y = top + plotHeight - (clampedValue / maxValue) * plotHeight;
     return { x, y };
@@ -2335,6 +2370,43 @@ function drawPerformanceMetricChart(svg, samples, suffix) {
   hitArea.classList.add("performance-chart-hit-area");
   svg.append(hoverLine, hoverDot, hitArea);
   return { points, hoverLine, hoverDot };
+}
+
+function performanceChartTimeWindow(samples) {
+  const latest = samples.reduce((currentLatest, sample) => Math.max(currentLatest, sample.time), 0);
+  const duration = Math.max(1, selectedPerformanceRangeHours * 60 * 60 * 1000);
+  return {
+    start: latest - duration,
+    end: latest,
+    duration,
+  };
+}
+
+function drawPerformanceTimeAxis(svg, timeWindow, geometry) {
+  for (const tick of performanceChartTimeTicks(timeWindow)) {
+    const x = geometry.left + tick.ratio * geometry.plotWidth;
+    const line = performanceSvgElement("line");
+    line.setAttribute("x1", x.toFixed(1));
+    line.setAttribute("x2", x.toFixed(1));
+    line.setAttribute("y1", String(geometry.top));
+    line.setAttribute("y2", String(geometry.height - geometry.bottom));
+    line.classList.add("performance-chart-x-gridline");
+    const label = performanceSvgElement("text");
+    label.setAttribute("x", x.toFixed(1));
+    label.setAttribute("y", String(geometry.height - 7));
+    label.setAttribute("text-anchor", tick.anchor);
+    label.classList.add("performance-chart-x-axis");
+    label.textContent = formatPerformanceTickTime(tick.time);
+    svg.append(line, label);
+  }
+}
+
+function performanceChartTimeTicks(timeWindow) {
+  return [0, 1 / 3, 2 / 3, 1].map((ratio, index) => ({
+    ratio,
+    anchor: index === 0 ? "start" : index === 3 ? "end" : "middle",
+    time: timeWindow.start + ratio * timeWindow.duration,
+  }));
 }
 
 function attachPerformanceChartTooltip(chart, svg, tooltip, samples, suffix, chartState) {
@@ -2389,6 +2461,17 @@ function performanceSampleTime(sample) {
   }
   const time = new Date(sample.generatedAt).getTime();
   return Number.isFinite(time) ? time : NaN;
+}
+
+function formatPerformanceTickTime(timestamp) {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+  if (selectedPerformanceRangeHours > 12) {
+    return performanceDayTickFormatter.format(date);
+  }
+  return pacificShortTimeFormatter.format(date);
 }
 
 function formatMetricChartValue(value, suffix) {

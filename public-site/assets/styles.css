@@ -725,6 +725,14 @@ button {
   opacity: 0.58;
 }
 
+.clip-pagination.is-pending .clip-page-status {
+  color: var(--teal);
+}
+
+.clip-pagination.is-pending .pagination-button:not([aria-current="page"]) {
+  opacity: 0.72;
+}
+
 .clip-page-status {
   min-width: 112px;
   color: var(--muted);
@@ -1429,7 +1437,13 @@ audio {
   stroke-width: 1;
 }
 
+.performance-chart-x-gridline {
+  stroke: color-mix(in srgb, var(--line) 72%, transparent);
+  stroke-width: 0.8;
+}
+
 .performance-chart-axis,
+.performance-chart-x-axis,
 .performance-chart-caption,
 .performance-chart-empty {
   fill: var(--muted);
@@ -1439,6 +1453,10 @@ audio {
 
 .performance-chart-empty {
   text-anchor: middle;
+}
+
+.performance-chart-x-axis {
+  font-size: 0.66rem;
 }
 
 .performance-chart-line {

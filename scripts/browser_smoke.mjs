@@ -271,8 +271,8 @@ try {
     if (!initialPagination.buttons.some((button) => button.text === "1" && button.current === "page")) {
       throw new Error(`pagination current page button missing: ${JSON.stringify(initialPagination)}`);
     }
-    if (!initialPagination.buttons.some((button) => button.text === "12")) {
-      throw new Error(`pagination last page button missing: ${JSON.stringify(initialPagination)}`);
+    if (initialPagination.buttons.some((button) => button.text === "12")) {
+      throw new Error(`pagination kept a redundant last-page anchor: ${JSON.stringify(initialPagination)}`);
     }
     if (initialPagination.ellipsisCount < 1) {
       throw new Error(`pagination ellipsis missing: ${JSON.stringify(initialPagination)}`);
@@ -286,6 +286,52 @@ try {
     if (secondPagePagination.activePage !== "2") {
       throw new Error(`pagination did not mark page 2 active: ${JSON.stringify(secondPagePagination)}`);
     }
+    await page.locator("#clip-pagination").getByRole("button", { name: "Page 5", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 25"));
+    await page.locator("#clip-pagination").getByRole("button", { name: "Page 6", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 31"));
+    const middlePagination = await page.evaluate(() => {
+      const pagination = document.querySelector("#clip-pagination");
+      const numberedButtons = [...pagination.querySelectorAll(".pagination-page-button")].map((button) =>
+        button.textContent?.trim(),
+      );
+      return {
+        text: pagination.textContent || "",
+        numberedButtons,
+        ellipsisCount: pagination.querySelectorAll(".pagination-ellipsis").length,
+        activePage: pagination.querySelector("button[aria-current='page']")?.textContent?.trim() || "",
+      };
+    });
+    if (middlePagination.activePage !== "6") {
+      throw new Error(`pagination did not mark middle page active: ${JSON.stringify(middlePagination)}`);
+    }
+    if (middlePagination.numberedButtons.join(",") !== "4,5,6,7,8") {
+      throw new Error(`pagination did not show five centered page numbers: ${JSON.stringify(middlePagination)}`);
+    }
+    if (middlePagination.ellipsisCount !== 2) {
+      throw new Error(`pagination middle window should be bracketed by ellipses: ${JSON.stringify(middlePagination)}`);
+    }
+    holdRecentClipResponses = true;
+    await page.locator("#clip-pagination").getByRole("button", { name: "Page 7", exact: true }).click();
+    const pendingPagination = await page.evaluate(() => ({
+      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+      busy: document.querySelector("#clip-pagination")?.getAttribute("aria-busy") || "",
+      status: document.querySelector("#clip-status")?.textContent || "",
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+    }));
+    if (
+      pendingPagination.activePage !== "7" ||
+      pendingPagination.busy !== "true" ||
+      !pendingPagination.status.includes("Loading page 7")
+    ) {
+      throw new Error(`pagination did not provide immediate pending feedback: ${JSON.stringify(pendingPagination)}`);
+    }
+    if (!pendingPagination.firstTranscript.includes("Smoke clip 31")) {
+      throw new Error(`pagination pending state should not flicker away the current cards: ${JSON.stringify(pendingPagination)}`);
+    }
+    holdRecentClipResponses = false;
+    releaseRecentClipResponses.splice(0).forEach((release) => release());
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 37"));
     await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
     await page.locator("#clip-pagination").getByRole("button", { name: "Oldest page" }).click();
@@ -294,9 +340,15 @@ try {
       firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
       activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
       text: document.querySelector("#clip-pagination")?.textContent || "",
+      numberedButtons: [...document.querySelectorAll("#clip-pagination .pagination-page-button")].map((button) =>
+        button.textContent?.trim(),
+      ),
     }));
     if (oldestPagePagination.activePage !== "12") {
       throw new Error(`pagination oldest jump did not land on last page: ${JSON.stringify(oldestPagePagination)}`);
+    }
+    if (oldestPagePagination.numberedButtons.join(",") !== "8,9,10,11,12") {
+      throw new Error(`pagination oldest window should show five nearby pages only: ${JSON.stringify(oldestPagePagination)}`);
     }
     await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
@@ -379,6 +431,9 @@ try {
     }
     const desktopPerformanceContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     let performanceHover = null;
+    let defaultRangeState = null;
+    let shortRangeState = null;
+    let longRangeState = null;
     try {
       const desktopPerformancePage = await desktopPerformanceContext.newPage();
       await desktopPerformancePage.goto(`${baseUrl}/search/`);
@@ -403,6 +458,66 @@ try {
       await desktopPerformancePage.getByRole("button", { name: "Performance" }).click();
       const firstChart = desktopPerformancePage.locator(".performance-chart-svg").first();
       await firstChart.waitFor({ state: "visible", timeout: 10000 });
+      defaultRangeState = await desktopPerformancePage.evaluate(() => {
+        const firstSvg = document.querySelector(".performance-chart-svg");
+        return {
+          activeRange: document
+            .querySelector(".performance-range-option[aria-pressed='true']")
+            ?.textContent?.trim(),
+          windowHours: firstSvg?.getAttribute("data-window-hours") || "",
+          xTickLabels: [...document.querySelectorAll(".performance-chart:first-child .performance-chart-x-axis")].map(
+            (tick) => tick.textContent || "",
+          ),
+        };
+      });
+      if (
+        defaultRangeState.activeRange !== "2h" ||
+        defaultRangeState.windowHours !== "2" ||
+        defaultRangeState.xTickLabels.length < 4
+      ) {
+        throw new Error(`performance default time axis did not render: ${JSON.stringify(defaultRangeState)}`);
+      }
+      await desktopPerformancePage.getByRole("button", { name: "30m", exact: true }).click();
+      shortRangeState = await desktopPerformancePage.evaluate(() => {
+        const firstSvg = document.querySelector(".performance-chart-svg");
+        return {
+          activeRange: document
+            .querySelector(".performance-range-option[aria-pressed='true']")
+            ?.textContent?.trim(),
+          windowHours: firstSvg?.getAttribute("data-window-hours") || "",
+          xTickLabels: [...document.querySelectorAll(".performance-chart:first-child .performance-chart-x-axis")].map(
+            (tick) => tick.textContent || "",
+          ),
+        };
+      });
+      await desktopPerformancePage.getByRole("button", { name: "3d", exact: true }).click();
+      longRangeState = await desktopPerformancePage.evaluate(() => {
+        const firstSvg = document.querySelector(".performance-chart-svg");
+        return {
+          activeRange: document
+            .querySelector(".performance-range-option[aria-pressed='true']")
+            ?.textContent?.trim(),
+          windowHours: firstSvg?.getAttribute("data-window-hours") || "",
+          xTickLabels: [...document.querySelectorAll(".performance-chart:first-child .performance-chart-x-axis")].map(
+            (tick) => tick.textContent || "",
+          ),
+        };
+      });
+      if (
+        shortRangeState.activeRange !== "30m" ||
+        shortRangeState.windowHours !== "0.5" ||
+        shortRangeState.xTickLabels.length < 4
+      ) {
+        throw new Error(`performance 30m time axis did not respond: ${JSON.stringify(shortRangeState)}`);
+      }
+      if (
+        longRangeState.activeRange !== "3d" ||
+        longRangeState.windowHours !== "72" ||
+        longRangeState.xTickLabels.length < 4 ||
+        longRangeState.xTickLabels.join("|") === shortRangeState.xTickLabels.join("|")
+      ) {
+        throw new Error(`performance 3d time axis did not respond: ${JSON.stringify(longRangeState)}`);
+      }
       await firstChart.scrollIntoViewIfNeeded();
       const box = await firstChart.boundingBox();
       if (!box) {
@@ -446,6 +561,9 @@ try {
           },
           speechTraining,
           performanceHover,
+          defaultRangeState,
+          shortRangeState,
+          longRangeState,
         },
         null,
         2,
