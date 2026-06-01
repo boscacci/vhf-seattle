@@ -72,6 +72,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "operatorLabelingLink" in app_js
     assert "operatorLabelingLink.hidden = !privateAppHost || operatorReviewEnabled;" in app_js
     assert ".operator-labeling-link" in styles_css
+    assert "\n[hidden] {\n  display: none !important;\n}" in styles_css
     assert 'const asrFeedbackStatusUrl = "/api/asr-feedback/status";' in app_js
     assert "privateAppHost" in app_js
     assert "tailnetDevHost" in app_js
