@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 
 from talkingboats.api import app, get_durable_event_store, get_settings, get_storage
+from talkingboats.asr_feedback import AsrFeedbackConfig, run_nightly_training
 from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import LiveChannel, Settings
 from talkingboats.durable_events import NullDurableEventStore
@@ -379,6 +380,84 @@ def test_operator_can_read_asr_feedback_status(tmp_path: Path, monkeypatch) -> N
         "generated_at": "2026-06-01T10:00:00Z",
     }
     assert "private" not in json.dumps(body)
+
+
+def test_asr_feedback_status_is_not_ready_when_labels_match_latest_training(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    output_dir = tmp_path / "asr-feedback"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    for index in range(2):
+        started_at = datetime(2026, 5, 20, 19, 12 + index, tzinfo=UTC)
+        key = f"raw/channel=14/date=2026-05-20/pan-pan-{index}.mp3"
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel="14").model_copy(
+                update={
+                    "started_at": started_at,
+                    "ended_at": started_at + timedelta(seconds=5),
+                    "idempotency_key": f"radio-event-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"PON PON all stations {index}",
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                )
+            ],
+        )
+        store.correct_transcript(
+            channel="14",
+            started_at=started_at.isoformat().replace("+00:00", "Z"),
+            corrected_transcript=f"PAN-PAN, all stations {index}.",
+            reviewer="rob",
+        )
+
+    class FakeReader:
+        def download(self, key: str, output_path: Path) -> None:
+            output_path.write_bytes(f"audio for {key}".encode())
+
+    def fake_trainer(
+        config: AsrFeedbackConfig,
+        run_dir: Path,
+        dataset_path: Path,
+    ) -> dict[str, str]:
+        model_dir = run_dir / "model-ct2"
+        model_dir.mkdir()
+        (model_dir / "model.bin").write_bytes(b"model")
+        return {"ct2_model_dir": str(model_dir)}
+
+    run_nightly_training(
+        AsrFeedbackConfig(
+            db_path=db_path,
+            output_dir=output_dir,
+            min_corrections=2,
+            restart_service=None,
+        ),
+        clip_reader=FakeReader(),
+        trainer=fake_trainer,
+        now=datetime(2026, 6, 1, 10, 0, tzinfo=UTC),
+    )
+    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(output_dir))
+    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_MIN_CORRECTIONS", "2")
+
+    response = client.get("/api/asr-feedback/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reviewed_correction_count"] == 2
+    assert body["min_corrections"] == 2
+    assert body["new_corrections_since_last_train"] is False
+    assert body["ready_for_training"] is False
 
 
 def test_recent_clips_skip_missing_playback_objects(tmp_path) -> None:

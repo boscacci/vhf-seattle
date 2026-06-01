@@ -249,6 +249,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "speech-training-panel" in app_js
     assert "renderSpeechTrainingPanel" in app_js
     assert "Reviewed corrections" in app_js
+    assert "trainingReadinessCaption" in app_js
+    assert "No new labels since last trained run" in app_js
     assert "Last ASR run" in app_js
     assert ".speech-training-panel" in styles_css
     assert ".speech-training-grid" in styles_css

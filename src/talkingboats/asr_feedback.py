@@ -256,6 +256,13 @@ def export_training_jsonl(db_path: Path, output_path: Path) -> dict[str, Any]:
     }
 
 
+def has_new_training_corrections(output_dir: Path, corrections: list[dict[str, object]]) -> bool:
+    if not corrections:
+        return False
+    correction_fingerprint = _correction_fingerprint(corrections)
+    return not _already_trained_fingerprint(_read_status(output_dir), correction_fingerprint)
+
+
 def _correction_store(db_path: Path, *, aws_region: str | None = None):
     if os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND", "sqlite") == "dynamodb":
         from talkingboats.dynamo_clip_store import dynamo_clip_store_from_env

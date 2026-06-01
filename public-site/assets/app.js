@@ -2106,6 +2106,8 @@ function renderSpeechTrainingPanel(payload) {
 
   const correctionCount = Number(payload.reviewed_correction_count || 0);
   const minCorrections = Number(payload.min_corrections || 20);
+  const hasEnoughCorrections = correctionCount >= minCorrections;
+  const hasNewCorrections = payload.new_corrections_since_last_train !== false;
   const ready = Boolean(payload.ready_for_training);
   const needed = Math.max(0, minCorrections - correctionCount);
   const trainingStatus = payload.training_status || null;
@@ -2113,7 +2115,7 @@ function renderSpeechTrainingPanel(payload) {
     performanceCard(
       "Reviewed corrections",
       `${correctionCount} / ${minCorrections}`,
-      ready ? "Ready for nightly training" : `${needed} more reviewed ${needed === 1 ? "clip" : "clips"} needed`,
+      trainingReadinessCaption({ ready, hasEnoughCorrections, hasNewCorrections, needed }),
       ready ? "ok" : "watch",
     ),
     performanceCard("Base ASR model", compactModelName(payload.base_model), "Whisper checkpoint", "ok"),
@@ -2126,6 +2128,16 @@ function renderSpeechTrainingPanel(payload) {
   );
   panel.append(title, cards);
   return panel;
+}
+
+function trainingReadinessCaption({ ready, hasEnoughCorrections, hasNewCorrections, needed }) {
+  if (ready) {
+    return "Ready for nightly training";
+  }
+  if (hasEnoughCorrections && !hasNewCorrections) {
+    return "No new labels since last trained run";
+  }
+  return `${needed} more reviewed ${needed === 1 ? "clip" : "clips"} needed`;
 }
 
 function trainingStatusCaption(status) {

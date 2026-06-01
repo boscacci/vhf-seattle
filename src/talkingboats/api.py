@@ -19,6 +19,7 @@ from talkingboats.asr_feedback import (
     DEFAULT_BASE_MODEL,
     DEFAULT_MIN_CORRECTIONS,
     DEFAULT_OUTPUT_DIR,
+    has_new_training_corrections,
 )
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
 from talkingboats.clip_search import (
@@ -412,16 +413,24 @@ async def asr_feedback_status(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="clip store unavailable",
         )
-    correction_count = len(clip_store.transcript_corrections_for_training())
+    corrections = clip_store.transcript_corrections_for_training()
+    correction_count = len(corrections)
     min_corrections = _env_positive_int(
         "TALKINGBOATS_ASR_FEEDBACK_MIN_CORRECTIONS",
         DEFAULT_MIN_CORRECTIONS,
     )
+    output_dir = FilePath(
+        os.getenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR))
+    )
+    new_corrections_since_last_train = has_new_training_corrections(output_dir, corrections)
     return {
         "status": "ok",
         "reviewed_correction_count": correction_count,
         "min_corrections": min_corrections,
-        "ready_for_training": correction_count >= min_corrections,
+        "new_corrections_since_last_train": new_corrections_since_last_train,
+        "ready_for_training": (
+            correction_count >= min_corrections and new_corrections_since_last_train
+        ),
         "base_model": os.getenv("TALKINGBOATS_ASR_FEEDBACK_BASE_MODEL", DEFAULT_BASE_MODEL),
         "nightly_schedule": "03:00 America/Los_Angeles",
         "export_url": "/api/clips/corrections/export",
