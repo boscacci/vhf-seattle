@@ -1099,7 +1099,14 @@ def main() -> None:
         compute_type=args.compute_type,
     )
 
-    _log_event("uploaded_clip_transcriber_start", db_path=str(args.db_path), bucket=args.bucket)
+    _log_event(
+        "uploaded_clip_transcriber_start",
+        **_transcriber_start_log_fields(
+            bucket=args.bucket,
+            db_path=args.db_path,
+            clip_store_backend=clip_store_backend,
+        ),
+    )
     audio_filter = None if args.no_audio_filter else (
         args.audio_filter or DEFAULT_SPEECH_AUDIO_FILTER
     )
@@ -1142,6 +1149,18 @@ def _row_to_record(row: tuple[Any, ...]) -> UploadedClipRecord:
 def _default_db_path() -> Path | None:
     value = os.getenv("TALKINGBOATS_CLIP_DB_PATH")
     return Path(value) if value else None
+
+
+def _transcriber_start_log_fields(
+    *,
+    bucket: str,
+    db_path: Path | None,
+    clip_store_backend: str,
+) -> dict[str, str]:
+    fields = {"bucket": bucket, "clip_store_backend": clip_store_backend}
+    if clip_store_backend != "dynamodb":
+        fields["db_path"] = str(db_path)
+    return fields
 
 
 def _audio_filter_for_record(

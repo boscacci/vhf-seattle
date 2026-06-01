@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from talkingboats.clip_transcriber import (
     ClipNotAvailable,
     UploadedClipStore,
+    _transcriber_start_log_fields,
     process_pending_uploads_once,
 )
 from talkingboats.schemas import ClipPresignRequest
@@ -123,6 +124,16 @@ def test_uploaded_clip_transcriber_can_trust_edge_preprocessed_mp3(tmp_path) -> 
     assert summary.transcribed == 1
     assert ffmpeg_calls == []
     assert FakeSpeechModel.last_path.endswith(".mp3")
+
+
+def test_dynamo_transcriber_start_log_does_not_report_sqlite_path(tmp_path) -> None:
+    fields = _transcriber_start_log_fields(
+        bucket="raw-audio",
+        db_path=tmp_path / "clips.sqlite3",
+        clip_store_backend="dynamodb",
+    )
+
+    assert fields == {"bucket": "raw-audio", "clip_store_backend": "dynamodb"}
 
 
 def test_uploaded_clip_transcriber_leaves_missing_objects_retryable(tmp_path) -> None:
