@@ -1053,6 +1053,16 @@ def test_proxy_performance_static_shell_hooks_are_dev_only() -> None:
     assert 'id="tab-performance" type="button" data-tab="performance" hidden' in index_response.text
 
 
+def test_proxy_static_shell_routes_include_search_tab() -> None:
+    app = create_app(ProxySettings())
+
+    response = _run(_asgi_get(app, "/search/"))
+
+    assert response.status_code == 200
+    assert 'id="tab-search" type="button" data-tab="search"' in response.text
+    assert "clip-search-form" in response.text
+
+
 def test_proxy_performance_disk_snapshot_collapses_duplicate_filesystems(
     tmp_path: Path, monkeypatch
 ) -> None:
