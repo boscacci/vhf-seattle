@@ -892,21 +892,7 @@ function renderClips(clips) {
     clipList.replaceChildren(empty);
     return;
   }
-  const cards = clips.map(renderClipCard);
-  const insertAfter = Math.min(6, cards.length);
-  clipList.replaceChildren(
-    ...cards.slice(0, insertAfter),
-    mobileClipDisplayControls(),
-    ...cards.slice(insertAfter),
-  );
-}
-
-function mobileClipDisplayControls() {
-  const controls = document.createElement("div");
-  controls.className = "clip-display-controls clip-display-controls-inline";
-  controls.setAttribute("aria-label", "Clip display options");
-  controls.replaceChildren(...renderClipDisplayControlSet());
-  return controls;
+  clipList.replaceChildren(...clips.map(renderClipCard));
 }
 
 function renderClipPagination(totalClips) {
