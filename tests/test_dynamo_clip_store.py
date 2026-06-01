@@ -156,3 +156,23 @@ class FakeDynamoTable:
 
     def scan(self):
         return {"Items": list(self.items.values())}
+
+    def batch_writer(self, **kwargs):
+        return FakeBatchWriter(self)
+
+
+class FakeBatchWriter:
+    def __init__(self, table: FakeDynamoTable) -> None:
+        self.table = table
+
+    def __enter__(self) -> FakeBatchWriter:
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def put_item(self, *, Item):
+        self.table.put_item(Item=Item)
+
+    def delete_item(self, *, Key):
+        self.table.delete_item(Key=Key)

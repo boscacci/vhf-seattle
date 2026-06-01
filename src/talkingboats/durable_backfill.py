@@ -15,8 +15,20 @@ from talkingboats.durable_events import (
     DynamoDurableEventStore,
     NullDurableEventStore,
     stable_event_id,
+    to_dynamodb_item,
 )
-from talkingboats.dynamo_clip_store import DynamoClipStoreConfig, DynamoUploadedClipStore
+from talkingboats.dynamo_clip_store import (
+    CLIP_STATE_SK,
+    CORRECTIONS_PK,
+    TRANSCRIBED_PK,
+    DynamoClipStoreConfig,
+    DynamoUploadedClipStore,
+    _channel_transcribed_pk,
+    _clip_pk,
+    _index_item,
+    _index_sk,
+    _status_pk,
+)
 from talkingboats.schemas import ClipPresignRequest
 
 
@@ -68,44 +80,26 @@ def backfill_clip_read_model(
     show_progress: bool = False,
 ) -> BackfillSummary:
     clips = _clip_rows(db_path, limit=limit)
-    read_model_count = 0
-    for index, clip in enumerate(clips, start=1):
-        _maybe_print_progress(index, len(clips), show_progress=show_progress)
-        key = str(clip["key"])
-        clip_store.record_presigned_upload(
-            key=key,
-            request=_clip_request_from_row(clip),
-        )
-        read_model_count += 1
-        status = str(clip["status"])
-        if status == "transcribed":
-            clip_store.mark_transcribed(
-                key,
-                [_segment_object(segment) for segment in _segment_rows(db_path, key=key)],
-            )
-            read_model_count += 2
-        elif status == "empty":
-            clip_store.mark_empty(key)
-            read_model_count += 1
-        elif status == "processing":
-            clip_store.mark_processing(key)
-            read_model_count += 1
-        elif status == "waiting_upload":
-            clip_store.mark_waiting_upload(key, str(clip["error"] or "waiting for upload"))
-            read_model_count += 1
-        elif status == "error":
-            clip_store.mark_failed(key, str(clip["error"] or "transcription failed"))
-            read_model_count += 1
+    segments_by_clip = _segment_rows_by_clip(db_path)
     corrections = _correction_rows(db_path, limit=limit)
-    for correction in corrections:
-        clip_store.correct_transcript(
-            channel=str(correction["channel"]),
-            started_at=str(correction["started_at"]),
-            corrected_transcript=str(correction["corrected_transcript"]),
-            reviewer=correction["reviewer"],
-            note=correction["note"],
-        )
-        read_model_count += 2
+    read_model_count = 0
+    state_by_key: dict[str, dict[str, object]] = {}
+    with clip_store.table.batch_writer(overwrite_by_pkeys=["pk", "sk"]) as batch:
+        for index, clip in enumerate(clips, start=1):
+            _maybe_print_progress(index, len(clips), show_progress=show_progress)
+            key = str(clip["key"])
+            state = _state_item_from_clip_row(clip, segments_by_clip.get(key, []))
+            state_by_key[key] = state
+            read_model_count += _batch_replace_clip_read_model(batch, state)
+        for correction in corrections:
+            key = str(correction["key"])
+            state = state_by_key.get(key)
+            if state is None:
+                raise LookupError(f"correction references clip outside read-model backfill: {key}")
+            _apply_correction_to_state(state, correction)
+            read_model_count += _batch_replace_clip_read_model(batch, state)
+            _batch_put_item(batch, _correction_item(correction))
+            read_model_count += 1
     if show_progress and clips:
         print(
             f"backfilled read model for {len(clips)} clips and {len(corrections)} corrections",
@@ -261,6 +255,30 @@ def _segment_rows(db_path: Path, *, key: str) -> list[dict[str, object]]:
     ]
 
 
+def _segment_rows_by_clip(db_path: Path) -> dict[str, list[dict[str, object]]]:
+    with _connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT clip_key, text, started_at, ended_at,
+                relative_start_seconds, relative_end_seconds
+            FROM uploaded_clip_segments
+            ORDER BY clip_key ASC, relative_start_seconds ASC, id ASC
+            """
+        ).fetchall()
+    segments: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        segments.setdefault(str(row["clip_key"]), []).append(
+            {
+                "text": row["text"],
+                "started_at": row["started_at"],
+                "ended_at": row["ended_at"],
+                "relative_start_seconds": row["relative_start_seconds"],
+                "relative_end_seconds": row["relative_end_seconds"],
+            }
+        )
+    return segments
+
+
 def _correction_rows(db_path: Path, *, limit: int | None) -> list[sqlite3.Row]:
     query = """
         SELECT
@@ -307,6 +325,102 @@ def _segment_object(row: dict[str, object]) -> SimpleNamespace:
         relative_start_seconds=row["relative_start_seconds"],
         relative_end_seconds=row["relative_end_seconds"],
     )
+
+
+def _state_item_from_clip_row(
+    row: sqlite3.Row,
+    segments: list[dict[str, object]],
+) -> dict[str, object]:
+    key = str(row["key"])
+    status = str(row["status"])
+    transcript = row["transcript"] if status == "transcribed" else None
+    if status == "empty":
+        transcript = ""
+    return {
+        "pk": _clip_pk(key),
+        "sk": CLIP_STATE_SK,
+        "entity_type": "clip_state",
+        "key": key,
+        "channel": row["channel"],
+        "started_at": row["started_at"],
+        "ended_at": row["ended_at"],
+        "duration_seconds": row["duration_seconds"],
+        "content_type": row["content_type"],
+        "idempotency_key": row["idempotency_key"],
+        "status": status,
+        "transcript": transcript,
+        "display_transcript": transcript,
+        "error": row["error"],
+        "transcript_reviewed": False,
+        "segments": segments if status == "transcribed" else [],
+        "segment_count": len(segments) if status == "transcribed" else 0,
+    }
+
+
+def _apply_correction_to_state(
+    state: dict[str, object],
+    correction: sqlite3.Row,
+) -> None:
+    corrected = " ".join(str(correction["corrected_transcript"]).split())
+    original = correction["original_transcript"] or state.get("transcript")
+    state.update(
+        {
+            "original_transcript": original,
+            "corrected_transcript": corrected,
+            "display_transcript": corrected,
+            "transcript_reviewed": True,
+            "reviewer": correction["reviewer"],
+            "note": correction["note"],
+        }
+    )
+
+
+def _batch_replace_clip_read_model(batch: object, state: dict[str, object]) -> int:
+    key = str(state["key"])
+    channel = str(state["channel"])
+    started_at = str(state["started_at"])
+    status = str(state["status"])
+    index_sk = _index_sk(started_at, key)
+
+    for indexed_status in ("pending", "processing", "waiting_upload", "error"):
+        if indexed_status != status:
+            batch.delete_item(Key={"pk": _status_pk(indexed_status), "sk": index_sk})
+    if status != "transcribed":
+        batch.delete_item(Key={"pk": TRANSCRIBED_PK, "sk": index_sk})
+        batch.delete_item(Key={"pk": _channel_transcribed_pk(channel), "sk": index_sk})
+
+    item_count = 1
+    _batch_put_item(batch, state)
+    if status in {"pending", "processing", "waiting_upload", "error"}:
+        _batch_put_item(batch, _index_item(_status_pk(status), state))
+        item_count += 1
+    if status == "transcribed":
+        _batch_put_item(batch, _index_item(TRANSCRIBED_PK, state))
+        _batch_put_item(batch, _index_item(_channel_transcribed_pk(channel), state))
+        item_count += 2
+    return item_count
+
+
+def _correction_item(correction: sqlite3.Row) -> dict[str, object]:
+    return {
+        "pk": CORRECTIONS_PK,
+        "sk": f"{correction['started_at']}#{correction['key']}",
+        "entity_type": "clip_correction",
+        "key": correction["key"],
+        "channel": correction["channel"],
+        "started_at": correction["started_at"],
+        "ended_at": correction["ended_at"],
+        "duration_seconds": correction["duration_seconds"],
+        "content_type": correction["content_type"],
+        "original_transcript": correction["original_transcript"],
+        "corrected_transcript": correction["corrected_transcript"],
+        "reviewer": correction["reviewer"],
+        "note": correction["note"],
+    }
+
+
+def _batch_put_item(batch: object, item: dict[str, object]) -> None:
+    batch.put_item(Item=to_dynamodb_item(item))
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
