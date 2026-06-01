@@ -471,6 +471,7 @@ button {
 }
 
 .clip-card,
+.clip-placeholder,
 .empty,
 .live-card {
   min-width: 0;
@@ -487,6 +488,70 @@ button {
   min-height: 0;
   margin: 0;
   padding: 12px 14px;
+}
+
+.clip-placeholder {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  overflow: hidden;
+}
+
+.clip-placeholder-meta {
+  display: flex;
+  gap: 6px;
+}
+
+.clip-placeholder-line {
+  display: block;
+  height: 14px;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.06),
+      rgba(49, 229, 204, 0.18),
+      rgba(255, 255, 255, 0.06)
+    );
+  background-size: 220% 100%;
+  animation: clip-placeholder-sheen 1.4s ease-in-out infinite;
+}
+
+.clip-placeholder-line.is-short {
+  width: 138px;
+  height: 24px;
+}
+
+.clip-placeholder-line.is-time {
+  width: 122px;
+  height: 24px;
+}
+
+.clip-placeholder-line.is-title {
+  width: min(78%, 420px);
+  height: 20px;
+}
+
+.clip-placeholder-line.is-transcript {
+  width: 100%;
+  height: 46px;
+  border-radius: 8px;
+}
+
+.clip-placeholder-line.is-audio {
+  width: min(420px, 100%);
+  height: 34px;
+  border-radius: 8px;
+}
+
+@keyframes clip-placeholder-sheen {
+  0% {
+    background-position: 120% 0;
+  }
+
+  100% {
+    background-position: -120% 0;
+  }
 }
 
 .clip-meta {

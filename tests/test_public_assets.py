@@ -7,6 +7,12 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert "limit=${selectedClipPageSize}" in app_js
+    assert "recentClipsCacheKeyPrefix" in app_js
+    assert "renderClipLoadingState" in app_js
+    assert "renderClipPlaceholders" in app_js
+    assert "loadCachedRecentClipPayload" in app_js
+    assert "storeRecentClipPayload" in app_js
+    assert ".clip-placeholder" in styles_css
     assert "channel-filter" in index_html
     assert '<select id="channel-filter"' not in index_html
     assert 'id="channel-filter" class="channel-filter channel-multiselect"' in index_html

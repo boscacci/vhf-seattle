@@ -8,6 +8,8 @@ import { chromium } from "playwright";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const publicSiteRoot = join(repoRoot, "public-site");
 const audioStartedAt = "2026-05-31T20:00:00Z";
+let holdRecentClipResponses = false;
+let releaseRecentClipResponses = [];
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -26,6 +28,11 @@ const server = createServer(async (request, response) => {
       return sendBytes(response, wavSilence(), "audio/wav");
     }
     if (url.pathname === "/api/clips/recent") {
+      if (holdRecentClipResponses) {
+        await new Promise((resolve) => {
+          releaseRecentClipResponses.push(resolve);
+        });
+      }
       return sendJson(response, recentClipPayload(url));
     }
     if (url.pathname === "/api/asr-feedback/status") {
@@ -55,6 +62,30 @@ try {
   });
   try {
     const page = await context.newPage();
+    holdRecentClipResponses = true;
+    await page.goto(`${baseUrl}/clips/`);
+    await page.locator("#clips .clip-placeholder").first().waitFor({ state: "visible", timeout: 10000 });
+    const lazyClipShell = await page.evaluate(() => ({
+      busy: document.querySelector("#clips")?.getAttribute("aria-busy"),
+      placeholderCount: document.querySelectorAll("#clips .clip-placeholder").length,
+      controlsText: document.querySelector("#clip-display-controls")?.textContent || "",
+      status: document.querySelector("#clip-status")?.textContent || "",
+    }));
+    if (lazyClipShell.busy !== "true") {
+      throw new Error(`recent clip list did not mark itself busy while lazy-loading: ${JSON.stringify(lazyClipShell)}`);
+    }
+    if (lazyClipShell.placeholderCount < 3) {
+      throw new Error(`recent clip lazy placeholders did not render: ${JSON.stringify(lazyClipShell)}`);
+    }
+    if (!lazyClipShell.controlsText.includes("Clips per page") || !lazyClipShell.controlsText.includes("48")) {
+      throw new Error(`recent clip controls were not available during lazy load: ${JSON.stringify(lazyClipShell)}`);
+    }
+    if (!lazyClipShell.status.includes("Loading recent clips")) {
+      throw new Error(`recent clip lazy status was not clear: ${JSON.stringify(lazyClipShell)}`);
+    }
+    holdRecentClipResponses = false;
+    releaseRecentClipResponses.splice(0).forEach((release) => release());
+    await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
     await page.goto(`${baseUrl}/analysis/`);
     await page.locator("#lexical-analysis audio").waitFor({ state: "visible", timeout: 10000 });
     const result = await page.evaluate(async () => {
@@ -252,6 +283,7 @@ try {
         {
           status: "ok",
           baseUrl,
+          lazyClipShell,
           ...result,
           clipControls: {
             beforeFlip: clipControlsBeforeFlip,
@@ -371,7 +403,13 @@ function lexicalPayload() {
 
 async function sendStatic(response, pathname) {
   let relativePath = decodeURIComponent(pathname);
-  if (relativePath === "/" || relativePath === "/analysis/" || relativePath === "/analysis") {
+  if (
+    relativePath === "/" ||
+    relativePath === "/clips/" ||
+    relativePath === "/clips" ||
+    relativePath === "/analysis/" ||
+    relativePath === "/analysis"
+  ) {
     relativePath = "/index.html";
   }
   const safePath = normalize(relativePath).replace(/^(\.\.[/\\])+/, "");

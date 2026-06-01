@@ -14,6 +14,9 @@ const liveChannelsUrl = "/api/live/channels";
 const liveQueueUrl = "/api/clips/recent?limit=24";
 const defaultLiveStreamUrl = "/api/live/current.mp3";
 const systemMediaControlsStorageKey = "talkingboats.systemMediaControls";
+const recentClipsCacheKeyPrefix = "talkingboats.recentClipsCache.v1";
+const recentClipsCacheMaxAgeMs = 5 * 60 * 1000;
+const recentClipPlaceholderLimit = 6;
 const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();
 const unknownPlaybackTimeLabel = "—";
 const everythingLiveChannel = "everything";
@@ -222,6 +225,7 @@ let clipSortDirection = "newest";
 let currentClipPayload = null;
 let currentPageClips = [];
 let currentFilteredTotal = 0;
+let clipRequestSequence = 0;
 let clipStatsTimer = null;
 let clipStatsAbortController = null;
 let lastRenderedClipTotal = null;
@@ -462,15 +466,35 @@ liveAudio.addEventListener("ended", () => {
 });
 
 async function loadAndRender() {
-  clipStatus.textContent = "Loading clips...";
-  const payload = await loadClipPayload();
+  const requestId = ++clipRequestSequence;
+  const requestUrl = clipRequestUrl();
+  const cachedPayload = loadCachedRecentClipPayload(requestUrl);
+  if (cachedPayload) {
+    currentClipPayload = cachedPayload;
+    renderSite(cachedPayload);
+    clipList.setAttribute("aria-busy", "true");
+    clipStatus.textContent = `${clipStatus.textContent} · refreshing`;
+  } else if (!currentClipPayload || !currentPageClips.length) {
+    renderClipLoadingState();
+  } else {
+    renderClipDisplayControls();
+    clipList.setAttribute("aria-busy", "true");
+    clipStatus.textContent = "Refreshing clips...";
+  }
+  const payload = await loadClipPayload(requestUrl);
+  if (requestId !== clipRequestSequence) {
+    return;
+  }
   currentClipPayload = payload;
   renderSite(payload);
+  if (payload.source === "live") {
+    storeRecentClipPayload(requestUrl, payload);
+  }
 }
 
-async function loadClipPayload() {
+async function loadClipPayload(requestUrl = clipRequestUrl()) {
   try {
-    const response = await fetch(clipRequestUrl(), { cache: "no-store" });
+    const response = await fetch(requestUrl, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`live clip HTTP ${response.status}`);
     }
@@ -479,6 +503,120 @@ async function loadClipPayload() {
   } catch {
     return loadPublishedManifest();
   }
+}
+
+function renderClipLoadingState() {
+  renderClipDisplayControls();
+  if (clipPagination) {
+    clipPagination.hidden = true;
+    clipPagination.replaceChildren();
+  }
+  clipList.setAttribute("aria-busy", "true");
+  clipList.replaceChildren(...renderClipPlaceholders());
+  clipStatus.textContent = "Loading recent clips...";
+}
+
+function renderClipPlaceholders() {
+  const placeholderCount = Math.max(3, Math.min(selectedClipPageSize, recentClipPlaceholderLimit));
+  return Array.from({ length: placeholderCount }, (_value, index) => {
+    const placeholder = document.createElement("article");
+    placeholder.className = "clip-placeholder";
+    placeholder.setAttribute("aria-hidden", "true");
+    placeholder.dataset.placeholderIndex = String(index + 1);
+    const meta = document.createElement("div");
+    meta.className = "clip-placeholder-meta";
+    meta.append(clipPlaceholderLine("short"), clipPlaceholderLine("time"));
+    const title = clipPlaceholderLine("title");
+    const transcript = clipPlaceholderLine("transcript");
+    const audio = clipPlaceholderLine("audio");
+    placeholder.append(meta, title, transcript, audio);
+    return placeholder;
+  });
+}
+
+function clipPlaceholderLine(kind) {
+  const line = document.createElement("span");
+  line.className = `clip-placeholder-line is-${kind}`;
+  return line;
+}
+
+function loadCachedRecentClipPayload(requestUrl) {
+  try {
+    const raw = window.localStorage.getItem(recentClipsCacheKey(requestUrl));
+    if (!raw) {
+      return null;
+    }
+    const cached = JSON.parse(raw);
+    const cachedAtMs = Number(cached.cached_at_ms || 0);
+    if (!cachedAtMs || Date.now() - cachedAtMs > recentClipsCacheMaxAgeMs) {
+      window.localStorage.removeItem(recentClipsCacheKey(requestUrl));
+      return null;
+    }
+    if (cached.request_url !== requestUrl || !cached.payload) {
+      return null;
+    }
+    return normalizeCachedRecentClipPayload(cached.payload);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCachedRecentClipPayload(payload) {
+  const clips = Array.isArray(payload.clips) ? payload.clips : [];
+  if (!clips.length) {
+    return null;
+  }
+  return {
+    source: "live",
+    site: fallbackManifest.site,
+    stats: payload.stats || {},
+    generated_at: payload.generated_at || null,
+    clips: clips.map((clip) => ({
+      id: clip.id || `${clip.channel}-${clip.started_at}`,
+      public_title: clip.public_title || titleForClip(clip),
+      channel: clip.channel || "?",
+      channel_label: clip.channel_label || "",
+      started_at: clip.started_at,
+      ended_at: clip.ended_at,
+      duration_seconds: clip.duration_seconds,
+      transcript_public: clip.transcript_public || clip.transcript || "",
+      transcript_reviewed: Boolean(clip.transcript_reviewed),
+      audio_public_filename: clip.audio_public_filename || "",
+    })),
+  };
+}
+
+function storeRecentClipPayload(requestUrl, payload) {
+  try {
+    const cachePayload = {
+      ...payload,
+      clips: (payload.clips || []).map(cacheableRecentClip),
+    };
+    window.localStorage.setItem(
+      recentClipsCacheKey(requestUrl),
+      JSON.stringify({
+        cached_at_ms: Date.now(),
+        request_url: requestUrl,
+        payload: cachePayload,
+      }),
+    );
+  } catch {
+    // Some private browsing modes and constrained webviews reject localStorage writes.
+  }
+}
+
+function cacheableRecentClip(clip) {
+  const {
+    playback_url: _playbackUrl,
+    playback_expires_in_seconds: _playbackExpiresInSeconds,
+    playback_issued_at_ms: _playbackIssuedAtMs,
+    ...cacheableClip
+  } = clip;
+  return cacheableClip;
+}
+
+function recentClipsCacheKey(requestUrl) {
+  return `${recentClipsCacheKeyPrefix}:${requestUrl}`;
 }
 
 function startClipStatsPolling() {
@@ -997,6 +1135,7 @@ function clipOffset() {
 }
 
 function renderClips(clips) {
+  clipList.setAttribute("aria-busy", "false");
   if (!clips.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
