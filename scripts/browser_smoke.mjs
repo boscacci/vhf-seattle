@@ -271,7 +271,7 @@ try {
     if (!initialPagination.buttons.some((button) => button.text === "1" && button.current === "page")) {
       throw new Error(`pagination current page button missing: ${JSON.stringify(initialPagination)}`);
     }
-    if (initialPagination.buttons.some((button) => button.text === "12")) {
+    if (initialPagination.buttons.some((button) => button.text === "24")) {
       throw new Error(`pagination kept a redundant last-page anchor: ${JSON.stringify(initialPagination)}`);
     }
     if (initialPagination.ellipsisCount < 1) {
@@ -335,7 +335,7 @@ try {
     await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
     await page.locator("#clip-pagination").getByRole("button", { name: "Oldest page" }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 67"));
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 139"));
     const oldestPagePagination = await page.evaluate(() => ({
       firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
       activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
@@ -344,10 +344,10 @@ try {
         button.textContent?.trim(),
       ),
     }));
-    if (oldestPagePagination.activePage !== "12") {
+    if (oldestPagePagination.activePage !== "24") {
       throw new Error(`pagination oldest jump did not land on last page: ${JSON.stringify(oldestPagePagination)}`);
     }
-    if (oldestPagePagination.numberedButtons.join(",") !== "8,9,10,11,12") {
+    if (oldestPagePagination.numberedButtons.join(",") !== "20,21,22,23,24") {
       throw new Error(`pagination oldest window should show five nearby pages only: ${JSON.stringify(oldestPagePagination)}`);
     }
     await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
@@ -373,6 +373,43 @@ try {
         pageSizeButtons: [...headerControls.querySelectorAll(".clip-control-group:first-child button")].length,
       };
     });
+    if (!clipControlsBeforeFlip.pageStatus.includes("Page 1 of 3")) {
+      throw new Error(`48-per-page did not recalculate total pages: ${JSON.stringify(clipControlsBeforeFlip)}`);
+    }
+    await page.locator("#clip-pagination").getByRole("button", { name: "Next", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 49"));
+    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
+    const fortyEightNextPage = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      renderedClips: document.querySelectorAll("#clips .clip-card").length,
+      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
+      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+    }));
+    if (
+      fortyEightNextPage.renderedClips !== 48 ||
+      fortyEightNextPage.activePage !== "2" ||
+      !fortyEightNextPage.pageStatus.includes("Page 2 of 3") ||
+      !fortyEightNextPage.firstTranscript.includes("Smoke clip 49")
+    ) {
+      throw new Error(`48-per-page next did not load the second full page: ${JSON.stringify(fortyEightNextPage)}`);
+    }
+    await page.locator("#clip-pagination").getByRole("button", { name: "Previous", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
+    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
+    const fortyEightPreviousPage = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      renderedClips: document.querySelectorAll("#clips .clip-card").length,
+      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
+      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+    }));
+    if (
+      fortyEightPreviousPage.renderedClips !== 48 ||
+      fortyEightPreviousPage.activePage !== "1" ||
+      !fortyEightPreviousPage.pageStatus.includes("Page 1 of 3") ||
+      !fortyEightPreviousPage.firstTranscript.includes("Smoke clip 1")
+    ) {
+      throw new Error(`48-per-page previous did not return to the first full page: ${JSON.stringify(fortyEightPreviousPage)}`);
+    }
     await page.locator("#clip-display-controls").getByRole("button", { name: "Oldest", exact: true }).click();
     await page.waitForFunction(
       () =>
@@ -621,7 +658,7 @@ try {
 function recentClipPayload(url) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 6), 1), 100);
   const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
-  const total = 72;
+  const total = 144;
   return {
     clips: Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_value, index) =>
       recentClip(offset + index),

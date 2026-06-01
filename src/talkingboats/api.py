@@ -238,40 +238,15 @@ async def recent_clips(
             "channel_counts": channel_counts,
             "channel_labels": public_monitored_channel_labels(channel_counts),
         }
-    clips = []
-    for clip in clip_store.recent_transcribed(
+    clips = _recent_playable_clip_page(
+        settings=settings,
+        storage=storage,
+        clip_store=clip_store,
         limit=limit,
         offset=offset,
         channel=channel if not channels else None,
         channels=selected_channels,
-        excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
-    ):
-        try:
-            if not storage.playback_exists(clip.key):
-                continue
-            playback_url = storage.presign_playback(clip.key)
-        except RuntimeError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=str(exc),
-            ) from exc
-        except ValueError:
-            continue
-        clips.append(
-            {
-                "channel": clip.channel,
-                "channel_label": channel_label(clip.channel),
-                "started_at": clip.started_at,
-                "ended_at": clip.ended_at,
-                "duration_seconds": clip.duration_seconds,
-                "content_type": clip.content_type,
-                "transcript": clip.transcript,
-                "transcript_reviewed": clip.transcript_reviewed,
-                "segments": clip.segments,
-                "playback_url": playback_url,
-                "playback_expires_in_seconds": settings.playback_presign_seconds,
-            }
-        )
+    )
     return {
         "clips": clips,
         "clip_count": clip_count,
@@ -281,6 +256,69 @@ async def recent_clips(
         "channel_counts": channel_counts,
         "channel_labels": public_monitored_channel_labels(channel_counts),
     }
+
+
+def _recent_playable_clip_page(
+    *,
+    settings: Settings,
+    storage: S3AudioStorage,
+    clip_store: UploadedClipStore,
+    limit: int,
+    offset: int,
+    channel: str | None,
+    channels: list[str],
+) -> list[dict[str, object]]:
+    clips: list[dict[str, object]] = []
+    playable_seen = 0
+    candidate_offset = 0
+    batch_size = max(limit, 50)
+    while len(clips) < limit:
+        candidates = clip_store.recent_transcribed(
+            limit=batch_size,
+            offset=candidate_offset,
+            channel=channel,
+            channels=channels,
+            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+        )
+        if not candidates:
+            break
+        for clip in candidates:
+            try:
+                if not storage.playback_exists(clip.key):
+                    continue
+                playback_url = storage.presign_playback(clip.key)
+            except RuntimeError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=str(exc),
+                ) from exc
+            except ValueError:
+                continue
+            if playable_seen < offset:
+                playable_seen += 1
+                continue
+            clips.append(
+                {
+                    "channel": clip.channel,
+                    "channel_label": channel_label(clip.channel),
+                    "started_at": clip.started_at,
+                    "ended_at": clip.ended_at,
+                    "duration_seconds": clip.duration_seconds,
+                    "content_type": clip.content_type,
+                    "transcript": clip.transcript,
+                    "transcript_reviewed": clip.transcript_reviewed,
+                    "segments": clip.segments,
+                    "playback_url": playback_url,
+                    "playback_expires_in_seconds": settings.playback_presign_seconds,
+                }
+            )
+            playable_seen += 1
+            if len(clips) >= limit:
+                break
+        candidate_offset += len(candidates)
+        if len(candidates) < batch_size:
+            break
+    return clips
 
 
 @app.get(

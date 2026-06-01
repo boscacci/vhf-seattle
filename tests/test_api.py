@@ -503,6 +503,53 @@ def test_recent_clips_skip_missing_playback_objects(tmp_path) -> None:
     assert playable_key not in response.text
 
 
+def test_recent_clips_pages_over_playable_clips_without_short_or_overlapping_pages(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    missing_key = "raw/channel=68/date=2026-05-20/fake-1.mp3"
+    client = _client(
+        clip_db_path=db_path,
+        storage=FakeStorage(missing_playback_keys={missing_key}),
+    )
+    store = UploadedClipStore(db_path)
+    for index in range(7):
+        started_at = datetime(2026, 5, 20, 19, index, tzinfo=UTC)
+        key = f"raw/channel=68/date=2026-05-20/fake-{index}.mp3"
+        request = _clip_presign(channel="68").model_copy(
+            update={
+                "started_at": started_at,
+                "ended_at": started_at + timedelta(seconds=5),
+                "idempotency_key": f"radio-event-page-{index}",
+            }
+        )
+        store.record_presigned_upload(key=key, request=request)
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"Playable page clip {index}",
+                    started_at=f"2026-05-20T19:{index:02d}:00Z",
+                    ended_at=f"2026-05-20T19:{index:02d}:04Z",
+                )
+            ],
+        )
+
+    page_1 = client.get("/api/clips/recent?limit=3&offset=0&channel=68")
+    page_2 = client.get("/api/clips/recent?limit=3&offset=3&channel=68")
+
+    assert page_1.status_code == 200
+    assert page_2.status_code == 200
+    assert [clip["transcript"] for clip in page_1.json()["clips"]] == [
+        "Playable page clip 6",
+        "Playable page clip 5",
+        "Playable page clip 4",
+    ]
+    assert [clip["transcript"] for clip in page_2.json()["clips"]] == [
+        "Playable page clip 3",
+        "Playable page clip 2",
+        "Playable page clip 0",
+    ]
+
+
 def test_public_clip_playback_url_can_be_refreshed_without_exposing_key(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     client = _client(clip_db_path=db_path)
