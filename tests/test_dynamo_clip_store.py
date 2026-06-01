@@ -89,6 +89,34 @@ def test_backfill_clip_read_model_replays_sqlite_into_dynamo(tmp_path: Path) -> 
     assert dynamo_store.recent_transcribed(limit=5)[0].transcript == "Seattle Traffic roger"
 
 
+def test_dynamo_clip_store_paginates_counts_and_stats() -> None:
+    table = FakeDynamoTable(page_size=2)
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    for index in range(3):
+        key = f"raw/channel=14/date=2026-06-01/example-{index}.mp3"
+        store.record_presigned_upload(key=key, request=_request(channel="14"))
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Seattle Traffic {index}",
+                    started_at=f"2026-06-01T12:00:0{index}Z",
+                    ended_at=f"2026-06-01T12:00:0{index + 1}Z",
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+
+    assert store.transcribed_channel_counts() == {"14": 3}
+    stats = store.stats()
+    assert stats["counts"] == {"transcribed": 3}
+    assert len(stats["recent"]) == 3
+
+
 def _request(*, channel: str) -> ClipPresignRequest:
     return ClipPresignRequest(
         channel=channel,
@@ -125,8 +153,9 @@ class CapturingEventStore:
 
 
 class FakeDynamoTable:
-    def __init__(self) -> None:
+    def __init__(self, *, page_size: int | None = None) -> None:
         self.items: dict[tuple[str, str], dict[str, object]] = {}
+        self.page_size = page_size
 
     def put_item(self, *, Item, **kwargs):
         self.items[(Item["pk"], Item["sk"])] = Item
@@ -148,17 +177,44 @@ class FakeDynamoTable:
             if item_pk == pk and (sk_prefix is None or item_sk.startswith(sk_prefix))
         ]
         rows.sort(key=lambda item: item["sk"], reverse=not kwargs.get("ScanIndexForward", True))
+        rows = self._after_exclusive_start(rows, kwargs.get("ExclusiveStartKey"))
+        page_limit = kwargs.get("Limit")
+        if self.page_size is not None:
+            page_limit = min(int(page_limit), self.page_size) if page_limit else self.page_size
+        page_rows = rows[: int(page_limit)] if page_limit is not None else rows
+        response = {}
+        if len(page_rows) < len(rows) and page_rows:
+            response["LastEvaluatedKey"] = {
+                "pk": page_rows[-1]["pk"],
+                "sk": page_rows[-1]["sk"],
+            }
         if kwargs.get("Select") == "COUNT":
-            return {"Count": len(rows)}
-        if kwargs.get("Limit") is not None:
-            rows = rows[: int(kwargs["Limit"])]
-        return {"Items": rows}
+            return {"Count": len(page_rows), **response}
+        return {"Items": page_rows, **response}
 
-    def scan(self):
-        return {"Items": list(self.items.values())}
+    def scan(self, **kwargs):
+        rows = list(self.items.values())
+        rows.sort(key=lambda item: (item["pk"], item["sk"]))
+        rows = self._after_exclusive_start(rows, kwargs.get("ExclusiveStartKey"))
+        page_rows = rows[: self.page_size] if self.page_size is not None else rows
+        response = {}
+        if len(page_rows) < len(rows) and page_rows:
+            response["LastEvaluatedKey"] = {
+                "pk": page_rows[-1]["pk"],
+                "sk": page_rows[-1]["sk"],
+            }
+        return {"Items": page_rows, **response}
 
     def batch_writer(self, **kwargs):
         return FakeBatchWriter(self)
+
+    def _after_exclusive_start(self, rows, exclusive_start_key):
+        if not exclusive_start_key:
+            return rows
+        for index, item in enumerate(rows):
+            if item["pk"] == exclusive_start_key["pk"] and item["sk"] == exclusive_start_key["sk"]:
+                return rows[index + 1 :]
+        return rows
 
 
 class FakeBatchWriter:

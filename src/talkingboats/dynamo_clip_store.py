@@ -466,16 +466,43 @@ class DynamoUploadedClipStore:
         }
         if limit is not None:
             kwargs["Limit"] = limit
-        response = self.table.query(**kwargs)
-        return [_from_dynamodb_item(item) for item in response.get("Items", [])]
+        items: list[dict[str, Any]] = []
+        remaining = limit
+        start_key: dict[str, Any] | None = None
+        while True:
+            page_kwargs = dict(kwargs)
+            if start_key is not None:
+                page_kwargs["ExclusiveStartKey"] = start_key
+            if remaining is not None:
+                page_kwargs["Limit"] = remaining
+            response = self.table.query(**page_kwargs)
+            items.extend(_from_dynamodb_item(item) for item in response.get("Items", []))
+            if limit is not None:
+                remaining = limit - len(items)
+                if remaining <= 0:
+                    break
+            start_key = response.get("LastEvaluatedKey")
+            if not start_key:
+                break
+        return items[:limit] if limit is not None else items
 
     def _query_count(self, pk: str) -> int:
-        response = self.table.query(
-            KeyConditionExpression="pk = :pk",
-            ExpressionAttributeValues={":pk": pk},
-            Select="COUNT",
-        )
-        return int(response.get("Count", 0))
+        total = 0
+        start_key: dict[str, Any] | None = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "KeyConditionExpression": "pk = :pk",
+                "ExpressionAttributeValues": {":pk": pk},
+                "Select": "COUNT",
+            }
+            if start_key is not None:
+                kwargs["ExclusiveStartKey"] = start_key
+            response = self.table.query(**kwargs)
+            total += int(response.get("Count", 0))
+            start_key = response.get("LastEvaluatedKey")
+            if not start_key:
+                break
+        return total
 
     def _query_filtered_transcribed(
         self,
@@ -493,8 +520,18 @@ class DynamoUploadedClipStore:
         return filtered[offset : offset + limit]
 
     def _scan_items(self) -> list[dict[str, Any]]:
-        response = self.table.scan()
-        return [_from_dynamodb_item(item) for item in response.get("Items", [])]
+        items: list[dict[str, Any]] = []
+        start_key: dict[str, Any] | None = None
+        while True:
+            kwargs: dict[str, Any] = {}
+            if start_key is not None:
+                kwargs["ExclusiveStartKey"] = start_key
+            response = self.table.scan(**kwargs)
+            items.extend(_from_dynamodb_item(item) for item in response.get("Items", []))
+            start_key = response.get("LastEvaluatedKey")
+            if not start_key:
+                break
+        return items
 
     def _put_item(self, item: dict[str, Any]) -> None:
         self.table.put_item(Item=to_dynamodb_item(item))
