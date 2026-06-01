@@ -8,7 +8,8 @@ def test_repo_has_one_shared_browser_ui_root() -> None:
     assert not Path("private-ui").exists()
     assert "/api/clips/recent" in app_js
     assert "/api/live/current.mp3" in app_js
-    assert "/api/operator/session" in app_js
+    assert "/api/operator/session" not in app_js
+    assert "privateAppHost" in app_js
     assert 'window.location.pathname.startsWith("/operator")' in app_js
     assert "Fix transcript" in app_js
     assert "/api/live/{channel}/stream" not in app_js

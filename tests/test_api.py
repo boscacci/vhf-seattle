@@ -113,10 +113,7 @@ def test_operator_can_read_ingest_clip_stats_when_db_configured(tmp_path) -> Non
         json=_clip_request(),
     )
 
-    response = client.get(
-        "/api/ingest/clips/stats",
-        headers={"X-TalkingBoats-Operator-Token": "operator-token"},
-    )
+    response = client.get("/api/ingest/clips/stats")
 
     assert response.status_code == 200
     body = response.json()
@@ -178,17 +175,8 @@ def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
         ],
     )
 
-    unauthenticated = client.post(
-        "/api/clips/corrections",
-        json={
-            "channel": "14",
-            "started_at": "2026-05-20T19:12:00Z",
-            "transcript": "PAN-PAN, all stations.",
-        },
-    )
     response = client.post(
         "/api/clips/corrections",
-        headers={"X-TalkingBoats-Operator-Token": "operator-token"},
         json={
             "channel": "14",
             "started_at": "2026-05-20T19:12:00Z",
@@ -199,7 +187,6 @@ def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
     )
     recent = client.get("/api/clips/recent?limit=1&channel=14")
 
-    assert unauthenticated.status_code == 401
     assert response.status_code == 200
     assert response.json() == {
         "status": "corrected",
@@ -240,13 +227,8 @@ def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) 
         note="urgency signal",
     )
 
-    unauthenticated = client.get("/api/clips/corrections/export")
-    response = client.get(
-        "/api/clips/corrections/export",
-        headers={"X-TalkingBoats-Operator-Token": "operator-token"},
-    )
+    response = client.get("/api/clips/corrections/export")
 
-    assert unauthenticated.status_code == 401
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
     records = [json.loads(line) for line in response.text.splitlines()]
@@ -650,10 +632,7 @@ def test_public_lexical_analysis_returns_cached_payload_without_private_fields(t
 def test_operator_live_channels_do_not_expose_upstream_urls() -> None:
     client = _client()
 
-    response = client.get(
-        "/api/live/channels",
-        headers={"X-TalkingBoats-Operator-Token": "operator-token"},
-    )
+    response = client.get("/api/live/channels")
 
     assert response.status_code == 200
     rendered = response.text
@@ -662,28 +641,20 @@ def test_operator_live_channels_do_not_expose_upstream_urls() -> None:
     assert response.json()["channels"][0]["enabled"] is True
 
 
-def test_operator_session_cookie_can_auth_live_channels() -> None:
+def test_operator_session_endpoint_is_not_exposed() -> None:
     client = _client()
 
-    session_response = client.post(
-        "/api/operator/session",
-        headers={"X-TalkingBoats-Operator-Token": "operator-token"},
-    )
+    session_response = client.post("/api/operator/session")
     channels_response = client.get("/api/live/channels")
 
-    assert session_response.status_code == 200
-    assert "talkingboats_operator_token" in session_response.headers["set-cookie"]
+    assert session_response.status_code == 404
     assert channels_response.status_code == 200
 
 
 def test_playback_presign_rejects_public_prefix() -> None:
     client = _client()
 
-    response = client.post(
-        "/api/clips/playback-url",
-        headers={"X-TalkingBoats-Operator-Token": "operator-token"},
-        json={"key": "public/file.mp3"},
-    )
+    response = client.post("/api/clips/playback-url", json={"key": "public/file.mp3"})
 
     assert response.status_code == 400
 
@@ -723,7 +694,6 @@ def _client(
             aws_region="us-west-2",
             raw_bucket="raw-bucket",
             public_bucket="public-bucket",
-            operator_token="operator-token",
             ingest_token="ingest-token",
             raw_presign_seconds=900,
             playback_presign_seconds=300,

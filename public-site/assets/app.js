@@ -3,7 +3,6 @@ const clipPageSizeOptions = [6, 12, 24, 48];
 const clipPlaybackUrl = "/api/clips/playback";
 const clipAudioUrl = "/api/clips/audio";
 const clipCorrectionsUrl = "/api/clips/corrections";
-const operatorSessionUrl = "/api/operator/session";
 const manifestUrl = "/public_manifest.json";
 const lexicalAnalysisUrl = "/api/analysis/lexical";
 const lexicalManifestUrl = "/analysis/lexical.json";
@@ -18,7 +17,13 @@ const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();
 const unknownPlaybackTimeLabel = "—";
 const everythingLiveChannel = "everything";
 const everythingInitialQueueLimit = 3;
-const liveDspProfile = window.location.hostname === "vhf-dev.robertboscacci.com" ? "warm_voice" : "";
+const trafficChannelIds = new Set(["14"]);
+const tailnetHostSuffix = ".tailbea63b.ts.net";
+const tailnetDevHost = window.location.hostname === "vhf-dev.robertboscacci.com";
+const localAppHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
+const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
+const privateAppHost = localAppHost || tailnetAppHost || tailnetDevHost;
+const liveDspProfile = privateAppHost ? "warm_voice" : "";
 const languageDashboardEnabled = [
   "vhf.robertboscacci.com",
   "vhf-dev.robertboscacci.com",
@@ -29,15 +34,12 @@ const languageDashboardEnabled = [
   window.location.hostname,
 );
 const liveLanguageAnalysisEnabled = window.location.hostname !== "vhf.robertboscacci.com";
-const performanceDashboardEnabled = ["vhf-dev.robertboscacci.com", "localhost", "127.0.0.1", ""].includes(
-  window.location.hostname,
-);
+const performanceDashboardEnabled = privateAppHost;
 const aisDashboardEnabled = !["vhf.robertboscacci.com"].includes(
   window.location.hostname,
 );
 const operatorReviewEnabled =
-  window.location.pathname.startsWith("/operator") ||
-  ["vhf-dev.robertboscacci.com", "localhost", "127.0.0.1", ""].includes(window.location.hostname);
+  window.location.pathname.startsWith("/operator") && privateAppHost;
 const tabRouteSegments = {
   clips: "clips",
   live: "live",
@@ -338,7 +340,11 @@ channelFilter.addEventListener("click", (event) => {
   if (!action || !channelFilter.contains(action)) {
     return;
   }
-  selectedChannels.clear();
+  if (action.dataset.preset === "all-but-traffic") {
+    selectAllButTrafficChannels(action.dataset.channels || "");
+  } else {
+    selectedChannels.clear();
+  }
   selectedClipPage = 1;
   loadAndRender();
 });
@@ -664,6 +670,7 @@ function renderChannelFilter(payload) {
   const allAction = document.createElement("button");
   allAction.type = "button";
   allAction.className = "channel-filter-action";
+  allAction.dataset.preset = "all";
   allAction.setAttribute("aria-pressed", String(selectedChannels.size === 0));
   const allName = document.createElement("span");
   allName.className = "channel-filter-name";
@@ -673,10 +680,32 @@ function renderChannelFilter(payload) {
   allDetail.textContent = channelClipCountText(totalAvailableClipsFromCounts(channelCounts));
   allAction.append(allName, allDetail);
 
+  const nonTrafficChannels = channels.filter((channel) => !trafficChannelIds.has(channel));
+  const allButTrafficAction = document.createElement("button");
+  allButTrafficAction.type = "button";
+  allButTrafficAction.className = "channel-filter-action";
+  allButTrafficAction.dataset.preset = "all-but-traffic";
+  allButTrafficAction.dataset.channels = nonTrafficChannels.join(",");
+  allButTrafficAction.setAttribute(
+    "aria-pressed",
+    String(channelSetMatches(selectedChannels, nonTrafficChannels)),
+  );
+  const allButTrafficName = document.createElement("span");
+  allButTrafficName.className = "channel-filter-name";
+  allButTrafficName.textContent = "All but traffic";
+  const allButTrafficDetail = document.createElement("span");
+  allButTrafficDetail.className = "channel-filter-detail";
+  const allButTrafficCount = nonTrafficChannels.reduce(
+    (total, channel) => total + Number(channelCounts[channel] || 0),
+    0,
+  );
+  allButTrafficDetail.textContent = channelClipCountText(allButTrafficCount);
+  allButTrafficAction.append(allButTrafficName, allButTrafficDetail);
+
   const options = document.createElement("div");
   options.className = "channel-filter-options";
   options.replaceChildren(...channels.map((channel) => channelFilterOption(channel, channelCounts[channel])));
-  panel.append(allAction, options);
+  panel.append(allAction, allButTrafficAction, options);
   menu.append(trigger, panel);
   channelFilter.replaceChildren(menu);
 }
@@ -798,6 +827,22 @@ function channelFilterOption(channel, count) {
 function channelFilterDetail(channel) {
   const label = currentChannelLabels[channel] || defaultChannelLabels[channel] || "Unlabeled";
   return label;
+}
+
+function selectAllButTrafficChannels(rawChannels) {
+  selectedChannels.clear();
+  for (const channel of rawChannels.split(",")) {
+    if (channel && !trafficChannelIds.has(channel)) {
+      selectedChannels.add(channel);
+    }
+  }
+}
+
+function channelSetMatches(selected, channels) {
+  if (selected.size !== channels.length) {
+    return false;
+  }
+  return channels.every((channel) => selected.has(channel));
 }
 
 function formatChannelFilterSummary(channelCounts) {
@@ -997,11 +1042,12 @@ async function saveTranscriptCorrection(clip, transcript, controls) {
   save.disabled = true;
   status.textContent = "Saving...";
   try {
-    let response = await postTranscriptCorrection(clip, corrected);
-    if (response.status === 401 && (await ensureOperatorSession(status))) {
-      response = await postTranscriptCorrection(clip, corrected);
-    }
+    const response = await postTranscriptCorrection(clip, corrected);
     if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        status.textContent = "Open the operator page over Tailscale to save corrections.";
+        return;
+      }
       throw new Error(`correction HTTP ${response.status}`);
     }
     const body = await response.json();
@@ -1031,25 +1077,6 @@ function postTranscriptCorrection(clip, transcript) {
       reviewer: "operator-ui",
     }),
   });
-}
-
-async function ensureOperatorSession(status) {
-  const token = window.prompt("Operator token");
-  if (!token) {
-    status.textContent = "Operator session required.";
-    return false;
-  }
-  const response = await fetch(operatorSessionUrl, {
-    method: "POST",
-    credentials: "include",
-    headers: { "X-TalkingBoats-Operator-Token": token },
-  });
-  if (!response.ok) {
-    status.textContent = "Operator sign-in failed.";
-    return false;
-  }
-  status.textContent = "Operator session ready.";
-  return true;
 }
 
 function renderPill(text) {

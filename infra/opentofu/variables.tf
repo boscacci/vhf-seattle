@@ -17,9 +17,21 @@ variable "site_subdomain" {
 }
 
 variable "dev_site_subdomain" {
-  description = "Subdomain to publish the dev static site under."
+  description = "Subdomain to publish the tailnet-only dev site under."
   type        = string
   default     = "vhf-dev"
+}
+
+variable "dev_tailnet_ipv4_addresses" {
+  description = "Tailnet IPv4 addresses for the dev site DNS record."
+  type        = list(string)
+  default     = ["100.124.5.39"]
+}
+
+variable "dev_tailnet_ipv6_addresses" {
+  description = "Tailnet IPv6 addresses for the dev site DNS record."
+  type        = list(string)
+  default     = ["fd7a:115c:a1e0::2601:597"]
 }
 
 variable "resource_site_subdomain" {

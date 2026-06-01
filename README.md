@@ -66,8 +66,8 @@ antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> private S3 / Cl
 - Raw audio: private S3 bucket, `raw/` expires after 60 days
 - Prod public site: static S3 origin plus read-only live API behaviors behind
   CloudFront at `vhf.robertboscacci.com`
-- Dev public site: separate static S3 origin and CloudFront distribution at
-  `vhf-dev.robertboscacci.com`, using the same live origin unless overridden
+- Dev site: separate static S3 origin served from the OptiPlex tailnet
+  deployment at `vhf-dev.robertboscacci.com`
 
 ## Compute And Network Boundaries
 
@@ -499,12 +499,11 @@ tailscale funnel --bg --https=10000 http://127.0.0.1:8095
 The proxy serves the same `public-site/` UI for direct origin checks, forwards
 only read-only public API calls to the private API, and exposes a read-only
 current receiver stream plus per-channel streams for the continuously monitored
-VHF channels. CloudFront routes the public app to:
+VHF channels. CloudFront routes the public prod app to:
 
 ```text
 https://vhf.robertboscacci.com/api/clips/recent
 https://vhf.robertboscacci.com/api/analysis/lexical
-https://vhf-dev.robertboscacci.com/ais-catcher/
 https://vhf.robertboscacci.com/api/live/current.mp3
 https://vhf.robertboscacci.com/api/live/13/current.mp3
 https://vhf.robertboscacci.com/api/live/14/current.mp3
@@ -514,6 +513,10 @@ https://vhf.robertboscacci.com/api/live/68/current.mp3
 The CloudFront live origin is configurable with `live_origin_domain_name` and
 `live_origin_https_port`; by default it points at
 `optiplex.tailbea63b.ts.net:10000`.
+The dev vanity hostname `vhf-dev.robertboscacci.com` is not a public
+CloudFront entry point. Route53 points it at the OptiPlex Tailscale address,
+and the tailnet reverse proxy injects `X-TalkingBoats-Tailnet-Dev: 1` before
+forwarding write-capable operator requests.
 
 `/api/live/current.mp3` keeps the stable default VHF 14 behavior. The channel
 paths proxy only their configured Icecast mounts, and `/api/live/channels`
@@ -526,10 +529,10 @@ endpoints remain off by default. Do not set
 origin.
 
 Dev previews can request the experimental warm voice chain with
-`?dsp=warm_voice`; the checked-in browser UI only adds that query on
-`vhf-dev.robertboscacci.com`. The proxy keeps prod raw unless the client
-explicitly asks for a DSP profile. Set `TALKINGBOATS_PROXY_FFMPEG_PATH` if the
-service should use a non-default `ffmpeg` binary.
+`?dsp=warm_voice`; the checked-in browser UI only adds that query on private
+dev/local hosts. The proxy keeps prod raw unless the client explicitly asks for
+a DSP profile. Set `TALKINGBOATS_PROXY_FFMPEG_PATH` if the service should use a
+non-default `ffmpeg` binary.
 
 Use the local analysis helper to compare clips before and after a filter change:
 
@@ -689,9 +692,12 @@ lexical analysis read the corrected transcript immediately, while the original
 ASR output is retained as the training input.
 
 Nightly training uses the reviewed correction table as supervised ASR feedback:
-it downloads the matching raw audio from S3, writes a Hugging Face audio/text
-JSONL dataset, fine-tunes the configured Whisper checkpoint, converts the
-checkpoint to a CTranslate2 directory for `faster-whisper`, promotes
+open `https://vhf-dev.robertboscacci.com/operator/` from a tailnet-connected
+device, fix transcripts inline, and those reviewed rows become the training
+set. The browser never asks for an operator bearer token. The nightly job
+downloads the matching raw audio from S3, writes a Hugging Face audio/text JSONL
+dataset, fine-tunes the configured Whisper checkpoint, converts the checkpoint
+to a CTranslate2 directory for `faster-whisper`, promotes
 `outputs/asr-feedback/latest-ct2`, writes
 `outputs/asr-feedback/latest_model.env`, and restarts the uploaded-clip
 transcriber. The transcriber service example loads that env file only if it
@@ -744,8 +750,8 @@ Useful overrides:
 
 Keep branch and resource separation explicit:
 
-- Dev deploys go to the separate dev S3 origin and CloudFront distribution behind
-  `vhf-dev.robertboscacci.com`.
+- Dev deploys go to the separate dev S3 origin, then the OptiPlex tailnet
+  deployment serves them behind `vhf-dev.robertboscacci.com`.
 - Prod deploys go to the prod S3 origin and CloudFront distribution behind
   `vhf.robertboscacci.com`.
 - The deploy helper allows prod only from a clean `main` worktree. Use `dev`,

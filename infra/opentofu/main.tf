@@ -244,27 +244,6 @@ resource "aws_cloudfront_origin_request_policy" "live_api" {
   }
 }
 
-resource "aws_cloudfront_origin_request_policy" "operator_api" {
-  name    = "${var.project_name}-operator-api-origin-request"
-  comment = "Forward operator auth to dev-only Elliott Bay VHF write API routes"
-
-  cookies_config {
-    cookie_behavior = "all"
-  }
-
-  headers_config {
-    header_behavior = "whitelist"
-
-    headers {
-      items = ["Content-Type", "X-TalkingBoats-Operator-Token"]
-    }
-  }
-
-  query_strings_config {
-    query_string_behavior = "all"
-  }
-}
-
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
   comment             = "Talking Boats public static site"
@@ -610,8 +589,8 @@ resource "aws_cloudfront_origin_access_control" "dev_public_site" {
 }
 
 resource "aws_cloudfront_distribution" "dev_site" {
-  enabled             = true
-  comment             = "Talking Boats dev static site"
+  enabled             = false
+  comment             = "Disabled legacy Talking Boats dev CloudFront distribution; dev DNS is tailnet-only"
   aliases             = [local.dev_site_fqdn]
   default_root_object = "index.html"
   is_ipv6_enabled     = true
@@ -695,17 +674,6 @@ resource "aws_cloudfront_distribution" "dev_site" {
   }
 
   ordered_cache_behavior {
-    path_pattern             = "/api/clips/corrections*"
-    target_origin_id         = local.dev_live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.operator_api.id
-  }
-
-  ordered_cache_behavior {
     path_pattern             = "/api/analysis/lexical"
     target_origin_id         = local.dev_live_origin_id
     viewer_protocol_policy   = "redirect-to-https"
@@ -714,17 +682,6 @@ resource "aws_cloudfront_distribution" "dev_site" {
     compress                 = true
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
     origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/operator/session*"
-    target_origin_id         = local.dev_live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.operator_api.id
   }
 
   ordered_cache_behavior {
@@ -797,24 +754,16 @@ resource "aws_route53_record" "dev_site_a" {
   zone_id = data.aws_route53_zone.root.zone_id
   name    = local.dev_site_fqdn
   type    = "A"
-
-  alias {
-    name                   = aws_cloudfront_distribution.dev_site.domain_name
-    zone_id                = aws_cloudfront_distribution.dev_site.hosted_zone_id
-    evaluate_target_health = false
-  }
+  ttl     = 300
+  records = var.dev_tailnet_ipv4_addresses
 }
 
 resource "aws_route53_record" "dev_site_aaaa" {
   zone_id = data.aws_route53_zone.root.zone_id
   name    = local.dev_site_fqdn
   type    = "AAAA"
-
-  alias {
-    name                   = aws_cloudfront_distribution.dev_site.domain_name
-    zone_id                = aws_cloudfront_distribution.dev_site.hosted_zone_id
-    evaluate_target_health = false
-  }
+  ttl     = 300
+  records = var.dev_tailnet_ipv6_addresses
 }
 
 resource "aws_cognito_user_pool" "dev_auth" {

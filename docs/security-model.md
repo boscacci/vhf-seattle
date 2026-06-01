@@ -47,7 +47,7 @@ URLs through the public clip playback refresh route instead of embedding raw
 object keys or depending on stale presigned links.
 
 The performance telemetry endpoint is dev-only and gated by configured dev
-hostnames or the dev CloudFront live-origin request. Its public response is a
+hostnames or the tailnet dev reverse proxy path. Its public-safe response is a
 whitelist of coarse CPU, memory, disk, and thermal health for the OptiPlex proxy
 and Raspberry Pi receiver. It must not expose LAN addresses, tailnet hostnames,
 service names, process lists, environment variables, internal URLs, tokens, or
@@ -74,7 +74,9 @@ Do not expose AIS-catcher control, metrics, or Prometheus paths publicly unless
 they have an explicit read-only threat review.
 
 Protect write/admin paths with LAN/Tailscale/VPN plus service-held credentials.
-Do not require an operator to manually paste tokens into the browser.
+Transcript correction writes must arrive through the tailnet dev reverse proxy,
+which marks them with `X-TalkingBoats-Tailnet-Dev: 1`. Do not require an
+operator to manually paste tokens into the browser.
 
 The Pi-to-OptiPlex LAN path is private infrastructure. If the Pi cannot reach
 the OptiPlex, it should keep bounded local buffers and retry instead of failing

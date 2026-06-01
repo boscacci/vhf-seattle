@@ -1,6 +1,6 @@
 # Talking Boats OpenTofu Stack
 
-This stack creates separate dev/prod static-site edges and private raw-audio buckets.
+This stack creates separate dev/prod static-site storage and private raw-audio buckets.
 
 It intentionally does **not** create long-lived AWS access keys for the Raspberry
 Pi. The Pi should ask the private API for presigned S3 upload URLs.
@@ -9,11 +9,12 @@ Pi. The Pi should ask the private API for presigned S3 upload URLs.
 
 - Prod private S3 bucket for public static-site files
 - Dev private S3 bucket for public static-site files
-- Separate dev/prod CloudFront distributions with Origin Access Control
+- Prod CloudFront distribution with Origin Access Control
+- Disabled legacy dev CloudFront distribution retained for controlled teardown
 - ACM certificates in `us-east-1`
-- Route 53 `A` and `AAAA` aliases for:
-  - `vhf.robertboscacci.com`
-  - `vhf-dev.robertboscacci.com`
+- Route 53 `A` and `AAAA` records for:
+  - `vhf.robertboscacci.com` as CloudFront aliases
+  - `vhf-dev.robertboscacci.com` as tailnet address records
 - Separate dev/prod private raw-audio S3 buckets with `raw/` lifecycle expiry
 - Separate dev/prod IAM policies for the private server to presign audio,
   publish reviewed static files, and invalidate CloudFront

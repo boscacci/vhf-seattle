@@ -46,16 +46,22 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert ".pill.channel-pill" in styles_css
     assert "VTS / Seattle Traffic" in app_js
     assert "tailnetLiveBase" not in app_js
-    assert "tailbea63b.ts.net" not in app_js
+    assert "tailnetHostSuffix" in app_js
+    assert ".tailbea63b.ts.net" in app_js
     assert "America/Los_Angeles" in app_js
     assert "timeZoneName" in app_js
     assert "/api/live/current.mp3" in app_js
     assert "/api/live/channels" in app_js
     assert 'const clipCorrectionsUrl = "/api/clips/corrections";' in app_js
-    assert 'const operatorSessionUrl = "/api/operator/session";' in app_js
+    assert "/api/operator/session" not in app_js
     assert "operatorReviewEnabled" in app_js
+    assert "privateAppHost" in app_js
+    assert "tailnetDevHost" in app_js
     assert 'window.location.pathname.startsWith("/operator")' in app_js
     assert 'hostname === "vhf-dev.robertboscacci.com"' in app_js
+    assert "All but traffic" in app_js
+    assert 'const trafficChannelIds = new Set(["14"]);' in app_js
+    assert 'allButTrafficAction.dataset.preset = "all-but-traffic";' in app_js
     assert 'dsp=warm_voice' not in app_js
     assert "/public_manifest.json" in app_js
     assert "Elliott Bay VHF" in index_html
@@ -384,7 +390,7 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert 'reviewer: "operator-ui"' in app_js
     assert 'credentials: "include"' in app_js
     assert 'headers: { "Content-Type": "application/json" }' in app_js
-    assert 'headers: { "X-TalkingBoats-Operator-Token": token }' in app_js
+    assert "X-TalkingBoats-Operator-Token" not in app_js
     assert "Saved for nightly training." in app_js
     assert ".transcript-correction" in styles_css
     assert ".reviewed-pill" in styles_css
@@ -396,10 +402,7 @@ def test_public_site_uses_same_origin_live_api_urls() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert 'const defaultLiveStreamUrl = "/api/live/current.mp3";' in app_js
-    assert (
-        'const liveDspProfile = window.location.hostname === "vhf-dev.robertboscacci.com" '
-        '? "warm_voice" : "";'
-    ) in app_js
+    assert 'const liveDspProfile = privateAppHost ? "warm_voice" : "";' in app_js
     assert 'return `/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`;' in app_js
     assert 'return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;' in app_js
     assert "return withDspProfile(url);" in app_js

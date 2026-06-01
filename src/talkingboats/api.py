@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 import httpx
 import uvicorn
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Path, Query, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -58,18 +58,6 @@ async def require_ingest_token(
     )
 
 
-async def require_operator_token(
-    settings: Annotated[Settings, Depends(get_settings)],
-    x_talkingboats_operator_token: Annotated[str | None, Header()] = None,
-    talkingboats_operator_token: Annotated[str | None, Cookie()] = None,
-) -> None:
-    require_token(
-        x_talkingboats_operator_token or talkingboats_operator_token,
-        settings.operator_token,
-        "TALKINGBOATS_OPERATOR_TOKEN",
-    )
-
-
 app = FastAPI(
     title="Talking Boats Private API",
     version="0.1.0",
@@ -84,35 +72,6 @@ if SHARED_UI_DIR.exists():
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.post(
-    "/api/operator/session",
-)
-async def create_operator_session(
-    response: Response,
-    settings: Annotated[Settings, Depends(get_settings)],
-    x_talkingboats_operator_token: Annotated[str | None, Header()] = None,
-) -> dict[str, str]:
-    require_token(
-        x_talkingboats_operator_token,
-        settings.operator_token,
-        "TALKINGBOATS_OPERATOR_TOKEN",
-    )
-    response.set_cookie(
-        "talkingboats_operator_token",
-        x_talkingboats_operator_token or "",
-        httponly=True,
-        samesite="strict",
-        max_age=3600,
-    )
-    return {"status": "ok"}
-
-
-@app.post("/api/operator/session/logout")
-async def clear_operator_session(response: Response) -> dict[str, str]:
-    response.delete_cookie("talkingboats_operator_token")
     return {"status": "ok"}
 
 
@@ -147,7 +106,6 @@ async def presign_clip_upload(
 
 @app.get(
     "/api/ingest/clips/stats",
-    dependencies=[Depends(require_operator_token)],
 )
 async def ingest_clip_stats(
     clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
@@ -305,7 +263,6 @@ async def public_clip_audio(
 @app.post(
     "/api/clips/corrections",
     response_model=TranscriptCorrectionResponse,
-    dependencies=[Depends(require_operator_token)],
 )
 async def correct_clip_transcript(
     request: TranscriptCorrectionRequest,
@@ -341,7 +298,6 @@ async def correct_clip_transcript(
 
 @app.get(
     "/api/clips/corrections/export",
-    dependencies=[Depends(require_operator_token)],
 )
 async def export_clip_transcript_corrections(
     clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
@@ -429,7 +385,6 @@ async def lexical_analysis(
 @app.post(
     "/api/clips/playback-url",
     response_model=PlaybackUrlResponse,
-    dependencies=[Depends(require_operator_token)],
 )
 async def presign_clip_playback(
     request: PlaybackUrlRequest,
@@ -454,7 +409,6 @@ async def presign_clip_playback(
 @app.get(
     "/api/live/channels",
     response_model=LiveChannelsResponse,
-    dependencies=[Depends(require_operator_token)],
 )
 async def list_live_channels(
     settings: Annotated[Settings, Depends(get_settings)],
@@ -472,7 +426,7 @@ async def list_live_channels(
     )
 
 
-@app.get("/api/live/{channel}/stream", dependencies=[Depends(require_operator_token)])
+@app.get("/api/live/{channel}/stream")
 async def live_channel_stream(
     settings: Annotated[Settings, Depends(get_settings)],
     channel: Annotated[str, Path(pattern=r"^(68|14)$")],

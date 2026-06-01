@@ -26,7 +26,6 @@ class Settings:
     aws_region: str
     raw_bucket: str
     public_bucket: str | None
-    operator_token: str | None
     ingest_token: str | None
     raw_presign_seconds: int
     playback_presign_seconds: int
@@ -41,7 +40,6 @@ class Settings:
             aws_region=os.getenv("TALKINGBOATS_AWS_REGION", "us-west-2"),
             raw_bucket=os.getenv("TALKINGBOATS_RAW_BUCKET", ""),
             public_bucket=os.getenv("TALKINGBOATS_PUBLIC_BUCKET"),
-            operator_token=os.getenv("TALKINGBOATS_OPERATOR_TOKEN"),
             ingest_token=os.getenv("TALKINGBOATS_INGEST_TOKEN"),
             raw_presign_seconds=_env_int("TALKINGBOATS_RAW_PRESIGN_SECONDS", 900),
             playback_presign_seconds=_env_int("TALKINGBOATS_PLAYBACK_PRESIGN_SECONDS", 300),

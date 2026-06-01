@@ -1,12 +1,10 @@
 # Performance Monitoring
 
-The dev public app exposes a **Performance** tab at
-`https://vhf-dev.robertboscacci.com`. It is intentionally dev-only. The tab reads
-`/api/live/performance`, which the live radio proxy serves only for configured
-dev hostnames or the dev CloudFront live-origin request. The origin request is
-recognized by the configured live-origin hostname plus the CloudFront-managed
-`X-TalkingBoats-Environment: dev` custom origin header; viewer headers are not
-forwarded by the live API origin request policy.
+The private dev app exposes a **Performance** tab at
+`https://vhf-dev.robertboscacci.com`. It is intentionally dev-only and reachable
+only from the tailnet. The tab reads `/api/live/performance`, which the live
+radio proxy serves only for configured dev hostnames or the tailnet dev reverse
+proxy path.
 
 The payload is public-safe by design. It includes OptiPlex live-proxy telemetry,
 and Raspberry Pi edge-radio telemetry, but it does not include LAN addresses,

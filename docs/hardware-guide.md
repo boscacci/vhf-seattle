@@ -16,7 +16,8 @@ flowchart LR
   optiplex["OptiPlex home server<br/>API, SQLite, transcription, export"]
   s3raw["Private S3 raw audio<br/>raw/ expires, hall-of-fame/ retained"]
   s3site["Private S3 public-site origin"]
-  public["CloudFront public app<br/>vhf / vhf-dev"]
+  public["CloudFront public app<br/>vhf"]
+  dev["Tailnet dev app<br/>vhf-dev"]
 
   antenna -->|RF at 156-162 MHz| sdr
   sdr -->|USB samples| pi
@@ -26,6 +27,7 @@ flowchart LR
   optiplex -->|sanitized exports| s3site
   s3site --> public
   public -->|read-only live API origin| optiplex
+  dev -->|tailnet-only operator/dev UI| optiplex
 ```
 
 This layout is intentional. The Pi is not a weak substitute for the OptiPlex; it
@@ -59,8 +61,9 @@ antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> AWS public edge
   pending uploads, transcribes clips, generates static exports, and exposes the
   read-only proxy that CloudFront can call.
 - **Cloud public edge:** S3 stores raw private audio and sanitized public-site
-  files. CloudFront and Route53 provide public `vhf` and `vhf-dev` domains with
-  only read-only app, clip, status, and live-audio paths.
+  files. CloudFront and Route53 provide the public `vhf` domain with only
+  read-only app, clip, status, and live-audio paths. Route53 points
+  `vhf-dev` to the OptiPlex tailnet address for private dev/operator access.
 
 If a laptop is used for repo edits, remember that it is usually a control plane,
 not the runtime host. The OptiPlex is where the live database, long-running

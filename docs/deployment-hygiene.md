@@ -46,20 +46,22 @@ because OpenTofu intentionally keeps those compatibility points.
 | Concern | Dev | Prod |
 | --- | --- | --- |
 | Branch | `dev`, `codex/*`, `feature/*` | `main` |
-| Public hostname | `vhf-dev.robertboscacci.com` | `vhf.robertboscacci.com` |
+| Browser hostname | `vhf-dev.robertboscacci.com` over Tailscale | `vhf.robertboscacci.com` public |
 | Static origin | `dev_public_site_bucket` output | `public_site_bucket` output |
 | Raw audio | `dev_raw_audio_bucket` output | `raw_audio_bucket` output |
-| CloudFront | `dev_cloudfront_distribution_id` output | `cloudfront_distribution_id` output |
+| CloudFront | disabled legacy dev distribution | `cloudfront_distribution_id` output |
 | IAM policy | `dev_server_iam_policy_arn` output | `server_iam_policy_arn` output |
 
 Dev and prod buckets, distributions, certificates, and server IAM policies carry
-explicit `Environment` tags. Public buckets stay private and are readable only
-through their matching CloudFront Origin Access Control.
+explicit `Environment` tags. Public buckets stay private. Prod is readable only
+through CloudFront Origin Access Control; dev is served from the OptiPlex
+tailnet deployment.
 
-The dev CloudFront distribution may share the same read-only OptiPlex live
-origin as prod unless `dev_live_origin_domain_name` is set. That is acceptable
-for live listening because the public routes are read-only. It is not permission
-for dev workers to write to prod raw or public buckets.
+Route53 points `vhf-dev.robertboscacci.com` at the OptiPlex Tailscale address,
+not at CloudFront. The tailnet reverse proxy injects
+`X-TalkingBoats-Tailnet-Dev: 1` before write-capable operator requests reach the
+live proxy. Do not reintroduce browser bearer-token auth for the transcript
+feedback loop.
 
 ## Operator Checklist
 
@@ -68,7 +70,7 @@ Before dev deploy:
 - Confirm the target is `dev`.
 - Confirm the branch is `dev`, `main`, `codex/*`, or `feature/*`.
 - Run the relevant tests for the changed area.
-- Smoke `https://vhf-dev.robertboscacci.com`.
+- Smoke `https://vhf-dev.robertboscacci.com` from a tailnet-connected device.
 
 Before prod deploy:
 

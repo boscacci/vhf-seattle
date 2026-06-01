@@ -487,20 +487,17 @@ def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:
     assert response.json() == {"status": "ok", "source_clip_count": 1, "entities": []}
 
 
-def test_proxy_operator_session_forwards_token_and_preserves_cookie() -> None:
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "http://private-api.test/api/operator/session"
-        assert request.headers["x-talkingboats-operator-token"] == "operator-token"
-        assert "authorization" not in request.headers
-        assert "cookie" not in request.headers
-        return httpx.Response(
-            200,
-            headers={
-                "Content-Type": "application/json",
-                "Set-Cookie": "talkingboats_operator_token=private-token; HttpOnly",
-            },
-            json={"status": "ok"},
-        )
+def test_proxy_operator_session_endpoint_is_not_exposed() -> None:
+    app = create_app(ProxySettings(private_api_url="http://private-api.test"))
+
+    response = _run(_asgi_post(app, "/api/operator/session"))
+
+    assert response.status_code in {404, 405}
+
+
+def test_proxy_transcript_correction_requires_tailnet_dev_proxy_marker() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("private API should not be reached without tailnet dev marker")
 
     app = create_app(
         ProxySettings(private_api_url="http://private-api.test"),
@@ -510,26 +507,26 @@ def test_proxy_operator_session_forwards_token_and_preserves_cookie() -> None:
     response = _run(
         _asgi_post(
             app,
-            "/api/operator/session",
+            "/api/clips/corrections",
             headers={
-                "X-TalkingBoats-Operator-Token": "operator-token",
-                "Authorization": "Bearer viewer-token",
-                "Cookie": "talkingboats_operator_token=viewer-token",
+                "Host": "vhf-dev.robertboscacci.com",
+                "Content-Type": "application/json",
             },
+            content=b'{"channel":"14"}',
         )
     )
 
-    assert response.status_code == 200
-    assert response.headers["set-cookie"] == "talkingboats_operator_token=private-token; HttpOnly"
-    assert response.json() == {"status": "ok"}
+    assert response.status_code == 403
 
 
-def test_proxy_transcript_correction_forwards_operator_cookie_and_strips_upstream_cookie() -> None:
+def test_proxy_transcript_correction_forwards_tailnet_dev_request_and_strips_auth() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "http://private-api.test/api/clips/corrections"
-        assert request.headers["cookie"] == "talkingboats_operator_token=viewer-token"
         assert request.headers["content-type"] == "application/json"
         assert "authorization" not in request.headers
+        assert "cookie" not in request.headers
+        assert "x-talkingboats-operator-token" not in request.headers
+        assert "x-talkingboats-tailnet-dev" not in request.headers
         assert request.content == b'{"channel":"14"}'
         return httpx.Response(
             200,
@@ -550,9 +547,12 @@ def test_proxy_transcript_correction_forwards_operator_cookie_and_strips_upstrea
             app,
             "/api/clips/corrections",
             headers={
+                "Host": "vhf-dev.robertboscacci.com",
+                "X-TalkingBoats-Tailnet-Dev": "1",
                 "Content-Type": "application/json",
                 "Authorization": "Bearer viewer-token",
                 "Cookie": "talkingboats_operator_token=viewer-token",
+                "X-TalkingBoats-Operator-Token": "viewer-token",
             },
             content=b'{"channel":"14"}',
         )
@@ -561,6 +561,26 @@ def test_proxy_transcript_correction_forwards_operator_cookie_and_strips_upstrea
     assert response.status_code == 200
     assert "set-cookie" not in response.headers
     assert response.json() == {"status": "corrected"}
+
+
+def test_proxy_transcript_correction_export_requires_tailnet_dev_proxy_marker() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("private API should not be reached without tailnet dev marker")
+
+    app = create_app(
+        ProxySettings(private_api_url="http://private-api.test"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_get(
+            app,
+            "/api/clips/corrections/export",
+            headers={"Host": "vhf-dev.robertboscacci.com"},
+        )
+    )
+
+    assert response.status_code == 403
 
 
 def test_proxy_ais_catcher_viewer_is_dev_only_and_public_safe() -> None:
@@ -870,9 +890,10 @@ def test_proxy_performance_static_shell_hooks_are_dev_only() -> None:
     assert 'const performanceUrl = "/api/live/performance";' in response.text
     assert "performanceDashboardEnabled" in response.text
     assert (
-        'const performanceDashboardEnabled = ["vhf-dev.robertboscacci.com", '
-        '"localhost", "127.0.0.1", ""].includes'
-    ) in response.text
+        "const privateAppHost = localAppHost || tailnetAppHost || tailnetDevHost;"
+        in response.text
+    )
+    assert 'const performanceDashboardEnabled = privateAppHost;' in response.text
     assert "renderPerformanceDashboard" in response.text
     assert 'id="tab-performance" type="button" data-tab="performance" hidden' in index_response.text
 
