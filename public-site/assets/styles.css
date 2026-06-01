@@ -1199,121 +1199,99 @@ audio {
   gap: 8px;
 }
 
-.mobile-signal-panel {
+.mobile-nlp-panel {
   display: none;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
 }
 
-.signal-fingerprint-stage {
+.nlp-summary-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 14px;
-  align-items: center;
-  min-width: 0;
+  gap: 5px;
 }
 
-.signal-score-orb {
-  --score-angle: 0deg;
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 112px;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background:
-    conic-gradient(var(--teal) 0 var(--score-angle), rgba(106, 184, 255, 0.16) var(--score-angle) 360deg),
-    radial-gradient(circle at 34% 24%, rgba(240, 184, 90, 0.44), transparent 38%);
-  box-shadow:
-    0 0 28px rgba(64, 224, 191, 0.2),
-    inset 0 0 0 1px rgba(242, 247, 244, 0.08);
-}
-
-.signal-score-orb::before {
-  position: absolute;
-  inset: 9px;
-  border: 1px solid rgba(242, 247, 244, 0.12);
-  border-radius: inherit;
-  background: #0b1715;
-  content: "";
-}
-
-.signal-score-value {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  justify-items: center;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.signal-score-value strong {
-  font-size: 2rem;
-}
-
-.signal-score-value span {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 850;
-}
-
-.signal-fingerprint-copy {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.signal-fingerprint-copy h4 {
+.nlp-summary-header h4 {
   margin: 0;
   color: var(--ink);
-  font-size: 1.02rem;
+  font-size: 1.04rem;
   line-height: 1.2;
-  overflow-wrap: anywhere;
 }
 
-.signal-fingerprint-summary {
+.nlp-summary-copy {
   margin: 0;
   color: #dbe5e1;
   line-height: 1.45;
 }
 
-.signal-meter-grid {
+.nlp-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.nlp-stat-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-strong) 74%, transparent);
+}
+
+.nlp-stat-card span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.nlp-stat-card strong {
+  color: var(--ink);
+  font-size: 1.26rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.nlp-term-bars {
   display: grid;
   gap: 10px;
 }
 
-.signal-meter {
+.nlp-term-row {
   display: grid;
   gap: 5px;
 }
 
-.signal-meter-head {
-  display: flex;
+.nlp-term-head {
+  display: grid;
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
   gap: 10px;
   align-items: baseline;
-  justify-content: space-between;
 }
 
-.signal-meter-label,
-.signal-meter-value {
+.nlp-term-head span,
+.nlp-term-head strong {
+  min-width: 0;
   font-size: 0.76rem;
-  font-weight: 850;
   line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
-.signal-meter-label {
+.nlp-term-head span {
   color: var(--muted);
+  font-weight: 850;
   text-transform: uppercase;
 }
 
-.signal-meter-value {
-  flex: 0 0 auto;
+.nlp-term-head strong {
   color: var(--ink);
-  font-variant-numeric: tabular-nums;
+  font-weight: 850;
+  text-align: right;
 }
 
-.signal-meter-track {
+.nlp-term-track {
   display: block;
   height: 8px;
   overflow: hidden;
@@ -1321,31 +1299,12 @@ audio {
   background: rgba(255, 255, 255, 0.06);
 }
 
-.signal-meter-fill {
+.nlp-term-fill {
   display: block;
   height: 100%;
   min-width: 4px;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--teal), var(--blue));
-}
-
-.signal-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.signal-chip {
-  min-width: 0;
-  padding: 6px 9px;
-  border: 1px solid color-mix(in srgb, var(--teal), transparent 62%);
-  border-radius: 999px;
-  color: #dffcf7;
-  background: color-mix(in srgb, var(--teal), transparent 88%);
-  font-size: 0.78rem;
-  font-weight: 800;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
 }
 
 .topic-list,
@@ -1621,7 +1580,7 @@ audio {
     display: none;
   }
 
-  .mobile-signal-panel {
+  .mobile-nlp-panel {
     display: grid;
   }
 }

@@ -63,21 +63,20 @@ try {
       }
       const topicFrame = document.querySelector(".topic-frame");
       const topicFrameShell = document.querySelector(".topic-frame-shell");
-      const mobileSignalPanel = document.querySelector(".mobile-signal-panel");
+      const mobileNlpPanel = document.querySelector(".mobile-nlp-panel");
       if (!(topicFrame instanceof HTMLIFrameElement)) {
         throw new Error("topic iframe did not render");
       }
       if (!(topicFrameShell instanceof HTMLElement)) {
         throw new Error("topic iframe shell did not render");
       }
-      if (!(mobileSignalPanel instanceof HTMLElement)) {
-        throw new Error("mobile signal fingerprint did not render");
+      if (!(mobileNlpPanel instanceof HTMLElement)) {
+        throw new Error("mobile NLP summary did not render");
       }
       const topicFrameStyle = window.getComputedStyle(topicFrame);
       const topicFrameBounds = topicFrame.getBoundingClientRect();
       const topicFrameShellStyle = window.getComputedStyle(topicFrameShell);
-      const mobileSignalPanelStyle = window.getComputedStyle(mobileSignalPanel);
-      const signalScore = mobileSignalPanel.querySelector(".signal-score-value strong")?.textContent;
+      const mobileNlpPanelStyle = window.getComputedStyle(mobileNlpPanel);
       const metadata = await new Promise((resolve, reject) => {
         const timeout = window.setTimeout(() => reject(new Error("audio metadata timed out")), 5000);
         audio.addEventListener(
@@ -115,11 +114,12 @@ try {
         topicFrameShell: {
           display: topicFrameShellStyle.display,
         },
-        mobileSignalPanel: {
-          display: mobileSignalPanelStyle.display,
-          score: signalScore,
-          meterCount: mobileSignalPanel.querySelectorAll(".signal-meter").length,
-          chipCount: mobileSignalPanel.querySelectorAll(".signal-chip").length,
+        mobileNlpPanel: {
+          display: mobileNlpPanelStyle.display,
+          statCount: mobileNlpPanel.querySelectorAll(".nlp-stat-card").length,
+          rowCount: mobileNlpPanel.querySelectorAll(".nlp-term-row").length,
+          headings: [...mobileNlpPanel.querySelectorAll(".nlp-term-head span")].map((item) => item.textContent),
+          hasScore: Boolean(mobileNlpPanel.querySelector(".signal-score-value")),
         },
         metadata,
       };
@@ -142,14 +142,17 @@ try {
     if (result.topicFrameShell.display !== "none") {
       throw new Error(`topic iframe should be hidden on mobile: ${result.topicFrameShell.display}`);
     }
-    if (result.mobileSignalPanel.display === "none") {
-      throw new Error("mobile signal fingerprint is hidden on mobile");
+    if (result.mobileNlpPanel.display === "none") {
+      throw new Error("mobile NLP summary is hidden on mobile");
     }
-    if (!Number.isFinite(Number(result.mobileSignalPanel.score))) {
-      throw new Error(`mobile signal fingerprint score is invalid: ${result.mobileSignalPanel.score}`);
+    if (result.mobileNlpPanel.hasScore) {
+      throw new Error("mobile NLP summary should not render a synthetic score");
     }
-    if (result.mobileSignalPanel.meterCount !== 4 || result.mobileSignalPanel.chipCount < 1) {
-      throw new Error(`mobile signal fingerprint is incomplete: ${JSON.stringify(result.mobileSignalPanel)}`);
+    if (result.mobileNlpPanel.statCount !== 4 || result.mobileNlpPanel.rowCount !== 4) {
+      throw new Error(`mobile NLP summary is incomplete: ${JSON.stringify(result.mobileNlpPanel)}`);
+    }
+    if (!result.mobileNlpPanel.headings.includes("Communication markers")) {
+      throw new Error(`mobile NLP summary is missing term buckets: ${JSON.stringify(result.mobileNlpPanel)}`);
     }
     if (!["pan-x pan-y pinch-zoom", "manipulation"].includes(result.topicFrame.touchAction)) {
       throw new Error(`topic iframe blocks pinch zoom: ${result.topicFrame.touchAction}`);

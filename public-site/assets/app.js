@@ -1233,8 +1233,8 @@ function renderLanguageDashboard(payload) {
   entityPanel.append(entityList(payload.entities || []));
 
   const topicPanel = languagePanel(
-    "Topic intelligence",
-    "Dominant clusters and radio signals from the current transcript sample.",
+    "Transcript NLP summary",
+    "Descriptive counts from the transcript analysis, with the desktop topic map kept below.",
   );
   const topicFrame = document.createElement("iframe");
   topicFrame.className = "topic-frame";
@@ -1247,7 +1247,7 @@ function renderLanguageDashboard(payload) {
   topicFrameShell.className = "topic-frame-shell";
   topicFrameShell.append(topicFrame);
   topicPanel.append(
-    mobileSignalFingerprint(payload, channelCounts, topics, terms),
+    mobileNlpSummary(payload, channelCounts, topics, terms),
     topicFrameShell,
     topicList(nonOutlierTopics(topics.items || [])),
   );
@@ -1670,163 +1670,95 @@ function languagePanel(titleText, descriptionText = "") {
   return section;
 }
 
-function mobileSignalFingerprint(payload, channelCounts, topics, terms) {
-  const metrics = signalFingerprintMetrics(payload, channelCounts, topics, terms);
+function mobileNlpSummary(payload, channelCounts, topics, terms) {
+  const rows = nlpSummaryRows(terms);
   const panel = document.createElement("div");
-  panel.className = "mobile-signal-panel";
+  panel.className = "mobile-nlp-panel";
 
-  const stage = document.createElement("div");
-  stage.className = "signal-fingerprint-stage";
-
-  const orb = document.createElement("div");
-  orb.className = "signal-score-orb";
-  orb.style.setProperty("--score-angle", `${metrics.score * 3.6}deg`);
-  const scoreValue = document.createElement("span");
-  scoreValue.className = "signal-score-value";
-  const score = document.createElement("strong");
-  score.textContent = String(metrics.score);
-  const scale = document.createElement("span");
-  scale.textContent = "/100";
-  scoreValue.append(score, scale);
-  orb.append(scoreValue);
-
-  const copy = document.createElement("div");
-  copy.className = "signal-fingerprint-copy";
+  const header = document.createElement("div");
+  header.className = "nlp-summary-header";
   const label = document.createElement("p");
   label.className = "language-label";
-  label.textContent = "Signal fingerprint";
+  label.textContent = "Descriptive NLP summary";
   const title = document.createElement("h4");
-  title.textContent = metrics.title;
+  title.textContent = "Counts from analyzed transcripts";
   const summary = document.createElement("p");
-  summary.className = "signal-fingerprint-summary";
-  summary.textContent = metrics.summary;
-  copy.append(label, title, summary);
-  stage.append(orb, copy);
+  summary.className = "nlp-summary-copy";
+  summary.textContent = "Top buckets are simple frequency counts from the current sample.";
+  header.append(label, title, summary);
 
-  const meters = document.createElement("div");
-  meters.className = "signal-meter-grid";
-  meters.append(
-    signalMeter("Topic focus", metrics.topicFocusText, metrics.topicFocus),
-    signalMeter("Channel spread", metrics.channelSpreadText, metrics.channelSpread),
-    signalMeter("Named traffic", metrics.entityDensityText, metrics.entityDensity),
-    signalMeter("Movement language", metrics.movementDensityText, metrics.movementDensity),
+  const stats = document.createElement("div");
+  stats.className = "nlp-summary-grid";
+  stats.append(
+    nlpStatCard("Analyzed clips", Number(payload?.source_clip_count || 0).toLocaleString()),
+    nlpStatCard("Active channels", String(activeAnalyzedChannelCount(channelCounts))),
+    nlpStatCard("Entities", sumCounts(payload?.entities || []).toLocaleString()),
+    nlpStatCard("Topic clusters", String(nonOutlierTopics(topics?.items || []).length)),
   );
 
-  const chips = document.createElement("div");
-  chips.className = "signal-chip-row";
-  for (const signal of metrics.signals) {
-    const chip = document.createElement("span");
-    chip.className = "signal-chip";
-    chip.textContent = signal;
-    chips.append(chip);
-  }
+  const termsTitle = document.createElement("p");
+  termsTitle.className = "language-label";
+  termsTitle.textContent = "Top observed terms";
+  const bars = document.createElement("div");
+  bars.className = "nlp-term-bars";
+  bars.append(...rows.map((row) => nlpTermRow(row, rows)));
 
-  panel.append(stage, meters, chips);
+  panel.append(header, stats, termsTitle, bars);
   return panel;
 }
 
-function signalFingerprintMetrics(payload, channelCounts, topics, terms) {
-  const sourceClipCount = Math.max(0, Number(payload?.source_clip_count || 0));
-  const visibleTopics = nonOutlierTopics(topics?.items || []);
-  const sortedTopics = [...visibleTopics].sort(
-    (left, right) => Number(right.count || 0) - Number(left.count || 0),
-  );
-  const dominantTopic = sortedTopics[0] || null;
-  const topicTotal = sumCounts(visibleTopics);
-  const dominantCount = Number(dominantTopic?.count || 0);
-  const topicFocus = boundedRatio(dominantCount, topicTotal || sourceClipCount);
-  const activeChannels = activeAnalyzedChannelCount(channelCounts);
-  const channelSpread = boundedRatio(activeChannels, monitoredAnalysisChannels.length);
-  const entities = Array.isArray(payload?.entities) ? payload.entities : [];
-  const entityMentions = sumCounts(entities);
-  const entityDensity = Math.min(boundedRatio(entityMentions, sourceClipCount), 1);
-  const movementHits = sumCounts(terms?.semantic_buckets?.movement || []);
-  const movementDensity = Math.min(boundedRatio(movementHits, sourceClipCount), 1);
-  const score = Math.round(
-    topicFocus * 42 + channelSpread * 22 + entityDensity * 22 + movementDensity * 14,
-  );
-  const title = dominantTopic ? topicTitle(dominantTopic) : "Signals still gathering";
-  const summary = dominantTopic
-    ? `${formatPercentRatio(topicFocus)} of clustered clips orbit ${topicTitle(dominantTopic)}.`
-    : "The next analysis run will fill in topic focus, channel spread, and entity density.";
+function nlpStatCard(labelText, valueText) {
+  const card = document.createElement("div");
+  card.className = "nlp-stat-card";
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  const value = document.createElement("strong");
+  value.textContent = valueText;
+  card.append(label, value);
+  return card;
+}
+
+function nlpSummaryRows(terms) {
+  return [
+    nlpSummaryRow("Communication markers", terms?.semantic_buckets?.communication_markers || []),
+    nlpSummaryRow("Movement words", terms?.semantic_buckets?.movement || []),
+    nlpSummaryRow("Place names", terms?.semantic_buckets?.places || []),
+    nlpSummaryRow("Common bigrams", terms?.bigrams || []),
+  ];
+}
+
+function nlpSummaryRow(label, items) {
+  const first = Array.isArray(items) ? items[0] : null;
   return {
-    score,
-    title,
-    summary,
-    signals: signalFingerprintSignals(payload, terms, dominantTopic),
-    topicFocus,
-    topicFocusText: dominantTopic ? `${formatPercentRatio(topicFocus)} focus` : "Pending",
-    channelSpread,
-    channelSpreadText: `${activeChannels}/${monitoredAnalysisChannels.length} channels`,
-    entityDensity,
-    entityDensityText: `${entityMentions.toLocaleString()} mentions`,
-    movementDensity,
-    movementDensityText: `${movementHits.toLocaleString()} hits`,
+    label,
+    term: first?.term || "No terms yet",
+    count: Math.max(0, Number(first?.count || 0)),
   };
 }
 
-function signalFingerprintSignals(payload, terms, dominantTopic) {
-  const signals = [];
-  addSignal(signals, dominantTopic ? topicTitle(dominantTopic) : "");
-  addSignal(signals, payload?.entities?.[0]?.name);
-  addSignal(signals, terms?.semantic_buckets?.places?.[0]?.term);
-  addSignal(signals, terms?.semantic_buckets?.movement?.[0]?.term);
-  addSignal(signals, terms?.semantic_buckets?.communication_markers?.[0]?.term);
-  addSignal(signals, terms?.bigrams?.[0]?.term);
-  if (!signals.length) {
-    signals.push("Awaiting analysis");
-  }
-  return signals.slice(0, 5);
-}
-
-function signalMeter(labelText, valueText, ratio) {
-  const meter = document.createElement("div");
-  meter.className = "signal-meter";
+function nlpTermRow(row, rows) {
+  const maxCount = Math.max(1, ...rows.map((item) => Number(item.count || 0)));
+  const item = document.createElement("div");
+  item.className = "nlp-term-row";
   const head = document.createElement("div");
-  head.className = "signal-meter-head";
+  head.className = "nlp-term-head";
   const label = document.createElement("span");
-  label.className = "signal-meter-label";
-  label.textContent = labelText;
-  const value = document.createElement("span");
-  value.className = "signal-meter-value";
-  value.textContent = valueText;
+  label.textContent = row.label;
+  const value = document.createElement("strong");
+  value.textContent = row.count ? `${row.term} · ${row.count.toLocaleString()}` : row.term;
   head.append(label, value);
   const track = document.createElement("span");
-  track.className = "signal-meter-track";
+  track.className = "nlp-term-track";
   const fill = document.createElement("span");
-  fill.className = "signal-meter-fill";
-  fill.style.width = `${Math.max(4, boundedPercent(ratio)).toFixed(1)}%`;
+  fill.className = "nlp-term-fill";
+  fill.style.width = `${Math.max(4, (row.count / maxCount) * 100).toFixed(1)}%`;
   track.append(fill);
-  meter.append(head, track);
-  return meter;
-}
-
-function addSignal(signals, value) {
-  const text = String(value || "").trim();
-  if (!text || signals.some((signal) => signal.toLowerCase() === text.toLowerCase())) {
-    return;
-  }
-  signals.push(text);
+  item.append(head, track);
+  return item;
 }
 
 function sumCounts(items) {
   return (items || []).reduce((total, item) => total + Math.max(0, Number(item?.count || 0)), 0);
-}
-
-function boundedRatio(numerator, denominator) {
-  const value = Number(numerator || 0) / Number(denominator || 0);
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.min(1, Math.max(0, value));
-}
-
-function boundedPercent(ratio) {
-  return boundedRatio(ratio, 1) * 100;
-}
-
-function formatPercentRatio(ratio) {
-  return `${Math.round(boundedPercent(ratio))}%`;
 }
 
 function activeChannelSummary(channelCounts) {
