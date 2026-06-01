@@ -801,6 +801,16 @@ def create_app(
                 client_factory,
             )
 
+        @app.get("/api/asr-feedback/status")
+        async def asr_feedback_status(request: Request) -> Response:
+            _require_tailnet_operator(request)
+            return await _proxy_private_api(
+                request,
+                "/api/asr-feedback/status",
+                settings,
+                client_factory,
+            )
+
     @app.get("/api/analysis/lexical")
     async def lexical_analysis(request: Request) -> Response:
         return await _proxy_private_api(request, "/api/analysis/lexical", settings, client_factory)
@@ -926,6 +936,8 @@ def create_app(
     @app.get("/analysis/", include_in_schema=False)
     @app.get("/performance", include_in_schema=False)
     @app.get("/performance/", include_in_schema=False)
+    @app.get("/fine-tuning", include_in_schema=False)
+    @app.get("/fine-tuning/", include_in_schema=False)
     @app.get("/operator", include_in_schema=False)
     @app.get("/operator/", include_in_schema=False)
     async def clip_console_index() -> Response:

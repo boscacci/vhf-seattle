@@ -28,6 +28,9 @@ const server = createServer(async (request, response) => {
     if (url.pathname === "/api/clips/recent") {
       return sendJson(response, recentClipPayload(url));
     }
+    if (url.pathname === "/api/asr-feedback/status") {
+      return sendJson(response, asrFeedbackStatusPayload());
+    }
     if (url.pathname === "/api/live/channels") {
       return sendJson(response, { channels: [] });
     }
@@ -222,6 +225,28 @@ try {
     if (clipControlsAfterFlip.renderedClips !== 48 || !clipControlsAfterFlip.pageStatus.includes("Page 1")) {
       throw new Error(`clip controls did not keep the larger first page: ${JSON.stringify(clipControlsAfterFlip)}`);
     }
+    await page.getByRole("button", { name: "Fine Tuning" }).click();
+    await page.locator("#fine-tuning-dashboard .language-card").first().waitFor({ state: "visible", timeout: 10000 });
+    const fineTuning = await page.evaluate(() => ({
+      status: document.querySelector("#fine-tuning-status")?.textContent || "",
+      cards: [...document.querySelectorAll("#fine-tuning-dashboard .language-card")].map((card) =>
+        card.textContent || "",
+      ),
+      exportHref: document.querySelector("#fine-tuning-dashboard a[download]")?.getAttribute("href"),
+      commandText: document.querySelector("#fine-tuning-dashboard code")?.textContent || "",
+    }));
+    if (!fineTuning.status.includes("more reviewed clips needed")) {
+      throw new Error(`fine-tuning status did not render threshold text: ${JSON.stringify(fineTuning)}`);
+    }
+    if (!fineTuning.cards.some((card) => card.includes("Reviewed corrections") && card.includes("3"))) {
+      throw new Error(`fine-tuning correction card missing: ${JSON.stringify(fineTuning)}`);
+    }
+    if (fineTuning.exportHref !== "/api/clips/corrections/export") {
+      throw new Error(`fine-tuning export link was wrong: ${JSON.stringify(fineTuning)}`);
+    }
+    if (!fineTuning.commandText.includes("talkingboats-asr-feedback-train.service")) {
+      throw new Error(`fine-tuning command block was missing: ${JSON.stringify(fineTuning)}`);
+    }
     console.log(
       JSON.stringify(
         {
@@ -232,6 +257,7 @@ try {
             beforeFlip: clipControlsBeforeFlip,
             afterFlip: clipControlsAfterFlip,
           },
+          fineTuning,
         },
         null,
         2,
@@ -274,6 +300,25 @@ function recentClip(index) {
     transcript: `Smoke clip ${index + 1}`,
     transcript_public: `Smoke clip ${index + 1}`,
     playback_url: "",
+  };
+}
+
+function asrFeedbackStatusPayload() {
+  return {
+    status: "ok",
+    reviewed_correction_count: 3,
+    min_corrections: 20,
+    ready_for_training: false,
+    base_model: "openai/whisper-small.en",
+    nightly_schedule: "03:20 UTC",
+    export_url: "/api/clips/corrections/export",
+    training_status: {
+      status: "skipped",
+      reason: "not enough reviewed transcript corrections",
+      correction_count: 3,
+      min_corrections: 20,
+      generated_at: "2026-06-01T03:20:00Z",
+    },
   };
 }
 

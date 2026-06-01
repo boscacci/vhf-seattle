@@ -194,6 +194,7 @@ route_index_paths=(
   "ais/index.html"
   "analysis/index.html"
   "performance/index.html"
+  "fine-tuning/index.html"
   "operator/index.html"
 )
 route_direct_paths=(
@@ -207,6 +208,8 @@ route_direct_paths=(
   "analysis"
   "performance/"
   "performance"
+  "fine-tuning/"
+  "fine-tuning"
   "operator/"
   "operator"
 )

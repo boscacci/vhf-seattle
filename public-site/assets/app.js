@@ -7,6 +7,7 @@ const manifestUrl = "/public_manifest.json";
 const lexicalAnalysisUrl = "/api/analysis/lexical";
 const lexicalManifestUrl = "/analysis/lexical.json";
 const performanceUrl = "/api/live/performance";
+const asrFeedbackStatusUrl = "/api/asr-feedback/status";
 const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353&zoom=13&setcoord=false&welcome=false&tab=map";
 const topicClusterFallbackUrl = "/analysis/topic_clusters.html";
 const liveChannelsUrl = "/api/live/channels";
@@ -35,6 +36,7 @@ const languageDashboardEnabled = [
 );
 const liveLanguageAnalysisEnabled = window.location.hostname !== "vhf.robertboscacci.com";
 const performanceDashboardEnabled = privateAppHost;
+const fineTuningDashboardEnabled = privateAppHost;
 const aisDashboardEnabled = !["vhf.robertboscacci.com"].includes(
   window.location.hostname,
 );
@@ -46,6 +48,7 @@ const tabRouteSegments = {
   map: "ais",
   language: "analysis",
   performance: "performance",
+  fineTuning: "fine-tuning",
 };
 const tabRouteAliases = {
   clips: "clips",
@@ -55,6 +58,10 @@ const tabRouteAliases = {
   analysis: "language",
   language: "language",
   performance: "performance",
+  "fine-tuning": "fineTuning",
+  finetuning: "fineTuning",
+  training: "fineTuning",
+  fineTuning: "fineTuning",
 };
 const liveStatusPollMs = 2000;
 const liveActivityPollMs = 15000;
@@ -152,6 +159,7 @@ const stats = document.querySelector("#stats");
 const tabs = [...document.querySelectorAll(".tab")];
 const languageTab = document.querySelector("#tab-language");
 const performanceTab = document.querySelector("#tab-performance");
+const fineTuningTab = document.querySelector("#tab-fine-tuning");
 const mapTab = document.querySelector("#tab-map");
 const panels = {
   clips: document.querySelector("#panel-clips"),
@@ -159,6 +167,7 @@ const panels = {
   map: document.querySelector("#panel-map"),
   language: document.querySelector("#panel-language"),
   performance: document.querySelector("#panel-performance"),
+  fineTuning: document.querySelector("#panel-fine-tuning"),
 };
 const liveAudio = document.querySelector("#live-audio");
 const liveStatus = document.querySelector("#live-status");
@@ -182,6 +191,8 @@ const languageStatus = document.querySelector("#language-status");
 const lexicalAnalysis = document.querySelector("#lexical-analysis");
 const performanceStatus = document.querySelector("#performance-status");
 const performanceDashboard = document.querySelector("#performance-dashboard");
+const fineTuningStatus = document.querySelector("#fine-tuning-status");
+const fineTuningDashboard = document.querySelector("#fine-tuning-dashboard");
 
 let liveRetryTimer = null;
 let liveStatusTimer = null;
@@ -219,6 +230,7 @@ let activeTab = "clips";
 let mapPayloadLoaded = false;
 let languagePayloadLoaded = false;
 let performancePayloadLoaded = false;
+let fineTuningPayloadLoaded = false;
 let performanceRefreshTimer = null;
 let latestPerformancePayload = null;
 let selectedPerformanceRangeHours = 2;
@@ -317,11 +329,17 @@ if (languageTab) {
 if (performanceTab) {
   performanceTab.hidden = !performanceDashboardEnabled;
 }
+if (fineTuningTab) {
+  fineTuningTab.hidden = !fineTuningDashboardEnabled;
+}
 if (mapTab) {
   mapTab.hidden = !aisDashboardEnabled;
 }
 if (panels.map) {
   panels.map.hidden = !aisDashboardEnabled;
+}
+if (panels.fineTuning) {
+  panels.fineTuning.hidden = !fineTuningDashboardEnabled;
 }
 
 configureLiveAudioElement();
@@ -331,6 +349,8 @@ updateSystemMediaControlsUi();
 refreshButton.addEventListener("click", () => {
   if (activeTab === "performance") {
     loadAndRenderPerformance({ showLoading: false });
+  } else if (activeTab === "fineTuning") {
+    loadAndRenderFineTuning({ showLoading: false });
   } else if (activeTab === "map") {
     loadAndRenderMap({ showLoading: false });
   } else {
@@ -1392,6 +1412,9 @@ function enabledTabName(name) {
   if (name === "performance" && !performanceDashboardEnabled) {
     return "clips";
   }
+  if (name === "fineTuning" && !fineTuningDashboardEnabled) {
+    return "clips";
+  }
   if (name === "map" && !aisDashboardEnabled) {
     return "clips";
   }
@@ -1409,7 +1432,7 @@ function activateTab(name, { updateRoute = true, replaceRoute = false } = {}) {
     panel.classList.toggle("is-active", active);
     panel.hidden = !active;
   });
-  refreshButton.hidden = !["clips", "map", "performance"].includes(name);
+  refreshButton.hidden = !["clips", "map", "performance", "fineTuning"].includes(name);
   if (name === "live") {
     if (liveAudio.paused || !liveAudio.src) {
       prepareLiveAudio();
@@ -1431,6 +1454,9 @@ function activateTab(name, { updateRoute = true, replaceRoute = false } = {}) {
     startPerformancePolling();
   } else {
     stopPerformancePolling();
+  }
+  if (name === "fineTuning") {
+    loadAndRenderFineTuning({ showLoading: !fineTuningPayloadLoaded });
   }
   if (updateRoute) {
     updateTabRoute(name, { replaceRoute });
@@ -1531,6 +1557,137 @@ function renderLanguageDashboard(payload) {
   );
 
   lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel, entityPanel, topicPanel, educationPanel);
+}
+
+async function loadAndRenderFineTuning({ showLoading = true } = {}) {
+  if (!fineTuningStatus || !fineTuningDashboard) {
+    return;
+  }
+  if (showLoading || !fineTuningPayloadLoaded) {
+    fineTuningStatus.textContent = "Loading fine tuning...";
+  }
+  try {
+    const response = await fetch(asrFeedbackStatusUrl, {
+      cache: "no-store",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error(`fine tuning HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    fineTuningPayloadLoaded = true;
+    renderFineTuningDashboard(payload);
+  } catch {
+    fineTuningStatus.textContent = "Fine tuning unavailable";
+    fineTuningDashboard.replaceChildren(emptyFineTuningState());
+  }
+}
+
+function renderFineTuningDashboard(payload) {
+  const correctionCount = Number(payload.reviewed_correction_count || 0);
+  const minCorrections = Number(payload.min_corrections || 20);
+  const needed = Math.max(0, minCorrections - correctionCount);
+  const ready = Boolean(payload.ready_for_training);
+  fineTuningStatus.textContent = ready
+    ? "Ready for the next nightly training run"
+    : `${needed} more reviewed ${needed === 1 ? "clip" : "clips"} needed`;
+
+  const cards = document.createElement("div");
+  cards.className = "language-grid fine-tuning-grid";
+  cards.append(
+    languageCard("Reviewed corrections", String(correctionCount), `Training starts at ${minCorrections}`),
+    languageCard("Training gate", ready ? "Ready" : `${needed} needed`, "Nightly batch threshold"),
+    languageCard("Base model", compactModelName(payload.base_model), "Whisper checkpoint"),
+    languageCard("Last run", trainingStatusSummary(payload.training_status), "Latest batch status"),
+  );
+
+  const exportPanel = languagePanel("Correction export");
+  const exportActions = document.createElement("div");
+  exportActions.className = "fine-tuning-actions";
+  const exportLink = document.createElement("a");
+  exportLink.className = "fine-tuning-button";
+  exportLink.href = payload.export_url || "/api/clips/corrections/export";
+  exportLink.download = "elliott-bay-vhf-asr-corrections.jsonl";
+  exportLink.textContent = "Export JSONL";
+  const labelingLink = document.createElement("a");
+  labelingLink.className = "fine-tuning-button is-secondary";
+  labelingLink.href = "/operator/";
+  labelingLink.textContent = "Label clips";
+  exportActions.append(exportLink, labelingLink);
+  const exportNote = document.createElement("p");
+  exportNote.className = "language-panel-intro";
+  exportNote.textContent = "Reviewed transcript corrections become audio/text pairs for the nightly ASR batch.";
+  exportPanel.append(exportActions, exportNote);
+
+  const statusPanel = languagePanel("Latest training status");
+  statusPanel.append(trainingStatusList(payload.training_status, correctionCount, minCorrections));
+
+  const commandPanel = languagePanel("Nightly training");
+  commandPanel.append(
+    commandBlock([
+      "ssh optiplex",
+      "cd /home/rob/repos/elliott-bay-vhf-live-ais-deploy",
+      "systemctl --user start talkingboats-asr-feedback-train.service",
+      "journalctl --user -u talkingboats-asr-feedback-train.service -n 80 --no-pager",
+      "cat outputs/asr-feedback/training_status.json",
+    ]),
+  );
+
+  fineTuningDashboard.replaceChildren(cards, exportPanel, statusPanel, commandPanel);
+}
+
+function emptyFineTuningState() {
+  const empty = document.createElement("p");
+  empty.className = "muted-inline";
+  empty.textContent = "Fine tuning status is available only through the tailnet dev operator route.";
+  return empty;
+}
+
+function compactModelName(value) {
+  const text = String(value || "openai/whisper-small.en");
+  return text.split("/").pop() || text;
+}
+
+function trainingStatusSummary(status) {
+  if (!status?.status) {
+    return "No runs";
+  }
+  return String(status.status);
+}
+
+function trainingStatusList(status, correctionCount, minCorrections) {
+  const list = document.createElement("dl");
+  list.className = "fine-tuning-status-list";
+  const rows = [
+    ["Reviewed now", `${correctionCount} / ${minCorrections}`],
+    ["Last batch", trainingStatusSummary(status)],
+  ];
+  if (status?.reason) {
+    rows.push(["Reason", String(status.reason)]);
+  }
+  if (status?.correction_count !== undefined) {
+    rows.push(["Batch corrections", String(status.correction_count)]);
+  }
+  if (status?.generated_at) {
+    rows.push(["Updated", formatDateTime(status.generated_at)]);
+  }
+  for (const [termText, valueText] of rows) {
+    const term = document.createElement("dt");
+    term.textContent = termText;
+    const value = document.createElement("dd");
+    value.textContent = valueText;
+    list.append(term, value);
+  }
+  return list;
+}
+
+function commandBlock(lines) {
+  const pre = document.createElement("pre");
+  pre.className = "fine-tuning-command";
+  const code = document.createElement("code");
+  code.textContent = lines.join("\n");
+  pre.append(code);
+  return pre;
 }
 
 async function loadAndRenderPerformance({ showLoading = true } = {}) {

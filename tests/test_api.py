@@ -323,6 +323,60 @@ def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) 
     assert key not in response.text
 
 
+def test_operator_can_read_asr_feedback_status(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/pan-pan.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="PON PON all stations",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-05-20T19:12:00Z",
+        corrected_transcript="PAN-PAN, all stations.",
+        reviewer="rob",
+    )
+    output_dir = tmp_path / "asr-feedback"
+    output_dir.mkdir()
+    (output_dir / "training_status.json").write_text(
+        json.dumps(
+            {
+                "status": "trained",
+                "correction_count": 20,
+                "generated_at": "2026-06-01T03:20:00Z",
+                "dataset_path": "/home/rob/private/train.jsonl",
+                "latest_model_dir": "/home/rob/private/latest-ct2",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(output_dir))
+    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_MIN_CORRECTIONS", "2")
+
+    response = client.get("/api/asr-feedback/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reviewed_correction_count"] == 1
+    assert body["min_corrections"] == 2
+    assert body["ready_for_training"] is False
+    assert body["training_status"] == {
+        "status": "trained",
+        "correction_count": 20,
+        "generated_at": "2026-06-01T03:20:00Z",
+    }
+    assert "private" not in json.dumps(body)
+
+
 def test_recent_clips_skip_missing_playback_objects(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     missing_key = "raw/channel=68/date=2026-05-20/missing.mp3"

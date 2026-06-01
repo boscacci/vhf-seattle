@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
@@ -14,6 +15,11 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Respon
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from talkingboats.asr_feedback import (
+    DEFAULT_BASE_MODEL,
+    DEFAULT_MIN_CORRECTIONS,
+    DEFAULT_OUTPUT_DIR,
+)
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
 from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import Settings
@@ -385,6 +391,34 @@ async def export_clip_transcript_corrections(
     )
 
 
+@app.get(
+    "/api/asr-feedback/status",
+)
+async def asr_feedback_status(
+    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+) -> dict[str, object]:
+    if clip_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="clip store unavailable",
+        )
+    correction_count = len(clip_store.transcript_corrections_for_training())
+    min_corrections = _env_positive_int(
+        "TALKINGBOATS_ASR_FEEDBACK_MIN_CORRECTIONS",
+        DEFAULT_MIN_CORRECTIONS,
+    )
+    return {
+        "status": "ok",
+        "reviewed_correction_count": correction_count,
+        "min_corrections": min_corrections,
+        "ready_for_training": correction_count >= min_corrections,
+        "base_model": os.getenv("TALKINGBOATS_ASR_FEEDBACK_BASE_MODEL", DEFAULT_BASE_MODEL),
+        "nightly_schedule": "03:20 UTC",
+        "export_url": "/api/clips/corrections/export",
+        "training_status": _read_public_asr_feedback_status(),
+    }
+
+
 def public_playback_clip(
     clip_store: UploadedClipStore | None,
     *,
@@ -418,6 +452,40 @@ def _public_training_record(correction: dict[str, object]) -> dict[str, object]:
         "reviewer": correction["reviewer"],
         "note": correction["note"],
     }
+
+
+def _read_public_asr_feedback_status() -> dict[str, object] | None:
+    output_dir = FilePath(
+        os.getenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR))
+    )
+    status_path = output_dir / "training_status.json"
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError):
+        return {"status": "unreadable"}
+    if not isinstance(payload, dict):
+        return {"status": "unreadable"}
+    allowed_keys = {
+        "status",
+        "reason",
+        "correction_count",
+        "min_corrections",
+        "generated_at",
+    }
+    return {key: value for key, value in payload.items() if key in allowed_keys}
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _format_utc(value: datetime) -> str:

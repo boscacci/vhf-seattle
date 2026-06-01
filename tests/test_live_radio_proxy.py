@@ -629,6 +629,72 @@ def test_proxy_transcript_correction_export_requires_tailnet_dev_proxy_marker() 
     assert response.status_code == 403
 
 
+def test_proxy_asr_feedback_status_forwards_tailnet_dev_request_and_strips_auth() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://private-api.test/api/asr-feedback/status"
+        assert "authorization" not in request.headers
+        assert "cookie" not in request.headers
+        assert "x-talkingboats-operator-token" not in request.headers
+        assert "x-talkingboats-tailnet-dev" not in request.headers
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "application/json",
+                "Set-Cookie": "talkingboats_operator_token=private-token",
+            },
+            json={"reviewed_correction_count": 3},
+        )
+
+    app = create_app(
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_get(
+            app,
+            "/api/asr-feedback/status",
+            headers={
+                "Host": "vhf-dev.robertboscacci.com",
+                "X-TalkingBoats-Tailnet-Dev": "1",
+                "Authorization": "Bearer viewer-token",
+                "Cookie": "talkingboats_operator_token=viewer-token",
+                "X-TalkingBoats-Operator-Token": "viewer-token",
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
+    assert response.json() == {"reviewed_correction_count": 3}
+
+
+def test_proxy_asr_feedback_status_requires_tailnet_dev_proxy_marker() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("private API should not be reached without tailnet dev marker")
+
+    app = create_app(
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_get(
+            app,
+            "/api/asr-feedback/status",
+            headers={"Host": "vhf-dev.robertboscacci.com"},
+        )
+    )
+
+    assert response.status_code == 403
+
+
 def test_proxy_ais_catcher_viewer_is_dev_only_and_public_safe() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "http://pi.test:8100/"

@@ -995,6 +995,7 @@ audio {
 
 .language-dashboard,
 .performance-dashboard,
+.fine-tuning-dashboard,
 .ais-catcher-shell {
   display: grid;
   gap: 14px;
@@ -1010,6 +1011,7 @@ audio {
 .language-card,
 .performance-card,
 .language-panel,
+.fine-tuning-button,
 .entity-card,
 .topic-card,
 .education-card,
@@ -1026,6 +1028,63 @@ audio {
   gap: 8px;
   min-height: 112px;
   padding: 14px;
+}
+
+.fine-tuning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.fine-tuning-button {
+  display: inline-grid;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  color: #06110f;
+  background: var(--teal);
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.fine-tuning-button.is-secondary {
+  color: var(--ink);
+  background: var(--panel-strong);
+}
+
+.fine-tuning-status-list {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.fine-tuning-status-list dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.fine-tuning-status-list dd {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.fine-tuning-command {
+  margin: 0;
+  overflow-x: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #dbe5e1;
+  background: var(--panel-strong);
+  line-height: 1.5;
 }
 
 .language-card strong,
