@@ -10,6 +10,10 @@ bucket and invalidates the shell paths. It does not remove remote-only files,
 so generated clips, analysis artifacts, and manifests already in the bucket are
 preserved.
 
+Dev shell deploys also sync the OptiPlex tailnet deploy copy by default, because
+`vhf-dev.robertboscacci.com` is served from that tailnet host. Set
+`TALKINGBOATS_SKIP_TAILNET_DEV_SYNC=1` to skip that extra sync.
+
 Dev shell deploys also allow archive/no-git deploy copies. Prod shell deploys
 still require the main branch and a clean worktree.
 
@@ -138,6 +142,22 @@ upload_route_indexes() {
   done
 }
 
+sync_tailnet_dev_static_shell() {
+  local source_dir="$1"
+  local target="${TALKINGBOATS_DEV_TAILNET_SSH_TARGET:-optiplex}"
+  local target_dir="${TALKINGBOATS_DEV_TAILNET_PUBLIC_SITE_DIR:-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/public-site}"
+
+  if [[ "${environment}" != "dev" || "${TALKINGBOATS_SKIP_TAILNET_DEV_SYNC:-0}" == "1" ]]; then
+    return
+  fi
+  if ! command -v rsync >/dev/null; then
+    echo "rsync is required for tailnet dev static shell sync." >&2
+    exit 1
+  fi
+  echo "Syncing static shell to tailnet dev copy: ${target}:${target_dir}"
+  rsync -az "${sync_excludes[@]}" "${source_dir}/" "${target}:${target_dir}/"
+}
+
 enforce_branch_hygiene() {
   local environment="$1"
   local branch="$2"
@@ -256,6 +276,7 @@ fqdn="$(deploy_output_raw "${fqdn_output}")"
 
 echo "Deploying static shell ${site_source} from ${branch} to ${environment}: https://${fqdn}"
 aws s3 sync "${site_source}" "s3://${bucket}/" "${sync_excludes[@]}"
+sync_tailnet_dev_static_shell "${site_source}"
 upload_route_indexes "${site_source}" "${bucket}"
 aws cloudfront create-invalidation \
   --distribution-id "${distribution_id}" \

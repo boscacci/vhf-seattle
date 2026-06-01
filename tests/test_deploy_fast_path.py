@@ -26,6 +26,11 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert "cloudfront create-invalidation" in script
     assert "enforce_branch_hygiene" in script
     assert "TALKINGBOATS_TOFU_DIR" in script
+    assert "sync_tailnet_dev_static_shell" in script
+    assert "TALKINGBOATS_DEV_TAILNET_SSH_TARGET:-optiplex" in script
+    assert "TALKINGBOATS_DEV_TAILNET_PUBLIC_SITE_DIR" in script
+    assert "TALKINGBOATS_SKIP_TAILNET_DEV_SYNC" in script
+    assert "rsync -az" in script
 
 
 def test_full_public_deploy_supports_external_tofu_state_dir() -> None:
