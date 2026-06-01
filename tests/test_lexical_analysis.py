@@ -17,6 +17,7 @@ from talkingboats.lexical_analysis import (
     main,
     missing_lexical_analysis,
     read_cached_lexical_analysis,
+    read_published_lexical_analysis,
 )
 from talkingboats.schemas import ClipPresignRequest
 from talkingboats.security import assert_public_safe
@@ -103,6 +104,7 @@ def test_generate_lexical_analysis_counts_terms_entities_and_writes_cache(tmp_pa
     assert (output_dir / "analysis" / "topic_clusters.html").exists()
     assert json.loads((output_dir / "analysis" / "lexical.json").read_text()) == payload
     assert read_cached_lexical_analysis(db_path) == payload
+    assert read_published_lexical_analysis(output_dir / "analysis" / "lexical.json") == payload
     assert_public_safe(payload)
 
 

@@ -23,7 +23,10 @@ from talkingboats.durable_events import (
     NullDurableEventStore,
 )
 from talkingboats.dynamo_clip_store import DynamoClipStoreConfig, DynamoUploadedClipStore
-from talkingboats.lexical_analysis import read_cached_lexical_analysis
+from talkingboats.lexical_analysis import (
+    read_cached_lexical_analysis,
+    read_published_lexical_analysis,
+)
 from talkingboats.schemas import (
     ClipPresignRequest,
     ClipPresignResponse,
@@ -101,6 +104,9 @@ app = FastAPI(
 )
 
 SHARED_UI_DIR = FilePath(__file__).resolve().parents[2] / "public-site"
+PUBLISHED_LEXICAL_PATH = (
+    FilePath(__file__).resolve().parents[2] / "outputs/public-site/analysis/lexical.json"
+)
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
 if SHARED_UI_DIR.exists():
     app.mount("/operator", StaticFiles(directory=SHARED_UI_DIR, html=True), name="operator")
@@ -438,6 +444,8 @@ async def lexical_analysis(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, object]:
     try:
+        if settings.clip_store_backend == "dynamodb":
+            return read_published_lexical_analysis(PUBLISHED_LEXICAL_PATH)
         return read_cached_lexical_analysis(settings.clip_db_path)
     except ValueError as exc:
         raise HTTPException(

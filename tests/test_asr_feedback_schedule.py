@@ -51,7 +51,8 @@ def test_live_transcriber_service_has_stream_url_and_cpu_cap() -> None:
     )
 
     assert "--stream-url http://192.168.1.114:8000/talkingboats-live.mp3" in service
-    assert "--sqlite-path /home/rob/.local/share/talkingboats/live-transcripts.sqlite3" in service
+    assert "TALKINGBOATS_TRANSCRIPT_STORE_BACKEND=dynamodb" in service
+    assert "--sqlite-path" not in service
     assert "StartLimitIntervalSec=300" in service
     assert "Nice=10" in service
     assert "CPUWeight=25" in service

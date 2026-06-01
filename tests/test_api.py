@@ -702,6 +702,35 @@ def test_public_lexical_analysis_returns_cached_payload_without_private_fields(t
     assert "127.0.0.1" not in response.text
 
 
+def test_public_lexical_analysis_uses_published_json_in_dynamo_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    published = {
+        "status": "ok",
+        "generated_at": "2026-05-26T01:02:03Z",
+        "source_clip_count": 1,
+        "source_min_started_at": "2026-05-25T22:10:00Z",
+        "source_max_started_at": "2026-05-25T22:10:00Z",
+        "channels": {"14": 1},
+        "frequency": {"by_channel": {"14": 1}},
+        "terms": {"unigrams": []},
+        "entities": [],
+        "topics": {"status": "skipped", "plot_url": "/analysis/topic_clusters.html"},
+        "education": [],
+    }
+    lexical_path = tmp_path / "lexical.json"
+    lexical_path.write_text(json.dumps(published), encoding="utf-8")
+    monkeypatch.setattr("talkingboats.api.PUBLISHED_LEXICAL_PATH", lexical_path)
+    missing_db_path = tmp_path / "missing.sqlite3"
+    client = _client(clip_db_path=missing_db_path, clip_store_backend="dynamodb")
+
+    response = client.get("/api/analysis/lexical")
+
+    assert response.status_code == 200
+    assert response.json() == published
+
+
 def test_operator_live_channels_do_not_expose_upstream_urls() -> None:
     client = _client()
 
@@ -758,6 +787,7 @@ class AsgiTestClient:
 def _client(
     *,
     clip_db_path: Path | None = None,
+    clip_store_backend: str = "sqlite",
     storage: FakeStorage | None = None,
     event_store: CapturingEventStore | None = None,
 ) -> AsgiTestClient:
@@ -788,6 +818,7 @@ def _client(
                 ),
             },
             clip_db_path=clip_db_path,
+            clip_store_backend=clip_store_backend,
         )
 
     async def override_storage() -> FakeStorage:

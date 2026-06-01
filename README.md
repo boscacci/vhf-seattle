@@ -485,7 +485,9 @@ conda run -n dell talkingboats-live-transcriber \
 For the long-running user service, install
 `deploy/systemd/talkingboats-live-transcriber.service.example`; it pins the Pi
 stream URL and uses the same lower-priority `CPUQuota=125%` guardrail as the
-uploaded-clip transcriber.
+uploaded-clip transcriber. The user service persists live-caption entries with
+`TALKINGBOATS_TRANSCRIPT_STORE_BACKEND=dynamodb`; local SQLite is retained only
+as a legacy fallback for ad hoc runs.
 
 The transcriber uses `faster-whisper` with Whisper `turbo` by default because it
 is a practical open-source CPU path for this hardware. It uses local beam search

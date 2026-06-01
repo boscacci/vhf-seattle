@@ -50,21 +50,22 @@ TALKINGBOATS_DURABLE_EVENTS_TABLE="$(cd infra/opentofu && tofu output -raw dev_r
 TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT=dev
 TALKINGBOATS_DURABLE_EVENTS_REQUIRED=false
 TALKINGBOATS_CLIP_STORE_BACKEND=dynamodb
+TALKINGBOATS_TRANSCRIPT_STORE_BACKEND=dynamodb
 ```
 
-`false` is intentional for the first rollout: SQLite remains the serving read
-model while DynamoDB events are verified. Once the backfill and dashboard read
-model are clean, set `TALKINGBOATS_DURABLE_EVENTS_REQUIRED=true` so new clip
-writes fail fast if they cannot be durably recorded.
+`false` keeps durable event writes retry-tolerant while the serving read models
+run from DynamoDB. Once the backfill and dashboard read model are clean, set
+`TALKINGBOATS_DURABLE_EVENTS_REQUIRED=true` so new clip writes fail fast if they
+cannot be durably recorded.
 
 ## Migration Path
 
 1. Apply the dev table with OpenTofu.
-2. Enable dual-write event publishing from the private API and uploaded-clip
-   transcriber while SQLite remains the read model.
-3. Backfill existing clip, correction, analysis, AIS, and telemetry records into
-   dev with deterministic `pk`/`sk` keys.
-4. Build read models from DynamoDB Streams for dashboard queries.
+2. Enable durable event publishing from the private API and uploaded-clip
+   transcriber.
+3. Backfill existing clip and correction records into dev with deterministic
+   `pk`/`sk` keys.
+4. Flip the clip, feedback, and live-caption read models to DynamoDB.
 5. Flip durable writes to required mode after dev replay and dashboard smoke
    tests are clean.
 6. Promote the same path to prod only after the dev path survives restart and

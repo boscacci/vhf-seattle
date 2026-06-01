@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import sqlite3
@@ -26,6 +27,7 @@ from talkingboats.audio_processing import (
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ,
 )
+from talkingboats.durable_events import to_dynamodb_item
 
 DEFAULT_AUDIO_FILTER = DEFAULT_SPEECH_AUDIO_FILTER
 
@@ -92,10 +94,121 @@ class TranscriptStore:
             )
 
 
+class DynamoTranscriptStore:
+    def __init__(
+        self,
+        *,
+        table_name: str,
+        aws_region: str,
+        environment: str = "dev",
+        table: Any | None = None,
+    ) -> None:
+        self.environment = environment
+        if table is None:
+            import boto3
+
+            table = boto3.resource("dynamodb", region_name=aws_region).Table(table_name)
+        self.table = table
+
+    @classmethod
+    def from_env(cls) -> DynamoTranscriptStore:
+        table_name = os.getenv("TALKINGBOATS_TRANSCRIPT_STORE_DYNAMO_TABLE") or os.getenv(
+            "TALKINGBOATS_DURABLE_EVENTS_TABLE"
+        )
+        if not table_name:
+            raise RuntimeError(
+                "TALKINGBOATS_TRANSCRIPT_STORE_DYNAMO_TABLE or "
+                "TALKINGBOATS_DURABLE_EVENTS_TABLE is required"
+            )
+        return cls(
+            table_name=table_name,
+            aws_region=os.getenv("TALKINGBOATS_AWS_REGION", "us-west-2"),
+            environment=os.getenv("TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT", "dev"),
+        )
+
+    def add_entry(self, *, text: str, started_at: str, ended_at: str, received_at: str) -> bool:
+        self.table.put_item(
+            Item=to_dynamodb_item(
+                {
+                    "pk": self._pk(),
+                    "sk": _transcript_entry_sk(
+                        text=text,
+                        started_at=started_at,
+                        ended_at=ended_at,
+                    ),
+                    "entity_type": "live_transcript_entry",
+                    "text": text,
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                    "received_at": received_at,
+                }
+            )
+        )
+        return True
+
+    def recent_entries(self, *, limit: int) -> list[dict[str, str]]:
+        rows = self._query_items(limit=limit, scan_forward=False)
+        return [
+            {
+                "text": str(item["text"]),
+                "started_at": str(item["started_at"]),
+                "ended_at": str(item["ended_at"]),
+            }
+            for item in reversed(rows)
+        ]
+
+    def count_entries(self) -> int:
+        total = 0
+        start_key: dict[str, Any] | None = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "KeyConditionExpression": "pk = :pk",
+                "ExpressionAttributeValues": {":pk": self._pk()},
+                "Select": "COUNT",
+            }
+            if start_key is not None:
+                kwargs["ExclusiveStartKey"] = start_key
+            response = self.table.query(**kwargs)
+            total += int(response.get("Count", 0))
+            start_key = response.get("LastEvaluatedKey")
+            if not start_key:
+                break
+        return total
+
+    def _query_items(self, *, limit: int, scan_forward: bool) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        remaining = limit
+        start_key: dict[str, Any] | None = None
+        while remaining > 0:
+            kwargs: dict[str, Any] = {
+                "KeyConditionExpression": "pk = :pk",
+                "ExpressionAttributeValues": {":pk": self._pk()},
+                "ScanIndexForward": scan_forward,
+                "Limit": remaining,
+            }
+            if start_key is not None:
+                kwargs["ExclusiveStartKey"] = start_key
+            response = self.table.query(**kwargs)
+            items.extend(response.get("Items", []))
+            remaining = limit - len(items)
+            start_key = response.get("LastEvaluatedKey")
+            if not start_key:
+                break
+        return items[:limit]
+
+    def _pk(self) -> str:
+        return f"live_transcripts#{self.environment}"
+
+
+def _transcript_entry_sk(*, text: str, started_at: str, ended_at: str) -> str:
+    digest = hashlib.sha256(f"{text}\0{started_at}\0{ended_at}".encode()).hexdigest()[:16]
+    return f"{started_at}#{digest}"
+
+
 @dataclass
 class TranscriptState:
     max_entries: int = 30
-    store: TranscriptStore | None = None
+    store: TranscriptStore | DynamoTranscriptStore | None = None
     status: str = "running"
     updated_at: str | None = None
     error: str | None = None
@@ -411,7 +524,7 @@ def main() -> None:
 
     state = TranscriptState(
         max_entries=args.max_entries,
-        store=TranscriptStore(args.sqlite_path) if args.sqlite_path else None,
+        store=_transcript_store_from_env(args.sqlite_path),
     )
     audio_filter = None if args.no_audio_filter else (args.audio_filter or DEFAULT_AUDIO_FILTER)
     worker = threading.Thread(
@@ -447,6 +560,20 @@ def _load_faster_whisper_model(*, model_size: str, device: str, compute_type: st
 
 def _format_utc(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _transcript_store_from_env(
+    sqlite_path: Path | None,
+) -> TranscriptStore | DynamoTranscriptStore | None:
+    backend = os.getenv("TALKINGBOATS_TRANSCRIPT_STORE_BACKEND") or os.getenv(
+        "TALKINGBOATS_CLIP_STORE_BACKEND",
+        "sqlite",
+    )
+    if backend == "dynamodb":
+        return DynamoTranscriptStore.from_env()
+    if backend == "sqlite":
+        return TranscriptStore(sqlite_path) if sqlite_path else None
+    raise RuntimeError(f"unsupported transcript store backend: {backend}")
 
 
 if __name__ == "__main__":

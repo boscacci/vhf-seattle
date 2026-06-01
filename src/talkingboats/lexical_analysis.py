@@ -608,6 +608,14 @@ def read_cached_lexical_analysis(db_path: Path | None) -> dict[str, Any]:
     return payload
 
 
+def read_published_lexical_analysis(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return missing_lexical_analysis()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert_public_safe(payload)
+    return payload
+
+
 def missing_lexical_analysis() -> dict[str, Any]:
     return {
         "status": "missing",

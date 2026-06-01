@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from talkingboats.live_transcriber import (
+    DynamoTranscriptStore,
     TranscriptState,
     TranscriptStore,
     append_transcript_segments,
@@ -88,6 +89,48 @@ def test_transcript_state_persists_entries_to_sqlite(tmp_path) -> None:
     ]
 
 
+def test_dynamo_transcript_store_persists_recent_entries() -> None:
+    store = DynamoTranscriptStore(
+        table_name="events",
+        aws_region="us-west-2",
+        environment="dev",
+        table=FakeDynamoTable(),
+    )
+
+    assert store.add_entry(
+        text="Seattle Traffic northbound",
+        started_at="2026-05-24T17:00:01Z",
+        ended_at="2026-05-24T17:00:04Z",
+        received_at="2026-05-24T17:00:05Z",
+    )
+    store.add_entry(
+        text="Seattle Traffic northbound",
+        started_at="2026-05-24T17:00:01Z",
+        ended_at="2026-05-24T17:00:04Z",
+        received_at="2026-05-24T17:00:06Z",
+    )
+    store.add_entry(
+        text="Seattle Traffic southbound",
+        started_at="2026-05-24T17:00:05Z",
+        ended_at="2026-05-24T17:00:08Z",
+        received_at="2026-05-24T17:00:09Z",
+    )
+
+    assert store.count_entries() == 2
+    assert store.recent_entries(limit=2) == [
+        {
+            "text": "Seattle Traffic northbound",
+            "started_at": "2026-05-24T17:00:01Z",
+            "ended_at": "2026-05-24T17:00:04Z",
+        },
+        {
+            "text": "Seattle Traffic southbound",
+            "started_at": "2026-05-24T17:00:05Z",
+            "ended_at": "2026-05-24T17:00:08Z",
+        },
+    ]
+
+
 def test_ffmpeg_command_downsamples_stream_and_applies_optional_filter() -> None:
     command = build_ffmpeg_pcm_command(
         "http://pi.test:8000/talkingboats-live.mp3",
@@ -144,3 +187,21 @@ class FakeTranscribeModel:
     def transcribe(self, path: str, **kwargs):
         self.calls.append({"path": path, **kwargs})
         return ([SimpleNamespace(start=0.0, end=1.0, text=" Seattle Traffic inbound ")], None)
+
+
+class FakeDynamoTable:
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, str], dict[str, object]] = {}
+
+    def put_item(self, *, Item):
+        self.items[(Item["pk"], Item["sk"])] = Item
+
+    def query(self, **kwargs):
+        pk = kwargs["ExpressionAttributeValues"][":pk"]
+        rows = [item for (item_pk, _sk), item in self.items.items() if item_pk == pk]
+        rows.sort(key=lambda item: item["sk"], reverse=not kwargs.get("ScanIndexForward", True))
+        if kwargs.get("Select") == "COUNT":
+            return {"Count": len(rows)}
+        if kwargs.get("Limit") is not None:
+            rows = rows[: int(kwargs["Limit"])]
+        return {"Items": rows}

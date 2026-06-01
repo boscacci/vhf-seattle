@@ -9,7 +9,8 @@ StartLimitBurst=5
 Type=simple
 WorkingDirectory=/home/rob/repos/elliott-bay-vhf
 EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/.env
-ExecStart=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-live-transcriber --stream-url http://192.168.1.114:8000/talkingboats-live.mp3 --host 0.0.0.0 --port 8055 --sqlite-path /home/rob/.local/share/talkingboats/live-transcripts.sqlite3
+Environment=TALKINGBOATS_TRANSCRIPT_STORE_BACKEND=dynamodb
+ExecStart=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-live-transcriber --stream-url http://192.168.1.114:8000/talkingboats-live.mp3 --host 0.0.0.0 --port 8055
 Restart=always
 RestartSec=20
 Nice=10
