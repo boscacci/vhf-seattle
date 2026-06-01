@@ -68,3 +68,12 @@ writes fail fast if they cannot be durably recorded.
    tests are clean.
 6. Promote the same path to prod only after the dev path survives restart and
    recovery testing.
+
+Clip and correction backfill:
+
+```bash
+talkingboats-backfill-durable-events \
+  --db-path /home/rob/.local/share/talkingboats/live-transcripts.sqlite3 \
+  --table "$(cd infra/opentofu && tofu output -raw dev_radio_events_table_name)" \
+  --environment dev
+```

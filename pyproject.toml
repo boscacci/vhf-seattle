@@ -52,6 +52,7 @@ talkingboats-export-public = "talkingboats.publish:main"
 talkingboats-analyze-audio = "talkingboats.audio_analysis:main"
 talkingboats-analyze-transcripts = "talkingboats.lexical_analysis:main"
 talkingboats-train-asr-feedback = "talkingboats.asr_feedback:main"
+talkingboats-backfill-durable-events = "talkingboats.durable_backfill:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
