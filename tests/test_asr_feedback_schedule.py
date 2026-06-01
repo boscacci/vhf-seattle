@@ -34,7 +34,8 @@ def test_asr_feedback_systemd_timer_runs_nightly() -> None:
     assert "scripts/train_asr_feedback_nightly.sh" in service
     assert "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/.env" in service
     assert "Nice=15" in service
-    assert "OnCalendar=*-*-* 03:20:00" in timer
+    assert "OnCalendar=*-*-* 03:00:00 America/Los_Angeles" in timer
+    assert "03:20:00" not in timer
     assert "Persistent=true" in timer
     assert "Unit=talkingboats-asr-feedback-train.service" in timer
 

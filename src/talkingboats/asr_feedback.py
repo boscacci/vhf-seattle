@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import inspect
 import json
 import os
@@ -17,6 +18,7 @@ DEFAULT_BASE_MODEL = "openai/whisper-small.en"
 DEFAULT_MIN_CORRECTIONS = 20
 DEFAULT_OUTPUT_DIR = Path("outputs/asr-feedback")
 DEFAULT_RESTART_SERVICE = "talkingboats-uploaded-clip-transcriber.service"
+NO_NEW_CORRECTIONS_REASON = "no new reviewed transcript corrections since last trained run"
 
 
 class Trainer(Protocol):
@@ -74,6 +76,20 @@ def run_nightly_training(
         return result
 
     run_started_at = now or datetime.now(UTC)
+    correction_fingerprint = _correction_fingerprint(corrections)
+    previous_status = _read_status(config.output_dir)
+    if _already_trained_fingerprint(previous_status, correction_fingerprint):
+        result = {
+            "status": "skipped",
+            "reason": NO_NEW_CORRECTIONS_REASON,
+            "correction_count": len(corrections),
+            "correction_fingerprint": correction_fingerprint,
+            "last_trained_at": _last_trained_at(previous_status),
+            "generated_at": _format_utc(run_started_at),
+        }
+        _write_status(config.output_dir, result)
+        return result
+
     run_id = run_started_at.strftime("%Y%m%dT%H%M%SZ")
     run_dir = config.output_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -90,6 +106,7 @@ def run_nightly_training(
     result = {
         "status": "trained",
         "correction_count": len(corrections),
+        "correction_fingerprint": correction_fingerprint,
         "dataset_path": str(dataset_path),
         "run_dir": str(run_dir),
         "hf_model_dir": training_result.get("hf_model_dir"),
@@ -339,6 +356,88 @@ def _write_status(output_dir: Path, result: dict[str, Any]) -> None:
         output_dir / "training_status.json",
         json.dumps(result, indent=2, sort_keys=True) + "\n",
     )
+
+
+def _read_status(output_dir: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads((output_dir / "training_status.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _already_trained_fingerprint(
+    previous_status: dict[str, Any] | None,
+    correction_fingerprint: str,
+) -> bool:
+    if not previous_status:
+        return False
+    previous_fingerprint = _previous_correction_fingerprint(previous_status)
+    if previous_fingerprint != correction_fingerprint:
+        return False
+    if previous_status.get("status") == "trained":
+        return True
+    return (
+        previous_status.get("status") == "skipped"
+        and previous_status.get("reason") == NO_NEW_CORRECTIONS_REASON
+    )
+
+
+def _last_trained_at(previous_status: dict[str, Any] | None) -> str | None:
+    if not previous_status:
+        return None
+    if previous_status.get("status") == "trained":
+        generated_at = previous_status.get("generated_at")
+        return str(generated_at) if generated_at else None
+    last_trained_at = previous_status.get("last_trained_at")
+    return str(last_trained_at) if last_trained_at else None
+
+
+def _correction_fingerprint(corrections: list[dict[str, object]]) -> str:
+    records = [
+        {
+            "key_hash": _short_hash(str(correction["key"])),
+            "started_at": str(correction["started_at"]),
+            "content_type": str(correction["content_type"]),
+            "duration_seconds": correction["duration_seconds"],
+            "text": str(correction["corrected_transcript"]),
+        }
+        for correction in corrections
+    ]
+    return _fingerprint_records(records)
+
+
+def _previous_correction_fingerprint(previous_status: dict[str, Any]) -> str | None:
+    fingerprint = previous_status.get("correction_fingerprint")
+    if isinstance(fingerprint, str) and fingerprint:
+        return fingerprint
+    dataset_path = previous_status.get("dataset_path")
+    if not isinstance(dataset_path, str) or not dataset_path:
+        return None
+    try:
+        records = [
+            {
+                "key_hash": str(record["key_hash"]),
+                "started_at": str(record["started_at"]),
+                "content_type": str(record["content_type"]),
+                "duration_seconds": record["duration_seconds"],
+                "text": str(record["text"]),
+            }
+            for record in (
+                json.loads(line)
+                for line in Path(dataset_path).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+        ]
+    except (KeyError, OSError, json.JSONDecodeError):
+        return None
+    return _fingerprint_records(records)
+
+
+def _fingerprint_records(records: list[dict[str, object]]) -> str:
+    records.sort(key=lambda record: (str(record["key_hash"]), str(record["started_at"])))
+    payload = json.dumps(records, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

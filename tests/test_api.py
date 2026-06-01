@@ -354,7 +354,8 @@ def test_operator_can_read_asr_feedback_status(tmp_path: Path, monkeypatch) -> N
             {
                 "status": "trained",
                 "correction_count": 20,
-                "generated_at": "2026-06-01T03:20:00Z",
+                "generated_at": "2026-06-01T10:00:00Z",
+                "correction_fingerprint": "private-fingerprint",
                 "dataset_path": "/home/rob/private/train.jsonl",
                 "latest_model_dir": "/home/rob/private/latest-ct2",
             }
@@ -371,10 +372,11 @@ def test_operator_can_read_asr_feedback_status(tmp_path: Path, monkeypatch) -> N
     assert body["reviewed_correction_count"] == 1
     assert body["min_corrections"] == 2
     assert body["ready_for_training"] is False
+    assert body["nightly_schedule"] == "03:00 America/Los_Angeles"
     assert body["training_status"] == {
         "status": "trained",
         "correction_count": 20,
-        "generated_at": "2026-06-01T03:20:00Z",
+        "generated_at": "2026-06-01T10:00:00Z",
     }
     assert "private" not in json.dumps(body)
 

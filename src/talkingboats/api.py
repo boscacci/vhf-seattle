@@ -423,7 +423,7 @@ async def asr_feedback_status(
         "min_corrections": min_corrections,
         "ready_for_training": correction_count >= min_corrections,
         "base_model": os.getenv("TALKINGBOATS_ASR_FEEDBACK_BASE_MODEL", DEFAULT_BASE_MODEL),
-        "nightly_schedule": "03:20 UTC",
+        "nightly_schedule": "03:00 America/Los_Angeles",
         "export_url": "/api/clips/corrections/export",
         "training_status": _read_public_asr_feedback_status(),
     }
@@ -482,6 +482,7 @@ def _read_public_asr_feedback_status() -> dict[str, object] | None:
         "reason",
         "correction_count",
         "min_corrections",
+        "last_trained_at",
         "generated_at",
     }
     return {key: value for key, value in payload.items() if key in allowed_keys}

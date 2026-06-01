@@ -84,6 +84,185 @@ def test_nightly_training_materializes_audio_and_promotes_model(tmp_path: Path) 
     assert f"TALKINGBOATS_TRANSCRIBE_MODEL={latest_model}" in env_text
     status = json.loads((tmp_path / "asr" / "training_status.json").read_text())
     assert status["status"] == "trained"
+    assert len(status["correction_fingerprint"]) == 64
+
+
+def test_nightly_training_skips_when_labeled_dataset_matches_last_trained_run(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "clips.sqlite3"
+    output_dir = tmp_path / "asr"
+    store = UploadedClipStore(db_path)
+    _corrected_clip(store, index=0)
+    _corrected_clip(store, index=1)
+    trainer_calls = 0
+
+    class FakeReader:
+        def download(self, key: str, output_path: Path) -> None:
+            output_path.write_bytes(f"audio for {key}".encode())
+
+    def fake_trainer(
+        config: AsrFeedbackConfig,
+        run_dir: Path,
+        dataset_path: Path,
+    ) -> dict[str, str]:
+        nonlocal trainer_calls
+        trainer_calls += 1
+        model_dir = run_dir / "model-ct2"
+        model_dir.mkdir()
+        (model_dir / "model.bin").write_bytes(f"model-{trainer_calls}".encode())
+        return {"ct2_model_dir": str(model_dir)}
+
+    first = run_nightly_training(
+        AsrFeedbackConfig(
+            db_path=db_path,
+            output_dir=output_dir,
+            min_corrections=2,
+            restart_service=None,
+        ),
+        clip_reader=FakeReader(),
+        trainer=fake_trainer,
+        now=datetime(2026, 5, 31, 10, 0, tzinfo=UTC),
+    )
+    second = run_nightly_training(
+        AsrFeedbackConfig(
+            db_path=db_path,
+            output_dir=output_dir,
+            min_corrections=2,
+            restart_service=None,
+        ),
+        clip_reader=FakeReader(),
+        trainer=fake_trainer,
+        now=datetime(2026, 6, 1, 10, 0, tzinfo=UTC),
+    )
+
+    assert first["status"] == "trained"
+    assert second["status"] == "skipped"
+    assert second["reason"] == "no new reviewed transcript corrections since last trained run"
+    assert second["correction_count"] == 2
+    assert second["last_trained_at"] == "2026-05-31T10:00:00Z"
+    assert second["correction_fingerprint"] == first["correction_fingerprint"]
+    assert trainer_calls == 1
+    assert len(list((output_dir / "runs").iterdir())) == 1
+
+
+def test_nightly_training_retrains_when_reviewed_correction_changes(tmp_path: Path) -> None:
+    db_path = tmp_path / "clips.sqlite3"
+    output_dir = tmp_path / "asr"
+    store = UploadedClipStore(db_path)
+    _corrected_clip(store, index=0)
+    _corrected_clip(store, index=1)
+    trainer_calls = 0
+
+    class FakeReader:
+        def download(self, key: str, output_path: Path) -> None:
+            output_path.write_bytes(f"audio for {key}".encode())
+
+    def fake_trainer(
+        config: AsrFeedbackConfig,
+        run_dir: Path,
+        dataset_path: Path,
+    ) -> dict[str, str]:
+        nonlocal trainer_calls
+        trainer_calls += 1
+        model_dir = run_dir / "model-ct2"
+        model_dir.mkdir()
+        (model_dir / "model.bin").write_bytes(f"model-{trainer_calls}".encode())
+        return {"ct2_model_dir": str(model_dir)}
+
+    first = run_nightly_training(
+        AsrFeedbackConfig(
+            db_path=db_path,
+            output_dir=output_dir,
+            min_corrections=2,
+            restart_service=None,
+        ),
+        clip_reader=FakeReader(),
+        trainer=fake_trainer,
+        now=datetime(2026, 5, 31, 10, 0, tzinfo=UTC),
+    )
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-05-20T19:12:00Z",
+        corrected_transcript="PAN-PAN reviewed zero with a better label.",
+        reviewer="test",
+    )
+    second = run_nightly_training(
+        AsrFeedbackConfig(
+            db_path=db_path,
+            output_dir=output_dir,
+            min_corrections=2,
+            restart_service=None,
+        ),
+        clip_reader=FakeReader(),
+        trainer=fake_trainer,
+        now=datetime(2026, 6, 1, 10, 0, tzinfo=UTC),
+    )
+
+    assert first["status"] == "trained"
+    assert second["status"] == "trained"
+    assert second["correction_fingerprint"] != first["correction_fingerprint"]
+    assert trainer_calls == 2
+
+
+def test_nightly_training_skips_when_old_status_dataset_matches_current_labels(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "clips.sqlite3"
+    output_dir = tmp_path / "asr"
+    store = UploadedClipStore(db_path)
+    _corrected_clip(store, index=0)
+    _corrected_clip(store, index=1)
+    trainer_calls = 0
+
+    class FakeReader:
+        def download(self, key: str, output_path: Path) -> None:
+            output_path.write_bytes(f"audio for {key}".encode())
+
+    def fake_trainer(
+        config: AsrFeedbackConfig,
+        run_dir: Path,
+        dataset_path: Path,
+    ) -> dict[str, str]:
+        nonlocal trainer_calls
+        trainer_calls += 1
+        model_dir = run_dir / "model-ct2"
+        model_dir.mkdir()
+        (model_dir / "model.bin").write_bytes(f"model-{trainer_calls}".encode())
+        return {"ct2_model_dir": str(model_dir)}
+
+    first = run_nightly_training(
+        AsrFeedbackConfig(
+            db_path=db_path,
+            output_dir=output_dir,
+            min_corrections=2,
+            restart_service=None,
+        ),
+        clip_reader=FakeReader(),
+        trainer=fake_trainer,
+        now=datetime(2026, 5, 31, 10, 0, tzinfo=UTC),
+    )
+    status_path = output_dir / "training_status.json"
+    old_status = json.loads(status_path.read_text(encoding="utf-8"))
+    old_status.pop("correction_fingerprint")
+    status_path.write_text(json.dumps(old_status), encoding="utf-8")
+
+    second = run_nightly_training(
+        AsrFeedbackConfig(
+            db_path=db_path,
+            output_dir=output_dir,
+            min_corrections=2,
+            restart_service=None,
+        ),
+        clip_reader=FakeReader(),
+        trainer=fake_trainer,
+        now=datetime(2026, 6, 1, 10, 0, tzinfo=UTC),
+    )
+
+    assert first["status"] == "trained"
+    assert second["status"] == "skipped"
+    assert second["reason"] == "no new reviewed transcript corrections since last trained run"
+    assert trainer_calls == 1
 
 
 def _corrected_clip(store: UploadedClipStore, *, index: int) -> None:

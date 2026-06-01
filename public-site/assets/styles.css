@@ -309,6 +309,16 @@ button {
   min-width: min(100%, 280px);
 }
 
+.clip-search-control .clip-control-group,
+.clip-search-control .clip-segmented-control {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.clip-search-control .clip-segment-button {
+  flex: 0 0 auto;
+}
+
 .clip-search-results {
   display: grid;
   gap: 12px;
@@ -1929,6 +1939,16 @@ audio {
     min-width: 0;
     min-height: 40px;
     padding-inline: 8px;
+  }
+
+  .clip-search-control .clip-control-group,
+  .clip-search-control .clip-segmented-control {
+    width: fit-content;
+  }
+
+  .clip-search-control .clip-segment-button {
+    flex: 0 0 auto;
+    min-width: 42px;
   }
 
   .clip-pagination {

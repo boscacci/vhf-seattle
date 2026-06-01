@@ -2,7 +2,7 @@
 Description=Run Elliott Bay VHF ASR feedback training nightly
 
 [Timer]
-OnCalendar=*-*-* 03:20:00
+OnCalendar=*-*-* 03:00:00 America/Los_Angeles
 Persistent=true
 Unit=talkingboats-asr-feedback-train.service
 

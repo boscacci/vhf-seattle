@@ -451,6 +451,20 @@ try {
         pressedLimit: document
           .querySelector("#clip-search-limit .clip-segment-button[aria-pressed='true']")
           ?.textContent?.trim() || "",
+        selectorMetrics: Array.from(
+          document.querySelectorAll("#clip-search-recency .clip-segmented-control, #clip-search-limit .clip-segmented-control"),
+        ).map((control) => {
+          const buttons = Array.from(control.querySelectorAll(".clip-segment-button"));
+          const controlRect = control.getBoundingClientRect();
+          const firstButton = buttons[0]?.getBoundingClientRect();
+          const lastButton = buttons.at(-1)?.getBoundingClientRect();
+          const buttonSpan = firstButton && lastButton ? lastButton.right - firstButton.left : 0;
+          return {
+            controlWidth: Math.round(controlRect.width),
+            buttonSpan: Math.round(buttonSpan),
+            extraSpace: Math.round(controlRect.width - buttonSpan),
+          };
+        }),
       }));
       if (
         searchDefaultState.activeRecency !== "7d" ||
@@ -459,6 +473,9 @@ try {
         searchDefaultState.pressedLimit !== "10"
       ) {
         throw new Error(`search defaults were not visibly selected: ${JSON.stringify(searchDefaultState)}`);
+      }
+      if (searchDefaultState.selectorMetrics.some((metric) => metric.extraSpace > 16)) {
+        throw new Error(`search selectors have excessive empty space: ${JSON.stringify(searchDefaultState.selectorMetrics)}`);
       }
       await desktopPerformancePage.getByLabel("Search transcript meaning").fill("tug barge");
       await desktopPerformancePage.getByRole("button", { name: "Search clips", exact: true }).click();
@@ -675,7 +692,7 @@ function asrFeedbackStatusPayload() {
     min_corrections: 20,
     ready_for_training: false,
     base_model: "openai/whisper-small.en",
-    nightly_schedule: "03:20 UTC",
+    nightly_schedule: "03:00 America/Los_Angeles",
     export_url: "/api/clips/corrections/export",
     training_status: {
       status: "skipped",

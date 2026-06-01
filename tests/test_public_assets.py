@@ -265,6 +265,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert ".performance-range-control" in styles_css
     assert ".clip-search-panel" in styles_css
     assert ".clip-search-form" in styles_css
+    assert ".clip-search-control .clip-control-group" in styles_css
+    assert "width: fit-content;" in styles_css
+    assert ".clip-search-control .clip-segmented-control" in styles_css
+    assert ".clip-search-control .clip-segment-button" in styles_css
+    assert "flex: 0 0 auto;" in styles_css
     assert ".search-result-card" in styles_css
     assert "serviceList" not in app_js
     assert "Services" not in app_js
