@@ -150,6 +150,7 @@ const clipList = document.querySelector("#clips");
 const clipPagination = document.querySelector("#clip-pagination");
 const clipStatus = document.querySelector("#clip-status");
 const clipDisplayControls = document.querySelector("#clip-display-controls");
+const operatorLabelingLink = document.querySelector("#operator-labeling-link");
 const channelFilter = document.querySelector("#channel-filter");
 const refreshButton = document.querySelector("#refresh-clips");
 const stats = document.querySelector("#stats");
@@ -186,6 +187,10 @@ const languageStatus = document.querySelector("#language-status");
 const lexicalAnalysis = document.querySelector("#lexical-analysis");
 const performanceStatus = document.querySelector("#performance-status");
 const performanceDashboard = document.querySelector("#performance-dashboard");
+
+if (operatorLabelingLink) {
+  operatorLabelingLink.hidden = !privateAppHost || operatorReviewEnabled;
+}
 
 let liveRetryTimer = null;
 let liveStatusTimer = null;
@@ -1727,6 +1732,9 @@ function renderLanguageDashboard(payload) {
   topicFrame.src = topics.plot_url || topicClusterFallbackUrl;
   const topicFrameShell = document.createElement("div");
   topicFrameShell.className = "topic-frame-shell";
+  topicFrame.addEventListener("load", () => {
+    hideUnavailableTopicFrame(topicFrame, topicFrameShell);
+  });
   topicFrameShell.append(topicFrame);
   topicPanel.append(topicFrameShell, topicList(nonOutlierTopics(topics.items || [])));
 
@@ -1737,6 +1745,27 @@ function renderLanguageDashboard(payload) {
   );
 
   lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel, entityPanel, topicPanel, educationPanel);
+}
+
+function hideUnavailableTopicFrame(topicFrame, topicFrameShell) {
+  if (!(topicFrameShell instanceof HTMLElement)) {
+    return;
+  }
+  let bodyText = "";
+  try {
+    bodyText = topicFrame.contentDocument?.body?.textContent?.trim() || "";
+  } catch {
+    return;
+  }
+  const notFoundPayload =
+    bodyText === "Not Found" ||
+    bodyText === '{"detail":"Not Found"}' ||
+    /^\{\s*"detail"\s*:\s*"Not Found"\s*\}$/.test(bodyText);
+  if (!notFoundPayload) {
+    return;
+  }
+  topicFrameShell.hidden = true;
+  topicFrameShell.setAttribute("aria-hidden", "true");
 }
 
 function compactModelName(value) {

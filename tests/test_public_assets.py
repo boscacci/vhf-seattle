@@ -67,6 +67,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "/api/operator/session" not in app_js
     assert "operatorReviewEnabled" in app_js
     assert "fineTuningDashboardEnabled" not in app_js
+    assert 'id="operator-labeling-link"' in index_html
+    assert "Label clips" in index_html
+    assert "operatorLabelingLink" in app_js
+    assert "operatorLabelingLink.hidden = !privateAppHost || operatorReviewEnabled;" in app_js
+    assert ".operator-labeling-link" in styles_css
     assert 'const asrFeedbackStatusUrl = "/api/asr-feedback/status";' in app_js
     assert "privateAppHost" in app_js
     assert "tailnetDevHost" in app_js
@@ -350,6 +355,9 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     assert 'className = "topic-frame-shell"' in app_js
     assert "topicFrame.allowFullscreen = true" in app_js
     assert 'topicFrame.setAttribute("allow", "fullscreen")' in app_js
+    assert "hideUnavailableTopicFrame(topicFrame, topicFrameShell)" in app_js
+    assert 'topicFrame.addEventListener("load"' in app_js
+    assert '.topic-frame-shell[hidden]' in styles_css
     assert "mobileNlpSummary" not in app_js
     assert "nlpSummaryRows" not in app_js
     assert "Descriptive NLP summary" not in app_js

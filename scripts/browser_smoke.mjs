@@ -10,6 +10,7 @@ const publicSiteRoot = join(repoRoot, "public-site");
 const audioStartedAt = "2026-05-31T20:00:00Z";
 let holdRecentClipResponses = false;
 let releaseRecentClipResponses = [];
+let topicClusterReturnsNotFound = false;
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -45,6 +46,9 @@ const server = createServer(async (request, response) => {
       return sendJson(response, { channels: [] });
     }
     if (url.pathname === "/analysis/topic_clusters.html") {
+      if (topicClusterReturnsNotFound) {
+        return sendJson(response, { detail: "Not Found" }, 404);
+      }
       return sendHtml(response, "<html><body>topic clusters</body></html>");
     }
     return sendStatic(response, url.pathname);
@@ -89,6 +93,23 @@ try {
     holdRecentClipResponses = false;
     releaseRecentClipResponses.splice(0).forEach((release) => release());
     await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
+    const labelingLink = await page.evaluate(() => {
+      const link = document.querySelector("#operator-labeling-link");
+      if (!(link instanceof HTMLAnchorElement)) {
+        throw new Error("operator labeling link did not render");
+      }
+      return {
+        hidden: link.hidden,
+        text: link.textContent?.trim() || "",
+        href: link.getAttribute("href") || "",
+      };
+    });
+    if (labelingLink.hidden || labelingLink.text !== "Label clips" || labelingLink.href !== "/operator/") {
+      throw new Error(`dev clip review labeling link is not reachable: ${JSON.stringify(labelingLink)}`);
+    }
+    await page.getByRole("link", { name: "Label clips" }).click();
+    await page.waitForURL(`${baseUrl}/operator/`, { timeout: 10000 });
+    await page.locator("#clips .transcript-correction").first().waitFor({ state: "visible", timeout: 10000 });
     await page.goto(`${baseUrl}/analysis/`);
     await page.locator("#lexical-analysis audio").waitFor({ state: "visible", timeout: 10000 });
     const result = await page.evaluate(async () => {
@@ -190,6 +211,29 @@ try {
     }
     if (!["pan-x pan-y pinch-zoom", "manipulation"].includes(result.topicFrame.touchAction)) {
       throw new Error(`topic iframe blocks pinch zoom: ${result.topicFrame.touchAction}`);
+    }
+    topicClusterReturnsNotFound = true;
+    const desktopContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    try {
+      const desktopPage = await desktopContext.newPage();
+      await desktopPage.goto(`${baseUrl}/analysis/`);
+      await desktopPage.locator(".topic-card").first().waitFor({ state: "visible", timeout: 10000 });
+      await desktopPage.waitForFunction(
+        () => document.querySelector(".topic-frame-shell")?.hidden === true,
+        null,
+        { timeout: 3000 },
+      );
+      const unavailableTopicFrame = await desktopPage.evaluate(() => ({
+        shellHidden: document.querySelector(".topic-frame-shell")?.hidden || false,
+        topicCards: document.querySelectorAll(".topic-card").length,
+        bodyText: document.querySelector(".language-panel")?.textContent || "",
+      }));
+      if (!unavailableTopicFrame.shellHidden || unavailableTopicFrame.topicCards < 1) {
+        throw new Error(`unavailable topic iframe was not hidden cleanly: ${JSON.stringify(unavailableTopicFrame)}`);
+      }
+    } finally {
+      await desktopContext.close();
+      topicClusterReturnsNotFound = false;
     }
     await page.getByRole("button", { name: "Clip Review" }).click();
     await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
@@ -489,6 +533,8 @@ async function sendStatic(response, pathname) {
     relativePath === "/" ||
     relativePath === "/clips/" ||
     relativePath === "/clips" ||
+    relativePath === "/operator/" ||
+    relativePath === "/operator" ||
     relativePath === "/analysis/" ||
     relativePath === "/analysis"
   ) {
@@ -514,8 +560,8 @@ async function sendStatic(response, pathname) {
   }
 }
 
-function sendJson(response, payload) {
-  response.writeHead(200, {
+function sendJson(response, payload, status = 200) {
+  response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
   });

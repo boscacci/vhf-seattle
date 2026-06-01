@@ -230,6 +230,30 @@ button {
   text-align: right;
 }
 
+.clip-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: min(100%, 360px);
+}
+
+.operator-labeling-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #06110f;
+  font-weight: 850;
+  line-height: 1.1;
+  text-decoration: none;
+  background: var(--teal);
+  white-space: nowrap;
+}
+
 .clip-controls {
   display: flex;
   flex-wrap: wrap;
@@ -1557,6 +1581,10 @@ audio {
   background: #07110f;
 }
 
+.topic-frame-shell[hidden] {
+  display: none !important;
+}
+
 .topic-frame {
   display: block;
   width: 100%;
@@ -1701,6 +1729,12 @@ audio {
 
   .status-text {
     text-align: left;
+  }
+
+  .clip-heading-actions {
+    align-items: stretch;
+    justify-content: stretch;
+    min-width: 0;
   }
 
   .live-telemetry .status-text {
