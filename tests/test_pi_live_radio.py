@@ -151,12 +151,27 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
         in installer
     )
     assert (
+        'replace_env_if_value TALKINGBOATS_AIS_STATION_NAME "Elliott Bay VHF" '
+        '"Elliott Bay VHF"'
+        in installer
+    )
+    assert (
         'replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "debug" "voice_net_balanced"'
         in installer
     )
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX" not in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS "5"' in installer
     assert "talkingboats.capture_profiles" in installer
+    assert (
+        'squelch_args+=(--squelch-threshold "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD}")'
+        in installer
+    )
+    assert (
+        'squelch_args+=(--squelch-snr-threshold '
+        '"${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD}")'
+        in installer
+    )
+    assert 'elif [[ -n "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD:-}" ]]' not in installer
     assert '--icecast-output "13:/talkingboats-13.mp3:Talking Boats Bridge-to-bridge"' in installer
     assert (
         '--icecast-output "14:${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}:'

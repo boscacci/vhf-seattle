@@ -39,3 +39,7 @@ def test_uploaded_clip_transcriber_can_load_promoted_feedback_model() -> None:
         "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/outputs/asr-feedback/latest_model.env"
         in service
     )
+    assert "Nice=10" in service
+    assert "CPUWeight=25" in service
+    assert "CPUQuota=125%" in service
+    assert "IOSchedulingPriority=6" in service

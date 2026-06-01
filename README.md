@@ -359,6 +359,10 @@ TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=-35
 TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=20
 ```
 
+When both voice squelch values are set, the generated rtl_airband config applies
+both gates on the Pi. That keeps weak static bursts from becoming split files,
+S3 uploads, and OptiPlex transcription jobs.
+
 It writes split-on-transmission files under
 `/opt/talkingboats/spool/airband/{05A,06,09,13,14,16,22A,67,68,69,71,72}`.
 The browser-facing Icecast mounts stay limited to VHF 13, 14, 16, and 68 while
@@ -417,6 +421,10 @@ uses the same pre-transcription cleanup before Whisper: 16 kHz mono WAV plus the
 shared speech filter. The default chain does not include dynamic normalization
 because that can raise static before or around the activity gate. Turn cleanup
 off only for an A/B test:
+
+The uploaded-clip transcriber systemd unit also runs at lower CPU priority with
+a `CPUQuota=125%` cap. That keeps the OptiPlex responsive and limits thermal
+spikes while the Pi-side squelch gates reduce avoidable transcription jobs.
 
 ```bash
 sudo sed -i 's/^TALKINGBOATS_AUDIO_FILTER_ENABLED=.*/TALKINGBOATS_AUDIO_FILTER_ENABLED=false/' \

@@ -12,6 +12,11 @@ Environment=TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true
 ExecStart=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-transcribe-uploaded-clips --poll-seconds 30 --limit 5
 Restart=always
 RestartSec=10
+Nice=10
+CPUWeight=25
+CPUQuota=125%
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
 
 [Install]
 WantedBy=default.target

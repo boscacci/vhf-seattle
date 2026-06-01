@@ -245,6 +245,7 @@ replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600" "5000"
 replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS "1.2" "2.0"
 replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS "2.5" "0.4"
 replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS "45" "30"
+replace_env_if_value TALKINGBOATS_AIS_STATION_NAME "Elliott Bay VHF" "Elliott Bay VHF"
 chmod 0600 "${env_file}"
 
 set -a
@@ -279,10 +280,11 @@ if id "${service_user}" >/dev/null 2>&1; then
 fi
 
 squelch_args=()
+if [[ -n "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD:-}" ]]; then
+  squelch_args+=(--squelch-threshold "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD}")
+fi
 if [[ -n "${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD:-}" ]]; then
   squelch_args+=(--squelch-snr-threshold "${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD}")
-elif [[ -n "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD:-}" ]]; then
-  squelch_args+=(--squelch-threshold "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD}")
 fi
 
 PYTHONPATH="${app_root}/src" python3 -m talkingboats.capture_profiles \
