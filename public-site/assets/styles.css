@@ -241,6 +241,10 @@ button {
   min-width: 0;
 }
 
+.clip-display-controls-inline {
+  display: none;
+}
+
 .clip-control-group {
   display: grid;
   gap: 4px;
@@ -1706,6 +1710,15 @@ audio {
     border: 1px solid var(--line);
     border-radius: 8px;
     background: color-mix(in srgb, var(--panel) 82%, transparent);
+  }
+
+  #clip-display-controls {
+    display: none;
+  }
+
+  .clip-display-controls-inline {
+    display: grid;
+    margin: 2px 0 4px;
   }
 
   .clip-control-group {

@@ -678,6 +678,10 @@ function renderClipDisplayControls() {
   if (!clipDisplayControls) {
     return;
   }
+  clipDisplayControls.replaceChildren(...renderClipDisplayControlSet());
+}
+
+function renderClipDisplayControlSet() {
   const pageSizeControl = segmentedControl(
     "Clips per page",
     clipPageSizeOptions.map((pageSize) => ({
@@ -717,7 +721,7 @@ function renderClipDisplayControls() {
       },
     },
   ]);
-  clipDisplayControls.replaceChildren(pageSizeControl, sortControl);
+  return [pageSizeControl, sortControl];
 }
 
 function segmentedControl(labelText, options) {
@@ -836,7 +840,21 @@ function renderClips(clips) {
     clipList.replaceChildren(empty);
     return;
   }
-  clipList.replaceChildren(...clips.map(renderClipCard));
+  const cards = clips.map(renderClipCard);
+  const insertAfter = Math.min(6, cards.length);
+  clipList.replaceChildren(
+    ...cards.slice(0, insertAfter),
+    mobileClipDisplayControls(),
+    ...cards.slice(insertAfter),
+  );
+}
+
+function mobileClipDisplayControls() {
+  const controls = document.createElement("div");
+  controls.className = "clip-display-controls clip-display-controls-inline";
+  controls.setAttribute("aria-label", "Clip display options");
+  controls.replaceChildren(...renderClipDisplayControlSet());
+  return controls;
 }
 
 function renderClipPagination(totalClips) {

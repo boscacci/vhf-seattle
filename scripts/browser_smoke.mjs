@@ -159,28 +159,32 @@ try {
     await page.getByRole("button", { name: "48" }).click();
     await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
     const clipControlsBeforeFlip = await page.evaluate(() => {
-      const controls = document.querySelector("#clip-display-controls");
+      const headerControls = document.querySelector("#clip-display-controls");
+      const controls = document.querySelector("#clips .clip-display-controls-inline");
       const firstTranscript = document.querySelector("#clips blockquote")?.textContent || "";
       if (!(controls instanceof HTMLElement)) {
-        throw new Error("clip display controls did not render");
+        throw new Error("mobile clip display controls did not render");
       }
+      const children = [...document.querySelector("#clips")?.children || []];
+      const inlineIndex = children.indexOf(controls);
       const controlStyle = window.getComputedStyle(controls);
       return {
         display: controlStyle.display,
+        headerDisplay: headerControls instanceof HTMLElement ? window.getComputedStyle(headerControls).display : "",
         firstTranscript,
+        precedingCards: children.slice(0, inlineIndex).filter((item) => item.classList.contains("clip-card")).length,
         pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
-        buttonLabels: [...document.querySelectorAll("#clip-display-controls button")].map((button) =>
+        buttonLabels: [...controls.querySelectorAll("button")].map((button) =>
           button.textContent?.trim(),
         ),
-        pageSizeButtons: [...document.querySelectorAll("#clip-display-controls .clip-control-group:first-child button")]
-          .length,
+        pageSizeButtons: [...controls.querySelectorAll(".clip-control-group:first-child button")].length,
       };
     });
     await page.getByRole("button", { name: "Oldest" }).click();
     await page.waitForFunction(
       () =>
         document
-          .querySelector("#clip-display-controls .clip-control-group:last-child button[aria-pressed='true']")
+          .querySelector("#clips .clip-display-controls-inline .clip-control-group:last-child button[aria-pressed='true']")
           ?.textContent?.trim() === "Oldest",
       null,
       { timeout: 10000 },
@@ -190,11 +194,14 @@ try {
       pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
       renderedClips: document.querySelectorAll("#clips .clip-card").length,
       activeControl: document
-        .querySelector("#clip-display-controls .clip-control-group:last-child button[aria-pressed='true']")
+        .querySelector("#clips .clip-display-controls-inline .clip-control-group:last-child button[aria-pressed='true']")
         ?.textContent?.trim(),
     }));
     if (clipControlsBeforeFlip.display !== "grid") {
-      throw new Error(`mobile clip controls are not in a grid: ${clipControlsBeforeFlip.display}`);
+      throw new Error(`inline mobile clip controls are not in a grid: ${clipControlsBeforeFlip.display}`);
+    }
+    if (clipControlsBeforeFlip.headerDisplay !== "none" || clipControlsBeforeFlip.precedingCards !== 6) {
+      throw new Error(`mobile clip controls are not below the first six clips: ${JSON.stringify(clipControlsBeforeFlip)}`);
     }
     if (!clipControlsBeforeFlip.buttonLabels.includes("48") || clipControlsBeforeFlip.pageSizeButtons !== 4) {
       throw new Error(`mobile page size controls are incomplete: ${JSON.stringify(clipControlsBeforeFlip)}`);

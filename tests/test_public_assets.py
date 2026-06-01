@@ -263,6 +263,9 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert "let clipSortDirection = \"newest\";" in app_js
     assert "limit=${selectedClipPageSize}" in app_js
     assert "renderClipDisplayControls()" in app_js
+    assert "renderClipDisplayControlSet()" in app_js
+    assert "mobileClipDisplayControls()" in app_js
+    assert "const insertAfter = Math.min(6, cards.length);" in app_js
     assert "applyClipSortForCurrentPage" in app_js
     assert "clipSortDirection === \"oldest\"" in app_js
     assert "let currentPageClips = [];" in app_js
@@ -273,7 +276,10 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert '"Flip page order"' in app_js
     assert 'id="clip-display-controls"' in index_html
     assert "clip-display-controls" in styles_css
+    assert "clip-display-controls-inline" in styles_css
     assert "clip-segmented-control" in styles_css
+    assert "#clip-display-controls {\n    display: none;" in styles_css
+    assert ".clip-display-controls-inline {\n    display: grid;" in styles_css
     assert ".clip-display-controls {\n    display: grid;" in styles_css
     assert ".clip-control-group {\n    width: 100%;" in styles_css
     assert ".clip-segment-button {\n    flex: 1 1 0;" in styles_css
