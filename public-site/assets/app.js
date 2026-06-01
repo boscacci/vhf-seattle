@@ -1157,27 +1157,93 @@ function renderClipPagination(totalClips) {
     return;
   }
   selectedClipPage = Math.min(Math.max(selectedClipPage, 1), totalPages);
-  const previous = paginationButton("Previous", selectedClipPage <= 1, () => {
-    selectedClipPage -= 1;
-    loadAndRender();
-  });
-  const next = paginationButton("Next", selectedClipPage >= totalPages, () => {
-    selectedClipPage += 1;
-    loadAndRender();
-  });
   const pageStatus = document.createElement("span");
   pageStatus.className = "clip-page-status";
   pageStatus.textContent = `Page ${selectedClipPage} of ${totalPages}`;
+  const pageList = document.createElement("div");
+  pageList.className = "pagination-pages";
+  pageList.setAttribute("aria-label", "Clip pages");
+  for (const item of clipPaginationItems(selectedClipPage, totalPages)) {
+    pageList.append(item === "ellipsis" ? paginationEllipsis() : paginationPageButton(item));
+  }
+  const actions = document.createElement("div");
+  actions.className = "pagination-actions";
+  actions.append(
+    paginationButton("Newest", selectedClipPage <= 1, () => goToClipPage(1), {
+      ariaLabel: "Newest page",
+    }),
+    paginationButton("Previous", selectedClipPage <= 1, () => goToClipPage(selectedClipPage - 1)),
+    paginationButton("Next", selectedClipPage >= totalPages, () => goToClipPage(selectedClipPage + 1)),
+    paginationButton("Oldest", selectedClipPage >= totalPages, () => goToClipPage(totalPages), {
+      ariaLabel: "Oldest page",
+    }),
+  );
   clipPagination.hidden = false;
-  clipPagination.replaceChildren(previous, pageStatus, next);
+  clipPagination.replaceChildren(pageStatus, pageList, actions);
 }
 
-function paginationButton(label, disabled, onClick) {
+function clipPaginationItems(currentPage, totalPages) {
+  const maxPageButtons = 5;
+  if (totalPages <= maxPageButtons) {
+    return Array.from({ length: totalPages }, (_value, index) => index + 1);
+  }
+  let pages;
+  if (currentPage <= 3) {
+    pages = [1, 2, 3, 4, totalPages];
+  } else if (currentPage >= totalPages - 2) {
+    pages = [1, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  } else {
+    pages = [1, currentPage - 1, currentPage, currentPage + 1, totalPages];
+  }
+  const items = [];
+  for (const page of [...new Set(pages)].sort((left, right) => left - right)) {
+    if (items.length && page - items[items.length - 1] > 1) {
+      items.push("ellipsis");
+    }
+    items.push(page);
+  }
+  return items;
+}
+
+function paginationPageButton(pageNumber) {
+  const button = paginationButton(String(pageNumber), selectedClipPage === pageNumber, () => {
+    goToClipPage(pageNumber);
+  });
+  button.classList.add("pagination-page-button");
+  button.disabled = false;
+  button.setAttribute("aria-label", `Page ${pageNumber}`);
+  if (selectedClipPage === pageNumber) {
+    button.setAttribute("aria-current", "page");
+  }
+  return button;
+}
+
+function paginationEllipsis() {
+  const ellipsis = document.createElement("span");
+  ellipsis.className = "pagination-ellipsis";
+  ellipsis.setAttribute("aria-hidden", "true");
+  ellipsis.textContent = "…";
+  return ellipsis;
+}
+
+function goToClipPage(pageNumber) {
+  const nextPage = Math.max(1, Math.floor(Number(pageNumber) || 1));
+  if (nextPage === selectedClipPage) {
+    return;
+  }
+  selectedClipPage = nextPage;
+  loadAndRender();
+}
+
+function paginationButton(label, disabled, onClick, { ariaLabel = "" } = {}) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "pagination-button";
   button.disabled = disabled;
   button.textContent = label;
+  if (ariaLabel) {
+    button.setAttribute("aria-label", ariaLabel);
+  }
   button.addEventListener("click", onClick);
   return button;
 }

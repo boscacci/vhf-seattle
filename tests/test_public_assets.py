@@ -32,8 +32,13 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "selectedClipPage" in app_js
     assert "offset=${clipOffset()}" in app_js
     assert "renderClipPagination" in app_js
+    assert "clipPaginationItems" in app_js
+    assert "paginationEllipsis" in app_js
+    assert "goToClipPage" in app_js
     assert "clip-pagination" in index_html
     assert ".clip-pagination" in styles_css
+    assert ".pagination-pages" in styles_css
+    assert ".pagination-ellipsis" in styles_css
     assert "columns: 2 320px;" not in styles_css
     assert ".clip-list" in styles_css
     assert ".clip-list {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);" in styles_css

@@ -203,7 +203,57 @@ try {
     if (!clipAudioStableAfterStatsPoll) {
       throw new Error("clip stats polling replaced the existing audio control");
     }
-    await page.getByRole("button", { name: "48" }).click();
+    const initialPagination = await page.evaluate(() => {
+      const pagination = document.querySelector("#clip-pagination");
+      if (!(pagination instanceof HTMLElement)) {
+        throw new Error("clip pagination did not render");
+      }
+      return {
+        text: pagination.textContent || "",
+        buttons: [...pagination.querySelectorAll("button")].map((button) => ({
+          text: button.textContent?.trim() || "",
+          current: button.getAttribute("aria-current"),
+          disabled: button.disabled,
+        })),
+        ellipsisCount: pagination.querySelectorAll(".pagination-ellipsis").length,
+      };
+    });
+    if (!initialPagination.text.includes("Newest") || !initialPagination.text.includes("Oldest")) {
+      throw new Error(`pagination jump buttons missing: ${JSON.stringify(initialPagination)}`);
+    }
+    if (!initialPagination.buttons.some((button) => button.text === "1" && button.current === "page")) {
+      throw new Error(`pagination current page button missing: ${JSON.stringify(initialPagination)}`);
+    }
+    if (!initialPagination.buttons.some((button) => button.text === "12")) {
+      throw new Error(`pagination last page button missing: ${JSON.stringify(initialPagination)}`);
+    }
+    if (initialPagination.ellipsisCount < 1) {
+      throw new Error(`pagination ellipsis missing: ${JSON.stringify(initialPagination)}`);
+    }
+    await page.locator("#clip-pagination").getByRole("button", { name: "Page 2", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"));
+    const secondPagePagination = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+    }));
+    if (secondPagePagination.activePage !== "2") {
+      throw new Error(`pagination did not mark page 2 active: ${JSON.stringify(secondPagePagination)}`);
+    }
+    await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
+    await page.locator("#clip-pagination").getByRole("button", { name: "Oldest page" }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 67"));
+    const oldestPagePagination = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+      text: document.querySelector("#clip-pagination")?.textContent || "",
+    }));
+    if (oldestPagePagination.activePage !== "12") {
+      throw new Error(`pagination oldest jump did not land on last page: ${JSON.stringify(oldestPagePagination)}`);
+    }
+    await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
+    await page.locator("#clip-display-controls").getByRole("button", { name: "48", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
     const clipControlsBeforeFlip = await page.evaluate(() => {
       const headerControls = document.querySelector("#clip-display-controls");
@@ -224,7 +274,7 @@ try {
         pageSizeButtons: [...headerControls.querySelectorAll(".clip-control-group:first-child button")].length,
       };
     });
-    await page.getByRole("button", { name: "Oldest" }).click();
+    await page.locator("#clip-display-controls").getByRole("button", { name: "Oldest", exact: true }).click();
     await page.waitForFunction(
       () =>
         document
@@ -288,6 +338,9 @@ try {
           lazyClipShell,
           ...result,
           clipControls: {
+            initialPagination,
+            secondPagePagination,
+            oldestPagePagination,
             beforeFlip: clipControlsBeforeFlip,
             afterFlip: clipControlsAfterFlip,
           },

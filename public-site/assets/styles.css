@@ -586,8 +586,8 @@ button {
 }
 
 .clip-pagination {
-  display: flex;
-  align-items: center;
+  display: grid;
+  justify-items: center;
   justify-content: center;
   gap: 10px;
   min-height: 48px;
@@ -603,6 +603,35 @@ button {
   padding: 8px 12px;
   color: var(--ink);
   background: var(--panel-strong);
+}
+
+.pagination-actions,
+.pagination-pages {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.pagination-page-button {
+  min-width: 42px;
+  padding: 8px 10px;
+}
+
+.pagination-page-button[aria-current="page"] {
+  color: #06110f;
+  background: var(--teal);
+}
+
+.pagination-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 38px;
+  color: var(--muted);
+  font-weight: 900;
 }
 
 .pagination-button:disabled {
@@ -1742,14 +1771,19 @@ audio {
     gap: 8px;
   }
 
-  .pagination-button {
+  .pagination-actions .pagination-button {
     flex: 1 1 0;
     min-width: 0;
     min-height: 44px;
   }
 
-  .clip-page-status {
+  .pagination-page-button {
     flex: 0 0 auto;
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .clip-page-status {
     min-width: 9ch;
   }
 
