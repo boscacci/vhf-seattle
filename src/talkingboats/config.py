@@ -33,6 +33,7 @@ class Settings:
     public_base_url: str
     live_channels: dict[str, LiveChannel]
     clip_db_path: Path | None = None
+    clip_store_backend: str = "sqlite"
     durable_events_table: str | None = None
     durable_events_environment: str = "dev"
     durable_events_required: bool = False
@@ -54,6 +55,7 @@ class Settings:
             clip_db_path=Path(os.environ["TALKINGBOATS_CLIP_DB_PATH"])
             if os.getenv("TALKINGBOATS_CLIP_DB_PATH")
             else None,
+            clip_store_backend=os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND", "sqlite"),
             durable_events_table=os.getenv("TALKINGBOATS_DURABLE_EVENTS_TABLE"),
             durable_events_environment=os.getenv("TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT", "dev"),
             durable_events_required=_env_bool("TALKINGBOATS_DURABLE_EVENTS_REQUIRED", False),

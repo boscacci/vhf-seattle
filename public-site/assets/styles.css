@@ -123,6 +123,13 @@ h3 {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+.stat.is-live-updated {
+  border-color: rgba(16, 211, 184, 0.65);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(16, 211, 184, 0.16);
+}
+
 .stat dt {
   color: var(--muted);
   font-size: 0.76rem;

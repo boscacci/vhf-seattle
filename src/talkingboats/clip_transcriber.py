@@ -1070,7 +1070,8 @@ def main() -> None:
     parser.add_argument("--hotwords", default=os.getenv("TALKINGBOATS_TRANSCRIBE_HOTWORDS"))
     args = parser.parse_args()
 
-    if args.db_path is None:
+    clip_store_backend = os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND", "sqlite")
+    if args.db_path is None and clip_store_backend != "dynamodb":
         parser.error("--db-path or TALKINGBOATS_CLIP_DB_PATH is required")
     if not args.bucket:
         parser.error("--bucket or TALKINGBOATS_RAW_BUCKET is required")
@@ -1081,10 +1082,16 @@ def main() -> None:
     if args.beam_size <= 0:
         parser.error("--beam-size must be positive")
 
-    store = UploadedClipStore(
-        args.db_path,
-        event_store=durable_event_store_from_env(aws_region=args.aws_region),
-    )
+    event_store = durable_event_store_from_env(aws_region=args.aws_region)
+    if clip_store_backend == "dynamodb":
+        from talkingboats.dynamo_clip_store import dynamo_clip_store_from_env
+
+        store = dynamo_clip_store_from_env(
+            event_store=event_store,
+            aws_region=args.aws_region,
+        )
+    else:
+        store = UploadedClipStore(args.db_path, event_store=event_store)
     reader = S3ClipReader(bucket=args.bucket, aws_region=args.aws_region)
     model = _load_faster_whisper_model(
         model_size=args.model_size,

@@ -7,13 +7,17 @@ import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from talkingboats.durable_events import (
     DurableEventStore,
     DynamoDurableEventStore,
+    NullDurableEventStore,
     stable_event_id,
 )
+from talkingboats.dynamo_clip_store import DynamoClipStoreConfig, DynamoUploadedClipStore
+from talkingboats.schemas import ClipPresignRequest
 
 
 @dataclass(frozen=True)
@@ -21,6 +25,7 @@ class BackfillSummary:
     clip_count: int
     correction_count: int
     event_count: int
+    read_model_count: int = 0
 
 
 def backfill_clip_events(
@@ -52,6 +57,65 @@ def backfill_clip_events(
         clip_count=len(clips),
         correction_count=len(corrections),
         event_count=event_count,
+    )
+
+
+def backfill_clip_read_model(
+    *,
+    db_path: Path,
+    clip_store: DynamoUploadedClipStore,
+    limit: int | None = None,
+    show_progress: bool = False,
+) -> BackfillSummary:
+    clips = _clip_rows(db_path, limit=limit)
+    read_model_count = 0
+    for index, clip in enumerate(clips, start=1):
+        _maybe_print_progress(index, len(clips), show_progress=show_progress)
+        key = str(clip["key"])
+        clip_store.record_presigned_upload(
+            key=key,
+            request=_clip_request_from_row(clip),
+        )
+        read_model_count += 1
+        status = str(clip["status"])
+        if status == "transcribed":
+            clip_store.mark_transcribed(
+                key,
+                [_segment_object(segment) for segment in _segment_rows(db_path, key=key)],
+            )
+            read_model_count += 2
+        elif status == "empty":
+            clip_store.mark_empty(key)
+            read_model_count += 1
+        elif status == "processing":
+            clip_store.mark_processing(key)
+            read_model_count += 1
+        elif status == "waiting_upload":
+            clip_store.mark_waiting_upload(key, str(clip["error"] or "waiting for upload"))
+            read_model_count += 1
+        elif status == "error":
+            clip_store.mark_failed(key, str(clip["error"] or "transcription failed"))
+            read_model_count += 1
+    corrections = _correction_rows(db_path, limit=limit)
+    for correction in corrections:
+        clip_store.correct_transcript(
+            channel=str(correction["channel"]),
+            started_at=str(correction["started_at"]),
+            corrected_transcript=str(correction["corrected_transcript"]),
+            reviewer=correction["reviewer"],
+            note=correction["note"],
+        )
+        read_model_count += 2
+    if show_progress and clips:
+        print(
+            f"backfilled read model for {len(clips)} clips and {len(corrections)} corrections",
+            flush=True,
+        )
+    return BackfillSummary(
+        clip_count=len(clips),
+        correction_count=len(corrections),
+        event_count=0,
+        read_model_count=read_model_count,
     )
 
 
@@ -224,6 +288,27 @@ def _correction_rows(db_path: Path, *, limit: int | None) -> list[sqlite3.Row]:
         return list(connection.execute(query, params).fetchall())
 
 
+def _clip_request_from_row(row: sqlite3.Row) -> ClipPresignRequest:
+    return ClipPresignRequest(
+        channel=row["channel"],
+        started_at=_parse_utc(str(row["started_at"])),
+        ended_at=_parse_utc(str(row["ended_at"])) if row["ended_at"] else None,
+        duration_seconds=row["duration_seconds"],
+        content_type=row["content_type"],
+        idempotency_key=row["idempotency_key"],
+    )
+
+
+def _segment_object(row: dict[str, object]) -> SimpleNamespace:
+    return SimpleNamespace(
+        text=row["text"],
+        started_at=row["started_at"],
+        ended_at=row["ended_at"],
+        relative_start_seconds=row["relative_start_seconds"],
+        relative_end_seconds=row["relative_end_seconds"],
+    )
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
@@ -254,6 +339,12 @@ def main() -> None:
     )
     parser.add_argument("--aws-region", default=os.getenv("TALKINGBOATS_AWS_REGION", "us-west-2"))
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--mode",
+        choices=("events", "read-model", "both"),
+        default="both",
+        help="Backfill durable event items, DynamoDB read-model items, or both.",
+    )
     args = parser.parse_args()
 
     if args.db_path is None:
@@ -269,12 +360,34 @@ def main() -> None:
         environment=args.environment,
         required=True,
     )
-    summary = backfill_clip_events(
-        db_path=args.db_path,
-        event_store=event_store,
-        limit=args.limit,
-        show_progress=True,
-    )
+    summary = BackfillSummary(clip_count=0, correction_count=0, event_count=0, read_model_count=0)
+    if args.mode in {"events", "both"}:
+        summary = backfill_clip_events(
+            db_path=args.db_path,
+            event_store=event_store,
+            limit=args.limit,
+            show_progress=True,
+        )
+    if args.mode in {"read-model", "both"}:
+        read_model_summary = backfill_clip_read_model(
+            db_path=args.db_path,
+            clip_store=DynamoUploadedClipStore(
+                DynamoClipStoreConfig(
+                    table_name=args.table,
+                    aws_region=args.aws_region,
+                    environment=args.environment,
+                ),
+                event_store=NullDurableEventStore(),
+            ),
+            limit=args.limit,
+            show_progress=True,
+        )
+        summary = BackfillSummary(
+            clip_count=max(summary.clip_count, read_model_summary.clip_count),
+            correction_count=max(summary.correction_count, read_model_summary.correction_count),
+            event_count=summary.event_count,
+            read_model_count=read_model_summary.read_model_count,
+        )
     print(json.dumps(asdict(summary), sort_keys=True), flush=True)
 
 

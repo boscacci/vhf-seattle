@@ -165,6 +165,10 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "Live delay" in app_js
     assert "behind antenna" in app_js
     assert "performanceRefreshMs = 10000" in app_js
+    assert "clipStatsPollMs = 10000" in app_js
+    assert "startClipStatsPolling" in app_js
+    assert "pollClipStats" in app_js
+    assert ".stat.is-live-updated" in styles_css
     assert "loadAndRenderPerformance({ showLoading: false });" in app_js
     assert "startPerformancePolling" in app_js
     assert "stopPerformancePolling" in app_js

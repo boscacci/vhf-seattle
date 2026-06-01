@@ -22,6 +22,7 @@ from talkingboats.durable_events import (
     DynamoDurableEventStore,
     NullDurableEventStore,
 )
+from talkingboats.dynamo_clip_store import DynamoClipStoreConfig, DynamoUploadedClipStore
 from talkingboats.lexical_analysis import read_cached_lexical_analysis
 from talkingboats.schemas import (
     ClipPresignRequest,
@@ -61,7 +62,22 @@ async def get_durable_event_store(
 async def get_clip_store(
     settings: Annotated[Settings, Depends(get_settings)],
     event_store: Annotated[DurableEventStore, Depends(get_durable_event_store)],
-) -> UploadedClipStore | None:
+) -> UploadedClipStore | DynamoUploadedClipStore | None:
+    if settings.clip_store_backend == "dynamodb":
+        table_name = settings.durable_events_table
+        if not table_name:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="DynamoDB clip store table is not configured",
+            )
+        return DynamoUploadedClipStore(
+            DynamoClipStoreConfig(
+                table_name=table_name,
+                aws_region=settings.aws_region,
+                environment=settings.durable_events_environment,
+            ),
+            event_store=event_store,
+        )
     if settings.clip_db_path is None:
         return None
     return UploadedClipStore(settings.clip_db_path, event_store=event_store)

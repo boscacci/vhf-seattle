@@ -58,7 +58,7 @@ def run_nightly_training(
     if config.max_corrections is not None and config.max_corrections <= 0:
         raise ValueError("max_corrections must be positive")
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    store = UploadedClipStore(config.db_path)
+    store = _correction_store(config.db_path, aws_region=config.aws_region)
     corrections = store.transcript_corrections_for_training()
     if config.max_corrections is not None:
         corrections = corrections[: config.max_corrections]
@@ -212,7 +212,7 @@ class WhisperDataCollator:
 
 
 def export_training_jsonl(db_path: Path, output_path: Path) -> dict[str, Any]:
-    store = UploadedClipStore(db_path)
+    store = _correction_store(db_path)
     corrections = store.transcript_corrections_for_training()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as output:
@@ -237,6 +237,14 @@ def export_training_jsonl(db_path: Path, output_path: Path) -> dict[str, Any]:
         "correction_count": len(corrections),
         "output_path": str(output_path),
     }
+
+
+def _correction_store(db_path: Path, *, aws_region: str | None = None):
+    if os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND", "sqlite") == "dynamodb":
+        from talkingboats.dynamo_clip_store import dynamo_clip_store_from_env
+
+        return dynamo_clip_store_from_env(aws_region=aws_region)
+    return UploadedClipStore(db_path)
 
 
 def _training_arguments(config: AsrFeedbackConfig, output_dir: Path, torch: Any) -> Any:

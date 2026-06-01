@@ -75,7 +75,7 @@ type AdminSession = {
   isSuperAdmin: true;
 };
 
-type WebFeatureId = "compass" | "cognito" | "clips" | "live-monitor" | "ais-map" | "analysis" | "performance";
+type WebFeatureId = "clips" | "live-monitor" | "ais-map" | "analysis" | "performance";
 
 type RemoteState<T> = {
   status: "idle" | "loading" | "ready" | "error";
@@ -162,47 +162,30 @@ type PerformancePayload = {
   hosts?: PerformanceHost[];
 };
 
-const FEATURE_NAV_ITEMS: Array<{ id: WebFeatureId; label: string; caption: string; detail: string }> = [
-  {
-    id: "compass",
-    label: "Compass",
-    caption: "Live steering heading",
-    detail: "Primary navigation: magnetic heading, direction status, and field strength.",
-  },
-  {
-    id: "cognito",
-    label: "Google federated login",
-    caption: "Mobile auth path",
-    detail: "OAuth via Cognito hosted UI with admin access gate and super-admin role check.",
-  },
+const FEATURE_NAV_ITEMS: Array<{ id: WebFeatureId; label: string; detail: string }> = [
   {
     id: "clips",
     label: "Clip Review",
-    caption: "Recent receiver clips",
     detail: "Match the web Clip Review tab with latest VHF clip transcripts and playback flow.",
   },
   {
     id: "live-monitor",
     label: "Live Monitor",
-    caption: "Live receiver stream",
     detail: "Native hook point for live audio channel status, signal telemetry, and playback controls.",
   },
   {
     id: "ais-map",
-    label: "AIS Map",
-    caption: "Vessel traffic map",
+    label: "Map",
     detail: "Mobile space for AIS vessel positions and ship-to-ship traffic visibility.",
   },
   {
     id: "analysis",
     label: "Analysis",
-    caption: "Lexical analysis",
     detail: "View lexical analysis summaries and topic clusters for recent marine traffic transcripts.",
   },
   {
     id: "performance",
     label: "Performance",
-    caption: "Dev operations metrics",
     detail: "System and ingestion health from the live monitoring pipeline.",
   },
 ];
@@ -255,21 +238,19 @@ const frameStuds = Array.from({ length: 24 }, (_, index) => {
 });
 
 export default function App() {
-  const adminAuth = useCognitoAdminAuth();
-  const {
-    compassBodyTransform,
-    heading,
-    sensorSource,
-    vector,
-  } = useLiveCompass();
-  const gpsAltitudeFeet = useGpsAltitudeFeet();
-  const [activeFeatureId, setActiveFeatureId] = useState<WebFeatureId>("compass");
-  const strength = useMemo(() => magneticStrength(vector), [vector]);
+  const summaryState = useJsonData<ClipsPayload>(
+    `${MOBILE_API_BASE_URL}/api/clips/recent?limit=1`,
+    10000,
+  );
   const topGutter = useMemo(
     () => topChromeGutter(Platform.OS, NativeStatusBar.currentHeight),
     [],
   );
-  const sensorLabel = compassSensorLabel(sensorSource);
+  const [activeFeatureId, setActiveFeatureId] = useState<WebFeatureId>("clips");
+  const summary = summaryState.data || {};
+  const summaryClips = Array.isArray(summary.clips) ? summary.clips : [];
+  const channelCount = summary.channel_counts ? Object.keys(summary.channel_counts).length : 0;
+  const latest = summaryClips[0]?.started_at ? shortTime(summaryClips[0].started_at) : "None";
 
   return (
     <View style={styles.shell}>
@@ -278,35 +259,19 @@ export default function App() {
       <SafeAreaView style={[styles.safeArea, { paddingTop: topGutter }]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.titleSection}>
-            <Text style={styles.title}>Steampunk Compass</Text>
-            <Text style={styles.subtitle}>Welcome back, Captain.</Text>
-          </View>
-
-          <View style={styles.compassPanel}>
-            <View style={styles.panelHeader}>
-              <View>
-                <Text style={styles.panelLabel}>Compass</Text>
-                <Text style={styles.headingText}>{formatHeading(heading)}</Text>
-              </View>
-              <View style={styles.liveBadge}>
-                <View
-                  style={[styles.statusDot, sensorSource === "demo" && styles.statusDotMuted]}
-                />
-                <Text style={styles.liveBadgeText}>{sensorLabel}</Text>
-              </View>
-            </View>
-
-            <CompassDial compassBodyTransform={compassBodyTransform} />
-
+            <Text style={styles.eyebrow}>Elliott Bay VHF</Text>
+            <Text style={styles.title}>Elliott Bay VHF</Text>
+            <Text style={styles.subtitle}>Live Elliott Bay marine VHF audio and recent receiver clips.</Text>
             <View style={styles.metricGrid}>
-              <Metric label="Magnetic field" value={`${strength.toFixed(1)} uT`} />
-              <Metric label="Elevation" value={formatAltitudeFeet(gpsAltitudeFeet)} />
+              <Metric label="Clips" value={`${summary.clip_count ?? 0}`} />
+              <Metric label="Channels" value={`${channelCount}`} />
+              <Metric label="Latest" value={latest} />
+              <Metric label="Feed" value={summaryState.status === "ready" ? "Live DB" : "Loading"} />
             </View>
           </View>
           <FeaturePanel
             activeFeatureId={activeFeatureId}
             setActiveFeatureId={setActiveFeatureId}
-            adminAuth={adminAuth}
           />
         </ScrollView>
       </SafeAreaView>
@@ -317,15 +282,12 @@ export default function App() {
 function FeaturePanel({
   activeFeatureId,
   setActiveFeatureId,
-  adminAuth,
 }: {
   activeFeatureId: WebFeatureId;
   setActiveFeatureId: (featureId: WebFeatureId) => void;
-  adminAuth: ReturnType<typeof useCognitoAdminAuth>;
 }) {
   return (
     <View style={styles.featurePanel}>
-      <Text style={styles.panelLabel}>Features</Text>
       <View style={styles.featureTabs}>
         {FEATURE_NAV_ITEMS.map((feature) => (
           <Pressable
@@ -339,13 +301,18 @@ function FeaturePanel({
               pressed && styles.featureTabPressed,
             ]}
           >
-            <Text style={styles.featureLabel}>{feature.label}</Text>
+            <Text
+              style={[
+                styles.featureLabel,
+                activeFeatureId === feature.id && styles.featureTabActiveLabel,
+              ]}
+            >
+              {feature.label}
+            </Text>
           </Pressable>
         ))}
       </View>
       <View>
-        {activeFeatureId === "compass" && <CompassFeature />}
-        {activeFeatureId === "cognito" && <AuthPanel adminAuth={adminAuth} />}
         {activeFeatureId === "clips" && <ClipReviewFeature />}
         {activeFeatureId === "live-monitor" && <LiveMonitorFeature />}
         {activeFeatureId === "ais-map" && <AisMapFeature />}
@@ -388,7 +355,7 @@ function FeatureStatus({
 }
 
 function ClipReviewFeature() {
-  const state = useJsonData<ClipsPayload>(`${MOBILE_API_BASE_URL}/api/clips/recent?limit=6`);
+  const state = useJsonData<ClipsPayload>(`${MOBILE_API_BASE_URL}/api/clips/recent?limit=6`, 10000);
 
   if (state.status === "loading") {
     return <FeatureStatus title="Clip review" message="Loading latest clips..." />;
@@ -719,7 +686,7 @@ function AuthPanel({ adminAuth }: { adminAuth: ReturnType<typeof useCognitoAdmin
   );
 }
 
-function useJsonData<T>(url: string | null) {
+function useJsonData<T>(url: string | null, refreshMs = 0) {
   const [state, setState] = useState<RemoteState<T>>({
     status: "idle",
     data: null,
@@ -731,6 +698,7 @@ function useJsonData<T>(url: string | null) {
       setState({ status: "idle", data: null, error: null });
       return;
     }
+    const requestUrl = url;
 
     let mounted = true;
     const controller = new AbortController();
@@ -741,9 +709,11 @@ function useJsonData<T>(url: string | null) {
       error: null,
     }));
 
-    (async () => {
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+    async function load() {
       try {
-        const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
+        const response = await fetch(requestUrl, { signal: controller.signal, cache: "no-store" });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -757,14 +727,23 @@ function useJsonData<T>(url: string | null) {
           return;
         }
         setState({ status: "error", data: null, error: error_ instanceof Error ? error_.message : "Request failed" });
+      } finally {
+        if (mounted && refreshMs > 0) {
+          refreshTimer = setTimeout(load, refreshMs);
+        }
       }
-    })();
+    }
+
+    void load();
 
     return () => {
       mounted = false;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
       controller.abort();
     };
-  }, [url]);
+  }, [refreshMs, url]);
 
   return state;
 }
@@ -797,6 +776,17 @@ function formatDateTime(timestamp?: string): string {
     return "—";
   }
   return parsed.toLocaleString();
+}
+
+function shortTime(timestamp?: string): string {
+  if (!timestamp) {
+    return "None";
+  }
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return "None";
+  }
+  return parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function formatDuration(seconds?: number | null): string {
@@ -1337,35 +1327,40 @@ function useLiveCompass() {
 const styles = StyleSheet.create({
   shell: {
     flex: 1,
-    backgroundColor: "#090d08",
+    backgroundColor: "#001b16",
   },
   safeArea: {
     flex: 1,
   },
   content: {
-    gap: 12,
+    gap: 14,
     paddingBottom: 28,
-    paddingHorizontal: 18,
-    paddingTop: 14,
+    paddingHorizontal: 16,
+    paddingTop: 18,
   },
   titleSection: {
-    alignItems: "center",
-    marginBottom: 2,
+    alignItems: "stretch",
+    gap: 12,
+    marginBottom: 4,
+  },
+  eyebrow: {
+    color: "#9fb8b2",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0,
+    textTransform: "uppercase",
   },
   title: {
-    color: "#ffe6b0",
-    fontSize: 30,
+    color: "#f8fffb",
+    fontSize: 36,
     fontWeight: "900",
-    letterSpacing: 1,
-    textAlign: "center",
+    letterSpacing: 0,
   },
   subtitle: {
-    color: "#95cfca",
-    fontSize: 14,
+    color: "#b4c7c1",
+    fontSize: 18,
     letterSpacing: 0.45,
-    marginTop: 3,
-    marginBottom: 5,
-    textAlign: "center",
+    lineHeight: 25,
   },
   panelLabel: {
     color: "#9fb8b2",
@@ -1452,8 +1447,8 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   metricCard: {
-    backgroundColor: "#0e2427",
-    borderColor: "#24484b",
+    backgroundColor: "#08231d",
+    borderColor: "#244c43",
     borderRadius: 8,
     borderWidth: 1,
     flex: 1,
@@ -1461,7 +1456,7 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   metricLabel: {
-    color: "#99b0ab",
+    color: "#a3b8b2",
     fontSize: 12,
     fontWeight: "800",
   },
@@ -1565,12 +1560,9 @@ const styles = StyleSheet.create({
     color: "#9eb4bd",
   },
   featurePanel: {
-    backgroundColor: "rgba(7, 20, 21, 0.74)",
-    borderColor: "#1b3837",
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: "transparent",
     gap: 12,
-    padding: 14,
+    paddingVertical: 2,
   },
   featureTabs: {
     flexDirection: "row",
@@ -1579,32 +1571,33 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   featureTab: {
-    backgroundColor: "#101b27",
-    borderColor: "#2a415c",
+    alignItems: "center",
+    backgroundColor: "#061d18",
+    borderColor: "#254b42",
     borderRadius: 8,
     borderWidth: 1,
     flex: 1,
     minWidth: "48%",
-    minHeight: 56,
+    minHeight: 64,
     paddingHorizontal: 8,
     paddingVertical: 8,
   },
   featureTabActive: {
-    borderColor: "#7cf2e3",
-    backgroundColor: "#13253e",
+    borderColor: "#11dec2",
+    backgroundColor: "#10d5bc",
   },
   featureTabPressed: {
     opacity: 0.78,
   },
   featureSectionTitle: {
     color: "#f4fbff",
-    fontSize: 16,
+    fontSize: 24,
     fontWeight: "900",
     marginBottom: 6,
   },
   featureSectionBody: {
-    color: "#a9bfd2",
-    fontSize: 13,
+    color: "#b7c8c3",
+    fontSize: 15,
     fontWeight: "700",
     lineHeight: 18,
   },
@@ -1616,8 +1609,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   listItem: {
-    backgroundColor: "#101b27",
-    borderColor: "#2a415c",
+    backgroundColor: "#08231d",
+    borderColor: "#244c43",
     borderRadius: 8,
     borderWidth: 1,
     gap: 4,
@@ -1629,11 +1622,11 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   listMeta: {
-    color: "#8fc6c4",
+    color: "#7ddfce",
     fontSize: 12,
   },
   listBody: {
-    color: "#9eb4c4",
+    color: "#b7c8c3",
     fontSize: 12,
     lineHeight: 17,
   },
@@ -1670,8 +1663,11 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   featureLabel: {
-    color: "#f4fbff",
-    fontSize: 15,
+    color: "#b6c8c2",
+    fontSize: 18,
     fontWeight: "900",
+  },
+  featureTabActiveLabel: {
+    color: "#021915",
   },
 });

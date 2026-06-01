@@ -9,4 +9,5 @@ describe("Expo Go compatibility", () => {
   it("keeps the xcode UUID override on the CommonJS-compatible fixed line", () => {
     expect(packageJson.overrides.xcode.uuid).toMatch(/^\^11\./);
   });
+
 });

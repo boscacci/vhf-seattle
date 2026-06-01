@@ -59,6 +59,7 @@ const tabRouteAliases = {
 const liveStatusPollMs = 2000;
 const liveActivityPollMs = 15000;
 const liveQueuePollMs = 5000;
+const clipStatsPollMs = 10000;
 const clipPlaybackRefreshLeadMs = 45000;
 const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
@@ -210,6 +211,9 @@ let clipSortDirection = "newest";
 let currentClipPayload = null;
 let currentPageClips = [];
 let currentFilteredTotal = 0;
+let clipStatsTimer = null;
+let clipStatsAbortController = null;
+let lastRenderedClipTotal = null;
 let selectedLiveChannel = everythingLiveChannel;
 let activeTab = "clips";
 let mapPayloadLoaded = false;
@@ -457,6 +461,70 @@ async function loadClipPayload() {
   }
 }
 
+function startClipStatsPolling() {
+  if (clipStatsTimer) {
+    clearTimeout(clipStatsTimer);
+    clipStatsTimer = null;
+  }
+  pollClipStats();
+}
+
+function scheduleClipStatsPolling() {
+  if (clipStatsTimer) {
+    clearTimeout(clipStatsTimer);
+  }
+  clipStatsTimer = setTimeout(pollClipStats, clipStatsPollMs);
+}
+
+async function pollClipStats() {
+  clipStatsAbortController?.abort();
+  clipStatsAbortController = new AbortController();
+  try {
+    const response = await fetch("/api/clips/recent?limit=1", {
+      cache: "no-store",
+      signal: clipStatsAbortController.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`clip stats HTTP ${response.status}`);
+    }
+    const payload = normalizeLivePayload(await response.json());
+    mergeLiveClipStats(payload);
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      // The main clip payload still has a published-manifest fallback.
+    }
+  } finally {
+    scheduleClipStatsPolling();
+  }
+}
+
+function mergeLiveClipStats(payload) {
+  if (!currentClipPayload || currentClipPayload.source !== "live") {
+    currentClipPayload = payload;
+  } else {
+    currentClipPayload = {
+      ...currentClipPayload,
+      stats: {
+        ...currentClipPayload.stats,
+        ...payload.stats,
+      },
+      generated_at: payload.generated_at,
+    };
+    if (payload.clips?.length) {
+      const existingIds = new Set((currentClipPayload.clips || []).map((clip) => clip.id));
+      currentClipPayload.clips = [
+        ...payload.clips.filter((clip) => !existingIds.has(clip.id)),
+        ...(currentClipPayload.clips || []),
+      ];
+    }
+  }
+  if (activeTab === "clips" && clipOffset() === 0 && selectedChannels.size === 0) {
+    renderSite(currentClipPayload);
+    return;
+  }
+  renderStats(payload, payload.clips || []);
+}
+
 function clipRequestUrl() {
   const offset = `offset=${clipOffset()}`;
   const channels = selectedChannelValues();
@@ -626,6 +694,9 @@ function renderStats(payload, clips) {
     ...statItems.map(([label, value]) => {
       const item = document.createElement("div");
       item.className = "stat";
+      if (label === "Clips" && lastRenderedClipTotal !== null && Number(value) > lastRenderedClipTotal) {
+        item.classList.add("is-live-updated");
+      }
       const term = document.createElement("dt");
       term.textContent = label;
       const description = document.createElement("dd");
@@ -634,6 +705,7 @@ function renderStats(payload, clips) {
       return item;
     }),
   );
+  lastRenderedClipTotal = Number(clipTotal);
 }
 
 function renderChannelFilter(payload) {
@@ -3477,4 +3549,5 @@ function shortTime(value) {
 
 loadLiveChannels();
 loadAndRender();
+startClipStatsPolling();
 activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false });

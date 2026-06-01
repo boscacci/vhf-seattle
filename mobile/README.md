@@ -1,10 +1,16 @@
 # Elliott Bay VHF Mobile
 
-Expo React Native v0 for Android/iOS parity. This first build is intentionally small:
+Expo React Native build for Android/iOS parity with the working web app. The
+demo surface mirrors the web tabs:
 
-- Captain-hat identity mark drawn with `react-native-svg`
-- Compass shell using `expo-sensors` magnetometer when available
-- Managed login lanes staged for Google, phone OTP, and passkeys
+- Clip Review
+- Live Monitor
+- Map
+- Analysis
+- Performance
+
+The app defaults to the dev tailnet site API unless
+`EXPO_PUBLIC_MOBILE_API_BASE_URL` is set.
 
 ## Run on Android Wirelessly
 

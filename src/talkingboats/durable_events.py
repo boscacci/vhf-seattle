@@ -125,6 +125,10 @@ def _to_dynamodb_item(value: Any) -> Any:
     return value
 
 
+def to_dynamodb_item(value: Any) -> Any:
+    return _to_dynamodb_item(value)
+
+
 def _format_utc(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)

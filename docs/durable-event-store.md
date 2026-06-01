@@ -49,6 +49,7 @@ Enable the dual-write path with:
 TALKINGBOATS_DURABLE_EVENTS_TABLE="$(cd infra/opentofu && tofu output -raw dev_radio_events_table_name)"
 TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT=dev
 TALKINGBOATS_DURABLE_EVENTS_REQUIRED=false
+TALKINGBOATS_CLIP_STORE_BACKEND=dynamodb
 ```
 
 `false` is intentional for the first rollout: SQLite remains the serving read
@@ -75,5 +76,9 @@ Clip and correction backfill:
 talkingboats-backfill-durable-events \
   --db-path /home/rob/.local/share/talkingboats/live-transcripts.sqlite3 \
   --table "$(cd infra/opentofu && tofu output -raw dev_radio_events_table_name)" \
-  --environment dev
+  --environment dev \
+  --mode both
 ```
+
+Run `--mode read-model` after the durable events already exist and you only need
+to rebuild the DynamoDB serving indexes.
