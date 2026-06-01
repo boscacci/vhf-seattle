@@ -520,13 +520,25 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert "updateTabRoute(name" in app_js
     assert "window.addEventListener(\"popstate\"" in app_js
     assert "activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false })" in app_js
-    for route in ("clips", "search", "live", "ais", "analysis", "performance", "operator"):
+    for route in ("clips", "search", "live", "ais", "analysis"):
         assert f'"{route}/index.html"' in deploy_shell
         assert f'"{route}/index.html"' in deploy_full
         assert f'"{route}/"' in deploy_shell
         assert f'"{route}/"' in deploy_full
         assert f'"{route}"' in deploy_shell
         assert f'"{route}"' in deploy_full
+    for route in ("performance", "operator"):
+        assert f'"{route}/index.html"' in deploy_shell
+        assert f'"{route}/index.html"' in deploy_full
+        assert f'"{route}/"' in deploy_shell
+        assert f'"{route}/"' in deploy_full
+        assert f'"{route}"' in deploy_shell
+        assert f'"{route}"' in deploy_full
+    for script in (deploy_shell, deploy_full):
+        assert "dev_only_route_index_paths" in script
+        assert "dev_only_route_direct_paths" in script
+        assert "prod_retired_route_paths" in script
+        assert 'if [[ "${environment}" == "dev" ]]; then' in script
     assert "retired_route_paths" in deploy_shell
     assert "retired_route_paths" in deploy_full
     assert '"fine-tuning/index.html"' in deploy_shell

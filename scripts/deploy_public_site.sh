@@ -202,8 +202,6 @@ route_index_paths=(
   "live/index.html"
   "ais/index.html"
   "analysis/index.html"
-  "performance/index.html"
-  "operator/index.html"
 )
 route_direct_paths=(
   "clips/"
@@ -216,6 +214,12 @@ route_direct_paths=(
   "ais"
   "analysis/"
   "analysis"
+)
+dev_only_route_index_paths=(
+  "performance/index.html"
+  "operator/index.html"
+)
+dev_only_route_direct_paths=(
   "performance/"
   "performance"
   "operator/"
@@ -226,7 +230,23 @@ retired_route_paths=(
   "fine-tuning/"
   "fine-tuning"
 )
+prod_retired_route_paths=(
+  "performance/index.html"
+  "performance/"
+  "performance"
+  "operator/index.html"
+  "operator/"
+  "operator"
+)
 route_shell_paths=( "${route_index_paths[@]}" "${route_direct_paths[@]}" )
+if [[ "${environment}" == "dev" ]]; then
+  route_shell_paths+=(
+    "${dev_only_route_index_paths[@]}"
+    "${dev_only_route_direct_paths[@]}"
+  )
+else
+  retired_route_paths+=( "${prod_retired_route_paths[@]}" )
+fi
 
 if [[ ! -d "${site_dir}" ]]; then
   echo "Static site directory does not exist: ${site_dir}" >&2

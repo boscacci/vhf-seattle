@@ -22,6 +22,11 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
         '"/operator/*"',
     ):
         assert path in script
+    assert "dev_only_route_index_paths" in script
+    assert '"performance/index.html"' in script
+    assert '"operator/index.html"' in script
+    assert 'if [[ "${environment}" == "dev" ]]; then' in script
+    assert "prod_retired_route_paths" in script
     assert "retired_route_paths" in script
     assert '"fine-tuning/index.html"' in script
     assert '"/fine-tuning/*"' in script
