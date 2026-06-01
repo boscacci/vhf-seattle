@@ -19,10 +19,13 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
         '"/ais/*"',
         '"/analysis/index.html"',
         '"/performance/*"',
-        '"/fine-tuning/*"',
         '"/operator/*"',
     ):
         assert path in script
+    assert "retired_route_paths" in script
+    assert '"fine-tuning/index.html"' in script
+    assert '"/fine-tuning/*"' in script
+    assert "aws s3 rm" in script
     assert "dev_public_site_bucket" in script
     assert "cloudfront create-invalidation" in script
     assert "enforce_branch_hygiene" in script

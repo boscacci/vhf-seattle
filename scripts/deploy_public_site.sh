@@ -141,6 +141,14 @@ upload_route_indexes() {
   done
 }
 
+delete_retired_route_indexes() {
+  local target_bucket="$1"
+  local retired_route_path
+  for retired_route_path in "${retired_route_paths[@]}"; do
+    aws s3 rm "s3://${target_bucket}/${retired_route_path}" || true
+  done
+}
+
 enforce_branch_hygiene() {
   local environment="$1"
   local branch="$2"
@@ -194,7 +202,6 @@ route_index_paths=(
   "ais/index.html"
   "analysis/index.html"
   "performance/index.html"
-  "fine-tuning/index.html"
   "operator/index.html"
 )
 route_direct_paths=(
@@ -208,10 +215,13 @@ route_direct_paths=(
   "analysis"
   "performance/"
   "performance"
-  "fine-tuning/"
-  "fine-tuning"
   "operator/"
   "operator"
+)
+retired_route_paths=(
+  "fine-tuning/index.html"
+  "fine-tuning/"
+  "fine-tuning"
 )
 route_shell_paths=( "${route_index_paths[@]}" "${route_direct_paths[@]}" )
 
@@ -246,6 +256,7 @@ fqdn="$(deploy_output_raw "${fqdn_output}")"
 echo "Deploying ${site_dir} from ${branch} to ${environment}: https://${fqdn}"
 aws s3 sync "${site_dir}" "s3://${bucket}/" --delete
 upload_route_indexes "${site_dir}" "${bucket}"
+delete_retired_route_indexes "${bucket}"
 aws cloudfront create-invalidation \
   --distribution-id "${distribution_id}" \
   --paths '/*' \

@@ -936,8 +936,6 @@ def create_app(
     @app.get("/analysis/", include_in_schema=False)
     @app.get("/performance", include_in_schema=False)
     @app.get("/performance/", include_in_schema=False)
-    @app.get("/fine-tuning", include_in_schema=False)
-    @app.get("/fine-tuning/", include_in_schema=False)
     @app.get("/operator", include_in_schema=False)
     @app.get("/operator/", include_in_schema=False)
     async def clip_console_index() -> Response:

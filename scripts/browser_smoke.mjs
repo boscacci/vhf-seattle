@@ -38,6 +38,9 @@ const server = createServer(async (request, response) => {
     if (url.pathname === "/api/asr-feedback/status") {
       return sendJson(response, asrFeedbackStatusPayload());
     }
+    if (url.pathname === "/api/live/performance") {
+      return sendJson(response, performancePayload());
+    }
     if (url.pathname === "/api/live/channels") {
       return sendJson(response, { channels: [] });
     }
@@ -256,27 +259,26 @@ try {
     if (clipControlsAfterFlip.renderedClips !== 48 || !clipControlsAfterFlip.pageStatus.includes("Page 1")) {
       throw new Error(`clip controls did not keep the larger first page: ${JSON.stringify(clipControlsAfterFlip)}`);
     }
-    await page.getByRole("button", { name: "Fine Tuning" }).click();
-    await page.locator("#fine-tuning-dashboard .language-card").first().waitFor({ state: "visible", timeout: 10000 });
-    const fineTuning = await page.evaluate(() => ({
-      status: document.querySelector("#fine-tuning-status")?.textContent || "",
-      cards: [...document.querySelectorAll("#fine-tuning-dashboard .language-card")].map((card) =>
+    if (await page.getByRole("button", { name: "Fine Tuning" }).count()) {
+      throw new Error("Fine Tuning tab should not crowd the primary mobile tabs");
+    }
+    await page.getByRole("button", { name: "Performance" }).click();
+    await page.locator(".speech-training-panel .performance-card").first().waitFor({ state: "visible", timeout: 10000 });
+    const speechTraining = await page.evaluate(() => ({
+      title: document.querySelector(".speech-training-panel h3")?.textContent || "",
+      cards: [...document.querySelectorAll(".speech-training-panel .performance-card")].map((card) =>
         card.textContent || "",
       ),
-      exportHref: document.querySelector("#fine-tuning-dashboard a[download]")?.getAttribute("href"),
-      commandText: document.querySelector("#fine-tuning-dashboard code")?.textContent || "",
+      bodyText: document.querySelector(".speech-training-panel")?.textContent || "",
     }));
-    if (!fineTuning.status.includes("more reviewed clips needed")) {
-      throw new Error(`fine-tuning status did not render threshold text: ${JSON.stringify(fineTuning)}`);
+    if (!speechTraining.cards.some((card) => card.includes("Reviewed corrections") && card.includes("3 / 20"))) {
+      throw new Error(`performance speech training correction card missing: ${JSON.stringify(speechTraining)}`);
     }
-    if (!fineTuning.cards.some((card) => card.includes("Reviewed corrections") && card.includes("3"))) {
-      throw new Error(`fine-tuning correction card missing: ${JSON.stringify(fineTuning)}`);
+    if (!speechTraining.cards.some((card) => card.includes("Last ASR run") && card.includes("skipped"))) {
+      throw new Error(`performance speech training last-run card missing: ${JSON.stringify(speechTraining)}`);
     }
-    if (fineTuning.exportHref !== "/api/clips/corrections/export") {
-      throw new Error(`fine-tuning export link was wrong: ${JSON.stringify(fineTuning)}`);
-    }
-    if (!fineTuning.commandText.includes("talkingboats-asr-feedback-train.service")) {
-      throw new Error(`fine-tuning command block was missing: ${JSON.stringify(fineTuning)}`);
+    if (speechTraining.bodyText.includes("Export JSONL") || speechTraining.bodyText.includes("Nightly training")) {
+      throw new Error(`performance speech training panel kept bulky operator actions: ${JSON.stringify(speechTraining)}`);
     }
     console.log(
       JSON.stringify(
@@ -289,7 +291,7 @@ try {
             beforeFlip: clipControlsBeforeFlip,
             afterFlip: clipControlsAfterFlip,
           },
-          fineTuning,
+          speechTraining,
         },
         null,
         2,
@@ -351,6 +353,33 @@ function asrFeedbackStatusPayload() {
       min_corrections: 20,
       generated_at: "2026-06-01T03:20:00Z",
     },
+  };
+}
+
+function performancePayload() {
+  const generatedAt = "2026-06-01T18:30:00Z";
+  const history = Array.from({ length: 3 }, (_value, index) => ({
+    generatedAt: new Date(Date.parse(generatedAt) - (2 - index) * 60_000).toISOString(),
+    cpuUtilizationPercent: 8 + index,
+    memoryUsedPercent: 42 + index,
+    thermalTemperatureC: 52 + index,
+  }));
+  return {
+    generatedAt,
+    hosts: [
+      {
+        role: "OptiPlex live proxy",
+        cpuCount: 8,
+        cpuUtilizationPercent: 10,
+        memoryUsedPercent: 44,
+        thermalTemperatureC: 54,
+        disks: [{ mountpoint: "/", usedPercent: 61 }],
+        cpu: { status: "ok" },
+        memory: { status: "ok" },
+        thermal: { status: "ok" },
+        history,
+      },
+    ],
   };
 }
 

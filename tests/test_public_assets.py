@@ -61,7 +61,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'const clipCorrectionsUrl = "/api/clips/corrections";' in app_js
     assert "/api/operator/session" not in app_js
     assert "operatorReviewEnabled" in app_js
-    assert "fineTuningDashboardEnabled" in app_js
+    assert "fineTuningDashboardEnabled" not in app_js
     assert 'const asrFeedbackStatusUrl = "/api/asr-feedback/status";' in app_js
     assert "privateAppHost" in app_js
     assert "tailnetDevHost" in app_js
@@ -93,16 +93,16 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'id="tab-language" type="button" data-tab="language" hidden' in index_html
     assert "panel-language" in index_html
     assert "lexical-analysis" in index_html
-    assert "Fine Tuning" in index_html
-    assert 'id="tab-fine-tuning" type="button" data-tab="fineTuning" hidden' in index_html
-    assert "panel-fine-tuning" in index_html
-    assert "fine-tuning-dashboard" in index_html
-    assert "renderFineTuningDashboard" in app_js
-    assert "loadAndRenderFineTuning" in app_js
-    assert "Correction export" in app_js
-    assert "Nightly training" in app_js
-    assert ".fine-tuning-button" in styles_css
-    assert ".fine-tuning-status-list" in styles_css
+    assert "Fine Tuning" not in index_html
+    assert "tab-fine-tuning" not in index_html
+    assert "panel-fine-tuning" not in index_html
+    assert "fine-tuning-dashboard" not in index_html
+    assert "renderFineTuningDashboard" not in app_js
+    assert "loadAndRenderFineTuning" not in app_js
+    assert "Correction export" not in app_js
+    assert "Nightly training" not in app_js
+    assert ".fine-tuning-button" not in styles_css
+    assert ".fine-tuning-status-list" not in styles_css
     assert "languageDashboardEnabled" in app_js
     assert '"vhf.robertboscacci.com"' in app_js
     assert "/api/analysis/lexical" in app_js
@@ -216,6 +216,13 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert '{ label: "24h", hours: 24 }' in app_js
     assert '{ label: "6h", hours: 6 }' not in app_js
     assert "performance-range-control" in app_js
+    assert "loadAsrFeedbackStatus" in app_js
+    assert "speech-training-panel" in app_js
+    assert "renderSpeechTrainingPanel" in app_js
+    assert "Reviewed corrections" in app_js
+    assert "Last ASR run" in app_js
+    assert ".speech-training-panel" in styles_css
+    assert ".speech-training-grid" in styles_css
     assert "cpuUtilizationPercent" in app_js
     assert "memoryUsedPercent" in app_js
     assert "thermalTemperatureC" in app_js
@@ -460,18 +467,23 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert 'map: "ais"' in app_js
     assert 'language: "analysis"' in app_js
     assert 'performance: "performance"' in app_js
-    assert 'fineTuning: "fine-tuning"' in app_js
+    assert "fineTuning" not in app_js
+    assert "fine-tuning" not in app_js
     assert "tabFromLocation()" in app_js
     assert "updateTabRoute(name" in app_js
     assert "window.addEventListener(\"popstate\"" in app_js
     assert "activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false })" in app_js
-    for route in ("clips", "live", "ais", "analysis", "performance", "fine-tuning", "operator"):
+    for route in ("clips", "live", "ais", "analysis", "performance", "operator"):
         assert f'"{route}/index.html"' in deploy_shell
         assert f'"{route}/index.html"' in deploy_full
         assert f'"{route}/"' in deploy_shell
         assert f'"{route}/"' in deploy_full
         assert f'"{route}"' in deploy_shell
         assert f'"{route}"' in deploy_full
+    assert "retired_route_paths" in deploy_shell
+    assert "retired_route_paths" in deploy_full
+    assert '"fine-tuning/index.html"' in deploy_shell
+    assert '"fine-tuning/index.html"' in deploy_full
     assert "aws s3api put-object" in deploy_shell
     assert "aws s3api put-object" in deploy_full
 

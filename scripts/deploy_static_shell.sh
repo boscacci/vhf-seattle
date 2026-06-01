@@ -142,6 +142,14 @@ upload_route_indexes() {
   done
 }
 
+delete_retired_route_indexes() {
+  local target_bucket="$1"
+  local retired_route_path
+  for retired_route_path in "${retired_route_paths[@]}"; do
+    aws s3 rm "s3://${target_bucket}/${retired_route_path}" || true
+  done
+}
+
 sync_tailnet_dev_static_shell() {
   local source_dir="$1"
   local target="${TALKINGBOATS_DEV_TAILNET_SSH_TARGET:-optiplex}"
@@ -208,7 +216,6 @@ route_index_paths=(
   "ais/index.html"
   "analysis/index.html"
   "performance/index.html"
-  "fine-tuning/index.html"
   "operator/index.html"
 )
 route_direct_paths=(
@@ -222,10 +229,13 @@ route_direct_paths=(
   "analysis"
   "performance/"
   "performance"
-  "fine-tuning/"
-  "fine-tuning"
   "operator/"
   "operator"
+)
+retired_route_paths=(
+  "fine-tuning/index.html"
+  "fine-tuning/"
+  "fine-tuning"
 )
 route_shell_paths=( "${route_index_paths[@]}" "${route_direct_paths[@]}" )
 invalidate_paths=(
@@ -283,6 +293,7 @@ echo "Deploying static shell ${site_source} from ${branch} to ${environment}: ht
 aws s3 sync "${site_source}" "s3://${bucket}/" "${sync_excludes[@]}"
 sync_tailnet_dev_static_shell "${site_source}"
 upload_route_indexes "${site_source}" "${bucket}"
+delete_retired_route_indexes "${bucket}"
 aws cloudfront create-invalidation \
   --distribution-id "${distribution_id}" \
   --paths "${invalidate_paths[@]}" \
