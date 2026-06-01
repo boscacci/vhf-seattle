@@ -384,8 +384,10 @@ sudo systemctl restart talkingboats-edge-live-radio-stream.service
 ```
 
 When the private API has `TALKINGBOATS_CLIP_DB_PATH` set, every presigned
-activity upload is recorded in SQLite before the Pi PUTs the object to S3. Run
-the uploaded clip transcriber on the OptiPlex to retry pending uploads and store
+activity upload is recorded in SQLite before the Pi PUTs the object to S3. Set
+`TALKINGBOATS_DURABLE_EVENTS_TABLE` to the dev DynamoDB events table to also
+dual-write presign, transcription, and correction events for recovery. Run the
+uploaded clip transcriber on the OptiPlex to retry pending uploads and store
 per-clip transcript segments:
 
 ```bash
@@ -399,6 +401,8 @@ The worker writes `uploaded_clips` and `uploaded_clip_segments` rows in the same
 SQLite file used by live captions. Missing S3 objects stay in `waiting_upload`
 and are retried later, so API presign success and actual object upload can remain
 eventually consistent.
+See `docs/durable-event-store.md` for the DynamoDB migration path and the switch
+from non-blocking dual writes to required durable writes.
 
 The uploaded-clip transcriber keeps VAD off by default so it can hear through
 short radio pauses, then drops individual Whisper segments below

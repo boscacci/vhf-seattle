@@ -5,9 +5,10 @@ from pathlib import Path
 
 import httpx
 
-from talkingboats.api import app, get_settings, get_storage
+from talkingboats.api import app, get_durable_event_store, get_settings, get_storage
 from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import LiveChannel, Settings
+from talkingboats.durable_events import NullDurableEventStore
 from talkingboats.lexical_analysis import write_cached_lexical_analysis
 
 
@@ -60,6 +61,30 @@ class FakePlaybackBody:
         self.closed = True
 
 
+class CapturingEventStore:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def record_clip_event(
+        self,
+        event_type: str,
+        *,
+        key: str,
+        payload,
+        idempotency_key: str,
+        observed_at=None,
+    ) -> None:
+        self.events.append(
+            {
+                "event_type": event_type,
+                "key": key,
+                "observed_at": observed_at,
+                "idempotency_key": idempotency_key,
+                "payload": payload,
+            }
+        )
+
+
 def test_ingest_presign_requires_ingest_token() -> None:
     client = _client()
 
@@ -102,6 +127,36 @@ def test_ingest_presign_records_upload_for_background_transcription(tmp_path) ->
     assert pending[0].key == "raw/channel=68/date=2026-05-20/fake.mp3"
     assert pending[0].channel == "68"
     assert pending[0].status == "pending"
+
+
+def test_ingest_presign_records_durable_event_without_sqlite() -> None:
+    event_store = CapturingEventStore()
+    client = _client(clip_db_path=None, event_store=event_store)
+
+    response = client.post(
+        "/api/ingest/clips/presign",
+        headers={"X-TalkingBoats-Ingest-Token": "ingest-token"},
+        json=_clip_request(),
+    )
+
+    assert response.status_code == 200
+    assert event_store.events == [
+        {
+            "event_type": "clip.presigned",
+            "key": "raw/channel=68/date=2026-05-20/fake.mp3",
+            "observed_at": datetime(2026, 5, 20, 19, 12, tzinfo=UTC),
+            "idempotency_key": "unique-radio-event",
+            "payload": {
+                "bucket": "raw-bucket",
+                "channel": "68",
+                "started_at": "2026-05-20T19:12:00Z",
+                "ended_at": None,
+                "duration_seconds": 12.5,
+                "content_type": "audio/mpeg",
+                "idempotency_key": "unique-radio-event",
+            },
+        }
+    ]
 
 
 def test_operator_can_read_ingest_clip_stats_when_db_configured(tmp_path) -> None:
@@ -160,7 +215,8 @@ def test_recent_clips_are_public_read_only_with_playback_urls(tmp_path) -> None:
 
 def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
-    client = _client(clip_db_path=db_path)
+    event_store = CapturingEventStore()
+    client = _client(clip_db_path=db_path, event_store=event_store)
     store = UploadedClipStore(db_path)
     key = "raw/channel=14/date=2026-05-20/pan-pan.mp3"
     store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
@@ -201,6 +257,23 @@ def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
     assert body["clips"][0]["transcript_reviewed"] is True
     assert key not in response.text
     assert key not in recent.text
+    assert event_store.events[-1]["event_type"] == "clip.transcript_corrected"
+    assert event_store.events[-1]["key"] == key
+    assert event_store.events[-1]["observed_at"] == datetime(2026, 5, 20, 19, 12, tzinfo=UTC)
+    assert str(event_store.events[-1]["idempotency_key"]).startswith(
+        f"{key}:clip.transcript_corrected:"
+    )
+    assert event_store.events[-1]["payload"] == {
+        "channel": "14",
+        "started_at": "2026-05-20T19:12:00Z",
+        "ended_at": "2026-05-20T19:12:05Z",
+        "duration_seconds": 5.0,
+        "content_type": "audio/mpeg",
+        "original_transcript": "PON PON all stations",
+        "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
+        "reviewer": "rob",
+        "note": "USCG urgency marker",
+    }
 
 
 def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) -> None:
@@ -686,6 +759,7 @@ def _client(
     *,
     clip_db_path: Path | None = None,
     storage: FakeStorage | None = None,
+    event_store: CapturingEventStore | None = None,
 ) -> AsgiTestClient:
     app.dependency_overrides.clear()
 
@@ -719,8 +793,12 @@ def _client(
     async def override_storage() -> FakeStorage:
         return storage or FakeStorage()
 
+    async def override_durable_event_store():
+        return event_store or NullDurableEventStore()
+
     app.dependency_overrides[get_settings] = override_settings
     app.dependency_overrides[get_storage] = override_storage
+    app.dependency_overrides[get_durable_event_store] = override_durable_event_store
     return AsgiTestClient(app)
 
 

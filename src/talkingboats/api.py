@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path as FilePath
 from typing import Annotated, Any
 from urllib.parse import urlencode
@@ -16,6 +17,11 @@ from fastapi.staticfiles import StaticFiles
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
 from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import Settings
+from talkingboats.durable_events import (
+    DurableEventStore,
+    DynamoDurableEventStore,
+    NullDurableEventStore,
+)
 from talkingboats.lexical_analysis import read_cached_lexical_analysis
 from talkingboats.schemas import (
     ClipPresignRequest,
@@ -39,12 +45,26 @@ async def get_storage(settings: Annotated[Settings, Depends(get_settings)]) -> S
     return S3AudioStorage(settings)
 
 
+async def get_durable_event_store(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DurableEventStore:
+    if not settings.durable_events_table:
+        return NullDurableEventStore()
+    return DynamoDurableEventStore(
+        table_name=settings.durable_events_table,
+        aws_region=settings.aws_region,
+        environment=settings.durable_events_environment,
+        required=settings.durable_events_required,
+    )
+
+
 async def get_clip_store(
     settings: Annotated[Settings, Depends(get_settings)],
+    event_store: Annotated[DurableEventStore, Depends(get_durable_event_store)],
 ) -> UploadedClipStore | None:
     if settings.clip_db_path is None:
         return None
-    return UploadedClipStore(settings.clip_db_path)
+    return UploadedClipStore(settings.clip_db_path, event_store=event_store)
 
 
 async def require_ingest_token(
@@ -84,10 +104,32 @@ async def presign_clip_upload(
     request: ClipPresignRequest,
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
+    event_store: Annotated[DurableEventStore, Depends(get_durable_event_store)],
     clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
 ) -> ClipPresignResponse:
     try:
         key, upload_url = storage.presign_raw_upload(request)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    try:
+        event_store.record_clip_event(
+            "clip.presigned",
+            key=key,
+            observed_at=request.started_at,
+            idempotency_key=request.idempotency_key,
+            payload={
+                "bucket": settings.raw_bucket,
+                "channel": request.channel,
+                "started_at": _format_utc(request.started_at),
+                "ended_at": _format_utc(request.ended_at) if request.ended_at else None,
+                "duration_seconds": request.duration_seconds,
+                "content_type": request.content_type,
+                "idempotency_key": request.idempotency_key,
+            },
+        )
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -354,6 +396,12 @@ def _public_training_record(correction: dict[str, object]) -> dict[str, object]:
         "reviewer": correction["reviewer"],
         "note": correction["note"],
     }
+
+
+def _format_utc(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def iter_playback_body(body: Any):

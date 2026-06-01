@@ -22,6 +22,12 @@ from talkingboats.audio_processing import (
     DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ,
     prepared_transcription_audio,
 )
+from talkingboats.durable_events import (
+    DurableEventStore,
+    NullDurableEventStore,
+    durable_event_store_from_env,
+    stable_event_id,
+)
 from talkingboats.schemas import ClipPresignRequest
 
 
@@ -93,8 +99,9 @@ class ProcessSummary:
 
 
 class UploadedClipStore:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, event_store: DurableEventStore | None = None) -> None:
         self.path = path
+        self.event_store = event_store or NullDurableEventStore()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
@@ -188,13 +195,18 @@ class UploadedClipStore:
         return _row_to_record(row) if row else None
 
     def mark_processing(self, key: str) -> None:
-        self._set_status(key, status="processing", error=None)
+        self._set_status(key, status="processing", error=None, event_type="clip.processing")
 
     def mark_waiting_upload(self, key: str, error: str) -> None:
-        self._set_status(key, status="waiting_upload", error=error)
+        self._set_status(
+            key,
+            status="waiting_upload",
+            error=error,
+            event_type="clip.waiting_upload",
+        )
 
     def mark_failed(self, key: str, error: str) -> None:
-        self._set_status(key, status="error", error=error)
+        self._set_status(key, status="error", error=error, event_type="clip.failed")
 
     def mark_empty(self, key: str) -> None:
         now = _format_utc(datetime.now(UTC))
@@ -212,6 +224,12 @@ class UploadedClipStore:
                 (now, now, key),
             )
             connection.execute("DELETE FROM uploaded_clip_segments WHERE clip_key = ?", (key,))
+        self._record_clip_event(
+            "clip.empty",
+            key=key,
+            extra_payload={"transcript": ""},
+            idempotency_seed="empty",
+        )
 
     def mark_transcribed(self, key: str, segments: Iterable[UploadedClipSegment]) -> None:
         segment_list = list(segments)
@@ -255,6 +273,17 @@ class UploadedClipStore:
                     for segment in segment_list
                 ],
             )
+        segment_payload = [_segment_payload(segment) for segment in segment_list]
+        self._record_clip_event(
+            "clip.transcribed",
+            key=key,
+            extra_payload={
+                "transcript": transcript,
+                "segments": segment_payload,
+                "segment_count": len(segment_payload),
+            },
+            idempotency_seed=stable_event_id(transcript, segment_payload),
+        )
 
     def segments_for_clip(self, key: str) -> list[dict[str, str]]:
         with sqlite3.connect(self.path) as connection:
@@ -490,7 +519,7 @@ class UploadedClipStore:
                     now,
                 ),
             )
-        return TranscriptCorrection(
+        correction = TranscriptCorrection(
             key=clip.key,
             channel=clip.channel,
             started_at=clip.started_at,
@@ -502,6 +531,27 @@ class UploadedClipStore:
             reviewer=stored_reviewer,
             note=note_text,
         )
+        self.event_store.record_clip_event(
+            "clip.transcript_corrected",
+            key=correction.key,
+            observed_at=_parse_utc(correction.started_at),
+            idempotency_key=(
+                f"{correction.key}:clip.transcript_corrected:"
+                f"{stable_event_id(corrected, stored_reviewer, note_text)}"
+            ),
+            payload={
+                "channel": correction.channel,
+                "started_at": correction.started_at,
+                "ended_at": correction.ended_at,
+                "duration_seconds": correction.duration_seconds,
+                "content_type": correction.content_type,
+                "original_transcript": correction.original_transcript,
+                "corrected_transcript": correction.corrected_transcript,
+                "reviewer": correction.reviewer,
+                "note": correction.note,
+            },
+        )
+        return correction
 
     def transcript_corrections_for_training(self) -> list[dict[str, object]]:
         with sqlite3.connect(self.path) as connection:
@@ -681,7 +731,14 @@ class UploadedClipStore:
             ],
         }
 
-    def _set_status(self, key: str, *, status: str, error: str | None) -> None:
+    def _set_status(
+        self,
+        key: str,
+        *,
+        status: str,
+        error: str | None,
+        event_type: str,
+    ) -> None:
         now = _format_utc(datetime.now(UTC))
         with sqlite3.connect(self.path) as connection:
             connection.execute(
@@ -694,6 +751,41 @@ class UploadedClipStore:
                 """,
                 (status, error, now, key),
             )
+        self._record_clip_event(
+            event_type,
+            key=key,
+            extra_payload={"status": status, "error": error},
+            idempotency_seed=stable_event_id(status, error),
+        )
+
+    def _record_clip_event(
+        self,
+        event_type: str,
+        *,
+        key: str,
+        extra_payload: dict[str, Any],
+        idempotency_seed: str,
+    ) -> None:
+        record = self.get_clip(key)
+        if record is None:
+            return
+        self.event_store.record_clip_event(
+            event_type,
+            key=key,
+            observed_at=_parse_utc(record.started_at),
+            idempotency_key=f"{key}:{event_type}:{idempotency_seed}",
+            payload={
+                "channel": record.channel,
+                "started_at": record.started_at,
+                "ended_at": record.ended_at,
+                "duration_seconds": record.duration_seconds,
+                "content_type": record.content_type,
+                "idempotency_key": record.idempotency_key,
+                "status": record.status,
+                "error": record.error,
+                **extra_payload,
+            },
+        )
 
     def _init_schema(self) -> None:
         with sqlite3.connect(self.path) as connection:
@@ -989,7 +1081,10 @@ def main() -> None:
     if args.beam_size <= 0:
         parser.error("--beam-size must be positive")
 
-    store = UploadedClipStore(args.db_path)
+    store = UploadedClipStore(
+        args.db_path,
+        event_store=durable_event_store_from_env(aws_region=args.aws_region),
+    )
     reader = S3ClipReader(bucket=args.bucket, aws_region=args.aws_region)
     model = _load_faster_whisper_model(
         model_size=args.model_size,
@@ -1051,6 +1146,16 @@ def _audio_filter_for_record(
     if trust_edge_preprocessed_audio and record.content_type == "audio/mpeg":
         return None
     return audio_filter
+
+
+def _segment_payload(segment: UploadedClipSegment) -> dict[str, object]:
+    return {
+        "text": segment.text,
+        "started_at": segment.started_at,
+        "ended_at": segment.ended_at,
+        "relative_start_seconds": segment.relative_start_seconds,
+        "relative_end_seconds": segment.relative_end_seconds,
+    }
 
 
 def _load_faster_whisper_model(*, model_size: str, device: str, compute_type: str) -> Any:

@@ -33,6 +33,9 @@ class Settings:
     public_base_url: str
     live_channels: dict[str, LiveChannel]
     clip_db_path: Path | None = None
+    durable_events_table: str | None = None
+    durable_events_environment: str = "dev"
+    durable_events_required: bool = False
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -51,6 +54,9 @@ class Settings:
             clip_db_path=Path(os.environ["TALKINGBOATS_CLIP_DB_PATH"])
             if os.getenv("TALKINGBOATS_CLIP_DB_PATH")
             else None,
+            durable_events_table=os.getenv("TALKINGBOATS_DURABLE_EVENTS_TABLE"),
+            durable_events_environment=os.getenv("TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT", "dev"),
+            durable_events_required=_env_bool("TALKINGBOATS_DURABLE_EVENTS_REQUIRED", False),
             live_channels={
                 "13": _live_channel_from_metadata("13", os.getenv("TALKINGBOATS_LIVE_13_URL")),
                 "14": LiveChannel(
@@ -86,3 +92,10 @@ def _env_int(name: str, default: int) -> int:
     if parsed <= 0:
         raise ValueError(f"{name} must be positive")
     return parsed
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}

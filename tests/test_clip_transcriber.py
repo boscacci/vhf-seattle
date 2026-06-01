@@ -14,7 +14,8 @@ from talkingboats.schemas import ClipPresignRequest
 
 def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
-    store = UploadedClipStore(db_path)
+    event_store = CapturingEventStore()
+    store = UploadedClipStore(db_path, event_store=event_store)
     store.record_presigned_upload(
         key="raw/channel=68/date=2026-05-24/20260524T210000Z-test.mp3",
         request=_clip_request(),
@@ -42,6 +43,22 @@ def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
     ]
     assert FakeSpeechModel.last_kwargs["vad_filter"] is False
     assert FakeSpeechModel.last_kwargs["beam_size"] == 5
+    assert [event["event_type"] for event in event_store.events] == [
+        "clip.processing",
+        "clip.transcribed",
+    ]
+    assert event_store.events[-1]["payload"]["transcript"] == (
+        "Seattle traffic inbound for the locks"
+    )
+    assert event_store.events[-1]["payload"]["segments"] == [
+        {
+            "text": "Seattle traffic inbound for the locks",
+            "started_at": "2026-05-24T21:00:00Z",
+            "ended_at": "2026-05-24T21:00:03Z",
+            "relative_start_seconds": 0.0,
+            "relative_end_seconds": 3.0,
+        }
+    ]
 
 
 def test_uploaded_clip_transcriber_prepares_audio_before_model_transcription(tmp_path) -> None:
@@ -362,6 +379,30 @@ class WritingClipReader:
 class MissingClipReader:
     def download(self, key: str, output_path) -> None:
         raise ClipNotAvailable(f"{key} not available yet")
+
+
+class CapturingEventStore:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def record_clip_event(
+        self,
+        event_type: str,
+        *,
+        key: str,
+        payload,
+        idempotency_key: str,
+        observed_at=None,
+    ) -> None:
+        self.events.append(
+            {
+                "event_type": event_type,
+                "key": key,
+                "payload": payload,
+                "idempotency_key": idempotency_key,
+                "observed_at": observed_at,
+            }
+        )
 
 
 class FakeSpeechModel:
