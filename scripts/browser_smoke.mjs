@@ -63,20 +63,21 @@ try {
       }
       const topicFrame = document.querySelector(".topic-frame");
       const topicFrameShell = document.querySelector(".topic-frame-shell");
-      const mobileNlpPanel = document.querySelector(".mobile-nlp-panel");
+      const topicPanel = [...document.querySelectorAll(".language-panel")].find((panel) =>
+        panel.querySelector("h3")?.textContent?.includes("Transcript topics"),
+      );
       if (!(topicFrame instanceof HTMLIFrameElement)) {
         throw new Error("topic iframe did not render");
       }
       if (!(topicFrameShell instanceof HTMLElement)) {
         throw new Error("topic iframe shell did not render");
       }
-      if (!(mobileNlpPanel instanceof HTMLElement)) {
-        throw new Error("mobile NLP summary did not render");
+      if (!(topicPanel instanceof HTMLElement)) {
+        throw new Error("transcript topics panel did not render");
       }
       const topicFrameStyle = window.getComputedStyle(topicFrame);
       const topicFrameBounds = topicFrame.getBoundingClientRect();
       const topicFrameShellStyle = window.getComputedStyle(topicFrameShell);
-      const mobileNlpPanelStyle = window.getComputedStyle(mobileNlpPanel);
       const metadata = await new Promise((resolve, reject) => {
         const timeout = window.setTimeout(() => reject(new Error("audio metadata timed out")), 5000);
         audio.addEventListener(
@@ -114,12 +115,11 @@ try {
         topicFrameShell: {
           display: topicFrameShellStyle.display,
         },
-        mobileNlpPanel: {
-          display: mobileNlpPanelStyle.display,
-          statCount: mobileNlpPanel.querySelectorAll(".nlp-stat-card").length,
-          rowCount: mobileNlpPanel.querySelectorAll(".nlp-term-row").length,
-          headings: [...mobileNlpPanel.querySelectorAll(".nlp-term-head span")].map((item) => item.textContent),
-          hasScore: Boolean(mobileNlpPanel.querySelector(".signal-score-value")),
+        transcriptTopics: {
+          title: topicPanel.querySelector("h3")?.textContent,
+          topicCards: topicPanel.querySelectorAll(".topic-card").length,
+          hasRemovedSummary: Boolean(topicPanel.querySelector(".mobile-nlp-panel, .nlp-summary-grid")),
+          bodyText: topicPanel.textContent || "",
         },
         metadata,
       };
@@ -142,17 +142,14 @@ try {
     if (result.topicFrameShell.display !== "none") {
       throw new Error(`topic iframe should be hidden on mobile: ${result.topicFrameShell.display}`);
     }
-    if (result.mobileNlpPanel.display === "none") {
-      throw new Error("mobile NLP summary is hidden on mobile");
+    if (result.transcriptTopics.hasRemovedSummary) {
+      throw new Error("removed mobile NLP summary is still present");
     }
-    if (result.mobileNlpPanel.hasScore) {
-      throw new Error("mobile NLP summary should not render a synthetic score");
+    if (result.transcriptTopics.topicCards < 1) {
+      throw new Error(`transcript topics did not render topic cards: ${JSON.stringify(result.transcriptTopics)}`);
     }
-    if (result.mobileNlpPanel.statCount !== 4 || result.mobileNlpPanel.rowCount !== 4) {
-      throw new Error(`mobile NLP summary is incomplete: ${JSON.stringify(result.mobileNlpPanel)}`);
-    }
-    if (!result.mobileNlpPanel.headings.includes("Communication markers")) {
-      throw new Error(`mobile NLP summary is missing term buckets: ${JSON.stringify(result.mobileNlpPanel)}`);
+    if (result.transcriptTopics.bodyText.includes("Descriptive NLP summary")) {
+      throw new Error("removed descriptive NLP copy is still present");
     }
     if (!["pan-x pan-y pinch-zoom", "manipulation"].includes(result.topicFrame.touchAction)) {
       throw new Error(`topic iframe blocks pinch zoom: ${result.topicFrame.touchAction}`);

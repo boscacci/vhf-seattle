@@ -289,36 +289,34 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert 'languagePanel(\n    "Transcript NLP summary",' in app_js
-    assert "Descriptive counts from the transcript analysis" in app_js
+    assert 'const topicPanel = languagePanel("Transcript topics");' in app_js
+    assert "Descriptive counts from the transcript analysis" not in app_js
     assert "Topic intelligence" not in app_js
     assert "Signal fingerprint" not in app_js
     assert "nonOutlierTopics(topics.items || [])" in app_js
     assert 'className = "topic-frame-shell"' in app_js
     assert "topicFrame.allowFullscreen = true" in app_js
     assert 'topicFrame.setAttribute("allow", "fullscreen")' in app_js
-    assert "mobileNlpSummary(payload, channelCounts, topics, terms)" in app_js
-    assert "nlpSummaryRows(terms)" in app_js
-    assert "Descriptive NLP summary" in app_js
-    assert "Analyzed clips" in app_js
-    assert "Top observed terms" in app_js
-    assert "Communication markers" in app_js
+    assert "mobileNlpSummary" not in app_js
+    assert "nlpSummaryRows" not in app_js
+    assert "Descriptive NLP summary" not in app_js
+    assert "Top observed terms" not in app_js
+    assert 'termSection("Jargon", terms.semantic_buckets?.communication_markers || [])' in app_js
     assert "topicTitle(topic)" in app_js
     assert "topicKeywordWords(topic)" in app_js
     assert 'title.textContent = `${topicTitle(topic)} · ${topic.count || 0}`;' in app_js
     assert "topic.id !== -1" in app_js
     assert 'topic.label || "Topic" !== "Outliers"' not in app_js
     assert ".language-panel-intro" in styles_css
-    assert ".mobile-nlp-panel" in styles_css
-    assert ".nlp-summary-grid" in styles_css
-    assert ".nlp-term-fill" in styles_css
+    assert ".mobile-nlp-panel" not in styles_css
+    assert ".nlp-summary-grid" not in styles_css
+    assert ".nlp-term-fill" not in styles_css
     assert "signal-score-orb" not in styles_css
     assert ".topic-frame-shell" in styles_css
     assert "touch-action: pan-x pan-y pinch-zoom;" in styles_css
     assert "height: min(72dvh, 620px);" in styles_css
     assert "@media (max-width: 760px)" in styles_css
     assert ".topic-frame-shell {\n    display: none;" in styles_css
-    assert ".mobile-nlp-panel {\n    display: grid;" in styles_css
 
 
 def test_public_site_analysis_examples_use_same_origin_clip_audio() -> None:

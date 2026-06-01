@@ -1232,10 +1232,7 @@ function renderLanguageDashboard(payload) {
   const entityPanel = languagePanel("Suspected vessels and entities");
   entityPanel.append(entityList(payload.entities || []));
 
-  const topicPanel = languagePanel(
-    "Transcript NLP summary",
-    "Descriptive counts from the transcript analysis, with the desktop topic map kept below.",
-  );
+  const topicPanel = languagePanel("Transcript topics");
   const topicFrame = document.createElement("iframe");
   topicFrame.className = "topic-frame";
   topicFrame.loading = "lazy";
@@ -1246,11 +1243,7 @@ function renderLanguageDashboard(payload) {
   const topicFrameShell = document.createElement("div");
   topicFrameShell.className = "topic-frame-shell";
   topicFrameShell.append(topicFrame);
-  topicPanel.append(
-    mobileNlpSummary(payload, channelCounts, topics, terms),
-    topicFrameShell,
-    topicList(nonOutlierTopics(topics.items || [])),
-  );
+  topicPanel.append(topicFrameShell, topicList(nonOutlierTopics(topics.items || [])));
 
   const educationPanel = languagePanel("Maritime radio references");
   educationPanel.append(
@@ -1668,93 +1661,6 @@ function languagePanel(titleText, descriptionText = "") {
     section.append(description);
   }
   return section;
-}
-
-function mobileNlpSummary(payload, channelCounts, topics, terms) {
-  const rows = nlpSummaryRows(terms);
-  const panel = document.createElement("div");
-  panel.className = "mobile-nlp-panel";
-
-  const header = document.createElement("div");
-  header.className = "nlp-summary-header";
-  const label = document.createElement("p");
-  label.className = "language-label";
-  label.textContent = "Descriptive NLP summary";
-  const title = document.createElement("h4");
-  title.textContent = "Counts from analyzed transcripts";
-  const summary = document.createElement("p");
-  summary.className = "nlp-summary-copy";
-  summary.textContent = "Top buckets are simple frequency counts from the current sample.";
-  header.append(label, title, summary);
-
-  const stats = document.createElement("div");
-  stats.className = "nlp-summary-grid";
-  stats.append(
-    nlpStatCard("Analyzed clips", Number(payload?.source_clip_count || 0).toLocaleString()),
-    nlpStatCard("Active channels", String(activeAnalyzedChannelCount(channelCounts))),
-    nlpStatCard("Entities", sumCounts(payload?.entities || []).toLocaleString()),
-    nlpStatCard("Topic clusters", String(nonOutlierTopics(topics?.items || []).length)),
-  );
-
-  const termsTitle = document.createElement("p");
-  termsTitle.className = "language-label";
-  termsTitle.textContent = "Top observed terms";
-  const bars = document.createElement("div");
-  bars.className = "nlp-term-bars";
-  bars.append(...rows.map((row) => nlpTermRow(row, rows)));
-
-  panel.append(header, stats, termsTitle, bars);
-  return panel;
-}
-
-function nlpStatCard(labelText, valueText) {
-  const card = document.createElement("div");
-  card.className = "nlp-stat-card";
-  const label = document.createElement("span");
-  label.textContent = labelText;
-  const value = document.createElement("strong");
-  value.textContent = valueText;
-  card.append(label, value);
-  return card;
-}
-
-function nlpSummaryRows(terms) {
-  return [
-    nlpSummaryRow("Communication markers", terms?.semantic_buckets?.communication_markers || []),
-    nlpSummaryRow("Movement words", terms?.semantic_buckets?.movement || []),
-    nlpSummaryRow("Place names", terms?.semantic_buckets?.places || []),
-    nlpSummaryRow("Common bigrams", terms?.bigrams || []),
-  ];
-}
-
-function nlpSummaryRow(label, items) {
-  const first = Array.isArray(items) ? items[0] : null;
-  return {
-    label,
-    term: first?.term || "No terms yet",
-    count: Math.max(0, Number(first?.count || 0)),
-  };
-}
-
-function nlpTermRow(row, rows) {
-  const maxCount = Math.max(1, ...rows.map((item) => Number(item.count || 0)));
-  const item = document.createElement("div");
-  item.className = "nlp-term-row";
-  const head = document.createElement("div");
-  head.className = "nlp-term-head";
-  const label = document.createElement("span");
-  label.textContent = row.label;
-  const value = document.createElement("strong");
-  value.textContent = row.count ? `${row.term} · ${row.count.toLocaleString()}` : row.term;
-  head.append(label, value);
-  const track = document.createElement("span");
-  track.className = "nlp-term-track";
-  const fill = document.createElement("span");
-  fill.className = "nlp-term-fill";
-  fill.style.width = `${Math.max(4, (row.count / maxCount) * 100).toFixed(1)}%`;
-  track.append(fill);
-  item.append(head, track);
-  return item;
 }
 
 function sumCounts(items) {
