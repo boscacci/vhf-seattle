@@ -32,6 +32,20 @@ case "${TALKINGBOATS_AIS_COMMUNITY_FEED:-anonymous}" in
     ;;
 esac
 
+ais_friends_args=()
+if [[ -n "${TALKINGBOATS_AIS_FRIENDS_UDP_PORT:-}" ]]; then
+  if [[ ! "${TALKINGBOATS_AIS_FRIENDS_UDP_PORT}" =~ ^[0-9]+$ ]]; then
+    echo "TALKINGBOATS_AIS_FRIENDS_UDP_PORT must be numeric" >&2
+    exit 64
+  fi
+  ais_friends_host="${TALKINGBOATS_AIS_FRIENDS_HOST:-ais.aisfriends.com}"
+  if [[ -z "${ais_friends_host}" ]]; then
+    echo "TALKINGBOATS_AIS_FRIENDS_HOST is required when TALKINGBOATS_AIS_FRIENDS_UDP_PORT is set" >&2
+    exit 64
+  fi
+  ais_friends_args=(-u "${ais_friends_host}" "${TALKINGBOATS_AIS_FRIENDS_UDP_PORT}")
+fi
+
 web_args=(
   -N "${TALKINGBOATS_AIS_WEB_PORT:-8100}"
   station "${TALKINGBOATS_AIS_STATION_NAME:-Elliott Bay VHF}"
@@ -44,5 +58,6 @@ web_args=(
 exec /usr/local/bin/AIS-catcher \
   "${device_args[@]}" \
   "${sharing_args[@]}" \
+  "${ais_friends_args[@]}" \
   -o 0 \
   "${web_args[@]}"

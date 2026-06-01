@@ -19,6 +19,7 @@ from talkingboats.audio_processing import (
 )
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
 from talkingboats.clip_transcriber import (
+    ClipNotAvailable,
     ClipReader,
     RecentTranscribedClip,
     S3ClipReader,
@@ -197,13 +198,23 @@ def export_recent_clip_site(
                 used_audio_filenames.add(destination.name)
                 continue
             if clip_audio_processor is None and clip_audio_quality_gate is None:
-                clip_reader.download(source_clip.key, destination)
+                try:
+                    clip_reader.download(source_clip.key, destination)
+                except ClipNotAvailable as exc:
+                    if skip_progress:
+                        skip_progress(index, total_clips, str(exc))
+                    continue
                 publishable_clips.append(source_clip)
                 used_audio_filenames.add(destination.name)
                 continue
             with tempfile.NamedTemporaryFile(suffix=Path(source_clip.key).suffix) as handle:
                 raw_clip_path = Path(handle.name)
-                clip_reader.download(source_clip.key, raw_clip_path)
+                try:
+                    clip_reader.download(source_clip.key, raw_clip_path)
+                except ClipNotAvailable as exc:
+                    if skip_progress:
+                        skip_progress(index, total_clips, str(exc))
+                    continue
                 try:
                     if clip_audio_quality_gate is not None:
                         clip_audio_quality_gate(raw_clip_path)

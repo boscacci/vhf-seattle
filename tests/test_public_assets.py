@@ -6,7 +6,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert "limit=${clipPageSize}" in app_js
+    assert "limit=${selectedClipPageSize}" in app_js
     assert "channel-filter" in index_html
     assert '<select id="channel-filter"' not in index_html
     assert 'id="channel-filter" class="channel-filter channel-multiselect"' in index_html
@@ -22,7 +22,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "channel-filter-frequency" in app_js
     assert "channel-filter-action" in app_js
     assert "channels=${encodeURIComponent(channel)}" in app_js
-    assert "clipPageSize = 6" in app_js
+    assert "defaultClipPageSize = 6" in app_js
     assert "selectedClipPage" in app_js
     assert "offset=${clipOffset()}" in app_js
     assert "renderClipPagination" in app_js
@@ -93,12 +93,13 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "Suspected vessels" in app_js
     assert "channelActivityChart" in app_js
     assert "channel-bar-list" in app_js
-    assert "busiestHoursSummary" in app_js
-    assert "Top Pacific hours by analyzed transcript clips" in app_js
-    assert "formatHourLabel" in app_js
+    assert "dominantThemeSummary(topics)" in app_js
+    assert "Largest non-outlier topic by analyzed clips" in app_js
+    assert "busiestHoursSummary" not in app_js
     assert "renderExamplePlayer(clip)" in app_js
-    assert "renderExamplePlayer(entity.examples?.[0] || {})" in app_js
-    assert "audioUrlForClip(example)" in app_js
+    assert "entityExampleWithAudio(entity)" in app_js
+    assert "renderExamplePlayer(entity.examples?.[0] || {})" not in app_js
+    assert "analysisAudioUrlForClip(example)" in app_js
     assert "example-player" in app_js
     assert "No playable clips are available" in app_js
     assert "loadedmetadata" in app_js
@@ -125,7 +126,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert ".reference-index" in styles_css
     assert ".language-grid" in styles_css
     assert ".topic-frame" in styles_css
-    assert "touch-action: none;" in styles_css
+    assert "touch-action: pan-x pan-y pinch-zoom;" in styles_css
     assert "live-channel" in index_html
     assert "live-last-communication" in index_html
     assert "live-latency" in index_html
@@ -234,16 +235,89 @@ def test_public_site_analysis_copy_clarifies_frequency_metrics() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert "Analyzed transcript clips by VHF channel" in app_js
-    assert "Top Pacific hours by analyzed transcript clips" in app_js
-    assert "busiestHoursSummary" in app_js
-    assert "formatHourRangeLabel" in app_js
+    assert "Dominant theme" in app_js
+    assert "dominantThemeSummary(topics)" in app_js
+    assert "Largest non-outlier topic by analyzed clips" in app_js
+    assert "Busiest hours" not in app_js
+    assert "busiestHoursSummary" not in app_js
     assert "No analyzed transmissions yet" in app_js
     assert "activeChannelSummary" in app_js
-    assert "return `VHF ${vhfCount}`" in app_js
-    assert "Radio channels in analyzed clips" in app_js
+    assert "formatCountNoun(vhfCount, \"channel\", \"channels\")" in app_js
+    assert "VHF channels with at least one analyzed clip" in app_js
     assert "monitoredAnalysisChannels" in app_js
     assert "channelCountsWithMonitoredChannels" in app_js
     assert '["05A", "06", "09", "13", "14", "16", "22A", "67", "68", "69", "71", "72"]' in app_js
+    assert "activeAnalyzedChannelCount(channelCounts)" in app_js
+    assert "Number(count || 0) > 0" in app_js
+    assert ".filter(([, count]) => count > 0)" in app_js
+
+
+def test_public_site_clip_review_page_size_and_sort_controls() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "const defaultClipPageSize = 6;" in app_js
+    assert "const clipPageSizeOptions = [6, 12, 24, 48];" in app_js
+    assert "let selectedClipPageSize = defaultClipPageSize;" in app_js
+    assert "let clipSortDirection = \"newest\";" in app_js
+    assert "limit=${selectedClipPageSize}" in app_js
+    assert "renderClipDisplayControls()" in app_js
+    assert "applyClipSortForCurrentPage" in app_js
+    assert "clipSortDirection === \"oldest\"" in app_js
+    assert "let currentPageClips = [];" in app_js
+    assert "function renderCurrentClipOrder()" in app_js
+    assert "clipSortDirection = \"newest\";\n        renderCurrentClipOrder();" in app_js
+    assert "clipSortDirection = \"oldest\";\n        renderCurrentClipOrder();" in app_js
+    assert "selectedClipPage = 1;" in app_js
+    assert '"Flip page order"' in app_js
+    assert 'id="clip-display-controls"' in index_html
+    assert "clip-display-controls" in styles_css
+    assert "clip-segmented-control" in styles_css
+    assert ".clip-display-controls {\n    display: grid;" in styles_css
+    assert ".clip-control-group {\n    width: 100%;" in styles_css
+    assert ".clip-segment-button {\n    flex: 1 1 0;" in styles_css
+
+
+def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert 'languagePanel(\n    "Topic intelligence",' in app_js
+    assert "Dominant clusters and radio signals" in app_js
+    assert "nonOutlierTopics(topics.items || [])" in app_js
+    assert 'className = "topic-frame-shell"' in app_js
+    assert "topicFrame.allowFullscreen = true" in app_js
+    assert 'topicFrame.setAttribute("allow", "fullscreen")' in app_js
+    assert "mobileSignalFingerprint(payload, channelCounts, topics, terms)" in app_js
+    assert "signalFingerprintMetrics(payload, channelCounts, topics, terms)" in app_js
+    assert "Signal fingerprint" in app_js
+    assert "Topic focus" in app_js
+    assert "Named traffic" in app_js
+    assert "Movement language" in app_js
+    assert "topicTitle(topic)" in app_js
+    assert "topicKeywordWords(topic)" in app_js
+    assert 'title.textContent = `${topicTitle(topic)} · ${topic.count || 0}`;' in app_js
+    assert "topic.id !== -1" in app_js
+    assert 'topic.label || "Topic" !== "Outliers"' not in app_js
+    assert ".language-panel-intro" in styles_css
+    assert ".mobile-signal-panel" in styles_css
+    assert ".signal-score-orb" in styles_css
+    assert ".topic-frame-shell" in styles_css
+    assert "touch-action: pan-x pan-y pinch-zoom;" in styles_css
+    assert "height: min(72dvh, 620px);" in styles_css
+    assert "@media (max-width: 760px)" in styles_css
+    assert ".topic-frame-shell {\n    display: none;" in styles_css
+    assert ".mobile-signal-panel {\n    display: grid;" in styles_css
+
+
+def test_public_site_analysis_examples_use_same_origin_clip_audio() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "function analysisAudioUrlForClip(clip)" in app_js
+    assert "return clipAudioRequestUrl(clip) || audioUrlForClip(clip);" in app_js
+    assert "const audioUrl = analysisAudioUrlForClip(example);" in app_js
+    assert 'const clipAudioUrl = "/api/clips/audio";' in app_js
 
 
 def test_public_site_performance_metric_values_average_selected_window() -> None:
@@ -262,6 +336,16 @@ def test_public_site_performance_metric_values_average_selected_window() -> None
     assert "percentLabel(memory.usedPercent)" not in app_js
     assert "thermalSummary(thermal)" not in app_js
     assert "latest?.value" not in app_js
+
+
+def test_public_site_performance_chart_traces_are_lightweight() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "dot.setAttribute(\"r\", \"2.2\")" in app_js
+    assert ".performance-chart-line" in styles_css
+    assert "stroke-width: 1.35;" in styles_css
+    assert "stroke-width: 2.4;" not in styles_css
 
 
 def test_public_site_renders_db_clips_and_static_export_clips() -> None:

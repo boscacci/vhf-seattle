@@ -108,6 +108,20 @@ conda run -n dell python -m pip install -e ".[dev]"
 conda run -n dell pytest
 ```
 
+Browser automation is kept close at hand through root-level Playwright tooling.
+The managed Chromium, Firefox, and WebKit binaries live in Playwright's local
+cache, and the doctor command prints their executable paths:
+
+```bash
+npm install
+npm run browser:install
+npm run browser:doctor
+npm run smoke:browser
+```
+
+Use `npm run browser:open:dev` when you need a quick headed Chromium session
+against the dev analysis tab.
+
 Run the private API locally:
 
 ```bash
@@ -545,11 +559,21 @@ TALKINGBOATS_AIS_DEVICE_INDEX=1
 TALKINGBOATS_AIS_WEB_PORT=8100
 TALKINGBOATS_AIS_COMMUNITY_FEED=anonymous
 TALKINGBOATS_AIS_SHARING_KEY=
+TALKINGBOATS_AIS_FRIENDS_HOST=ais.aisfriends.com
+TALKINGBOATS_AIS_FRIENDS_UDP_PORT=
 ```
 
 Set `TALKINGBOATS_AIS_COMMUNITY_FEED=off` to keep AIS-catcher local-only, or set
 `TALKINGBOATS_AIS_COMMUNITY_FEED=key` with `TALKINGBOATS_AIS_SHARING_KEY` if the
 station should use a registered AIS-catcher sharing key.
+
+AIS Friends uses a separate station feed. Register the station, complete the
+activation, then set `TALKINGBOATS_AIS_FRIENDS_UDP_PORT` to the station-specific
+UDP port from their setup email. The wrapper sends standard AIS NMEA lines to
+`ais.aisfriends.com` with AIS-catcher's `-u` UDP output. Their public API docs
+are at `https://www.aisfriends.com/docs/api/v1`; that API is read-only,
+HTTPS/JSON, and uses Bearer tokens generated under `Account > Details > API
+Tokens` after the station is active.
 
 ```text
 /ais-catcher/

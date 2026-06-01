@@ -1,8 +1,15 @@
 {
   "scripts": {
+    "browser:doctor": "node scripts/browser_doctor.mjs",
+    "browser:install": "playwright install chromium firefox webkit",
+    "browser:install:chromium": "playwright install chromium",
+    "browser:open:dev": "playwright open --browser=chromium https://vhf-dev.robertboscacci.com/analysis/",
+    "smoke:browser": "node scripts/browser_smoke.mjs",
     "lint:md": "markdownlint-cli2 README.md \"docs/**/*.md\" infra/opentofu/README.md"
   },
   "devDependencies": {
-    "markdownlint-cli2": "^0.22.1"
+    "@playwright/test": "^1.60.0",
+    "markdownlint-cli2": "^0.22.1",
+    "playwright": "^1.60.0"
   }
 }

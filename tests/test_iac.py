@@ -61,6 +61,13 @@ def test_opentofu_has_distinct_dev_and_prod_outputs() -> None:
 def test_opentofu_tags_environment_boundaries() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
 
+    common_tags = _locals_block(main_tf)
+    assert 'Application    = "elliott-bay-vhf"' in common_tags
+    assert "BillingProject = var.project_name" in common_tags
+    assert 'ManagedBy      = "opentofu"' in common_tags
+    assert 'Owner          = "rob"' in common_tags
+    assert "Project        = var.project_name" in common_tags
+
     assert 'Environment = "prod"' in _resource_block(main_tf, "aws_s3_bucket", "public_site")
     assert 'Environment = "prod"' in _resource_block(main_tf, "aws_s3_bucket", "raw_audio")
     assert 'Environment = "prod"' in _resource_block(
@@ -71,6 +78,19 @@ def test_opentofu_tags_environment_boundaries() -> None:
     assert 'Environment = "dev"' in _resource_block(
         main_tf, "aws_cloudfront_distribution", "dev_site"
     )
+    assert main_tf.count("merge(local.common_tags, {") >= 11
+
+
+def test_opentofu_does_not_recreate_detached_server_iam_policies() -> None:
+    main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+    outputs_tf = Path("infra/opentofu/outputs.tf").read_text(encoding="utf-8")
+
+    assert 'resource "aws_iam_policy" "server_s3_access"' not in main_tf
+    assert 'resource "aws_iam_policy" "dev_server_s3_access"' not in main_tf
+    assert 'data "aws_iam_policy_document" "server_s3_access"' not in main_tf
+    assert 'data "aws_iam_policy_document" "dev_server_s3_access"' not in main_tf
+    assert 'output "server_iam_policy_arn"' not in outputs_tf
+    assert 'output "dev_server_iam_policy_arn"' not in outputs_tf
 
 
 def test_opentofu_defines_dynamodb_event_tables_for_dev_and_prod() -> None:
@@ -225,4 +245,10 @@ def _resource_block(main_tf: str, resource_type: str, resource_name: str) -> str
     next_data = main_tf.find('\ndata "', start + 1)
     candidates = [value for value in (next_resource, next_data) if value != -1]
     end = min(candidates) if candidates else len(main_tf)
+    return main_tf[start:end]
+
+
+def _locals_block(main_tf: str) -> str:
+    start = main_tf.index("locals {")
+    end = main_tf.index('\nresource "', start)
     return main_tf[start:end]

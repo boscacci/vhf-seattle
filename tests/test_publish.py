@@ -4,7 +4,11 @@ from pathlib import Path
 import pytest
 
 from talkingboats.audio_processing import PublicClipAudioRejected
-from talkingboats.clip_transcriber import RecentTranscribedClip, UploadedClipStore
+from talkingboats.clip_transcriber import (
+    ClipNotAvailable,
+    RecentTranscribedClip,
+    UploadedClipStore,
+)
 from talkingboats.publish import (
     PublicExportError,
     _public_audio_filename,
@@ -355,6 +359,62 @@ def test_recent_clip_export_skips_unpublishable_audio_after_download(tmp_path: P
     assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
 
 
+def test_recent_clip_export_skips_audio_missing_from_source(tmp_path: Path) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    db_path = tmp_path / "clips.sqlite3"
+    store = UploadedClipStore(db_path)
+    missing_key = "raw/channel=14/date=2026-05-31/missing.mp3"
+    good_key = "raw/channel=14/date=2026-05-31/good.mp3"
+    for key, started_at, idempotency_key, text in (
+        (
+            missing_key,
+            "2026-05-31T18:54:36Z",
+            "missing-clip",
+            "Seattle Traffic missing source audio.",
+        ),
+        (
+            good_key,
+            "2026-05-31T18:53:36Z",
+            "good-clip",
+            "Seattle Traffic playable source audio.",
+        ),
+    ):
+        store.record_presigned_upload(
+            key=key,
+            request=ClipPresignRequest(
+                channel="14",
+                started_at=started_at,
+                duration_seconds=5.0,
+                content_type="audio/mpeg",
+                idempotency_key=idempotency_key,
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [_segment(text=text, started_at=started_at, ended_at=started_at)],
+        )
+    skipped: list[tuple[int, int, str]] = []
+
+    manifest = export_recent_clip_site(
+        clip_db_path=db_path,
+        site_source_dir=site_source,
+        output_dir=tmp_path / "output",
+        clip_reader=FakeClipReader({good_key: b"real traffic"}),
+        clip_audio_processor=RecordingAudioProcessor(),
+        clip_audio_quality_gate=None,
+        skip_progress=lambda index, total, reason: skipped.append((index, total, reason)),
+        limit=10,
+    )
+
+    assert [clip["transcript_public"] for clip in manifest["clips"]] == [
+        "Seattle Traffic playable source audio."
+    ]
+    assert skipped == [(1, 2, f"{missing_key} is not available in S3 yet")]
+    assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
+
+
 def test_recent_clip_public_audio_filename_cannot_look_like_account_id(monkeypatch) -> None:
     class FakeHash:
         def hexdigest(self) -> str:
@@ -497,6 +557,8 @@ class FakeClipReader:
 
     def download(self, key: str, output_path: Path) -> None:
         self.downloads.append(key)
+        if key not in self.objects:
+            raise ClipNotAvailable(f"{key} is not available in S3 yet")
         output_path.write_bytes(self.objects[key])
 
 

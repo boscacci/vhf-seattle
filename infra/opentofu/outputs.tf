@@ -28,11 +28,6 @@ output "radio_events_table_name" {
   value       = aws_dynamodb_table.radio_events.name
 }
 
-output "server_iam_policy_arn" {
-  description = "Attach this policy to the private server role/user used for presigned URLs and public exports."
-  value       = aws_iam_policy.server_s3_access.arn
-}
-
 output "dev_site_fqdn" {
   description = "Dev public site hostname."
   value       = local.dev_site_fqdn
@@ -61,11 +56,6 @@ output "dev_raw_audio_bucket" {
 output "dev_radio_events_table_name" {
   description = "DynamoDB table for durable dev radio, AIS, and telemetry event records."
   value       = aws_dynamodb_table.dev_radio_events.name
-}
-
-output "dev_server_iam_policy_arn" {
-  description = "Attach this policy to the private dev server role/user."
-  value       = aws_iam_policy.dev_server_s3_access.arn
 }
 
 output "dev_cognito_user_pool_id" {

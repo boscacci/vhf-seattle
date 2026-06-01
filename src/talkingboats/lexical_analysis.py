@@ -141,6 +141,56 @@ STOPWORDS = {
     "get",
     "got",
 }
+TOPIC_LABEL_STOPWORDS = STOPWORDS | {
+    "additional",
+    "bit",
+    "check",
+    "checking",
+    "good",
+    "guys",
+    "ahead",
+    "affirmative",
+    "afternoon",
+    "back",
+    "bye",
+    "bye-bye",
+    "call",
+    "hello",
+    "ill",
+    "i'll",
+    "i'm",
+    "im",
+    "little",
+    "minute",
+    "minutes",
+    "morning",
+    "much",
+    "off",
+    "perfect",
+    "please",
+    "reported",
+    "roger",
+    "routine",
+    "see",
+    "sir",
+    "take",
+    "that's",
+    "there's",
+    "theres",
+    "thankyou",
+    "time",
+    "up",
+    "very",
+    "we'll",
+    "we're",
+    "we've",
+    "well",
+    "were",
+    "you'll",
+    "you're",
+    "youre",
+    "youll",
+}
 
 PHRASE_BUCKETS = {
     "communication_markers": re.compile(
@@ -692,6 +742,7 @@ def _build_topics(
             umap_model=umap_model,
         )
         topics, _ = topic_model.fit_transform(documents, embeddings=embeddings)
+        topic_labels = _topic_labels_by_id(topic_model, topics, documents)
         coordinates = umap_model.fit_transform(embeddings)
         marker_colors = [_topic_color(topic_id) for topic_id in topics]
         figure = go.Figure(
@@ -709,7 +760,9 @@ def _build_topics(
                         "line": {"color": "rgba(7,17,15,0.45)", "width": 1},
                     },
                     text=[_short_text(doc, limit=160) for doc in documents],
-                    customdata=[_topic_label(topic_id) for topic_id in topics],
+                    customdata=[
+                        topic_labels.get(topic_id, "Keywords pending") for topic_id in topics
+                    ],
                     hovertemplate="%{customdata}<br>%{text}<extra></extra>",
                 )
             ],
@@ -753,6 +806,8 @@ def _build_topics(
                     config={
                         "responsive": True,
                         "scrollZoom": True,
+                        "displayModeBar": True,
+                        "doubleClick": "reset",
                         "displaylogo": False,
                         "modeBarButtonsToRemove": ["lasso2d", "select2d"],
                     },
@@ -792,20 +847,254 @@ def _topic_color(topic_id: int) -> str:
 def _topic_label(topic_id: int) -> str:
     if topic_id == -1:
         return "Outliers"
-    return f"Topic {topic_id}"
+    return "Keywords pending"
+
+
+def _topic_labels_by_id(
+    topic_model: Any,
+    topics: Sequence[int],
+    documents: Sequence[str],
+) -> dict[int, str]:
+    return {
+        int(topic_id): _topic_label(topic_id)
+        if topic_id == -1
+        else _topic_label_from_words(
+            _topic_words_for_display(topic_model, topics, documents, int(topic_id))
+        )
+        for topic_id in set(topics)
+    }
 
 
 def _mobile_topic_plot_html(html_text: str) -> str:
-    mobile_css = """
-<style>
-  html, body { min-height: 100%; margin: 0; background: #07110f; overflow: hidden; }
-  .plotly-graph-div { width: 100vw !important; height: 100dvh !important; touch-action: none; }
-  .modebar { transform: scale(1.08); transform-origin: top right; }
+    marker = "topic-map-mobile-enhancements"
+    if marker in html_text:
+        return html_text
+
+    mobile_head = """
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style id="topic-map-mobile-enhancements">
+  :root { color-scheme: dark; }
+  html,
+  body {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: #07110f;
+  }
+  body {
+    position: fixed;
+    inset: 0;
+  }
+  .plotly-graph-div {
+    width: 100vw !important;
+    height: 100dvh !important;
+    min-height: 100svh;
+    touch-action: none;
+    user-select: none;
+  }
+  .modebar {
+    top: calc(8px + env(safe-area-inset-top));
+    right: calc(8px + env(safe-area-inset-right));
+    transform: scale(1.08);
+    transform-origin: top right;
+  }
+  .topic-mobile-tools {
+    position: fixed;
+    right: calc(10px + env(safe-area-inset-right));
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 10000;
+    display: none;
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid rgba(242, 247, 244, 0.2);
+    border-radius: 8px;
+    background: rgba(7, 17, 15, 0.82);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+  .topic-mobile-tools button {
+    width: 40px;
+    height: 40px;
+    border: 1px solid rgba(242, 247, 244, 0.22);
+    border-radius: 8px;
+    color: #f2f7f4;
+    background: rgba(21, 37, 33, 0.94);
+    font: 800 1rem/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .topic-mobile-tools button[data-topic-zoom="reset"] {
+    width: auto;
+    min-width: 48px;
+    padding: 0 10px;
+    font-size: 0.82rem;
+  }
+  .topic-mobile-tools button:active {
+    border-color: rgba(64, 224, 191, 0.66);
+    background: rgba(64, 224, 191, 0.2);
+  }
+  @media (pointer: coarse), (max-width: 720px) {
+    .topic-mobile-tools {
+      display: flex;
+    }
+  }
 </style>
 """
+    mobile_body = """
+<div class="topic-mobile-tools" aria-label="Topic cluster zoom controls">
+  <button
+    type="button"
+    data-topic-zoom="in"
+    aria-label="Zoom topic clusters in"
+    title="Zoom in"
+  >+</button>
+  <button
+    type="button"
+    data-topic-zoom="out"
+    aria-label="Zoom topic clusters out"
+    title="Zoom out"
+  >-</button>
+  <button
+    type="button"
+    data-topic-zoom="reset"
+    aria-label="Reset topic cluster view"
+    title="Reset view"
+  >1x</button>
+</div>
+<script>
+(() => {
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  const fallbackEye = { x: 1.45, y: 1.55, z: 1.05 };
+
+  function waitForPlot() {
+    const plot = document.querySelector(".js-plotly-plot")
+      || document.querySelector(".plotly-graph-div");
+    if (!plot || !window.Plotly || typeof window.Plotly.relayout !== "function") {
+      window.setTimeout(waitForPlot, 80);
+      return;
+    }
+    installTopicMapControls(plot);
+  }
+
+  function cameraEye(plot) {
+    const eye = plot.layout?.scene?.camera?.eye || fallbackEye;
+    return {
+      x: Number.isFinite(Number(eye.x)) ? Number(eye.x) : fallbackEye.x,
+      y: Number.isFinite(Number(eye.y)) ? Number(eye.y) : fallbackEye.y,
+      z: Number.isFinite(Number(eye.z)) ? Number(eye.z) : fallbackEye.z,
+    };
+  }
+
+  function scaleEye(eye, multiplier) {
+    const scaled = {
+      x: eye.x * multiplier,
+      y: eye.y * multiplier,
+      z: eye.z * multiplier,
+    };
+    const distance = Math.hypot(scaled.x, scaled.y, scaled.z);
+    const boundedDistance = clamp(distance, 0.42, 6.2);
+    const distanceScale = distance > 0 ? boundedDistance / distance : 1;
+    return {
+      x: scaled.x * distanceScale,
+      y: scaled.y * distanceScale,
+      z: scaled.z * distanceScale,
+    };
+  }
+
+  function touchDistance(touches) {
+    const first = touches[0];
+    const second = touches[1];
+    return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+  }
+
+  function installTopicMapControls(plot) {
+    const defaultCamera = typeof window.structuredClone === "function"
+      ? window.structuredClone(plot.layout?.scene?.camera || { eye: fallbackEye })
+      : JSON.parse(JSON.stringify(plot.layout?.scene?.camera || { eye: fallbackEye }));
+    let pinchStart = null;
+    let pendingEye = null;
+    let animationFrame = 0;
+
+    function relayoutEye(eye) {
+      pendingEye = eye;
+      if (animationFrame) {
+        return;
+      }
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = 0;
+        window.Plotly.relayout(plot, { "scene.camera.eye": pendingEye });
+        pendingEye = null;
+      });
+    }
+
+    function zoom(multiplier) {
+      relayoutEye(scaleEye(cameraEye(plot), multiplier));
+    }
+
+    plot.addEventListener(
+      "touchstart",
+      (event) => {
+        if (event.touches.length !== 2) {
+          pinchStart = null;
+          return;
+        }
+        const distance = touchDistance(event.touches);
+        if (!Number.isFinite(distance) || distance < 12) {
+          return;
+        }
+        pinchStart = { distance, eye: cameraEye(plot) };
+      },
+      { passive: false },
+    );
+
+    plot.addEventListener(
+      "touchmove",
+      (event) => {
+        if (!pinchStart || event.touches.length !== 2) {
+          return;
+        }
+        const distance = touchDistance(event.touches);
+        if (!Number.isFinite(distance) || distance < 12) {
+          return;
+        }
+        event.preventDefault();
+        const multiplier = clamp(pinchStart.distance / distance, 0.34, 2.95);
+        relayoutEye(scaleEye(pinchStart.eye, multiplier));
+      },
+      { passive: false },
+    );
+
+    plot.addEventListener("touchend", () => {
+      pinchStart = null;
+    });
+    plot.addEventListener("touchcancel", () => {
+      pinchStart = null;
+    });
+
+    document.querySelectorAll("[data-topic-zoom]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const action = button.getAttribute("data-topic-zoom");
+        if (action === "reset") {
+          window.Plotly.relayout(plot, { "scene.camera": defaultCamera });
+        } else {
+          zoom(action === "in" ? 0.78 : 1.28);
+        }
+      });
+    });
+  }
+
+  waitForPlot();
+})();
+</script>
+"""
     if "</head>" in html_text:
-        return html_text.replace("</head>", f"{mobile_css}</head>", 1)
-    return f"{mobile_css}{html_text}"
+        html_text = html_text.replace("</head>", f"{mobile_head}</head>", 1)
+    else:
+        html_text = f"{mobile_head}{html_text}"
+    if "</body>" in html_text:
+        return html_text.replace("</body>", f"{mobile_body}</body>", 1)
+    return f"{html_text}{mobile_body}"
 
 
 def _topic_items(
@@ -824,8 +1113,14 @@ def _topic_items(
             label = "Outliers"
             words: list[str] = []
         else:
-            label = f"Topic {topic_id}"
-            words = [word for word, _score in topic_model.get_topic(topic_id)[:12]]
+            raw_words = _topic_words_for_display(
+                topic_model,
+                topics,
+                documents,
+                int(topic_id),
+            )
+            words = _topic_display_words(raw_words, limit=12)
+            label = _topic_label_from_words(raw_words)
         examples = [
             {"text": _short_text(document, limit=260)}
             for document, assigned_topic in zip(documents, topics, strict=True)
@@ -841,6 +1136,124 @@ def _topic_items(
             }
         )
     return items
+
+
+def _topic_words(topic_model: Any, topic_id: int) -> list[str]:
+    return [
+        str(word).strip().lower()
+        for word, _score in topic_model.get_topic(topic_id)
+        if str(word).strip()
+    ]
+
+
+def _topic_words_for_display(
+    topic_model: Any,
+    topics: Sequence[int],
+    documents: Sequence[str],
+    topic_id: int,
+) -> list[str]:
+    model_words = _topic_words(topic_model, topic_id)
+    fallback_words = _fallback_topic_words(
+        topics=topics,
+        documents=documents,
+        topic_id=topic_id,
+    )
+    return [*model_words, *fallback_words]
+
+
+def _fallback_topic_words(
+    *,
+    topics: Sequence[int],
+    documents: Sequence[str],
+    topic_id: int,
+    limit: int = 24,
+) -> list[str]:
+    counts: Counter[str] = Counter()
+    for document, assigned_topic in zip(documents, topics, strict=True):
+        if int(assigned_topic) != topic_id:
+            continue
+        _add_topic_document_signals(counts, document)
+    ranked = sorted(
+        counts.items(),
+        key=lambda item: (-item[1], -len(item[0].split()), item[0]),
+    )
+    return [term for term, _count in ranked[:limit]]
+
+
+def _add_topic_document_signals(counts: Counter[str], document: str) -> None:
+    for name, pattern in PHRASE_BUCKETS.items():
+        weight = 5 if name in {"places", "vessel_types"} else 3
+        for hit in _bucket_hits(pattern, document):
+            counts[hit] += weight
+    for name, _kind, pattern in KNOWN_ENTITY_PATTERNS:
+        if pattern.search(document):
+            counts[_normalize_topic_word(name)] += 5
+    for match in VESSEL_NAME_RE.finditer(document):
+        counts[_normalize_topic_word(match.group(0))] += 5
+    tokens = _tokens(document)
+    for length in (2,):
+        for phrase in _topic_ngrams(tokens, length):
+            counts[phrase] += 1
+    for token in tokens:
+        if _topic_word_is_interesting(token):
+            counts[token] += 1
+
+
+def _topic_ngrams(tokens: Sequence[str], length: int) -> Iterable[str]:
+    for index in range(len(tokens) - length + 1):
+        gram = tokens[index : index + length]
+        if any(token in STOPWORDS for token in gram):
+            continue
+        phrase = _normalize_topic_word(" ".join(gram))
+        if _topic_word_is_interesting(phrase):
+            yield phrase
+
+
+def _topic_label_from_words(words: Sequence[str]) -> str:
+    display_words = _topic_display_words(words, limit=3)
+    if not display_words:
+        return "Keywords pending"
+    return " / ".join(display_words)
+
+
+def _topic_display_words(words: Sequence[str], *, limit: int) -> list[str]:
+    raw_words = [_normalize_topic_word(word) for word in words]
+    raw_words = [word for word in raw_words if word]
+    selected: list[str] = []
+    for word in raw_words:
+        if not _topic_word_is_interesting(word):
+            continue
+        selected = [existing for existing in selected if existing not in word]
+        if any(word == existing or word in existing for existing in selected):
+            continue
+        selected.append(word)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _normalize_topic_word(word: str) -> str:
+    text = " ".join(str(word).strip().lower().split())
+    if not text:
+        return ""
+    parts = text.split()
+    while parts and parts[0] in TOPIC_LABEL_STOPWORDS:
+        parts.pop(0)
+    while parts and parts[-1] in TOPIC_LABEL_STOPWORDS:
+        parts.pop()
+    return " ".join(parts)
+
+
+def _topic_word_is_interesting(word: str) -> bool:
+    tokens = _tokens(word)
+    return bool(
+        tokens
+        and any(
+            token not in TOPIC_LABEL_STOPWORDS
+            and any(character.isalpha() for character in token)
+            for token in tokens
+        )
+    )
 
 
 def _write_placeholder_topic_html(path: Path, message: str) -> None:
@@ -912,7 +1325,7 @@ def _extract_entities(
         )
         item["count"] += 1
         item["channels"][clip.channel] += 1
-        if len(item["examples"]) < 3 and _is_short_entity_example(clip):
+        if len(item["examples"]) < 3 and (_is_short_entity_example(clip) or not item["examples"]):
             example = {
                 "channel": clip.channel,
                 "started_at": clip.started_at,

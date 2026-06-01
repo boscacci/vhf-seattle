@@ -44,28 +44,33 @@ locals {
   )
   dev_cognito_domain_prefix = replace("${var.project_name}-${var.dev_resource_site_subdomain}-auth", ".", "-")
   dev_cognito_domain        = "https://${aws_cognito_user_pool_domain.dev_auth.domain}.auth.${var.aws_region}.amazoncognito.com"
+  common_tags = {
+    Application    = "elliott-bay-vhf"
+    BillingProject = var.project_name
+    ManagedBy      = "opentofu"
+    Owner          = "rob"
+    Project        = var.project_name
+  }
 }
 
 resource "aws_s3_bucket" "public_site" {
   bucket        = local.public_bucket
   force_destroy = var.force_destroy_buckets
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "prod"
-    Project     = var.project_name
     Role        = "public-static-site"
-  }
+  })
 }
 
 resource "aws_s3_bucket" "raw_audio" {
   bucket        = local.raw_audio_bucket
   force_destroy = var.force_destroy_buckets
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "prod"
-    Project     = var.project_name
     Role        = "private-raw-audio"
-  }
+  })
 }
 
 resource "aws_s3_bucket_public_access_block" "public_site" {
@@ -164,11 +169,10 @@ resource "aws_dynamodb_table" "radio_events" {
     enabled = true
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "prod"
-    Project     = var.project_name
     Role        = "radio-event-store"
-  }
+  })
 }
 
 resource "aws_acm_certificate" "site" {
@@ -180,10 +184,10 @@ resource "aws_acm_certificate" "site" {
     create_before_destroy = true
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "prod"
-    Project     = var.project_name
-  }
+    Role        = "tls-certificate"
+  })
 }
 
 resource "aws_route53_record" "site_cert_validation" {
@@ -353,11 +357,10 @@ resource "aws_cloudfront_distribution" "site" {
     minimum_protocol_version = "TLSv1.2_2021"
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "prod"
-    Project     = var.project_name
     Role        = "public-static-site"
-  }
+  })
 
   depends_on = [aws_acm_certificate_validation.site]
 }
@@ -385,75 +388,6 @@ data "aws_iam_policy_document" "public_site_cloudfront_read" {
 resource "aws_s3_bucket_policy" "public_site" {
   bucket = aws_s3_bucket.public_site.id
   policy = data.aws_iam_policy_document.public_site_cloudfront_read.json
-}
-
-data "aws_iam_policy_document" "server_s3_access" {
-  statement {
-    sid = "ListProjectBuckets"
-    actions = [
-      "s3:ListBucket",
-    ]
-    resources = [
-      aws_s3_bucket.raw_audio.arn,
-      aws_s3_bucket.public_site.arn,
-    ]
-  }
-
-  statement {
-    sid = "ManagePrivateAudioObjects"
-    actions = [
-      "s3:DeleteObject",
-      "s3:GetObject",
-      "s3:PutObject",
-    ]
-    resources = [
-      "${aws_s3_bucket.raw_audio.arn}/raw/*",
-      "${aws_s3_bucket.raw_audio.arn}/hall-of-fame/*",
-    ]
-  }
-
-  statement {
-    sid = "PublishReviewedStaticSite"
-    actions = [
-      "s3:DeleteObject",
-      "s3:GetObject",
-      "s3:PutObject",
-    ]
-    resources = ["${aws_s3_bucket.public_site.arn}/*"]
-  }
-
-  statement {
-    sid = "ManageRadioEvents"
-    actions = [
-      "dynamodb:BatchGetItem",
-      "dynamodb:BatchWriteItem",
-      "dynamodb:DescribeTable",
-      "dynamodb:GetItem",
-      "dynamodb:PutItem",
-      "dynamodb:Query",
-      "dynamodb:UpdateItem",
-    ]
-    resources = [aws_dynamodb_table.radio_events.arn]
-  }
-
-  statement {
-    sid = "InvalidatePublicDistribution"
-    actions = [
-      "cloudfront:CreateInvalidation",
-    ]
-    resources = [aws_cloudfront_distribution.site.arn]
-  }
-}
-
-resource "aws_iam_policy" "server_s3_access" {
-  name        = "${var.project_name}-server-s3-access"
-  description = "Least-privilege S3/CloudFront access for the private Talking Boats server"
-  policy      = data.aws_iam_policy_document.server_s3_access.json
-
-  tags = {
-    Environment = "prod"
-    Project     = var.project_name
-  }
 }
 
 resource "aws_route53_record" "site_a" {
@@ -484,22 +418,20 @@ resource "aws_s3_bucket" "dev_public_site" {
   bucket        = local.dev_public_bucket
   force_destroy = var.force_destroy_buckets
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "dev"
-    Project     = var.project_name
     Role        = "public-static-site"
-  }
+  })
 }
 
 resource "aws_s3_bucket" "dev_raw_audio" {
   bucket        = local.dev_raw_audio_bucket
   force_destroy = var.force_destroy_buckets
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "dev"
-    Project     = var.project_name
     Role        = "private-raw-audio"
-  }
+  })
 }
 
 resource "aws_s3_bucket_public_access_block" "dev_public_site" {
@@ -598,11 +530,10 @@ resource "aws_dynamodb_table" "dev_radio_events" {
     enabled = true
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "dev"
-    Project     = var.project_name
     Role        = "radio-event-store"
-  }
+  })
 }
 
 resource "aws_acm_certificate" "dev_site" {
@@ -614,10 +545,10 @@ resource "aws_acm_certificate" "dev_site" {
     create_before_destroy = true
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "dev"
-    Project     = var.project_name
-  }
+    Role        = "tls-certificate"
+  })
 }
 
 resource "aws_route53_record" "dev_site_cert_validation" {
@@ -786,11 +717,10 @@ resource "aws_cloudfront_distribution" "dev_site" {
     minimum_protocol_version = "TLSv1.2_2021"
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "dev"
-    Project     = var.project_name
     Role        = "public-static-site"
-  }
+  })
 
   depends_on = [aws_acm_certificate_validation.dev_site]
 }
@@ -818,75 +748,6 @@ data "aws_iam_policy_document" "dev_public_site_cloudfront_read" {
 resource "aws_s3_bucket_policy" "dev_public_site" {
   bucket = aws_s3_bucket.dev_public_site.id
   policy = data.aws_iam_policy_document.dev_public_site_cloudfront_read.json
-}
-
-data "aws_iam_policy_document" "dev_server_s3_access" {
-  statement {
-    sid = "ListProjectBuckets"
-    actions = [
-      "s3:ListBucket",
-    ]
-    resources = [
-      aws_s3_bucket.dev_raw_audio.arn,
-      aws_s3_bucket.dev_public_site.arn,
-    ]
-  }
-
-  statement {
-    sid = "ManagePrivateAudioObjects"
-    actions = [
-      "s3:DeleteObject",
-      "s3:GetObject",
-      "s3:PutObject",
-    ]
-    resources = [
-      "${aws_s3_bucket.dev_raw_audio.arn}/raw/*",
-      "${aws_s3_bucket.dev_raw_audio.arn}/hall-of-fame/*",
-    ]
-  }
-
-  statement {
-    sid = "PublishReviewedStaticSite"
-    actions = [
-      "s3:DeleteObject",
-      "s3:GetObject",
-      "s3:PutObject",
-    ]
-    resources = ["${aws_s3_bucket.dev_public_site.arn}/*"]
-  }
-
-  statement {
-    sid = "ManageRadioEvents"
-    actions = [
-      "dynamodb:BatchGetItem",
-      "dynamodb:BatchWriteItem",
-      "dynamodb:DescribeTable",
-      "dynamodb:GetItem",
-      "dynamodb:PutItem",
-      "dynamodb:Query",
-      "dynamodb:UpdateItem",
-    ]
-    resources = [aws_dynamodb_table.dev_radio_events.arn]
-  }
-
-  statement {
-    sid = "InvalidatePublicDistribution"
-    actions = [
-      "cloudfront:CreateInvalidation",
-    ]
-    resources = [aws_cloudfront_distribution.dev_site.arn]
-  }
-}
-
-resource "aws_iam_policy" "dev_server_s3_access" {
-  name        = "${var.project_name}-dev-server-s3-access"
-  description = "Least-privilege S3/CloudFront access for the private Talking Boats dev server"
-  policy      = data.aws_iam_policy_document.dev_server_s3_access.json
-
-  tags = {
-    Environment = "dev"
-    Project     = var.project_name
-  }
 }
 
 resource "aws_route53_record" "dev_site_a" {
@@ -962,11 +823,10 @@ resource "aws_cognito_user_pool" "dev_auth" {
     user_verification = "required"
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Environment = "dev"
-    Project     = var.project_name
     Role        = "mobile-auth"
-  }
+  })
 }
 
 resource "aws_cognito_user_pool_domain" "dev_auth" {

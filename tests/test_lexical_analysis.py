@@ -223,6 +223,30 @@ def test_entity_examples_prefer_short_analysis_clips(tmp_path: Path) -> None:
     assert all(example["duration_seconds"] <= 12.0 for example in examples)
 
 
+def test_entity_examples_keep_playable_fallback_for_long_clips(tmp_path: Path) -> None:
+    db_path = tmp_path / "clips.sqlite3"
+    store = UploadedClipStore(db_path)
+    _transcribe(
+        store,
+        key="raw/channel=14/date=2026-05-26/long-msc.mp3",
+        channel="14",
+        started_at="2026-05-26T03:00:00Z",
+        text="Seattle Traffic, MSC Gabriella northbound past Elliott Bay Marina.",
+        duration_seconds=31.0,
+    )
+
+    payload = generate_lexical_analysis(
+        db_path=db_path,
+        output_dir=tmp_path / "site",
+        generated_at=datetime(2026, 5, 26, 3, 30, 0, tzinfo=UTC),
+    )
+
+    example = _entity(payload, "MSC Gabriella")["examples"][0]
+    assert example["started_at"] == "2026-05-26T03:00:00Z"
+    assert example["duration_seconds"] == 31.0
+    assert example["audio_public_filename"].endswith(".mp3")
+
+
 def test_analysis_audio_example_window_matches_public_export_default() -> None:
     assert lexical_analysis.PUBLIC_AUDIO_EXAMPLE_LIMIT == DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
     assert DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT >= 3000
@@ -411,8 +435,87 @@ def test_bertopic_model_is_configured_for_condensed_topic_count(
     assert figure_kwargs["layout"]["scene"]["camera"]
     assert html_options["config"]["scrollZoom"] is True
     assert html_options["config"]["responsive"] is True
+    assert html_options["config"]["displayModeBar"] is True
+    assert html_options["config"]["doubleClick"] == "reset"
     assert payload["status"] == "ok"
     assert len(payload["items"]) <= lexical_analysis.MAX_BERTOPIC_TOPICS
+    assert lexical_analysis.MAX_BERTOPIC_TOPICS == 18
+    assert all(not item["label"].startswith("Topic ") for item in payload["items"])
+
+
+def test_mobile_topic_plot_html_supports_two_finger_camera_zoom() -> None:
+    base_html = "<html><head><title>Topics</title></head><body><div>plot</div></body></html>"
+
+    topic_html = lexical_analysis._mobile_topic_plot_html(base_html)
+    repeated_html = lexical_analysis._mobile_topic_plot_html(topic_html)
+
+    assert 'name="viewport"' in topic_html
+    assert "topic-mobile-tools" in topic_html
+    assert 'aria-label="Zoom topic clusters in"' in topic_html
+    assert 'aria-label="Reset topic cluster view"' in topic_html
+    assert "touches.length !== 2" in topic_html
+    assert "event.preventDefault()" in topic_html
+    assert "Plotly.relayout" in topic_html
+    assert '"scene.camera.eye"' in topic_html
+    assert "requestAnimationFrame" in topic_html
+    assert repeated_html.count("topic-map-mobile-enhancements") == 1
+
+
+def test_topic_items_label_topics_with_keywords_not_numeric_ids() -> None:
+    class FakeTopicModel:
+        def get_topic(self, topic_id: int) -> list[tuple[str, float]]:
+            return {
+                0: [
+                    ("roger", 1.0),
+                    ("seattle traffic", 0.9),
+                    ("traffic", 0.8),
+                    ("mariners", 0.7),
+                    ("calling", 0.6),
+                ],
+                1: [("container ship", 1.0), ("cosco jetta", 0.9), ("ship", 0.8)],
+            }[topic_id]
+
+    items = lexical_analysis._topic_items(
+        FakeTopicModel(),
+        topics=[0, 0, 1, -1],
+        documents=["a", "b", "c", "d"],
+    )
+
+    assert items[0]["label"] == "seattle traffic / mariners / calling"
+    assert items[0]["top_words"] == ["seattle traffic", "mariners", "calling"]
+    assert items[1]["label"] == "container ship / cosco jetta"
+    assert items[2]["label"] == "Outliers"
+
+
+def test_topic_items_fall_back_to_document_keywords_when_model_words_are_empty() -> None:
+    class FakeTopicModel:
+        def get_topic(self, _topic_id: int) -> list[tuple[str, float]]:
+            return []
+
+    items = lexical_analysis._topic_items(
+        FakeTopicModel(),
+        topics=[0, 0, 1],
+        documents=[
+            "Seattle Traffic, tug assist in the West Waterway.",
+            "Seattle Traffic, pilot station entering the West Waterway.",
+            "Cape San Juan departing Colman Dock.",
+        ],
+    )
+
+    assert items[0]["label"] == "seattle traffic / west waterway / pilot station"
+    assert items[0]["top_words"][:3] == [
+        "seattle traffic",
+        "west waterway",
+        "pilot station",
+    ]
+    assert items[1]["label"] == "colman dock / cape san juan / departing"
+
+
+def test_topic_display_words_filter_radio_filler_contractions() -> None:
+    assert lexical_analysis._topic_display_words(
+        ["we'll", "i'll", "that's", "seattle traffic", "wind direction"],
+        limit=3,
+    ) == ["seattle traffic", "wind direction"]
 
 
 def _transcribe(
