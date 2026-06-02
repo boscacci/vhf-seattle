@@ -363,6 +363,12 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert "featured=true" in app_js
     assert "renderClipDisplayControls()" in app_js
     assert "renderClipDisplayControlSet()" in app_js
+    assert "function setClipPageSize(pageSize)" in app_js
+    assert "const firstVisibleClipOffset = clipOffset();" in app_js
+    assert (
+        "selectedClipPage = Math.floor(firstVisibleClipOffset / selectedClipPageSize) + 1;"
+        in app_js
+    )
     assert "mobileClipDisplayControls()" not in app_js
     assert "const insertAfter = Math.min(6, cards.length);" not in app_js
     assert "clipList.replaceChildren(...clips.map(renderClipCard));" not in app_js

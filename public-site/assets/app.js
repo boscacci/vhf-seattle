@@ -1420,11 +1420,9 @@ function renderClipDisplayControlSet() {
       label: String(pageSize),
       active: selectedClipPageSize === pageSize,
       onClick: () => {
-        if (selectedClipPageSize === pageSize) {
+        if (!setClipPageSize(pageSize)) {
           return;
         }
-        selectedClipPageSize = pageSize;
-        selectedClipPage = 1;
         loadAndRender();
       },
     })),
@@ -1454,6 +1452,17 @@ function renderClipDisplayControlSet() {
     },
   ]);
   return [featuredControl, pageSizeControl, sortControl];
+}
+
+function setClipPageSize(pageSize) {
+  const nextPageSize = Number(pageSize);
+  if (!clipPageSizeOptions.includes(nextPageSize) || selectedClipPageSize === nextPageSize) {
+    return false;
+  }
+  const firstVisibleClipOffset = clipOffset();
+  selectedClipPageSize = nextPageSize;
+  selectedClipPage = Math.floor(firstVisibleClipOffset / selectedClipPageSize) + 1;
+  return true;
 }
 
 function segmentedControl(labelText, options) {

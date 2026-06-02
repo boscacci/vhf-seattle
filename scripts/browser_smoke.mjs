@@ -458,6 +458,26 @@ try {
     ) {
       throw new Error(`48-per-page next did not load the second full page: ${JSON.stringify(fortyEightNextPage)}`);
     }
+    await page.locator("#clip-display-controls").getByRole("button", { name: "12", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 12);
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 49"));
+    const anchoredPageSizeChange = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      renderedClips: document.querySelectorAll("#clips .clip-card").length,
+      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
+      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+    }));
+    if (
+      anchoredPageSizeChange.renderedClips !== 12 ||
+      anchoredPageSizeChange.activePage !== "5" ||
+      !anchoredPageSizeChange.pageStatus.includes("Page 5 of 12") ||
+      !anchoredPageSizeChange.firstTranscript.includes("Smoke clip 49")
+    ) {
+      throw new Error(`page size change did not keep the visible clip anchored: ${JSON.stringify(anchoredPageSizeChange)}`);
+    }
+    await page.locator("#clip-display-controls").getByRole("button", { name: "48", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 49"));
     await page.locator("#clip-pagination").getByRole("button", { name: "Previous", exact: true }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
     await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
