@@ -92,6 +92,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'id="tab-search" type="button" data-tab="search"' in index_html
     assert "panel-search" in index_html
     assert "clip-search-form" in index_html
+    assert "clip-search-suggestions" in index_html
     assert "clip-search-results" in index_html
     assert "Map" in index_html
     assert ">AIS<" not in index_html
@@ -123,6 +124,9 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert '"vhf.robertboscacci.com"' in app_js
     assert "/api/analysis/lexical" in app_js
     assert 'const clipSearchUrl = "/api/clips/search";' in app_js
+    assert "renderSearchSuggestions" in app_js
+    assert "searchSuggestionGroupsFromPayload" in app_js
+    assert "applySearchSuggestion" in app_js
     assert 'let selectedSearchRecency = "7d";' in app_js
     assert "let selectedSearchLimit = 10;" in app_js
     assert 'button.classList.toggle("is-active", option.value === selectedValue);' in app_js
@@ -268,6 +272,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert ".performance-range-control" in styles_css
     assert ".clip-search-panel" in styles_css
     assert ".clip-search-form" in styles_css
+    assert ".clip-search-suggestions" in styles_css
+    assert ".search-suggestion-chip" in styles_css
     assert ".clip-search-control .clip-control-group" in styles_css
     assert "width: fit-content;" in styles_css
     assert ".clip-search-control .clip-segmented-control" in styles_css

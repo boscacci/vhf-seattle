@@ -26,6 +26,53 @@ const searchRecencyOptions = [
   { label: "All", value: "all" },
 ];
 const searchLimitOptions = [5, 10, 20, 50];
+const fallbackSearchSuggestionGroups = [
+  {
+    label: "Popular terms",
+    caption: "Frequent radio words",
+    items: [
+      { query: "seattle traffic" },
+      { query: "roger" },
+      { query: "southbound" },
+      { query: "northbound" },
+      { query: "traffic check" },
+    ],
+  },
+  {
+    label: "Common phrases",
+    caption: "Useful transcript pairs",
+    items: [
+      { query: "tug barge" },
+      { query: "vessel traffic" },
+      { query: "elliott bay" },
+      { query: "west waterway" },
+      { query: "pilot transfer" },
+    ],
+  },
+  {
+    label: "Observed entities",
+    caption: "Stations and vessel names",
+    items: [
+      { query: "Seattle Traffic" },
+      { query: "United States Coast Guard" },
+      { query: "Tacoma Traffic" },
+      { query: "Puget Sound" },
+    ],
+  },
+  {
+    label: "Nautical terms",
+    caption: "Marine radio vocabulary",
+    items: [
+      { query: "pan pan" },
+      { query: "securite" },
+      { query: "bridge to bridge" },
+      { query: "tug and tow" },
+      { query: "making knots" },
+    ],
+  },
+];
+const searchSuggestionGroupLimit = 4;
+const searchSuggestionItemLimit = 6;
 const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();
 const unknownPlaybackTimeLabel = "—";
 const everythingLiveChannel = "everything";
@@ -185,6 +232,7 @@ const searchForm = document.querySelector("#clip-search-form");
 const searchQuery = document.querySelector("#clip-search-query");
 const searchRecencyControl = document.querySelector("#clip-search-recency");
 const searchLimitControl = document.querySelector("#clip-search-limit");
+const searchSuggestions = document.querySelector("#clip-search-suggestions");
 const searchResults = document.querySelector("#clip-search-results");
 const panels = {
   clips: document.querySelector("#panel-clips"),
@@ -260,10 +308,13 @@ let languagePayloadLoaded = false;
 let performancePayloadLoaded = false;
 let performanceRefreshTimer = null;
 let latestPerformancePayload = null;
+let latestLanguagePayload = null;
 let selectedPerformanceRangeHours = 2;
 let selectedSearchRecency = "7d";
 let selectedSearchLimit = 10;
 let latestSearchPayload = null;
+let latestSearchSuggestions = null;
+let searchSuggestionsLoaded = false;
 let searchRequestSequence = 0;
 let systemMediaControlsEnabled = initialSystemMediaControlsEnabled();
 let liveChannels = [
@@ -385,6 +436,14 @@ refreshButton.addEventListener("click", () => {
 searchForm?.addEventListener("submit", (event) => {
   event.preventDefault();
   performClipSearch();
+});
+
+searchQuery?.addEventListener("input", () => {
+  if (activeTab === "search" && !searchQuery.value.trim()) {
+    latestSearchPayload = null;
+    searchStatus.textContent = "Ready";
+    renderEmptySearchState();
+  }
 });
 
 channelFilter.addEventListener("click", (event) => {
@@ -578,6 +637,153 @@ function renderSegmentedSearchControl(container, labelText, options, selectedVal
   container.replaceChildren(group);
 }
 
+async function loadAndRenderSearchSuggestions() {
+  if (!searchSuggestions || searchSuggestionsLoaded) {
+    return;
+  }
+  renderSearchSuggestions(latestSearchSuggestions || fallbackSearchSuggestionGroups);
+  try {
+    const payload = latestLanguagePayload || (await loadLanguagePayload());
+    latestLanguagePayload = payload;
+    latestSearchSuggestions = searchSuggestionGroupsFromPayload(payload);
+    searchSuggestionsLoaded = true;
+    if (!latestSearchPayload && !searchQuery?.value.trim()) {
+      renderSearchSuggestions(latestSearchSuggestions);
+    }
+  } catch {
+    latestSearchSuggestions = fallbackSearchSuggestionGroups;
+    searchSuggestionsLoaded = true;
+  }
+}
+
+function renderSearchSuggestions(groups = fallbackSearchSuggestionGroups) {
+  if (!searchSuggestions) {
+    return;
+  }
+  const visibleGroups = groups.filter((group) => Array.isArray(group.items) && group.items.length).slice(0, searchSuggestionGroupLimit);
+  if (!visibleGroups.length) {
+    searchSuggestions.hidden = true;
+    searchSuggestions.replaceChildren();
+    return;
+  }
+  searchSuggestions.hidden = false;
+  const heading = document.createElement("div");
+  heading.className = "search-suggestion-heading";
+  const title = document.createElement("h3");
+  title.textContent = "Search starters";
+  const note = document.createElement("p");
+  note.textContent = "Pulled from frequent transcript terms, entities, and marine vocabulary.";
+  heading.append(title, note);
+  const grid = document.createElement("div");
+  grid.className = "search-suggestion-grid";
+  grid.append(...visibleGroups.map(renderSearchSuggestionGroup));
+  searchSuggestions.replaceChildren(heading, grid);
+}
+
+function renderSearchSuggestionGroup(group) {
+  const card = document.createElement("article");
+  card.className = "search-suggestion-group";
+  const label = document.createElement("p");
+  label.className = "language-label";
+  label.textContent = group.label;
+  const caption = document.createElement("span");
+  caption.className = "search-suggestion-caption";
+  caption.textContent = group.caption || "";
+  const chips = document.createElement("div");
+  chips.className = "search-suggestion-chips";
+  chips.append(
+    ...group.items.slice(0, searchSuggestionItemLimit).map((item) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "search-suggestion-chip";
+      const label = document.createElement("span");
+      label.textContent = item.query;
+      button.append(label);
+      button.addEventListener("click", () => applySearchSuggestion(item.query));
+      if (Number.isFinite(Number(item.count)) && Number(item.count) > 0) {
+        const count = document.createElement("span");
+        count.className = "search-suggestion-count";
+        count.setAttribute("aria-hidden", "true");
+        count.textContent = Number(item.count).toLocaleString();
+        button.append(count);
+      }
+      return button;
+    }),
+  );
+  card.append(label, caption, chips);
+  return card;
+}
+
+function searchSuggestionGroupsFromPayload(payload) {
+  const terms = payload?.terms || {};
+  const buckets = terms.semantic_buckets || {};
+  const groups = [
+    {
+      label: "Popular terms",
+      caption: "Frequent radio words",
+      items: uniqueSearchSuggestions([
+        ...(buckets.communication_markers || []),
+        ...(buckets.movement || []),
+        ...(buckets.places || []),
+        ...(buckets.vessel_types || []),
+      ]),
+    },
+    {
+      label: "Common phrases",
+      caption: "Useful transcript pairs",
+      items: uniqueSearchSuggestions(terms.bigrams || []),
+    },
+    {
+      label: "Observed entities",
+      caption: "Stations and vessel names",
+      items: uniqueSearchSuggestions(payload?.entities || []),
+    },
+    ...fallbackSearchSuggestionGroups.filter((group) => group.label === "Nautical terms"),
+  ];
+  return groups.map((group, index) => ({
+    ...fallbackSearchSuggestionGroups[index],
+    ...group,
+    items: group.items.length ? group.items : fallbackSearchSuggestionGroups[index]?.items || [],
+  }));
+}
+
+function uniqueSearchSuggestions(items) {
+  const seen = new Set();
+  const suggestions = [];
+  for (const item of items) {
+    const query = searchSuggestionText(item);
+    if (!query) {
+      continue;
+    }
+    const key = query.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    suggestions.push({ query, count: Number(item?.count || 0) });
+    if (suggestions.length >= searchSuggestionItemLimit) {
+      break;
+    }
+  }
+  return suggestions;
+}
+
+function searchSuggestionText(item) {
+  if (typeof item === "string") {
+    return item.trim();
+  }
+  return String(item?.term || item?.name || item?.label || item?.text || "").trim();
+}
+
+function applySearchSuggestion(query) {
+  if (!searchQuery) {
+    return;
+  }
+  searchQuery.value = query;
+  searchQuery.focus();
+  performClipSearch();
+}
+
 async function performClipSearch() {
   if (!searchQuery || !searchStatus || !searchResults) {
     return;
@@ -590,6 +796,9 @@ async function performClipSearch() {
   }
   const requestId = ++searchRequestSequence;
   searchStatus.textContent = "Searching clips...";
+  if (searchSuggestions) {
+    searchSuggestions.hidden = true;
+  }
   searchResults.setAttribute("aria-busy", "true");
   searchResults.replaceChildren(...renderClipPlaceholders().slice(0, Math.min(3, selectedSearchLimit)));
   try {
@@ -624,6 +833,8 @@ function renderEmptySearchState() {
   }
   searchResults.removeAttribute("aria-busy");
   searchResults.replaceChildren(emptySearchMessage("Enter a search string to find related clips."));
+  renderSearchSuggestions(latestSearchSuggestions || fallbackSearchSuggestionGroups);
+  loadAndRenderSearchSuggestions();
 }
 
 function renderSearchResults(payload) {
@@ -632,6 +843,9 @@ function renderSearchResults(payload) {
   }
   const results = Array.isArray(payload?.results) ? payload.results : [];
   searchResults.removeAttribute("aria-busy");
+  if (searchSuggestions) {
+    searchSuggestions.hidden = true;
+  }
   if (!results.length) {
     searchResults.replaceChildren(emptySearchMessage("No matching clips in that window."));
     searchStatus.textContent = `No matches for "${payload?.query || ""}"`;
@@ -1878,6 +2092,7 @@ async function loadAndRenderLanguage() {
   languageStatus.textContent = "Loading analysis...";
   const payload = await loadLanguagePayload();
   languagePayloadLoaded = true;
+  latestLanguagePayload = payload;
   renderLanguageDashboard(payload);
 }
 

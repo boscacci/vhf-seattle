@@ -328,6 +328,90 @@ button {
   gap: 12px;
 }
 
+.clip-search-suggestions {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 16px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--blue) 36%, var(--line));
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(106, 184, 255, 0.08), rgba(64, 224, 191, 0.035)),
+    color-mix(in srgb, var(--panel), var(--bg) 18%);
+}
+
+.search-suggestion-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.search-suggestion-heading p {
+  max-width: 540px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+  text-align: right;
+}
+
+.search-suggestion-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.search-suggestion-group {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(7, 17, 15, 0.45);
+}
+
+.search-suggestion-caption {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.search-suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.search-suggestion-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-color: color-mix(in srgb, var(--teal) 44%, var(--line-strong));
+  color: var(--ink);
+  background: color-mix(in srgb, var(--panel-strong) 78%, var(--teal) 8%);
+}
+
+.search-suggestion-chip:hover,
+.search-suggestion-chip:focus-visible {
+  color: #06110f;
+  border-color: transparent;
+  background: var(--teal);
+}
+
+.search-suggestion-count {
+  color: var(--blue);
+  font-size: 0.72rem;
+}
+
+.search-suggestion-chip:hover .search-suggestion-count,
+.search-suggestion-chip:focus-visible .search-suggestion-count {
+  color: #063348;
+}
+
 .search-result-card {
   border-color: color-mix(in srgb, var(--blue) 42%, var(--line));
 }
@@ -1910,6 +1994,20 @@ audio {
 
   .clip-search-options {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .search-suggestion-heading {
+    display: grid;
+    gap: 6px;
+  }
+
+  .search-suggestion-heading p {
+    max-width: none;
+    text-align: left;
+  }
+
+  .search-suggestion-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

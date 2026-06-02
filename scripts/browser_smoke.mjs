@@ -502,6 +502,13 @@ try {
             extraSpace: Math.round(controlRect.width - buttonSpan),
           };
         }),
+        suggestions: {
+          hidden: document.querySelector("#clip-search-suggestions")?.hidden ?? true,
+          groupCount: document.querySelectorAll(".search-suggestion-group").length,
+          chipLabels: [...document.querySelectorAll(".search-suggestion-chip")].map((button) =>
+            button.textContent?.trim(),
+          ),
+        },
       }));
       if (
         searchDefaultState.activeRecency !== "7d" ||
@@ -514,15 +521,29 @@ try {
       if (searchDefaultState.selectorMetrics.some((metric) => metric.extraSpace > 16)) {
         throw new Error(`search selectors have excessive empty space: ${JSON.stringify(searchDefaultState.selectorMetrics)}`);
       }
-      await desktopPerformancePage.getByLabel("Search transcript meaning").fill("tug barge");
-      await desktopPerformancePage.getByRole("button", { name: "Search clips", exact: true }).click();
+      if (
+        searchDefaultState.suggestions.hidden ||
+        searchDefaultState.suggestions.groupCount < 4 ||
+        !searchDefaultState.suggestions.chipLabels.some((label) => label.toLowerCase().includes("tug barge"))
+      ) {
+        throw new Error(`search suggestions did not render before searching: ${JSON.stringify(searchDefaultState.suggestions)}`);
+      }
+      await desktopPerformancePage
+        .locator("#clip-search-suggestions")
+        .getByRole("button", { name: /tug barge/i })
+        .click();
       await desktopPerformancePage.locator(".search-result-card").first().waitFor({ state: "visible", timeout: 10000 });
       const searchResult = await desktopPerformancePage.evaluate(() => ({
+        query: document.querySelector("#clip-search-query")?.value || "",
+        suggestionsHidden: document.querySelector("#clip-search-suggestions")?.hidden ?? false,
         status: document.querySelector("#clip-search-status")?.textContent || "",
         resultCount: document.querySelectorAll(".search-result-card").length,
         firstTranscript: document.querySelector(".search-result-card blockquote")?.textContent || "",
         audioCount: document.querySelectorAll(".search-result-card audio").length,
       }));
+      if (searchResult.query !== "tug barge" || !searchResult.suggestionsHidden) {
+        throw new Error(`search suggestion did not populate and hide suggestions: ${JSON.stringify(searchResult)}`);
+      }
       if (!searchResult.status.includes("semantic matches") || searchResult.resultCount < 1) {
         throw new Error(`search results did not render: ${JSON.stringify(searchResult)}`);
       }
@@ -531,6 +552,20 @@ try {
       }
       if (searchResult.audioCount < 1) {
         throw new Error(`search result audio controls did not render: ${JSON.stringify(searchResult)}`);
+      }
+      await desktopPerformancePage.getByLabel("Search transcript meaning").fill("");
+      await desktopPerformancePage.waitForFunction(
+        () => document.querySelector("#clip-search-suggestions")?.hidden === false,
+        null,
+        { timeout: 10000 },
+      );
+      const clearedSearchState = await desktopPerformancePage.evaluate(() => ({
+        status: document.querySelector("#clip-search-status")?.textContent || "",
+        suggestionsHidden: document.querySelector("#clip-search-suggestions")?.hidden ?? true,
+        resultText: document.querySelector("#clip-search-results")?.textContent || "",
+      }));
+      if (clearedSearchState.suggestionsHidden || !clearedSearchState.resultText.includes("Enter a search string")) {
+        throw new Error(`clearing search did not restore suggestions: ${JSON.stringify(clearedSearchState)}`);
       }
       await desktopPerformancePage.getByRole("button", { name: "Performance" }).click();
       const firstChart = desktopPerformancePage.locator(".performance-chart-svg").first();
@@ -781,12 +816,12 @@ function lexicalPayload() {
     },
     terms: {
       semantic_buckets: {
-        communication_markers: [{ term: "roger", count: 1 }],
-        movement: [],
-        places: [],
+        communication_markers: [{ term: "roger", count: 16 }],
+        movement: [{ term: "southbound", count: 8 }],
+        places: [{ term: "west waterway", count: 5 }],
         vessel_types: [],
       },
-      bigrams: [],
+      bigrams: [{ term: "tug barge", count: 7 }],
     },
     entities: [
       {
@@ -803,6 +838,14 @@ function lexicalPayload() {
             text: "Seattle traffic smoke test.",
           },
         ],
+      },
+      {
+        name: "Tacoma Traffic",
+        kind: "shore_station",
+        count: 1,
+        confidence: 0.9,
+        channels: { "14": 1 },
+        examples: [],
       },
     ],
     topics: {
