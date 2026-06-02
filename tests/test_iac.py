@@ -81,7 +81,7 @@ def test_opentofu_tags_environment_boundaries() -> None:
     assert 'Environment = "dev"' in _resource_block(
         main_tf, "aws_cloudfront_distribution", "dev_site"
     )
-    assert main_tf.count("merge(local.common_tags, {") >= 11
+    assert main_tf.count("merge(local.common_tags, {") >= 10
 
 
 def test_opentofu_does_not_recreate_detached_server_iam_policies() -> None:
@@ -223,45 +223,21 @@ def test_dev_cloudfront_marks_live_origin_requests_as_dev_only() -> None:
     assert "X-TalkingBoats-Environment" not in prod_distribution
 
 
-def test_dev_cognito_auth_allows_only_rob_as_super_admin() -> None:
+def test_paused_native_mobile_auth_resources_are_not_managed() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
     variables_tf = Path("infra/opentofu/variables.tf").read_text(encoding="utf-8")
     outputs_tf = Path("infra/opentofu/outputs.tf").read_text(encoding="utf-8")
 
-    user_pool = _resource_block(main_tf, "aws_cognito_user_pool", "dev_auth")
-    user = _resource_block(main_tf, "aws_cognito_user", "dev_super_admin")
-    group = _resource_block(main_tf, "aws_cognito_user_group", "dev_super_admins")
-    membership = _resource_block(main_tf, "aws_cognito_user_in_group", "dev_super_admin")
-    client = _resource_block(main_tf, "aws_cognito_user_pool_client", "dev_mobile")
-
-    assert 'variable "dev_admin_email"' in variables_tf
-    assert 'default     = "cinemarob1@gmail.com"' in variables_tf
-    assert "allow_admin_create_user_only = true" in user_pool
-    assert 'username_attributes      = ["email"]' in user_pool
-    assert re.search(r"username\s+=\s+var\.dev_admin_email", user)
-    assert re.search(r"email\s+=\s+var\.dev_admin_email", user)
-    assert re.search(r'name\s+=\s+"super-admins"', group)
-    assert "aws_cognito_user.dev_super_admin.username" in membership
-    assert 'allowed_oauth_flows_user_pool_client = true' in client
-    assert 'allowed_oauth_flows                  = ["code"]' in client
-    assert re.search(r"generate_secret\s+=\s+false", client)
-    assert 'output "dev_cognito_user_pool_id"' in outputs_tf
-    assert 'output "dev_cognito_mobile_client_id"' in outputs_tf
-    assert 'output "dev_cognito_login_url"' in outputs_tf
+    assert "aws_cognito_" not in main_tf
+    assert "dev_cognito" not in main_tf
+    assert "dev_auth_callback_urls" not in variables_tf
+    assert "dev_auth_logout_urls" not in variables_tf
+    assert "dev_admin_email" not in variables_tf
+    assert "dev_cognito" not in outputs_tf
 
 
-def test_google_cognito_helper_uses_secret_manager_and_preserves_client_settings() -> None:
-    configure_script = Path("scripts/configure_dev_google_cognito_idp.sh").read_text(
-        encoding="utf-8"
-    )
-
-    assert "TALKINGBOATS_GOOGLE_OAUTH_SECRET_ID" in configure_script
-    assert "aws secretsmanager get-secret-value" in configure_script
-    assert "describe-user-pool-client" in configure_script
-    assert "client_update_payload" in configure_script
-    assert "CallbackURLs" in configure_script
-    assert "AllowedOAuthFlows" in configure_script
-    assert "--supported-identity-providers Google" not in configure_script
+def test_google_cognito_helper_is_removed_with_native_mobile_app() -> None:
+    assert not Path("scripts/configure_dev_google_cognito_idp.sh").exists()
 
 
 def _lifecycle_block(main_tf: str) -> str:

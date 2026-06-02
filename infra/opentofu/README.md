@@ -22,8 +22,6 @@ Pi. The Pi should ask the private API for presigned S3 upload URLs.
   publish reviewed static files, and invalidate CloudFront
 - Explicit `Environment` tags on dev/prod buckets, CloudFront distributions,
   certificates, and server IAM policies
-- Dev Cognito user pool for the mobile app. Sign-up is disabled, Rob is the only
-  provisioned user, and the user is assigned to the `super-admins` group.
 
 ## Commands
 
@@ -55,37 +53,3 @@ The deploy helper enforces branch hygiene:
 - prod deploys: clean `main` worktree only
 
 See `docs/deployment-hygiene.md` for the full branch/resource policy.
-
-## Dev Mobile Auth
-
-After `tofu apply`, generate the local Expo auth config:
-
-```bash
-scripts/write_mobile_auth_env.sh
-```
-
-The generated `mobile/.env.local` file is gitignored. The Cognito client is a
-public PKCE client with no secret; never add provider secrets, temporary
-passwords, or local token values to git.
-
-To use Google federation, create a Google OAuth web client with this authorized
-redirect URI:
-
-```bash
-printf '%s/oauth2/idpresponse\n' "$(cd infra/opentofu && tofu output -raw dev_cognito_domain)"
-```
-
-Then store the Google client credentials in AWS Secrets Manager and configure
-the dev user pool without writing the Google secret to OpenTofu state:
-
-```bash
-aws secretsmanager create-secret \
-  --name talkingboats/dev/google-oauth-client \
-  --secret-string '{"client_id":"...","client_secret":"..."}'
-scripts/configure_dev_google_cognito_idp.sh
-```
-
-Set `TALKINGBOATS_GOOGLE_OAUTH_SECRET_ID` if you use a different secret name.
-The script defaults the mobile client to Google-only sign-in. Set
-`TALKINGBOATS_COGNITO_ALLOW_PASSWORD_FALLBACK=true` before running it if you
-temporarily need the Cognito password form too.

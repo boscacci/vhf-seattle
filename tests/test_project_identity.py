@@ -30,3 +30,25 @@ def test_tracked_project_files_do_not_refer_to_placeholder_repo_name() -> None:
             stale_paths.append(raw_path)
 
     assert stale_paths == []
+
+
+def test_native_mobile_app_development_scaffolding_is_removed() -> None:
+    tracked_files = subprocess.check_output(
+        ["git", "ls-files", "-z"],
+        text=True,
+        encoding="utf-8",
+    ).split("\0")
+
+    mobile_paths = [
+        path
+        for path in tracked_files
+        if path.startswith("mobile/")
+        or path in {
+            "scripts/write_mobile_auth_env.sh",
+            "scripts/configure_dev_google_cognito_idp.sh",
+            "tests/test_mobile_app_shell.py",
+        }
+    ]
+
+    assert mobile_paths == []
+    assert not Path("mobile").exists()

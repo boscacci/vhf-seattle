@@ -126,6 +126,9 @@ const liveStatusPollMs = 2000;
 const liveActivityPollMs = 15000;
 const liveQueuePollMs = 5000;
 const clipStatsPollMs = 10000;
+const clipPagePrefetchRadius = 2;
+const clipPageMemoryCacheMaxAgeMs = 120000;
+const clipPageMemoryCacheMaxEntries = 16;
 const clipPlaybackRefreshLeadMs = 45000;
 const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
@@ -306,6 +309,8 @@ let currentClipPayload = null;
 let currentPageClips = [];
 let currentFilteredTotal = 0;
 let clipRequestSequence = 0;
+const clipPageMemoryCache = new Map();
+const clipPagePrefetches = new Map();
 let clipStatsTimer = null;
 let clipStatsAbortController = null;
 let lastRenderedClipTotal = null;
@@ -560,7 +565,7 @@ liveAudio.addEventListener("ended", () => {
 async function loadAndRender() {
   const requestId = ++clipRequestSequence;
   const requestUrl = clipRequestUrl();
-  const cachedPayload = loadCachedRecentClipPayload(requestUrl);
+  const cachedPayload = prefetchedClipPagePayload(requestUrl) || loadCachedRecentClipPayload(requestUrl);
   if (cachedPayload) {
     currentClipPayload = cachedPayload;
     renderSite(cachedPayload);
@@ -578,11 +583,13 @@ async function loadAndRender() {
   currentClipPayload = payload;
   renderSite(payload);
   if (payload.source === "live") {
+    storeClipPageMemoryPayload(requestUrl, payload);
     storeRecentClipPayload(requestUrl, payload);
+    prefetchNeighborClipPages(payload);
   }
 }
 
-async function loadClipPayload(requestUrl = clipRequestUrl()) {
+async function loadClipPayload(requestUrl = clipRequestUrl(), { allowFallback = true } = {}) {
   try {
     const response = await fetch(requestUrl, { cache: "no-store" });
     if (!response.ok) {
@@ -590,7 +597,10 @@ async function loadClipPayload(requestUrl = clipRequestUrl()) {
     }
     const payload = await response.json();
     return normalizeLivePayload(payload);
-  } catch {
+  } catch (error) {
+    if (!allowFallback) {
+      throw error;
+    }
     return loadPublishedManifest();
   }
 }
@@ -1103,14 +1113,92 @@ function mergeLiveClipStats(payload) {
   renderStats(currentClipPayload || payload, currentPageClips.length ? currentPageClips : payload.clips || []);
 }
 
-function clipRequestUrl() {
-  const params = [`limit=${selectedClipPageSize}`, `offset=${clipOffset()}`];
+function clipRequestUrl(offset = clipOffset()) {
+  const params = [`limit=${selectedClipPageSize}`, `offset=${Math.max(0, Math.floor(Number(offset) || 0))}`];
   if (clipFeaturedFilter === "featured") {
     params.push("featured=true");
   }
   const channels = selectedChannelValues();
   params.push(...channels.map((channel) => `channels=${encodeURIComponent(channel)}`));
   return `/api/clips/recent?${params.join("&")}`;
+}
+
+function prefetchNeighborClipPages(payload) {
+  if (!payload || payload.source !== "live" || !currentFilteredTotal) {
+    return;
+  }
+  const baseOffset = clipOffset();
+  const pageSize = selectedClipPageSize;
+  const totalClips = currentFilteredTotal;
+  scheduleClipPagePrefetch(() => {
+    for (let pageDelta = -clipPagePrefetchRadius; pageDelta <= clipPagePrefetchRadius; pageDelta += 1) {
+      if (pageDelta === 0) {
+        continue;
+      }
+      prefetchClipPageAtOffset(baseOffset + pageDelta * pageSize, totalClips);
+    }
+  });
+}
+
+function scheduleClipPagePrefetch(callback) {
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(callback, { timeout: 1500 });
+    return;
+  }
+  window.setTimeout(callback, 100);
+}
+
+async function prefetchClipPageAtOffset(offset, totalClips = currentFilteredTotal) {
+  const targetOffset = Math.max(0, Math.floor(Number(offset) || 0));
+  if (targetOffset === clipOffset() || targetOffset >= totalClips) {
+    return;
+  }
+  const requestUrl = clipRequestUrl(targetOffset);
+  if (prefetchedClipPagePayload(requestUrl) || clipPagePrefetches.has(requestUrl)) {
+    return;
+  }
+  const prefetch = loadClipPayload(requestUrl, { allowFallback: false })
+    .then((payload) => {
+      if (payload.source !== "live") {
+        return;
+      }
+      storeClipPageMemoryPayload(requestUrl, payload);
+      storeRecentClipPayload(requestUrl, payload);
+    })
+    .catch(() => {
+      // Main page loads keep the published-manifest fallback; speculative fetches stay quiet.
+    })
+    .finally(() => {
+      clipPagePrefetches.delete(requestUrl);
+    });
+  clipPagePrefetches.set(requestUrl, prefetch);
+}
+
+function prefetchedClipPagePayload(requestUrl) {
+  const cached = clipPageMemoryCache.get(requestUrl);
+  if (!cached) {
+    return null;
+  }
+  if (Date.now() - cached.cached_at_ms > clipPageMemoryCacheMaxAgeMs) {
+    clipPageMemoryCache.delete(requestUrl);
+    return null;
+  }
+  return cached.payload;
+}
+
+function storeClipPageMemoryPayload(requestUrl, payload) {
+  clipPageMemoryCache.delete(requestUrl);
+  clipPageMemoryCache.set(requestUrl, {
+    cached_at_ms: Date.now(),
+    payload,
+  });
+  while (clipPageMemoryCache.size > clipPageMemoryCacheMaxEntries) {
+    const oldestKey = clipPageMemoryCache.keys().next().value;
+    if (!oldestKey) {
+      return;
+    }
+    clipPageMemoryCache.delete(oldestKey);
+  }
 }
 
 async function loadPublishedManifest() {

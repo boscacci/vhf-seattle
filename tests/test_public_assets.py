@@ -8,10 +8,21 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
 
     assert "limit=${selectedClipPageSize}" in app_js
     assert "recentClipsCacheKeyPrefix" in app_js
+    assert "clipPagePrefetchRadius = 2" in app_js
+    assert "prefetchNeighborClipPages(payload)" in app_js
+    assert "clipPageMemoryCache" in app_js
+    assert "prefetchedClipPagePayload(requestUrl)" in app_js
+    assert "scheduleClipPagePrefetch" in app_js
+    assert "requestIdleCallback" in app_js
+    assert "prefetchClipPageAtOffset" in app_js
+    assert "storeClipPageMemoryPayload(requestUrl, payload)" in app_js
     assert "renderClipLoadingState" in app_js
     assert "renderClipPlaceholders" in app_js
     assert "loadCachedRecentClipPayload" in app_js
     assert "storeRecentClipPayload" in app_js
+    assert "storeRecentClipPayload(requestUrl, payload)" in app_js
+    assert "loadClipPayload(requestUrl, { allowFallback: false })" in app_js
+    assert "prefetchClipPageAtOffset(baseOffset + pageDelta * pageSize" in app_js
     assert ".clip-placeholder" in styles_css
     assert "channel-filter" in index_html
     assert '<select id="channel-filter"' not in index_html
@@ -30,7 +41,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "channels=${encodeURIComponent(channel)}" in app_js
     assert "defaultClipPageSize = 6" in app_js
     assert "selectedClipPage" in app_js
-    assert "offset=${clipOffset()}" in app_js
+    assert "offset=${Math.max(0, Math.floor(Number(offset) || 0))}" in app_js
     assert "renderClipPagination" in app_js
     assert "clipPaginationItems" in app_js
     assert "paginationEllipsis" in app_js

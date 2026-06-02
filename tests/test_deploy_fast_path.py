@@ -77,32 +77,22 @@ def test_deploy_scripts_allow_archive_sources_for_dev_only() -> None:
         )
 
 
-def test_mobile_auth_env_writer_uses_tofu_outputs_and_gitignored_local_file() -> None:
-    script = Path("scripts/write_mobile_auth_env.sh").read_text(encoding="utf-8")
+def test_native_mobile_auth_env_writer_is_removed_while_paused() -> None:
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
 
-    assert "dev_cognito_domain" in script
-    assert "dev_cognito_mobile_client_id" in script
-    assert "dev_cognito_allowed_email" in script
-    assert "tofu_output_raw_or_default" in script
-    assert "cognito_domain=\"$(tofu_output_raw dev_cognito_domain)\"" in script
-    assert "EXPO_PUBLIC_COGNITO_REDIRECT_URI" in script
-    assert "mobile/.env*" in gitignore
+    assert not Path("scripts/write_mobile_auth_env.sh").exists()
+    assert not Path("mobile").exists()
+    assert "mobile/.env*" not in gitignore
     assert "*.env.local" in gitignore
 
 
-def test_google_cognito_setup_script_keeps_provider_secret_out_of_state() -> None:
-    script = Path("scripts/configure_dev_google_cognito_idp.sh").read_text(encoding="utf-8")
+def test_paused_native_mobile_auth_scripts_are_removed() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
 
-    assert "TALKINGBOATS_GOOGLE_OAUTH_CLIENT_ID" in script
-    assert "TALKINGBOATS_GOOGLE_OAUTH_CLIENT_SECRET" in script
-    assert "create-identity-provider" in script
-    assert "update-identity-provider" in script
-    assert "update-user-pool-client" in script
-    assert "--supported-identity-providers Google" not in script
+    assert not Path("scripts/configure_dev_google_cognito_idp.sh").exists()
+    assert "aws_cognito_identity_provider" not in main_tf
+    assert "aws_cognito_user_pool_client" not in main_tf
     assert "client_secret" not in main_tf
-    assert "ignore_changes = [supported_identity_providers]" in main_tf
 
 
 def test_docker_orchestration_files_cover_optiplex_services_without_secrets() -> None:
