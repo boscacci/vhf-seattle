@@ -144,6 +144,51 @@ def test_generate_lexical_analysis_uses_corrected_transcripts(tmp_path: Path) ->
     )
 
 
+def test_generate_lexical_analysis_skips_legacy_ellipsis_transcripts(tmp_path: Path) -> None:
+    db_path = tmp_path / "clips.sqlite3"
+    output_dir = tmp_path / "site"
+    store = UploadedClipStore(db_path)
+    _transcribe(
+        store,
+        key="raw/channel=14/date=2026-05-25/good.mp3",
+        channel="14",
+        started_at="2026-05-25T22:10:00Z",
+        text="Seattle Traffic roger.",
+    )
+    ellipsis_key = "raw/channel=14/date=2026-05-25/ellipsis.mp3"
+    store.record_presigned_upload(
+        key=ellipsis_key,
+        request=ClipPresignRequest(
+            channel="14",
+            started_at="2026-05-25T22:20:00Z",
+            ended_at="2026-05-25T22:20:08Z",
+            content_type="audio/mpeg",
+            idempotency_key="radio-event-14-ellipsis",
+            duration_seconds=8.0,
+        ),
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            UPDATE uploaded_clips
+            SET status = 'transcribed',
+                transcript = '... ... ...',
+                error = NULL
+            WHERE key = ?
+            """,
+            (ellipsis_key,),
+        )
+
+    payload = generate_lexical_analysis(
+        db_path=db_path,
+        output_dir=output_dir,
+        generated_at=datetime(2026, 5, 26, 1, 2, 3, tzinfo=UTC),
+    )
+
+    assert payload["source_clip_count"] == 1
+    assert "... ... ..." not in json.dumps(payload)
+
+
 def test_generate_lexical_analysis_cache_is_idempotent(tmp_path: Path) -> None:
     db_path = tmp_path / "clips.sqlite3"
     store = UploadedClipStore(db_path)

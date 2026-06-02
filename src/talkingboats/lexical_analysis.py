@@ -16,8 +16,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from talkingboats.clip_search import build_search_index, skipped_search_index, write_search_index
+from talkingboats.clip_transcriber import is_displayable_transcript
 from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 from talkingboats.security import assert_public_safe
+
+_DISPLAYED_TRANSCRIPT_SQL = (
+    "COALESCE(uploaded_clip_transcript_corrections.corrected_transcript, "
+    "uploaded_clips.transcript)"
+)
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
@@ -494,6 +500,11 @@ def load_transcribed_clips(
     remaining = limit
     excluded = ",".join("?" for _ in PUBLIC_EXCLUDED_CHANNELS)
     with sqlite3.connect(db_path) as connection:
+        connection.create_function(
+            "talkingboats_transcript_displayable",
+            1,
+            _sqlite_transcript_displayable,
+        )
         while remaining is None or remaining > 0:
             batch_size = page_size if remaining is None else min(page_size, remaining)
             rows = connection.execute(
@@ -505,16 +516,14 @@ def load_transcribed_clips(
                     uploaded_clips.ended_at,
                     uploaded_clips.duration_seconds,
                     uploaded_clips.content_type,
-                    COALESCE(
-                        uploaded_clip_transcript_corrections.corrected_transcript,
-                        uploaded_clips.transcript
-                    ) AS displayed_transcript
+                    {_DISPLAYED_TRANSCRIPT_SQL} AS displayed_transcript
                 FROM uploaded_clips
                 LEFT JOIN uploaded_clip_transcript_corrections
                     ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
                 WHERE uploaded_clips.status = 'transcribed'
                     AND uploaded_clips.transcript IS NOT NULL
                     AND trim(uploaded_clips.transcript) != ''
+                    AND talkingboats_transcript_displayable({_DISPLAYED_TRANSCRIPT_SQL}) = 1
                     AND uploaded_clips.channel NOT IN ({excluded})
                 ORDER BY uploaded_clips.started_at ASC, uploaded_clips.id ASC
                 LIMIT ? OFFSET ?
@@ -546,6 +555,10 @@ def load_transcribed_clips(
             offset += len(rows)
             if remaining is not None:
                 remaining -= len(rows)
+
+
+def _sqlite_transcript_displayable(text: object) -> int:
+    return 1 if is_displayable_transcript(text) else 0
 
 
 def write_cached_lexical_analysis(
