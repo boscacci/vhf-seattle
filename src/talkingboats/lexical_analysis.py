@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import html
 import json
+import os
 import re
 import sqlite3
 import tempfile
@@ -464,6 +465,40 @@ def generate_lexical_analysis(
         raise FileNotFoundError(db_path)
 
     clips = list(load_transcribed_clips(db_path, page_size=page_size, limit=limit))
+    return generate_lexical_analysis_from_clips(
+        clips=clips,
+        output_dir=output_dir,
+        generated_at=generated_at,
+        db_path=db_path,
+    )
+
+
+def generate_lexical_analysis_from_store(
+    *,
+    clip_store: Any,
+    output_dir: Path,
+    page_size: int = 500,
+    limit: int | None = None,
+    generated_at: datetime | None = None,
+) -> dict[str, Any]:
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be positive")
+    clips = list(load_transcribed_clips_from_store(clip_store, page_size=page_size, limit=limit))
+    return generate_lexical_analysis_from_clips(
+        clips=clips,
+        output_dir=output_dir,
+        generated_at=generated_at,
+        db_path=None,
+    )
+
+
+def generate_lexical_analysis_from_clips(
+    *,
+    clips: list[TranscriptClip],
+    output_dir: Path,
+    generated_at: datetime | None,
+    db_path: Path | None,
+) -> dict[str, Any]:
     generated_at_text = _format_utc(generated_at or datetime.now(UTC))
     payload = _build_payload(clips, generated_at=generated_at_text)
 
@@ -482,12 +517,49 @@ def generate_lexical_analysis(
         lexical_path,
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
     )
-    write_cached_lexical_analysis(
-        db_path,
-        payload=payload,
-        source_fingerprint=_source_fingerprint(clips),
-    )
+    if db_path is not None:
+        write_cached_lexical_analysis(
+            db_path,
+            payload=payload,
+            source_fingerprint=_source_fingerprint(clips),
+        )
     return payload
+
+
+def load_transcribed_clips_from_store(
+    clip_store: Any,
+    *,
+    page_size: int,
+    limit: int | None,
+) -> Iterable[TranscriptClip]:
+    if page_size <= 0:
+        raise ValueError("page_size must be positive")
+    offset = 0
+    remaining = limit
+    while remaining is None or remaining > 0:
+        batch_size = page_size if remaining is None else min(page_size, remaining)
+        batch = clip_store.recent_transcribed(
+            limit=batch_size,
+            offset=offset,
+            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+        )
+        if not batch:
+            break
+        for clip in reversed(batch):
+            yield TranscriptClip(
+                key=str(clip.key),
+                channel=str(clip.channel),
+                started_at=str(clip.started_at),
+                ended_at=str(clip.ended_at) if clip.ended_at else None,
+                duration_seconds=clip.duration_seconds,
+                content_type=str(clip.content_type),
+                transcript=_public_text(str(clip.transcript)),
+            )
+        offset += len(batch)
+        if remaining is not None:
+            remaining -= len(batch)
+        if len(batch) < batch_size:
+            break
 
 
 def load_transcribed_clips(
@@ -1598,20 +1670,37 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Analyze Elliott Bay VHF transcripts and cache public lexical artifacts."
     )
-    parser.add_argument("--db-path", type=Path, required=True)
+    parser.add_argument("--db-path", type=Path)
+    parser.add_argument(
+        "--clip-store-backend",
+        default=os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND", "dynamodb"),
+        choices=("dynamodb", "sqlite"),
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/public-site"))
     parser.add_argument("--page-size", type=int, default=500)
     parser.add_argument("--limit", type=int)
     args = parser.parse_args(argv)
 
-    if not args.db_path.exists():
-        parser.error(f"database does not exist: {args.db_path}")
-    payload = generate_lexical_analysis(
-        db_path=args.db_path,
-        output_dir=args.output_dir,
-        page_size=args.page_size,
-        limit=args.limit,
-    )
+    if args.clip_store_backend == "dynamodb":
+        from talkingboats.dynamo_clip_store import dynamo_clip_store_from_env
+
+        payload = generate_lexical_analysis_from_store(
+            clip_store=dynamo_clip_store_from_env(),
+            output_dir=args.output_dir,
+            page_size=args.page_size,
+            limit=args.limit,
+        )
+    else:
+        if args.db_path is None:
+            parser.error("--db-path is required when --clip-store-backend sqlite")
+        if not args.db_path.exists():
+            parser.error(f"database does not exist: {args.db_path}")
+        payload = generate_lexical_analysis(
+            db_path=args.db_path,
+            output_dir=args.output_dir,
+            page_size=args.page_size,
+            limit=args.limit,
+        )
     print(
         json.dumps(
             {

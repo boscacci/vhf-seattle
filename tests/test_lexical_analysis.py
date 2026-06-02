@@ -13,7 +13,9 @@ import talkingboats.lexical_analysis as lexical_analysis
 from talkingboats.clip_transcriber import UploadedClipStore
 from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 from talkingboats.lexical_analysis import (
+    TranscriptClip,
     generate_lexical_analysis,
+    generate_lexical_analysis_from_store,
     main,
     missing_lexical_analysis,
     read_cached_lexical_analysis,
@@ -142,6 +144,33 @@ def test_generate_lexical_analysis_uses_corrected_transcripts(tmp_path: Path) ->
     assert ("pon pon", 1) not in _term_pairs(
         payload["terms"]["semantic_buckets"]["communication_markers"]
     )
+
+
+def test_generate_lexical_analysis_can_use_cloud_clip_store(tmp_path: Path) -> None:
+    store = FakeAnalysisClipStore(
+        [
+            TranscriptClip(
+                key="raw/channel=14/date=2026-05-25/cloud.mp3",
+                channel="14",
+                started_at="2026-05-25T22:10:00Z",
+                ended_at="2026-05-25T22:10:08Z",
+                duration_seconds=8.0,
+                content_type="audio/mpeg",
+                transcript="Seattle Traffic cloud backed transcript.",
+            )
+        ]
+    )
+
+    payload = generate_lexical_analysis_from_store(
+        clip_store=store,
+        output_dir=tmp_path / "site",
+        generated_at=datetime(2026, 5, 26, 1, 2, 3, tzinfo=UTC),
+    )
+
+    assert payload["source_clip_count"] == 1
+    assert payload["channels"] == {"14": 1}
+    assert ("seattle traffic", 1) in _term_pairs(payload["terms"]["bigrams"])
+    assert store.calls == [{"limit": 500, "excluded_channels": ("WX",), "offset": 0}]
 
 
 def test_generate_lexical_analysis_skips_legacy_ellipsis_transcripts(tmp_path: Path) -> None:
@@ -358,6 +387,8 @@ def test_cli_rejects_missing_database(tmp_path: Path, capsys: pytest.CaptureFixt
     with pytest.raises(SystemExit) as exc:
         main(
             [
+                "--clip-store-backend",
+                "sqlite",
                 "--db-path",
                 str(tmp_path / "missing.sqlite3"),
                 "--output-dir",
@@ -383,7 +414,16 @@ def test_cli_writes_summary_and_returns_none(
         text="Seattle Traffic roger.",
     )
 
-    result = main(["--db-path", str(db_path), "--output-dir", str(tmp_path / "site")])
+    result = main(
+        [
+            "--clip-store-backend",
+            "sqlite",
+            "--db-path",
+            str(db_path),
+            "--output-dir",
+            str(tmp_path / "site"),
+        ]
+    )
 
     assert result is None
     assert json.loads(capsys.readouterr().out) == {"status": "ok", "source_clip_count": 1}
@@ -654,6 +694,28 @@ def _transcribe(
             )
         ],
     )
+
+
+class FakeAnalysisClipStore:
+    def __init__(self, clips: list[TranscriptClip]) -> None:
+        self.clips = clips
+        self.calls: list[dict[str, object]] = []
+
+    def recent_transcribed(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+        excluded_channels: tuple[str, ...] = (),
+    ):
+        self.calls.append(
+            {
+                "limit": limit,
+                "excluded_channels": excluded_channels,
+                "offset": offset,
+            }
+        )
+        return self.clips[offset : offset + limit]
 
 
 class _Segment:

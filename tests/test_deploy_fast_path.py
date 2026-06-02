@@ -123,7 +123,7 @@ def test_docker_orchestration_files_cover_optiplex_services_without_secrets() ->
     assert "TALKINGBOATS_INGEST_TOKEN=" in env_example
     assert "TALKINGBOATS_CLIP_STORE_BACKEND=dynamodb" in env_example
     assert "TALKINGBOATS_DURABLE_EVENTS_TABLE=" in env_example
-    assert "TALKINGBOATS_DURABLE_EVENTS_REQUIRED=false" in env_example
+    assert "TALKINGBOATS_DURABLE_EVENTS_REQUIRED=true" in env_example
     assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true" in env_example
     assert "changeme" not in env_example.lower()
     assert "config/optiplex.env" in gitignore

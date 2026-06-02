@@ -567,7 +567,7 @@ def _transcript_store_from_env(
 ) -> TranscriptStore | DynamoTranscriptStore | None:
     backend = os.getenv("TALKINGBOATS_TRANSCRIPT_STORE_BACKEND") or os.getenv(
         "TALKINGBOATS_CLIP_STORE_BACKEND",
-        "sqlite",
+        "dynamodb",
     )
     if backend == "dynamodb":
         return DynamoTranscriptStore.from_env()

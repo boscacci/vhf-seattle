@@ -183,7 +183,10 @@ async def presign_clip_upload(
         key=key,
         upload_url=upload_url,
         expires_in_seconds=settings.raw_presign_seconds,
-        required_headers={"Content-Type": request.content_type},
+        required_headers={
+            "Content-Type": request.content_type,
+            "x-amz-tagging": "talkingboats-featured=false",
+        },
     )
 
 
@@ -440,6 +443,7 @@ async def correct_clip_transcript(
 )
 async def feature_clip(
     request: ClipFeatureRequest,
+    storage: Annotated[S3AudioStorage, Depends(get_storage)],
     clip_store: Annotated[
         UploadedClipStore | DynamoUploadedClipStore | None,
         Depends(get_clip_store),
@@ -459,10 +463,16 @@ async def feature_clip(
             note=request.note,
             excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
         )
+        storage.tag_raw_clip_featured(feature.key, featured=feature.featured)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
     return ClipFeatureResponse(
         status="featured" if feature.featured else "unfeatured",
         channel=feature.channel,

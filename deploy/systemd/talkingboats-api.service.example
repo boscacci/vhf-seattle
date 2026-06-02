@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/rob/repos/elliott-bay-vhf
-EnvironmentFile=/home/rob/repos/elliott-bay-vhf/.env
+WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
+EnvironmentFile=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env
 ExecStart=/home/rob/miniforge3/condabin/conda run -n dell uvicorn talkingboats.api:app --host 192.168.1.247 --port 8034
 Restart=on-failure
 RestartSec=5

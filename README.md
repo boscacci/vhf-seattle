@@ -46,8 +46,8 @@ OptiPlex, and public delivery on narrow AWS edges.
 | Layer | Runs On | Owns |
 | --- | --- | --- |
 | Radio edge | Raspberry Pi + RTL-SDR | VHF capture, live MP3, activity detection, bounded clip spooling, thermals |
-| Home processing | OptiPlex | Private API, SQLite metadata, transcription, exports, live proxy, system telemetry |
-| Public edge | AWS S3 + CloudFront | Static app assets, sanitized public audio, TLS, DNS, cacheable read-only delivery |
+| Home processing | OptiPlex | Private API, transcription, exports, live proxy, realtime telemetry |
+| Public edge | AWS S3 + CloudFront + DynamoDB | Durable clip metadata/transcripts, static app assets, sanitized public audio, TLS, DNS, cacheable read-only delivery |
 
 The public app can read live audio/status and recent clip data, but it does not
 expose radio controls, ingest endpoints, the Pi, raw Icecast URLs, database
@@ -63,7 +63,8 @@ antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> private S3 / Cl
 
 - Fun channel: VHF 68, `156.425 MHz`
 - Business channel: VHF 14, `156.700 MHz` Seattle Traffic / Puget Sound VTS
-- Raw audio: private S3 bucket, `raw/` expires after 60 days
+- Raw audio: private S3 bucket, unstarred `raw/` clips expire after 90 days;
+  starred/hall-of-fame clips are tagged for indefinite retention
 - Prod public site: static S3 origin plus read-only live API behaviors behind
   CloudFront at `vhf.robertboscacci.com`
 - Dev site: separate static S3 origin served from the OptiPlex tailnet
@@ -80,10 +81,10 @@ The system has three compute tiers:
   keep running even when the internet is down, and it should not need AWS
   credentials.
 - **OptiPlex, on the LAN:** owns work that benefits from local CPU, disk, and
-  stable services: SQLite, transcription, retry loops, S3 presigning, public
-  export generation, the private API, and the read-only CloudFront live origin.
-  This is the normal development and operations box for `conda run -n dell ...`
-  commands.
+  stable service supervision: transcription, retry loops, S3 presigning, public
+  export generation, the private API, realtime performance telemetry, and the
+  read-only CloudFront live origin. This is the normal development and
+  operations box for `conda run -n dell ...` commands.
 - **AWS, public edge:** owns long-lived raw object storage, private static-site
   origins, CloudFront caching, TLS, DNS, and public read-only delivery. AWS is
   deliberately not the primary signal-processing environment.
@@ -137,11 +138,11 @@ http://localhost:8034/operator/
 ```
 
 If you are on a MacBook or another client machine instead of the OptiPlex, you
-may have the repo and AWS credentials but not the live SQLite database, Pi systemd
-units, or OpenTofu binary. In that case, use SSH to the OptiPlex for export,
-transcription, and service work. Direct S3/CloudFront syncs from the MacBook are
-acceptable only for emergency static UI fixes where existing manifests and clip
-objects are preserved.
+may have the repo and AWS credentials but not the Pi systemd units, OptiPlex
+service state, or OpenTofu binary. In that case, use SSH to the OptiPlex for
+export, transcription, and service work. Direct S3/CloudFront syncs from the
+MacBook are acceptable only for emergency static UI fixes where existing
+manifests and clip objects are preserved.
 
 The browser UI shows recent transcribed clips and a separate live-monitor tab.
 At `vhf.robertboscacci.com` it reads `/api/clips/recent`,
@@ -304,7 +305,7 @@ fallback or bug:
 
 Keep heavier or stateful work on the OptiPlex:
 
-- Private API, S3 presigning, database, transcription, publishing.
+- Private API, S3 presigning, DynamoDB writes, transcription, publishing.
 - Backfills and reprocessing of already-spooled clips.
 
 The edge stream service uses one SDR pipeline:
@@ -370,8 +371,9 @@ the spool uploader sends active clips for transcription.
 
 The default local rolling buffer is five-minute WAV segments with 24-hour
 retention. Raw audio uploaded to the private S3 `raw/` prefix is governed by the
-OpenTofu lifecycle rule and expires after 60 days; the Pi-local buffer is only a
-short retry/debug cache so it cannot grow without bound.
+OpenTofu lifecycle rule: unstarred clips expire after 90 days, while starred
+hall-of-fame clips are tagged for indefinite retention. The Pi-local buffer is
+only a short retry/debug cache so it cannot grow without bound.
 
 Enable durable activity-clip upload only after the private API is reachable from
 the Pi and `TALKINGBOATS_INGEST_TOKEN` is configured in
@@ -383,26 +385,26 @@ sudo sed -i 's/^TALKINGBOATS_EDGE_UPLOAD_ENABLED=.*/TALKINGBOATS_EDGE_UPLOAD_ENA
 sudo systemctl restart talkingboats-edge-live-radio-stream.service
 ```
 
-When the private API has `TALKINGBOATS_CLIP_DB_PATH` set, every presigned
-activity upload is recorded in SQLite before the Pi PUTs the object to S3. Set
-`TALKINGBOATS_DURABLE_EVENTS_TABLE` to the dev DynamoDB events table to also
-dual-write presign, transcription, and correction events for recovery. Run the
+When the private API has `TALKINGBOATS_CLIP_STORE_BACKEND=dynamodb` and
+`TALKINGBOATS_DURABLE_EVENTS_TABLE` set, every presigned activity upload is
+recorded in the DynamoDB clip read model before the Pi PUTs the object to S3.
+The same table records transcription and correction events for recovery. Run the
 uploaded clip transcriber on the OptiPlex to retry pending uploads and store
 per-clip transcript segments:
 
 ```bash
 conda run -n dell talkingboats-transcribe-uploaded-clips \
-  --db-path /home/rob/.local/share/talkingboats/live-transcripts.sqlite3 \
   --bucket talkingboats-raw-audio \
   --poll-seconds 30
 ```
 
-The worker writes `uploaded_clips` and `uploaded_clip_segments` rows in the same
-SQLite file used by live captions. Missing S3 objects stay in `waiting_upload`
-and are retried later, so API presign success and actual object upload can remain
-eventually consistent.
-See `docs/durable-event-store.md` for the DynamoDB migration path and the switch
-from non-blocking dual writes to required durable writes.
+The worker writes clip state and segment records through the configured
+DynamoDB-backed clip store. Missing S3 objects stay in `waiting_upload` and are
+retried later, so API presign success and actual object upload can remain
+eventually consistent. SQLite is still available for explicit legacy backfills
+and local fixture tests, but it is no longer the operational clip/transcript
+store. See `docs/durable-event-store.md` for the durable store model and the
+switch from non-blocking event writes to required durable writes.
 
 The uploaded-clip transcriber keeps VAD off by default so it can hear through
 short radio pauses, then drops individual Whisper segments below
@@ -608,19 +610,20 @@ hides the AIS tab; tighter clip-to-vessel integration can build on this later.
 
 ## Public Export
 
-The primary exporter turns the recent transcribed clip DB into a static site with
-copied public audio files. The browser UI shows timestamps in Pacific time and
-the clip review list can filter by channel; the live API fetches filtered channel
-views directly so sparse channels are not hidden behind busier channels. The dev
-site also exposes a Language tab that reads cached lexical-analysis JSON and a
-static topic-cluster plot from `analysis/`.
+The primary exporter turns the recent DynamoDB-backed transcribed clip store
+into a static site with copied public audio files. The browser UI shows
+timestamps in Pacific time and the clip review list can filter by channel; the
+live API fetches filtered channel views directly so sparse channels are not
+hidden behind busier channels. The dev site also exposes a Language tab that
+reads cached lexical-analysis JSON and a static topic-cluster plot from
+`analysis/`.
 
-Generate the lexical artifacts before export. The exporter preserves the
-existing `analysis/` directory when it refreshes the static site files:
+Generate the lexical artifacts before export. The analyzer reads DynamoDB by
+default, and the exporter preserves the existing `analysis/` directory when it
+refreshes the static site files:
 
 ```bash
 conda run -n dell talkingboats-analyze-transcripts \
-  --db-path /home/rob/.local/share/talkingboats/live-transcripts.sqlite3 \
   --output-dir outputs/public-site
 ```
 
@@ -632,7 +635,7 @@ conda run -n dell python -m pip install -e ".[analysis]"
 
 ```bash
 conda run -n dell talkingboats-export-public \
-  --clip-db-path /home/rob/.local/share/talkingboats/live-transcripts.sqlite3 \
+  --clip-store-backend dynamodb \
   --raw-bucket "$(cd infra/opentofu && tofu output -raw raw_audio_bucket)" \
   --site-source public-site \
   --output-dir outputs/public-site
@@ -648,6 +651,23 @@ keeps subsecond transcriber hallucinations out of the dashboard. Use
 `--public-audio-ffmpeg-path` / `--public-audio-ffprobe-path` if the service
 should use non-default media binaries.
 
+Raw S3 audio retention is intentionally shorter than transcript retention.
+Transcripts and reviewed corrections remain in DynamoDB, but playback controls
+should only be shown when the corresponding raw/public audio object can still be
+resolved. Unstarred raw audio expires after 90 days. Starred clips are tagged
+`talkingboats-featured=true` so the raw object is retained for the hall of fame.
+After enabling the tag-filtered lifecycle rule, tag existing raw objects once so
+older untagged clips are not accidentally retained forever:
+
+```bash
+conda run -n dell talkingboats-tag-raw-retention \
+  --bucket "$(cd infra/opentofu && tofu output -raw raw_audio_bucket)" \
+  --dry-run
+
+conda run -n dell talkingboats-tag-raw-retention \
+  --bucket "$(cd infra/opentofu && tofu output -raw raw_audio_bucket)"
+```
+
 The older private-manifest mode remains for local simulator tests only.
 
 Deploy dev first, then prod after the public checks look right:
@@ -659,9 +679,9 @@ scripts/deploy_public_site.sh prod outputs/public-site
 
 To keep the Language tab fresh, install the scheduled lexical refresh on the
 OptiPlex. It rebuilds the lexical JSON, suspected entities, and BERTopic/UMAP
-topic plot from the current transcript DB, rebuilds the public export, and
-deploys the dev site every six hours. The script uses a lock directory so a slow
-topic run skips the next tick instead of overlapping itself.
+topic plot from the current DynamoDB clip/transcript store, rebuilds the public
+export, and deploys the dev site every six hours. The script uses a lock
+directory so a slow topic run skips the next tick instead of overlapping itself.
 
 ```bash
 sudo install -m 0644 deploy/systemd/talkingboats-lexical-refresh.service.example \
@@ -692,13 +712,13 @@ scripts/refresh_lexical_analysis.sh
 
 The refresh defaults to:
 
-- DB: `/home/rob/.local/share/talkingboats/live-transcripts.sqlite3`
+- clip store backend: `dynamodb`
 - output: `outputs/public-site`
 - deploy target: `dev`
 - conda env: `dell`
 
 Use `.env` or systemd environment overrides such as
-`TALKINGBOATS_LEXICAL_DEPLOY_ENV`, `TALKINGBOATS_LEXICAL_DB_PATH`, and
+`TALKINGBOATS_LEXICAL_DEPLOY_ENV`, `TALKINGBOATS_CLIP_STORE_BACKEND`, and
 `TALKINGBOATS_LEXICAL_OUTPUT_DIR` if a host needs different paths. Do not set
 `TALKINGBOATS_LEXICAL_DEPLOY_ENV=prod` unless you intend to promote the refreshed
 analysis to prod; the prod deploy helper still enforces a clean `main` worktree.
@@ -707,7 +727,7 @@ analysis to prod; the prod deploy helper still enforces a clean `main` worktree.
 
 Transcript correction is built into the dev/operator clip cards. On dev or
 `/operator/`, use **Fix transcript** on a clip, save the corrected text, and the
-private API stores the original/corrected pair in SQLite. Recent clips and the
+private API stores the original/corrected pair in DynamoDB. Recent clips and the
 lexical analysis read the corrected transcript immediately, while the original
 ASR output is retained as the training input.
 
@@ -765,6 +785,8 @@ Useful overrides:
   the nightly run records a skipped status and leaves the current model alone.
 - `TALKINGBOATS_ASR_FEEDBACK_BASE_MODEL`: defaults to `openai/whisper-small.en`.
 - `TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR`: defaults to `outputs/asr-feedback`.
+- `TALKINGBOATS_CLIP_STORE_BACKEND`: defaults to `dynamodb`; use `sqlite` only
+  for explicit legacy backfills or local fixture runs with `--db-path`.
 - `TALKINGBOATS_ASR_RESTART_SERVICE`: defaults to
   `talkingboats-uploaded-clip-transcriber.service`.
 

@@ -103,7 +103,7 @@ def durable_event_store_from_env(*, aws_region: str | None = None) -> DurableEve
         table_name=table_name,
         aws_region=aws_region or os.getenv("TALKINGBOATS_AWS_REGION", "us-west-2"),
         environment=os.getenv("TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT", "dev"),
-        required=_env_bool("TALKINGBOATS_DURABLE_EVENTS_REQUIRED", False),
+        required=_env_bool("TALKINGBOATS_DURABLE_EVENTS_REQUIRED", True),
     )
 
 

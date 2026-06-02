@@ -283,6 +283,43 @@ def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) 
     assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
 
 
+def test_recent_clip_export_can_use_cloud_clip_store_without_sqlite(tmp_path: Path) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    key = "raw/channel=14/date=2026-05-24/cloud.mp3"
+    store = FakeRecentClipStore(
+        [
+            RecentTranscribedClip(
+                key=key,
+                channel="14",
+                started_at="2026-05-24T22:08:41Z",
+                ended_at="2026-05-24T22:08:49Z",
+                duration_seconds=8.1,
+                content_type="audio/mpeg",
+                transcript="Seattle Traffic cloud-backed export.",
+                segments=[],
+            )
+        ]
+    )
+
+    manifest = export_recent_clip_site(
+        clip_store=store,
+        site_source_dir=site_source,
+        output_dir=tmp_path / "output",
+        clip_reader=FakeClipReader({key: b"real audio"}),
+        clip_audio_processor=RecordingAudioProcessor(),
+        clip_audio_quality_gate=None,
+        limit=10,
+    )
+
+    assert [clip["transcript_public"] for clip in manifest["clips"]] == [
+        "Seattle Traffic cloud-backed export."
+    ]
+    assert store.calls == [{"limit": 10, "excluded_channels": ("WX",)}]
+    assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
+
+
 def test_recent_clip_export_skips_unpublishable_audio_after_download(tmp_path: Path) -> None:
     site_source = tmp_path / "site-source"
     site_source.mkdir()
@@ -560,6 +597,16 @@ class FakeClipReader:
         if key not in self.objects:
             raise ClipNotAvailable(f"{key} is not available in S3 yet")
         output_path.write_bytes(self.objects[key])
+
+
+class FakeRecentClipStore:
+    def __init__(self, clips: list[RecentTranscribedClip]) -> None:
+        self.clips = clips
+        self.calls: list[dict[str, object]] = []
+
+    def recent_transcribed(self, *, limit: int, excluded_channels: tuple[str, ...]):
+        self.calls.append({"limit": limit, "excluded_channels": excluded_channels})
+        return self.clips[:limit]
 
 
 class RecordingAudioProcessor:

@@ -6,9 +6,9 @@ from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 def test_lexical_refresh_script_regenerates_exports_and_deploys_dev() -> None:
     script = Path("scripts/refresh_lexical_analysis.sh").read_text(encoding="utf-8")
 
-    assert "TALKINGBOATS_LEXICAL_DB_PATH" in script
     assert "TALKINGBOATS_LEXICAL_OUTPUT_DIR" in script
     assert "TALKINGBOATS_LEXICAL_DEPLOY_ENV" in script
+    assert 'clip_store_backend="${TALKINGBOATS_CLIP_STORE_BACKEND:-dynamodb}"' in script
     assert 'raw_bucket="${TALKINGBOATS_RAW_BUCKET:-}"' in script
     assert 'tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"' in script
     assert (
@@ -20,10 +20,11 @@ def test_lexical_refresh_script_regenerates_exports_and_deploys_dev() -> None:
     assert "trap cleanup EXIT" in script
     assert "rm -rf \"${output_dir}/analysis\"" in script
     assert "talkingboats-analyze-transcripts" in script
-    assert "--db-path \"${db_path}\"" in script
+    assert "--clip-store-backend \"${clip_store_backend}\"" in script
     assert "--output-dir \"${output_dir}\"" in script
     assert "talkingboats-export-public" in script
-    assert "--clip-db-path \"${db_path}\"" in script
+    assert "--clip-db-path" not in script
+    assert "live-transcripts.sqlite3" not in script
     assert 'if [[ -z "${raw_bucket}" ]]; then' in script
     assert 'cd "${tofu_dir}"' in script
     assert "scripts/deploy_public_site.sh \"${deploy_env}\" \"${output_dir}\"" in script
@@ -39,10 +40,12 @@ def test_lexical_refresh_systemd_timer_runs_every_six_hours() -> None:
     )
 
     assert "Type=oneshot" in service
-    assert "WorkingDirectory=/home/rob/repos/elliott-bay-vhf" in service
-    assert "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/.env" in service
+    assert "WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy" in service
     assert (
-        "ExecStart=/home/rob/repos/elliott-bay-vhf/scripts/refresh_lexical_analysis.sh"
+        "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env" in service
+    )
+    assert (
+        "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/refresh_lexical_analysis.sh"
         in service
     )
     assert "CPUQuota=150%" in service

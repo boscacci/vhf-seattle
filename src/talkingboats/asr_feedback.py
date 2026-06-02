@@ -32,7 +32,7 @@ class Trainer(Protocol):
 
 @dataclass(frozen=True)
 class AsrFeedbackConfig:
-    db_path: Path
+    db_path: Path | None = None
     output_dir: Path = DEFAULT_OUTPUT_DIR
     bucket: str | None = None
     aws_region: str = "us-west-2"
@@ -51,6 +51,7 @@ class AsrFeedbackConfig:
 def run_nightly_training(
     config: AsrFeedbackConfig,
     *,
+    correction_store: Any | None = None,
     clip_reader: ClipReader | None = None,
     trainer: Trainer | None = None,
     now: datetime | None = None,
@@ -60,7 +61,7 @@ def run_nightly_training(
     if config.max_corrections is not None and config.max_corrections <= 0:
         raise ValueError("max_corrections must be positive")
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    store = _correction_store(config.db_path, aws_region=config.aws_region)
+    store = correction_store or _correction_store(config.db_path, aws_region=config.aws_region)
     corrections = store.transcript_corrections_for_training()
     if config.max_corrections is not None:
         corrections = corrections[: config.max_corrections]
@@ -263,11 +264,16 @@ def has_new_training_corrections(output_dir: Path, corrections: list[dict[str, o
     return not _already_trained_fingerprint(_read_status(output_dir), correction_fingerprint)
 
 
-def _correction_store(db_path: Path, *, aws_region: str | None = None):
-    if os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND", "sqlite") == "dynamodb":
+def _correction_store(db_path: Path | None, *, aws_region: str | None = None):
+    backend = os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND")
+    if backend == "dynamodb" or (backend is None and db_path is None):
         from talkingboats.dynamo_clip_store import dynamo_clip_store_from_env
 
         return dynamo_clip_store_from_env(aws_region=aws_region)
+    if backend not in (None, "sqlite"):
+        raise RuntimeError(f"unsupported TALKINGBOATS_CLIP_STORE_BACKEND: {backend}")
+    if db_path is None:
+        raise RuntimeError("db_path is required when TALKINGBOATS_CLIP_STORE_BACKEND is sqlite")
     return UploadedClipStore(db_path)
 
 
@@ -527,7 +533,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _add_common_config_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--db-path", type=Path, required=True)
+    parser.add_argument("--db-path", type=Path)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--aws-region", default=os.getenv("AWS_REGION", "us-west-2"))
     parser.add_argument("--base-model", default=DEFAULT_BASE_MODEL)

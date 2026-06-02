@@ -14,12 +14,15 @@ def test_asr_feedback_nightly_script_uses_lock_and_restarts_transcriber() -> Non
     script = Path("scripts/train_asr_feedback_nightly.sh").read_text(encoding="utf-8")
 
     assert "TALKINGBOATS_ASR_FEEDBACK_LOCK_DIR" in script
+    assert 'clip_store_backend="${TALKINGBOATS_CLIP_STORE_BACKEND:-dynamodb}"' in script
     assert "talkingboats-train-asr-feedback" in script
     assert "--min-corrections" in script
     assert "--base-model" in script
     assert "--quantization" in script
     assert "--restart-service" in script
     assert "talkingboats-uploaded-clip-transcriber.service" in script
+    assert "live-transcripts.sqlite3" not in script
+    assert "--db-path" not in script
 
 
 def test_asr_feedback_systemd_timer_runs_nightly() -> None:
@@ -32,7 +35,9 @@ def test_asr_feedback_systemd_timer_runs_nightly() -> None:
 
     assert "Description=Elliott Bay VHF ASR feedback training" in service
     assert "scripts/train_asr_feedback_nightly.sh" in service
-    assert "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/.env" in service
+    assert (
+        "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env" in service
+    )
     assert "Nice=15" in service
     assert "OnCalendar=*-*-* 03:00:00 America/Los_Angeles" in timer
     assert "03:20:00" not in timer
@@ -46,7 +51,7 @@ def test_uploaded_clip_transcriber_can_load_promoted_feedback_model() -> None:
     ).read_text(encoding="utf-8")
 
     assert (
-        "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/outputs/asr-feedback/latest_model.env"
+        "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/outputs/asr-feedback/latest_model.env"
         in service
     )
     assert "Nice=10" in service

@@ -1,9 +1,9 @@
 # Durable Event Store
 
-The local SQLite databases are still the operational read model for live
-transcripts and performance history. DynamoDB is the durable append-only event
-store and is the migration path away from the OptiPlex SQLite database as a
-single point of failure.
+DynamoDB is the operational durable store for clip metadata, live transcripts,
+reviewed transcript corrections, and serving read models. SQLite is retained
+only for explicit legacy backfills, local fixture tests, and the separate
+realtime performance telemetry ring buffer.
 
 ## Tables
 
@@ -37,41 +37,37 @@ Use append-oriented event records so retries are idempotent:
 ```
 
 Keep raw audio in S3. DynamoDB stores clip metadata, status transitions,
-transcripts, segment metadata, correction text, analysis pointers, AIS
-observations, and telemetry samples. Do not store audio bytes or large derived
-artifacts in DynamoDB.
+transcripts, segment metadata, correction text, analysis pointers, and AIS
+observations. Do not store audio bytes, large derived artifacts, or high-rate
+performance telemetry samples in DynamoDB.
 
 ## Runtime Configuration
 
-Enable the dual-write path with:
+Runtime services should use:
 
 ```bash
 TALKINGBOATS_DURABLE_EVENTS_TABLE="$(cd infra/opentofu && tofu output -raw dev_radio_events_table_name)"
 TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT=dev
-TALKINGBOATS_DURABLE_EVENTS_REQUIRED=false
+TALKINGBOATS_DURABLE_EVENTS_REQUIRED=true
 TALKINGBOATS_CLIP_STORE_BACKEND=dynamodb
 TALKINGBOATS_TRANSCRIPT_STORE_BACKEND=dynamodb
 ```
 
-`false` keeps durable event writes retry-tolerant while the serving read models
-run from DynamoDB. Once the backfill and dashboard read model are clean, set
-`TALKINGBOATS_DURABLE_EVENTS_REQUIRED=true` so new clip writes fail fast if they
-cannot be durably recorded.
+Use `TALKINGBOATS_DURABLE_EVENTS_REQUIRED=false` only during controlled recovery
+or backfill work. Normal runtime writes should fail fast if they cannot be
+durably recorded.
 
 ## Migration Path
 
-1. Apply the dev table with OpenTofu.
-2. Enable durable event publishing from the private API and uploaded-clip
-   transcriber.
-3. Backfill existing clip and correction records into dev with deterministic
-   `pk`/`sk` keys.
-4. Flip the clip, feedback, and live-caption read models to DynamoDB.
-5. Flip durable writes to required mode after dev replay and dashboard smoke
-   tests are clean.
-6. Promote the same path to prod only after the dev path survives restart and
-   recovery testing.
+1. Keep DynamoDB read models enabled with `TALKINGBOATS_CLIP_STORE_BACKEND` and
+   `TALKINGBOATS_TRANSCRIPT_STORE_BACKEND` set to `dynamodb`.
+2. Keep durable event writes required in normal runtime service env files.
+3. Use SQLite only as an explicit source for one-time backfills or local
+   regression fixtures.
+4. Promote schema/config changes to prod only after the dev path survives
+   restart and dashboard smoke tests.
 
-Clip and correction backfill:
+Legacy SQLite clip and correction backfill:
 
 ```bash
 talkingboats-backfill-durable-events \

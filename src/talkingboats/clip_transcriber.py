@@ -1232,7 +1232,9 @@ def transcribe_audio_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Transcribe completed Talking Boats clip uploads into SQLite."
+        description=(
+            "Transcribe completed Talking Boats clip uploads into the configured clip store."
+        )
     )
     parser.add_argument("--db-path", type=Path, default=_default_db_path())
     parser.add_argument("--bucket", default=os.getenv("TALKINGBOATS_RAW_BUCKET", ""))
@@ -1289,7 +1291,7 @@ def main() -> None:
     parser.add_argument("--hotwords", default=os.getenv("TALKINGBOATS_TRANSCRIBE_HOTWORDS"))
     args = parser.parse_args()
 
-    clip_store_backend = os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND", "sqlite")
+    clip_store_backend = os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND", "dynamodb")
     if args.db_path is None and clip_store_backend != "dynamodb":
         parser.error("--db-path or TALKINGBOATS_CLIP_DB_PATH is required")
     if not args.bucket:

@@ -16,12 +16,15 @@ def test_opentofu_keeps_public_and_raw_buckets_private() -> None:
 
 def test_opentofu_expires_only_raw_audio_prefix() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+    variables_tf = Path("infra/opentofu/variables.tf").read_text(encoding="utf-8")
 
     assert 'resource "aws_s3_bucket_lifecycle_configuration" "raw_audio"' in main_tf
     assert 'prefix = "raw/"' in main_tf
+    assert '"talkingboats-featured" = "false"' in main_tf
     assert "days = var.raw_retention_days" in main_tf
+    assert 'default     = 90' in variables_tf
     assert "noncurrent_version_expiration" not in main_tf
-    assert "hall-of-fame" not in _lifecycle_block(main_tf)
+    assert '"talkingboats-featured" = "true"' not in _lifecycle_block(main_tf)
 
 
 def test_opentofu_keeps_s3_bucket_versioning_suspended() -> None:

@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/rob/repos/elliott-bay-vhf
+WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
 EnvironmentFile=/home/rob/.config/talkingboats/api.env
-EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/outputs/asr-feedback/latest_model.env
+EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/outputs/asr-feedback/latest_model.env
 Environment=TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true
 ExecStart=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-transcribe-uploaded-clips --poll-seconds 30 --limit 5
 Restart=always

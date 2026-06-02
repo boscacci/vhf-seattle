@@ -133,7 +133,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "raw_audio" {
     status = "Enabled"
 
     filter {
-      prefix = "raw/"
+      and {
+        prefix = "raw/"
+        tags = {
+          "talkingboats-featured" = "false"
+        }
+      }
     }
 
     expiration {
@@ -505,7 +510,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "dev_raw_audio" {
     status = "Enabled"
 
     filter {
-      prefix = "raw/"
+      and {
+        prefix = "raw/"
+        tags = {
+          "talkingboats-featured" = "false"
+        }
+      }
     }
 
     expiration {

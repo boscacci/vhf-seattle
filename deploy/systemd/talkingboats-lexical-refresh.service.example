@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/rob/repos/elliott-bay-vhf
-EnvironmentFile=-/home/rob/repos/elliott-bay-vhf/.env
-ExecStart=/home/rob/repos/elliott-bay-vhf/scripts/refresh_lexical_analysis.sh
+WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
+EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env
+ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/refresh_lexical_analysis.sh
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

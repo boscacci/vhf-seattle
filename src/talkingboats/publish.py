@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -161,7 +162,8 @@ def export_public_site(
 
 def export_recent_clip_site(
     *,
-    clip_db_path: Path,
+    clip_db_path: Path | None = None,
+    clip_store: Any | None = None,
     site_source_dir: Path,
     output_dir: Path,
     clip_reader: ClipReader,
@@ -173,8 +175,14 @@ def export_recent_clip_site(
 ) -> dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
-    store = UploadedClipStore(clip_db_path)
-    clips = store.recent_transcribed(limit=limit, excluded_channels=PUBLIC_EXCLUDED_CHANNELS)
+    if clip_store is None:
+        if clip_db_path is None:
+            raise ValueError("clip_db_path or clip_store is required")
+        clip_store = UploadedClipStore(clip_db_path)
+    clips = clip_store.recent_transcribed(
+        limit=limit,
+        excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+    )
 
     with (
         _preserved_output_subdir(output_dir, "analysis") as preserved_analysis,
@@ -486,9 +494,14 @@ def _format_utc(value: datetime) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build the sanitized Elliott Bay VHF site.")
-    source = parser.add_mutually_exclusive_group(required=True)
+    source = parser.add_mutually_exclusive_group(required=False)
     source.add_argument("--private-manifest", type=Path)
     source.add_argument("--clip-db-path", type=Path)
+    parser.add_argument(
+        "--clip-store-backend",
+        default=os.getenv("TALKINGBOATS_CLIP_STORE_BACKEND", "dynamodb"),
+        choices=("dynamodb", "sqlite"),
+    )
     parser.add_argument("--site-source", type=Path, default=Path("public-site"))
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/public-site"))
     parser.add_argument("--audio-source-dir", type=Path)
@@ -542,6 +555,16 @@ def main() -> None:
                 ffmpeg_path=args.public_audio_ffmpeg_path,
             )
 
+    if args.private_manifest is not None:
+        export_public_site(
+            private_manifest_path=args.private_manifest,
+            site_source_dir=args.site_source,
+            output_dir=args.output_dir,
+            audio_source_dir=args.audio_source_dir,
+            clip_audio_processor=clip_audio_processor,
+        )
+        return
+
     if args.clip_db_path is not None:
         if not args.raw_bucket:
             parser.error("--clip-db-path requires --raw-bucket")
@@ -556,15 +579,27 @@ def main() -> None:
             progress=_print_export_progress,
             skip_progress=_print_skip_progress,
         )
-    else:
-        assert args.private_manifest is not None
-        export_public_site(
-            private_manifest_path=args.private_manifest,
+        return
+
+    if args.clip_store_backend == "dynamodb":
+        if not args.raw_bucket:
+            parser.error("--clip-store-backend dynamodb requires --raw-bucket")
+        from talkingboats.dynamo_clip_store import dynamo_clip_store_from_env
+
+        export_recent_clip_site(
+            clip_store=dynamo_clip_store_from_env(aws_region=args.aws_region),
             site_source_dir=args.site_source,
             output_dir=args.output_dir,
-            audio_source_dir=args.audio_source_dir,
+            clip_reader=S3ClipReader(bucket=args.raw_bucket, aws_region=args.aws_region),
+            limit=args.limit,
             clip_audio_processor=clip_audio_processor,
+            clip_audio_quality_gate=clip_audio_quality_gate,
+            progress=_print_export_progress,
+            skip_progress=_print_skip_progress,
         )
+        return
+
+    parser.error("--clip-db-path is required when --clip-store-backend sqlite")
 
 
 def _print_export_progress(index: int, total: int) -> None:

@@ -15,7 +15,9 @@ Pi. The Pi should ask the private API for presigned S3 upload URLs.
 - Route 53 `A` and `AAAA` records for:
   - `vhf.robertboscacci.com` as CloudFront aliases
   - `vhf-dev.robertboscacci.com` as tailnet address records
-- Separate dev/prod private raw-audio S3 buckets with `raw/` lifecycle expiry
+- Separate dev/prod private raw-audio S3 buckets with tag-filtered `raw/`
+  lifecycle expiry: unstarred clips expire after 90 days, starred clips are
+  retained
 - Separate dev/prod IAM policies for the private server to presign audio,
   publish reviewed static files, and invalidate CloudFront
 - Explicit `Environment` tags on dev/prod buckets, CloudFront distributions,

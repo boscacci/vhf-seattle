@@ -21,10 +21,13 @@ class FakeStorage:
         *,
         missing_playback_keys: set[str] | None = None,
         playback_content: bytes = b"mp3-data",
+        tag_error: RuntimeError | None = None,
     ) -> None:
         self.missing_playback_keys = missing_playback_keys or set()
         self.playback_content = playback_content
+        self.tag_error = tag_error
         self.opened_playback_keys: list[str] = []
+        self.featured_tags: list[tuple[str, bool]] = []
 
     def presign_raw_upload(self, request):
         return (
@@ -49,6 +52,11 @@ class FakeStorage:
             raise FileNotFoundError(key)
         self.opened_playback_keys.append(key)
         return FakePlaybackBody(self.playback_content)
+
+    def tag_raw_clip_featured(self, key: str, *, featured: bool) -> None:
+        if self.tag_error:
+            raise self.tag_error
+        self.featured_tags.append((key, featured))
 
 
 class FakePlaybackBody:
@@ -111,6 +119,10 @@ def test_ingest_presign_returns_short_lived_upload_url() -> None:
     assert body["key"].startswith("raw/channel=68/")
     assert body["upload_url"] == "https://s3.example.test/upload"
     assert body["expires_in_seconds"] == 900
+    assert body["required_headers"] == {
+        "Content-Type": "audio/mpeg",
+        "x-amz-tagging": "talkingboats-featured=false",
+    }
 
 
 def test_ingest_presign_records_upload_for_background_transcription(tmp_path) -> None:
@@ -282,7 +294,8 @@ def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
 def test_operator_can_star_clip_for_hall_of_fame_filter(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     event_store = CapturingEventStore()
-    client = _client(clip_db_path=db_path, event_store=event_store)
+    storage = FakeStorage()
+    client = _client(clip_db_path=db_path, event_store=event_store, storage=storage)
     store = UploadedClipStore(db_path)
     starred_key = "raw/channel=14/date=2026-05-20/featured.mp3"
     plain_key = "raw/channel=68/date=2026-05-20/plain.mp3"
@@ -344,11 +357,13 @@ def test_operator_can_star_clip_for_hall_of_fame_filter(tmp_path) -> None:
     assert starred_key not in recent.text
     assert plain_key not in recent.text
     assert event_store.events[-1]["event_type"] == "clip.featured"
+    assert storage.featured_tags == [(starred_key, True)]
 
 
 def test_operator_can_remove_clip_from_hall_of_fame(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
-    client = _client(clip_db_path=db_path)
+    storage = FakeStorage()
+    client = _client(clip_db_path=db_path, storage=storage)
     store = UploadedClipStore(db_path)
     key = "raw/channel=14/date=2026-05-20/featured.mp3"
     store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
@@ -387,6 +402,39 @@ def test_operator_can_remove_clip_from_hall_of_fame(tmp_path) -> None:
         "featured": False,
     }
     assert client.get("/api/clips/recent?limit=5&featured=true").json()["clips"] == []
+    assert storage.featured_tags == [(key, False)]
+
+
+def test_operator_star_returns_503_when_retention_tag_update_fails(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    storage = FakeStorage(tag_error=RuntimeError("S3 tagging failed"))
+    client = _client(clip_db_path=db_path, storage=storage)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/featured.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Potential feature",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    response = client.post(
+        "/api/clips/features",
+        json={
+            "channel": "14",
+            "started_at": "2026-05-20T19:12:00Z",
+            "featured": True,
+            "featured_by": "operator-ui",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "S3 tagging failed"
 
 
 def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) -> None:

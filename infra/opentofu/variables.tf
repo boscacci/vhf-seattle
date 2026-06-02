@@ -77,9 +77,9 @@ variable "project_name" {
 }
 
 variable "raw_retention_days" {
-  description = "Days to retain raw/ audio objects before S3 lifecycle expiry."
+  description = "Days to retain unstarred raw/ audio objects before S3 lifecycle expiry."
   type        = number
-  default     = 60
+  default     = 90
 }
 
 variable "force_destroy_buckets" {

@@ -13,8 +13,9 @@ flowchart LR
   sdr["RTL-SDR pair<br/>voice net + AIS"]
   pi["Raspberry Pi edge node<br/>RTLSDR-Airband, AIS-catcher, Icecast, activity clips"]
   lan["Private LAN / Wi-Fi"]
-  optiplex["OptiPlex home server<br/>API, SQLite, transcription, export"]
-  s3raw["Private S3 raw audio<br/>raw/ expires, hall-of-fame/ retained"]
+  optiplex["OptiPlex home server<br/>API, transcription, export, telemetry"]
+  ddb["DynamoDB<br/>clip metadata, transcripts, corrections"]
+  s3raw["Private S3 raw audio<br/>unstarred raw/ expires, starred retained"]
   s3site["Private S3 public-site origin"]
   public["CloudFront public app<br/>vhf"]
   dev["Tailnet dev app<br/>vhf-dev"]
@@ -23,6 +24,7 @@ flowchart LR
   sdr -->|USB samples| pi
   pi -->|clip requests, status, live MP3| lan
   lan --> optiplex
+  optiplex -->|durable read models| ddb
   optiplex -->|presigned raw uploads| s3raw
   optiplex -->|sanitized exports| s3site
   s3site --> public
@@ -32,10 +34,10 @@ flowchart LR
 
 This layout is intentional. The Pi is not a weak substitute for the OptiPlex; it
 is the right place for low-latency radio plumbing because it is physically close
-to the antenna and SDR. The OptiPlex is the right place for local CPU-heavy and
-stateful work: transcription, retry loops, SQLite, publishing, and the public
-proxy. AWS is the durable/public edge, not the place where every radio decision
-has to happen.
+to the antenna and SDR. The OptiPlex is the right place for local CPU-heavy work
+and service supervision: transcription, retry loops, publishing, realtime
+telemetry, and the public proxy. AWS is the durable/public edge for clip
+metadata, transcripts, raw audio, static assets, and public read-only delivery.
 
 ## Signal And Data Path
 
@@ -57,17 +59,19 @@ antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> AWS public edge
   stale, so verify the live address before changing receiver or telemetry
   settings. The Pi asks the private API for presigned upload URLs instead of
   holding cloud credentials.
-- **OptiPlex processing:** the OptiPlex records clip metadata in SQLite, retries
-  pending uploads, transcribes clips, generates static exports, and exposes the
-  read-only proxy that CloudFront can call.
-- **Cloud public edge:** S3 stores raw private audio and sanitized public-site
-  files. CloudFront and Route53 provide the public `vhf` domain with only
-  read-only app, clip, status, and live-audio paths. Route53 points
-  `vhf-dev` to the OptiPlex tailnet address for private dev/operator access.
+- **OptiPlex processing:** the OptiPlex records clip metadata through the
+  DynamoDB-backed store, retries pending uploads, transcribes clips, generates
+  static exports, and exposes the read-only proxy that CloudFront can call.
+- **Cloud public edge:** DynamoDB stores durable clip metadata, transcripts, and
+  corrections. S3 stores raw private audio and sanitized public-site files.
+  Unstarred raw audio expires after 90 days; starred clips are retained.
+  CloudFront and Route53 provide the public `vhf` domain with only read-only
+  app, clip, status, and live-audio paths. Route53 points `vhf-dev` to the
+  OptiPlex tailnet address for private dev/operator access.
 
 If a laptop is used for repo edits, remember that it is usually a control plane,
-not the runtime host. The OptiPlex is where the live database, long-running
-workers, and service environment normally live.
+not the runtime host. The OptiPlex is where the long-running workers, service
+environment, and local realtime telemetry normally live.
 
 ## First Parts List
 
@@ -160,13 +164,13 @@ Use the hardware for what it is good at:
 
 - **Raspberry Pi:** edge capture, stream continuity, activity gating, short
   rolling buffers, and safe retry queues. Keep memory and CPU bounded.
-- **OptiPlex:** Whisper/faster-whisper, SQLite, S3 interaction, publishing,
-  lexical analysis, and public proxying. This is where the `dell` conda
-  environment and live transcript DB normally live.
+- **OptiPlex:** Whisper/faster-whisper, S3 interaction, publishing, lexical
+  analysis, realtime telemetry, and public proxying. This is where the `dell`
+  conda environment and long-running services normally live.
 - **MacBook or other laptop:** development, emergency AWS/static-site operations,
   and browser checks. Do not assume it has the OptiPlex runtime state.
-- **AWS:** private object storage, CloudFront, DNS, TLS, and public read-only
-  delivery.
+- **AWS:** DynamoDB clip/transcript/correction durability, private object
+  storage, CloudFront, DNS, TLS, and public read-only delivery.
 
 ## Blog/Figma Diagram Notes
 

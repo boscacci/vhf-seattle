@@ -23,6 +23,7 @@ EXTENSIONS_BY_CONTENT_TYPE = {
     "audio/wav": ".wav",
     "audio/x-wav": ".wav",
 }
+RAW_CLIP_FEATURED_TAG_KEY = "talkingboats-featured"
 
 
 class S3AudioStorage:
@@ -40,10 +41,41 @@ class S3AudioStorage:
                 "Bucket": self.settings.raw_bucket,
                 "Key": key,
                 "ContentType": request.content_type,
+                "Tagging": f"{RAW_CLIP_FEATURED_TAG_KEY}=false",
             },
             ExpiresIn=self.settings.raw_presign_seconds,
         )
         return key, url
+
+    def tag_raw_clip_featured(self, key: str, *, featured: bool) -> None:
+        if not is_allowed_audio_key(key):
+            raise ValueError("playback key must be in raw/ or hall-of-fame/")
+        if not self.settings.raw_bucket:
+            raise RuntimeError("TALKINGBOATS_RAW_BUCKET is not configured")
+        self.client.put_object_tagging(
+            Bucket=self.settings.raw_bucket,
+            Key=key,
+            Tagging={
+                "TagSet": [
+                    {
+                        "Key": RAW_CLIP_FEATURED_TAG_KEY,
+                        "Value": "true" if featured else "false",
+                    }
+                ]
+            },
+        )
+
+    def iter_raw_audio_keys(self, *, prefix: str = "raw/"):
+        if not prefix.startswith("raw/"):
+            raise ValueError("raw audio listing prefix must stay under raw/")
+        if not self.settings.raw_bucket:
+            raise RuntimeError("TALKINGBOATS_RAW_BUCKET is not configured")
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.settings.raw_bucket, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = item.get("Key")
+                if isinstance(key, str) and is_allowed_audio_key(key):
+                    yield key
 
     def presign_playback(self, key: str) -> str:
         if not is_allowed_audio_key(key):

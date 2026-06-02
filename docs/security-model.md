@@ -22,11 +22,12 @@ The trusted compute boundary is intentionally local-first:
 - **Raspberry Pi:** trusted edge capture node on the private LAN. It may see raw
   RF audio and short local buffers, but it should not hold long-lived AWS
   credentials or expose public controls.
-- **OptiPlex:** trusted home processing node. It owns the private API, SQLite
-  clip database, transcription workers, retry loops, export jobs, and the
-  read-only proxy used by CloudFront.
+- **OptiPlex:** trusted home processing node. It owns the private API,
+  transcription workers, retry loops, export jobs, realtime performance
+  telemetry, and the read-only proxy used by CloudFront.
 - **AWS:** durable storage and public edge. S3 receives raw objects only through
-  presigned URLs or service-held credentials, and CloudFront exposes only
+  presigned URLs or service-held credentials. DynamoDB stores durable clip
+  metadata, transcripts, and transcript corrections. CloudFront exposes only
   sanitized static assets plus narrow read-only live/API routes.
 - **Public browser:** untrusted. It can read published clips, recent public clip
   metadata, current status, and live audio, but it cannot retune the receiver,
@@ -87,7 +88,10 @@ local state and retry uploads/exports when connectivity returns.
 
 ## Retention
 
-- `raw/`: short-lived raw audio, expired by S3 lifecycle after about 60 days.
-- `hall-of-fame/`: manually promoted audio retained indefinitely.
-- Transcripts and metadata: stored in the private database unless intentionally
-  published through the sanitizer.
+- `raw/`: unstarred raw audio, expired by S3 lifecycle after 90 days.
+- Starred clips: raw audio tagged `talkingboats-featured=true` and retained
+  indefinitely for the hall of fame.
+- Transcripts, corrections, and metadata: stored durably in DynamoDB unless
+  intentionally published through the sanitizer.
+- Playback controls: shown only when the matching audio object can still be
+  resolved; expired audio should not leave dead controls in the public UI.

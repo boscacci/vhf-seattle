@@ -6,8 +6,8 @@ cd "${repo_root}"
 
 export PATH="/home/rob/.local/bin:/snap/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 
-db_path="${TALKINGBOATS_ASR_FEEDBACK_DB_PATH:-/home/rob/.local/share/talkingboats/live-transcripts.sqlite3}"
 output_dir="${TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR:-outputs/asr-feedback}"
+clip_store_backend="${TALKINGBOATS_CLIP_STORE_BACKEND:-dynamodb}"
 conda_env="${TALKINGBOATS_ASR_FEEDBACK_CONDA_ENV:-dell}"
 conda_bin="${TALKINGBOATS_CONDA_BIN:-/home/rob/miniforge3/condabin/conda}"
 lock_dir="${TALKINGBOATS_ASR_FEEDBACK_LOCK_DIR:-outputs/.asr-feedback-training.lock}"
@@ -34,8 +34,8 @@ faster-whisper/CTranslate2 model directory, promotes outputs/asr-feedback/latest
 and restarts the uploaded-clip transcriber service by default.
 
 Environment overrides:
-  TALKINGBOATS_ASR_FEEDBACK_DB_PATH        SQLite transcript DB path
   TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR     Training artifact directory
+  TALKINGBOATS_CLIP_STORE_BACKEND          Clip store backend; defaults to dynamodb
   TALKINGBOATS_ASR_FEEDBACK_CONDA_ENV      Conda env; defaults to dell
   TALKINGBOATS_CONDA_BIN                   Conda binary path
   TALKINGBOATS_RAW_BUCKET                  Private raw audio bucket
@@ -56,11 +56,6 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
-if [[ ! -f "${db_path}" ]]; then
-  echo "Transcript database does not exist: ${db_path}" >&2
-  exit 1
-fi
-
 if [[ -z "${raw_bucket}" ]]; then
   echo "TALKINGBOATS_RAW_BUCKET is required for ASR feedback training." >&2
   exit 2
@@ -75,7 +70,6 @@ trap cleanup EXIT
 
 args=(
   talkingboats-train-asr-feedback nightly
-  --db-path "${db_path}"
   --output-dir "${output_dir}"
   --bucket "${raw_bucket}"
   --aws-region "${aws_region}"
@@ -98,6 +92,7 @@ if [[ "${TALKINGBOATS_ASR_FEEDBACK_SKIP_RESTART:-}" == "1" ]]; then
   args+=(--skip-restart)
 fi
 
-echo "Running ASR feedback training from ${db_path} into ${output_dir}"
+echo "Running ASR feedback training from ${clip_store_backend} into ${output_dir}"
+export TALKINGBOATS_CLIP_STORE_BACKEND="${clip_store_backend}"
 "${conda_bin}" run --no-capture-output -n "${conda_env}" "${args[@]}"
 echo "ASR feedback training tick complete"

@@ -30,6 +30,61 @@ def test_nightly_training_skips_until_enough_corrections(tmp_path: Path) -> None
     assert json.loads(status_path.read_text())["status"] == "skipped"
 
 
+def test_nightly_training_can_use_cloud_corrections_without_sqlite(tmp_path: Path) -> None:
+    store = FakeCorrectionStore(
+        [
+            _correction_payload(
+                key="raw/channel=14/date=2026-05-20/cloud-0.mp3",
+                corrected_transcript="PAN-PAN reviewed cloud 0.",
+            ),
+            _correction_payload(
+                key="raw/channel=14/date=2026-05-20/cloud-1.mp3",
+                corrected_transcript="PAN-PAN reviewed cloud 1.",
+            ),
+        ]
+    )
+    downloads: list[str] = []
+
+    class FakeReader:
+        def download(self, key: str, output_path: Path) -> None:
+            downloads.append(key)
+            output_path.write_bytes(b"audio")
+
+    def fake_trainer(
+        config: AsrFeedbackConfig,
+        run_dir: Path,
+        dataset_path: Path,
+    ) -> dict[str, str]:
+        records = [json.loads(line) for line in dataset_path.read_text().splitlines()]
+        assert [record["text"] for record in records] == [
+            "PAN-PAN reviewed cloud 0.",
+            "PAN-PAN reviewed cloud 1.",
+        ]
+        model_dir = run_dir / "model-ct2"
+        model_dir.mkdir()
+        (model_dir / "model.bin").write_bytes(b"model")
+        return {"ct2_model_dir": str(model_dir)}
+
+    result = run_nightly_training(
+        AsrFeedbackConfig(
+            db_path=None,
+            output_dir=tmp_path / "asr",
+            min_corrections=2,
+            restart_service=None,
+        ),
+        correction_store=store,
+        clip_reader=FakeReader(),
+        trainer=fake_trainer,
+        now=datetime(2026, 5, 31, 10, 0, tzinfo=UTC),
+    )
+
+    assert result["status"] == "trained"
+    assert downloads == [
+        "raw/channel=14/date=2026-05-20/cloud-0.mp3",
+        "raw/channel=14/date=2026-05-20/cloud-1.mp3",
+    ]
+
+
 def test_nightly_training_materializes_audio_and_promotes_model(tmp_path: Path) -> None:
     db_path = tmp_path / "clips.sqlite3"
     store = UploadedClipStore(db_path)
@@ -296,6 +351,29 @@ def _corrected_clip(store: UploadedClipStore, *, index: int) -> None:
         corrected_transcript=f"PAN-PAN reviewed {index}.",
         reviewer="test",
     )
+
+
+def _correction_payload(*, key: str, corrected_transcript: str) -> dict[str, object]:
+    return {
+        "key": key,
+        "channel": "14",
+        "started_at": "2026-05-20T19:12:00Z",
+        "ended_at": "2026-05-20T19:12:05Z",
+        "duration_seconds": 5.0,
+        "content_type": "audio/mpeg",
+        "original_transcript": "PON PON reviewed cloud.",
+        "corrected_transcript": corrected_transcript,
+        "reviewer": "test",
+        "note": None,
+    }
+
+
+class FakeCorrectionStore:
+    def __init__(self, corrections: list[dict[str, object]]) -> None:
+        self.corrections = corrections
+
+    def transcript_corrections_for_training(self) -> list[dict[str, object]]:
+        return self.corrections
 
 
 class _Segment:
