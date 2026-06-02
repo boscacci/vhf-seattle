@@ -114,6 +114,26 @@ try {
     if (labelingLink.hidden || labelingLink.text !== "Label clips" || labelingLink.href !== "/operator/") {
       throw new Error(`dev clip review labeling link is not reachable: ${JSON.stringify(labelingLink)}`);
     }
+    const devClipFeatureState = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips .clip-card:first-child blockquote")?.textContent || "",
+      buttonText:
+        document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.textContent?.trim() || "",
+      buttonLabel:
+        document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.getAttribute("aria-label") || "",
+      buttonPressed:
+        document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.getAttribute("aria-pressed") ||
+        "",
+      correctionOpen: Boolean(document.querySelector("#clips .clip-card:first-child .transcript-correction")),
+    }));
+    if (
+      !devClipFeatureState.firstTranscript.includes("Smoke clip 1") ||
+      devClipFeatureState.buttonText !== "☆" ||
+      devClipFeatureState.buttonLabel !== "Add to Hall of Fame" ||
+      devClipFeatureState.buttonPressed !== "false" ||
+      devClipFeatureState.correctionOpen
+    ) {
+      throw new Error(`dev clip review star action is not visible without transcript editing: ${JSON.stringify(devClipFeatureState)}`);
+    }
     await page.getByRole("link", { name: "Label clips" }).click();
     await page.waitForURL(`${baseUrl}/operator/`, { timeout: 10000 });
     await page.locator("#clips .transcript-correction").first().waitFor({ state: "visible", timeout: 10000 });

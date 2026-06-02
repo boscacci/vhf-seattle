@@ -99,6 +99,7 @@ const performanceDashboardEnabled = privateAppHost;
 const aisDashboardEnabled = !["vhf.robertboscacci.com"].includes(
   window.location.hostname,
 );
+const featureClipWriteEnabled = privateAppHost;
 const operatorReviewEnabled =
   window.location.pathname.startsWith("/operator") && privateAppHost;
 const tabRouteSegments = {
@@ -1746,6 +1747,8 @@ function renderClipCard(clip) {
   article.className = "clip-card";
   article.dataset.clipId = clipDomId(clip);
   article.dataset.clipSignature = clipRenderSignature(clip);
+  const canWriteClipFeature = featureClipWriteEnabled && canReviewClip(clip);
+  const canEditClipTranscript = operatorReviewEnabled && canReviewClip(clip);
 
   const meta = document.createElement("div");
   meta.className = "clip-meta";
@@ -1763,7 +1766,7 @@ function renderClipCard(clip) {
     meta.append(renderFeaturedPill());
     article.classList.add("is-featured");
   }
-  if (operatorReviewEnabled && canReviewClip(clip)) {
+  if (canWriteClipFeature) {
     meta.append(renderFeaturedClipAction(clip, article));
   }
 
@@ -1778,7 +1781,7 @@ function renderClipCard(clip) {
   if (audioUrl) {
     article.append(renderExamplePlayer(clip));
   }
-  if (operatorReviewEnabled && canReviewClip(clip)) {
+  if (canEditClipTranscript) {
     article.append(renderTranscriptCorrectionForm(clip, transcript, article));
   }
   return article;
@@ -1801,6 +1804,7 @@ function clipRenderSignature(clip) {
     clip.featured ? "featured" : "standard",
     clip.featured_at || "",
     clip.playback_url ? "has-live-audio" : clip.audio_public_filename ? "has-static-audio" : "no-audio",
+    featureClipWriteEnabled && canReviewClip(clip) ? "feature-writable" : "feature-read-only",
     operatorReviewEnabled && canReviewClip(clip) ? "reviewable" : "read-only",
   ].join("\u001f");
 }

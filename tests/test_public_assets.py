@@ -67,6 +67,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'const clipFeaturesUrl = "/api/clips/features";' in app_js
     assert "/api/operator/session" not in app_js
     assert "operatorReviewEnabled" in app_js
+    assert "featureClipWriteEnabled" in app_js
+    assert "const featureClipWriteEnabled = privateAppHost;" in app_js
     assert "fineTuningDashboardEnabled" not in app_js
     assert 'id="operator-labeling-link"' in index_html
     assert "Label clips" in index_html
@@ -477,6 +479,8 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert "featured" in app_js
     assert "renderFeaturedClipAction" in app_js
     assert "saveClipFeature" in app_js
+    assert "featureClipWriteEnabled && canReviewClip(clip)" in app_js
+    assert "operatorReviewEnabled && canReviewClip(clip)" in app_js
     assert 'button.textContent = featured ? "★" : "☆";' in app_js
     assert (
         'button.setAttribute("aria-label", featured ? '
