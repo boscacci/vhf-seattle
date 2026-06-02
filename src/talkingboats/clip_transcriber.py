@@ -30,6 +30,14 @@ from talkingboats.durable_events import (
 )
 from talkingboats.schemas import ClipPresignRequest
 
+_DISPLAYED_TRANSCRIPT_SQL = (
+    "COALESCE(uploaded_clip_transcript_corrections.corrected_transcript, "
+    "uploaded_clips.transcript)"
+)
+_DISPLAYABLE_TRANSCRIPT_SQL = (
+    f"talkingboats_transcript_displayable({_DISPLAYED_TRANSCRIPT_SQL}) = 1"
+)
+
 
 class ClipNotAvailable(RuntimeError):
     """Raised when a presigned upload has not appeared in object storage yet."""
@@ -250,6 +258,9 @@ class UploadedClipStore:
     def mark_transcribed(self, key: str, segments: Iterable[UploadedClipSegment]) -> None:
         segment_list = list(segments)
         transcript = " ".join(segment.text for segment in segment_list)
+        if not is_displayable_transcript(transcript):
+            self.mark_empty(key)
+            return
         now = _format_utc(datetime.now(UTC))
         with sqlite3.connect(self.path) as connection:
             connection.execute(
@@ -332,9 +343,10 @@ class UploadedClipStore:
         if offset < 0:
             raise ValueError("offset must be non-negative")
         filters = [
-            "status = 'transcribed'",
-            "transcript IS NOT NULL",
-            "trim(transcript) != ''",
+            "uploaded_clips.status = 'transcribed'",
+            "uploaded_clips.transcript IS NOT NULL",
+            "trim(uploaded_clips.transcript) != ''",
+            _DISPLAYABLE_TRANSCRIPT_SQL,
         ]
         params: list[object] = []
         selected_channels = _unique_channels([channel] if channel else channels)
@@ -357,7 +369,7 @@ class UploadedClipStore:
             if featured_only
             else "uploaded_clips.started_at DESC, uploaded_clips.id DESC"
         )
-        with sqlite3.connect(self.path) as connection:
+        with _connect_upload_db(self.path) as connection:
             rows = connection.execute(
                 f"""
                 SELECT
@@ -427,9 +439,10 @@ class UploadedClipStore:
         if channel.upper() in {excluded.upper() for excluded in excluded_channels}:
             return None
         filters = [
-            "status = 'transcribed'",
-            "transcript IS NOT NULL",
-            "trim(transcript) != ''",
+            "uploaded_clips.status = 'transcribed'",
+            "uploaded_clips.transcript IS NOT NULL",
+            "trim(uploaded_clips.transcript) != ''",
+            _DISPLAYABLE_TRANSCRIPT_SQL,
             "channel = ?",
             "started_at = ?",
         ]
@@ -439,7 +452,7 @@ class UploadedClipStore:
             filters.append(f"channel NOT IN ({placeholders})")
             params.extend(excluded_channels)
         where_clause = "\n                    AND ".join(filters)
-        with sqlite3.connect(self.path) as connection:
+        with _connect_upload_db(self.path) as connection:
             row = connection.execute(
                 f"""
                 SELECT
@@ -805,15 +818,18 @@ class UploadedClipStore:
             if featured_only
             else ""
         )
-        with sqlite3.connect(self.path) as connection:
+        with _connect_upload_db(self.path) as connection:
             rows = connection.execute(
                 f"""
                 SELECT uploaded_clips.channel, count(*)
                 FROM uploaded_clips
                 {feature_join}
-                WHERE status = 'transcribed'
-                    AND transcript IS NOT NULL
-                    AND trim(transcript) != ''
+                LEFT JOIN uploaded_clip_transcript_corrections
+                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
+                WHERE uploaded_clips.status = 'transcribed'
+                    AND uploaded_clips.transcript IS NOT NULL
+                    AND trim(uploaded_clips.transcript) != ''
+                    AND {_DISPLAYABLE_TRANSCRIPT_SQL}
                     {channel_filter}
                 GROUP BY uploaded_clips.channel
                 ORDER BY uploaded_clips.channel
@@ -834,6 +850,7 @@ class UploadedClipStore:
             "uploaded_clips.status = 'transcribed'",
             "uploaded_clips.transcript IS NOT NULL",
             "trim(uploaded_clips.transcript) != ''",
+            _DISPLAYABLE_TRANSCRIPT_SQL,
         ]
         params: list[object] = []
         selected_channels = _unique_channels([channel] if channel else channels)
@@ -851,12 +868,14 @@ class UploadedClipStore:
             else ""
         )
         where_clause = "\n                    AND ".join(filters)
-        with sqlite3.connect(self.path) as connection:
+        with _connect_upload_db(self.path) as connection:
             row = connection.execute(
                 f"""
                 SELECT count(*)
                 FROM uploaded_clips
                 {feature_join}
+                LEFT JOIN uploaded_clip_transcript_corrections
+                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
                 WHERE {where_clause}
                 """,
                 tuple(params),
@@ -1186,6 +1205,8 @@ def transcribe_audio_file(
         text = " ".join(str(getattr(segment, "text", "")).split())
         if not text:
             continue
+        if not _transcript_has_alnum(text):
+            continue
         avg_logprob = getattr(segment, "avg_logprob", None)
         if (
             min_segment_avg_logprob is not None
@@ -1204,7 +1225,7 @@ def transcribe_audio_file(
                 relative_end_seconds=relative_end,
             )
         )
-    if rendered and _is_likely_static_hallucination(" ".join(segment.text for segment in rendered)):
+    if rendered and not is_displayable_transcript(" ".join(segment.text for segment in rendered)):
         return []
     return rendered
 
@@ -1423,16 +1444,42 @@ def _unique_channels(channels: Iterable[str] | None) -> list[str]:
     return selected
 
 
+def is_displayable_transcript(text: object) -> bool:
+    rendered = " ".join(str(text or "").split())
+    return _transcript_has_alnum(rendered) and not _is_likely_static_hallucination(rendered)
+
+
+def _transcript_has_alnum(text: str) -> bool:
+    return re.search(r"[a-z0-9]", text, flags=re.IGNORECASE) is not None
+
+
+def _sqlite_transcript_displayable(text: object) -> int:
+    return 1 if is_displayable_transcript(text) else 0
+
+
+def _connect_upload_db(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(path)
+    connection.create_function(
+        "talkingboats_transcript_displayable",
+        1,
+        _sqlite_transcript_displayable,
+    )
+    return connection
+
+
 def _is_likely_static_hallucination(text: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
-    return normalized in {
+    if normalized in {
         "i love you",
         "lets go",
+        "subs by www zeoranger co uk",
         "thank you",
         "thanks for watching",
         "we ll be right back",
         "well be right back",
-    }
+    }:
+        return True
+    return normalized.startswith("subtitles by ") or normalized.startswith("subs by ")
 
 
 def _suffix_for_content_type(content_type: str) -> str:

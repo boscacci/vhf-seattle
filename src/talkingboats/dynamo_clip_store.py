@@ -16,6 +16,7 @@ from talkingboats.clip_transcriber import (
     TranscriptCorrection,
     UploadedClipRecord,
     UploadedClipSegment,
+    is_displayable_transcript,
 )
 from talkingboats.durable_events import (
     DurableEventStore,
@@ -162,6 +163,9 @@ class DynamoUploadedClipStore:
             return
         segment_payload = [_segment_payload(segment) for segment in segments]
         transcript = " ".join(str(segment["text"]) for segment in segment_payload)
+        if not is_displayable_transcript(transcript):
+            self.mark_empty(key)
+            return
         old_status = str(item.get("status"))
         item.update(
             {
@@ -236,7 +240,9 @@ class DynamoUploadedClipStore:
                 key=lambda item: (str(item["started_at"]), str(item["key"])),
                 reverse=True,
             )
-            index_items = index_items[offset : offset + limit]
+            index_items = [
+                item for item in index_items if _is_displayable_index_item(item)
+            ][offset : offset + limit]
         else:
             index_items = self._query_filtered_transcribed(
                 limit=limit,
@@ -263,7 +269,10 @@ class DynamoUploadedClipStore:
             scan_forward=False,
             limit=5,
         )
-        return _recent_from_item(rows[0]) if rows else None
+        for row in rows:
+            if _is_displayable_index_item(row):
+                return _recent_from_item(row)
+        return None
 
     def set_clip_featured(
         self,
@@ -440,7 +449,7 @@ class DynamoUploadedClipStore:
         for channel in sorted(CHANNEL_METADATA, key=_channel_sort_key):
             if channel.upper() in excluded:
                 continue
-            count = self._query_count(
+            count = self._query_displayable_count(
                 _channel_featured_pk(channel) if featured_only else _channel_transcribed_pk(channel)
             )
             if count:
@@ -459,7 +468,8 @@ class DynamoUploadedClipStore:
         pk_for_channel = _channel_featured_pk if featured_only else _channel_transcribed_pk
         if selected_channels:
             return sum(
-                self._query_count(pk_for_channel(selected)) for selected in selected_channels
+                self._query_displayable_count(pk_for_channel(selected))
+                for selected in selected_channels
             )
         if excluded_channels:
             excluded = {excluded.upper() for excluded in excluded_channels}
@@ -471,7 +481,7 @@ class DynamoUploadedClipStore:
                 ).items()
                 if selected.upper() not in excluded
             )
-        return self._query_count(FEATURED_PK if featured_only else TRANSCRIBED_PK)
+        return self._query_displayable_count(FEATURED_PK if featured_only else TRANSCRIBED_PK)
 
     def stats(self) -> dict[str, Any]:
         states = [item for item in self._scan_items() if item.get("entity_type") == "clip_state"]
@@ -537,7 +547,7 @@ class DynamoUploadedClipStore:
         if old_status == "transcribed" and status != "transcribed":
             self._delete_transcribed_indexes(channel, started_at, key)
             self._delete_featured_indexes(channel, started_at, key)
-        if status == "transcribed":
+        if status == "transcribed" and _is_displayable_index_item(item):
             self._put_item(_index_item(TRANSCRIBED_PK, item))
             self._put_item(_index_item(_channel_transcribed_pk(channel), item))
             if bool(item.get("featured")):
@@ -545,6 +555,9 @@ class DynamoUploadedClipStore:
                 self._put_item(_index_item(_channel_featured_pk(channel), item))
             else:
                 self._delete_featured_indexes(channel, started_at, key)
+        elif status == "transcribed":
+            self._delete_transcribed_indexes(channel, started_at, key)
+            self._delete_featured_indexes(channel, started_at, key)
 
     def _delete_transcribed_indexes(self, channel: str, started_at: str, key: str) -> None:
         sk = _index_sk(started_at, key)
@@ -619,6 +632,9 @@ class DynamoUploadedClipStore:
                 break
         return total
 
+    def _query_displayable_count(self, pk: str) -> int:
+        return sum(1 for item in self._query_items(pk) if _is_displayable_index_item(item))
+
     def _query_filtered_transcribed(
         self,
         *,
@@ -635,7 +651,10 @@ class DynamoUploadedClipStore:
             limit=fetch_limit,
         )
         filtered = [
-            row for row in rows if str(row.get("channel") or "").upper() not in excluded_channels
+            row
+            for row in rows
+            if str(row.get("channel") or "").upper() not in excluded_channels
+            and _is_displayable_index_item(row)
         ]
         return filtered[offset : offset + limit]
 
@@ -752,6 +771,15 @@ def _recent_from_item(item: dict[str, Any]) -> RecentTranscribedClip:
         transcript_reviewed=bool(item.get("transcript_reviewed")),
         featured=bool(item.get("featured")),
         featured_at=_optional_str(item.get("featured_at")),
+    )
+
+
+def _is_displayable_index_item(item: dict[str, Any]) -> bool:
+    return is_displayable_transcript(
+        item.get("corrected_transcript")
+        or item.get("display_transcript")
+        or item.get("transcript")
+        or ""
     )
 
 

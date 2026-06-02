@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -201,6 +202,52 @@ def test_uploaded_clip_transcriber_marks_known_static_hallucinations_empty(tmp_p
     assert store.segments_for_clip(clip.key) == []
 
 
+def test_uploaded_clip_transcriber_marks_subtitle_credit_hallucinations_empty(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=09/date=2026-06-02/20260602T141900Z-static.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request(channel="09"))
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=WritingClipReader(expected_channel="09"),
+        model=SubtitleCreditHallucinationSpeechModel(),
+        limit=10,
+        audio_filter=None,
+    )
+
+    clip = store.get_clip(key)
+    assert summary.empty == 1
+    assert clip is not None
+    assert clip.status == "empty"
+    assert clip.transcript == ""
+    assert store.segments_for_clip(clip.key) == []
+
+
+def test_uploaded_clip_transcriber_marks_ellipsis_only_segments_empty(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-06-02/20260602T141900Z-ellipsis.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request(channel="14"))
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=WritingClipReader(expected_channel="14"),
+        model=EllipsisOnlySpeechModel(),
+        limit=10,
+        audio_filter=None,
+    )
+
+    clip = store.get_clip(key)
+    assert summary.empty == 1
+    assert clip is not None
+    assert clip.status == "empty"
+    assert clip.transcript == ""
+    assert store.segments_for_clip(clip.key) == []
+
+
 def test_uploaded_clip_transcriber_retries_interrupted_processing_rows(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)
@@ -297,6 +344,29 @@ def test_recent_transcribed_clips_returns_newest_with_segments(tmp_path) -> None
     channel_14_clips = store.recent_transcribed(limit=10, channel="14")
 
     assert [clip.key for clip in channel_14_clips] == [older_key]
+
+
+def test_recent_transcribed_clips_hide_legacy_ellipsis_only_rows(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    good_key = "raw/channel=14/date=2026-05-24/20260524T210000Z-good.mp3"
+    ellipsis_key = "raw/channel=14/date=2026-05-24/20260524T213000Z-ellipsis.mp3"
+    store.record_presigned_upload(key=good_key, request=_clip_request(channel="14"))
+    store.record_presigned_upload(
+        key=ellipsis_key,
+        request=_clip_request(channel="14", started_at="2026-05-24T21:30:00Z"),
+    )
+    store.mark_transcribed(
+        good_key,
+        [_segment("Seattle Traffic roger", "2026-05-24T21:00:00Z", "2026-05-24T21:00:03Z")],
+    )
+    _seed_legacy_transcribed_clip(db_path, ellipsis_key, transcript="... ... ...")
+
+    clips = store.recent_transcribed(limit=10)
+
+    assert [clip.key for clip in clips] == [good_key]
+    assert store.transcribed_channel_counts() == {"14": 1}
+    assert store.transcribed_clip_count(channel="14") == 1
 
 
 def test_transcript_corrections_override_recent_text_and_export_training_pairs(tmp_path) -> None:
@@ -424,6 +494,20 @@ def _clip_request(
     )
 
 
+def _seed_legacy_transcribed_clip(db_path: Path, key: str, *, transcript: str) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            UPDATE uploaded_clips
+            SET status = 'transcribed',
+                transcript = ?,
+                error = NULL
+            WHERE key = ?
+            """,
+            (transcript, key),
+        )
+
+
 def _segment(text: str, started_at: str, ended_at: str):
     return SimpleNamespace(
         text=text,
@@ -514,6 +598,36 @@ class KnownStaticHallucinationSpeechModel:
                     start=0.0,
                     end=30.0,
                     text=" Thank you. ",
+                    avg_logprob=-0.2,
+                )
+            ],
+            None,
+        )
+
+
+class SubtitleCreditHallucinationSpeechModel:
+    def transcribe(self, path: str, **kwargs):
+        return (
+            [
+                SimpleNamespace(
+                    start=0.0,
+                    end=30.0,
+                    text=" Subs by www.zeoranger.co.uk ",
+                    avg_logprob=-0.2,
+                )
+            ],
+            None,
+        )
+
+
+class EllipsisOnlySpeechModel:
+    def transcribe(self, path: str, **kwargs):
+        return (
+            [
+                SimpleNamespace(
+                    start=0.0,
+                    end=30.0,
+                    text=" ... ... ... ",
                     avg_logprob=-0.2,
                 )
             ],

@@ -140,6 +140,35 @@ def test_dynamo_clip_store_paginates_counts_and_stats() -> None:
     assert len(stats["recent"]) == 3
 
 
+def test_dynamo_clip_store_hides_legacy_ellipsis_only_rows() -> None:
+    table = FakeDynamoTable()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    good_key = "raw/channel=14/date=2026-06-01/good.mp3"
+    ellipsis_key = "raw/channel=14/date=2026-06-01/ellipsis.mp3"
+    store.record_presigned_upload(key=good_key, request=_request(channel="14"))
+    store.record_presigned_upload(key=ellipsis_key, request=_request(channel="14"))
+    store.mark_transcribed(
+        good_key,
+        [
+            SimpleNamespace(
+                text="Seattle Traffic roger",
+                started_at="2026-06-01T12:00:00Z",
+                ended_at="2026-06-01T12:00:01Z",
+                relative_start_seconds=0.0,
+                relative_end_seconds=1.0,
+            )
+        ],
+    )
+    _seed_legacy_dynamo_transcribed_clip(table, ellipsis_key, transcript="... ... ...")
+
+    assert [clip.key for clip in store.recent_transcribed(limit=5)] == [good_key]
+    assert store.transcribed_channel_counts() == {"14": 1}
+    assert store.transcribed_clip_count(channel="14") == 1
+
+
 def _request(*, channel: str) -> ClipPresignRequest:
     return ClipPresignRequest(
         channel=channel,
@@ -171,6 +200,47 @@ class CapturingEventStore:
                 "payload": payload,
                 "idempotency_key": idempotency_key,
                 "observed_at": observed_at,
+            }
+        )
+
+
+def _seed_legacy_dynamo_transcribed_clip(
+    table: FakeDynamoTable,
+    key: str,
+    *,
+    transcript: str,
+) -> None:
+    state_key = (f"clip#{key}", "state")
+    item = dict(table.items[state_key])
+    item.update(
+        {
+            "status": "transcribed",
+            "transcript": transcript,
+            "display_transcript": transcript,
+            "segments": [
+                {
+                    "text": transcript,
+                    "started_at": item["started_at"],
+                    "ended_at": item["ended_at"],
+                    "relative_start_seconds": 0.0,
+                    "relative_end_seconds": 1.0,
+                }
+            ],
+            "segment_count": 1,
+        }
+    )
+    table.put_item(Item=item)
+    for pk in ("clips#transcribed", f"clips#transcribed#channel#{item['channel']}"):
+        table.put_item(
+            Item={
+                "pk": pk,
+                "sk": f"{item['started_at']}#{key}",
+                "entity_type": "clip_index",
+                **{
+                    item_key: value
+                    for item_key, value in item.items()
+                    if item_key not in {"pk", "sk", "entity_type"}
+                },
             }
         )
 
