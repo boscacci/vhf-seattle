@@ -64,6 +64,22 @@ class RecentTranscribedClip:
     transcript: str
     segments: list[dict[str, str]]
     transcript_reviewed: bool = False
+    featured: bool = False
+    featured_at: str | None = None
+
+
+@dataclass(frozen=True)
+class ClipFeature:
+    key: str
+    channel: str
+    started_at: str
+    ended_at: str | None
+    duration_seconds: float | None
+    content_type: str
+    featured: bool
+    featured_at: str | None
+    featured_by: str | None
+    note: str | None
 
 
 @dataclass(frozen=True)
@@ -309,6 +325,7 @@ class UploadedClipStore:
         channel: str | None = None,
         channels: Iterable[str] | None = None,
         excluded_channels: tuple[str, ...] = (),
+        featured_only: bool = False,
     ) -> list[RecentTranscribedClip]:
         if limit <= 0:
             raise ValueError("limit must be positive")
@@ -329,8 +346,17 @@ class UploadedClipStore:
             placeholders = ", ".join("?" for _ in excluded_channels)
             filters.append(f"channel NOT IN ({placeholders})")
             params.extend(excluded_channels)
+        if featured_only:
+            filters.append("uploaded_clip_features.clip_key IS NOT NULL")
         params.extend([limit, offset])
         where_clause = "\n                    AND ".join(filters)
+        order_clause = (
+            "uploaded_clip_features.featured_at DESC, "
+            "uploaded_clips.started_at DESC, "
+            "uploaded_clips.id DESC"
+            if featured_only
+            else "uploaded_clips.started_at DESC, uploaded_clips.id DESC"
+        )
         with sqlite3.connect(self.path) as connection:
             rows = connection.execute(
                 f"""
@@ -345,12 +371,15 @@ class UploadedClipStore:
                         uploaded_clip_transcript_corrections.corrected_transcript,
                         uploaded_clips.transcript
                     ) AS displayed_transcript,
-                    uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL
+                    uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL,
+                    uploaded_clip_features.featured_at
                 FROM uploaded_clips
                 LEFT JOIN uploaded_clip_transcript_corrections
                     ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
+                LEFT JOIN uploaded_clip_features
+                    ON uploaded_clip_features.clip_key = uploaded_clips.key
                 WHERE {where_clause}
-                ORDER BY uploaded_clips.started_at DESC, uploaded_clips.id DESC
+                ORDER BY {order_clause}
                 LIMIT ? OFFSET ?
                 """,
                 tuple(params),
@@ -365,6 +394,7 @@ class UploadedClipStore:
             content_type,
             transcript,
             transcript_reviewed,
+            featured_at,
         ) in rows:
             clips.append(
                 RecentTranscribedClip(
@@ -377,6 +407,8 @@ class UploadedClipStore:
                     transcript=transcript,
                     segments=self.segments_for_clip(key),
                     transcript_reviewed=bool(transcript_reviewed),
+                    featured=featured_at is not None,
+                    featured_at=featured_at,
                 )
             )
         return clips
@@ -421,10 +453,13 @@ class UploadedClipStore:
                         uploaded_clip_transcript_corrections.corrected_transcript,
                         uploaded_clips.transcript
                     ) AS displayed_transcript,
-                    uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL
+                    uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL,
+                    uploaded_clip_features.featured_at
                 FROM uploaded_clips
                 LEFT JOIN uploaded_clip_transcript_corrections
                     ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
+                LEFT JOIN uploaded_clip_features
+                    ON uploaded_clip_features.clip_key = uploaded_clips.key
                 WHERE {where_clause}
                 ORDER BY uploaded_clips.id DESC
                 LIMIT 1
@@ -442,6 +477,7 @@ class UploadedClipStore:
             content_type,
             transcript,
             transcript_reviewed,
+            featured_at,
         ) = row
         return RecentTranscribedClip(
             key=key,
@@ -453,7 +489,99 @@ class UploadedClipStore:
             transcript=transcript,
             segments=self.segments_for_clip(key),
             transcript_reviewed=bool(transcript_reviewed),
+            featured=featured_at is not None,
+            featured_at=featured_at,
         )
+
+    def set_clip_featured(
+        self,
+        *,
+        channel: str,
+        started_at: str,
+        featured: bool,
+        featured_by: str | None = None,
+        note: str | None = None,
+        excluded_channels: tuple[str, ...] = (),
+    ) -> ClipFeature:
+        clip = self._raw_transcribed_clip(
+            channel=channel,
+            started_at=started_at,
+            excluded_channels=excluded_channels,
+        )
+        if clip is None:
+            raise LookupError("clip not found")
+        now = _format_utc(datetime.now(UTC))
+        featured_by_text = featured_by.strip() if featured_by else None
+        note_text = note.strip() if note else None
+        featured_at: str | None = None
+        with sqlite3.connect(self.path) as connection:
+            if featured:
+                existing = connection.execute(
+                    """
+                    SELECT featured_at
+                    FROM uploaded_clip_features
+                    WHERE clip_key = ?
+                    """,
+                    (clip.key,),
+                ).fetchone()
+                featured_at = existing[0] if existing else now
+                connection.execute(
+                    """
+                    INSERT INTO uploaded_clip_features (
+                        clip_key,
+                        featured_at,
+                        featured_by,
+                        note,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(clip_key) DO UPDATE SET
+                        featured_by = excluded.featured_by,
+                        note = excluded.note,
+                        updated_at = excluded.updated_at
+                    """,
+                    (clip.key, featured_at, featured_by_text, note_text, now, now),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM uploaded_clip_features WHERE clip_key = ?",
+                    (clip.key,),
+                )
+        feature = ClipFeature(
+            key=clip.key,
+            channel=clip.channel,
+            started_at=clip.started_at,
+            ended_at=clip.ended_at,
+            duration_seconds=clip.duration_seconds,
+            content_type=clip.content_type,
+            featured=featured,
+            featured_at=featured_at,
+            featured_by=featured_by_text,
+            note=note_text,
+        )
+        event_type = "clip.featured" if featured else "clip.unfeatured"
+        self.event_store.record_clip_event(
+            event_type,
+            key=feature.key,
+            observed_at=_parse_utc(feature.started_at),
+            idempotency_key=(
+                f"{feature.key}:{event_type}:"
+                f"{stable_event_id(feature.featured, feature.featured_by, feature.note)}"
+            ),
+            payload={
+                "channel": feature.channel,
+                "started_at": feature.started_at,
+                "ended_at": feature.ended_at,
+                "duration_seconds": feature.duration_seconds,
+                "content_type": feature.content_type,
+                "featured": feature.featured,
+                "featured_at": feature.featured_at,
+                "featured_by": feature.featured_by,
+                "note": feature.note,
+            },
+        )
+        return feature
 
     def correct_transcript(
         self,
@@ -488,8 +616,8 @@ class UploadedClipStore:
                 (clip.key,),
             ).fetchone()
             original_transcript = existing[0] if existing else clip.transcript
-            stored_reviewer = reviewer_text if reviewer_text is not None else (
-                existing[1] if existing else None
+            stored_reviewer = (
+                reviewer_text if reviewer_text is not None else (existing[1] if existing else None)
             )
             connection.execute(
                 """
@@ -664,28 +792,76 @@ class UploadedClipStore:
         self,
         *,
         excluded_channels: tuple[str, ...] = (),
+        featured_only: bool = False,
     ) -> dict[str, int]:
         channel_filter = ""
         params: tuple[object, ...] = ()
         if excluded_channels:
             placeholders = ", ".join("?" for _ in excluded_channels)
-            channel_filter = f"AND channel NOT IN ({placeholders})"
+            channel_filter = f"AND uploaded_clips.channel NOT IN ({placeholders})"
             params = tuple(excluded_channels)
+        feature_join = (
+            "JOIN uploaded_clip_features ON uploaded_clip_features.clip_key = uploaded_clips.key"
+            if featured_only
+            else ""
+        )
         with sqlite3.connect(self.path) as connection:
             rows = connection.execute(
                 f"""
-                SELECT channel, count(*)
+                SELECT uploaded_clips.channel, count(*)
                 FROM uploaded_clips
+                {feature_join}
                 WHERE status = 'transcribed'
                     AND transcript IS NOT NULL
                     AND trim(transcript) != ''
                     {channel_filter}
-                GROUP BY channel
-                ORDER BY channel
+                GROUP BY uploaded_clips.channel
+                ORDER BY uploaded_clips.channel
                 """,
                 params,
             ).fetchall()
         return {channel: count for channel, count in rows}
+
+    def transcribed_clip_count(
+        self,
+        *,
+        channel: str | None = None,
+        channels: Iterable[str] | None = None,
+        excluded_channels: tuple[str, ...] = (),
+        featured_only: bool = False,
+    ) -> int:
+        filters = [
+            "uploaded_clips.status = 'transcribed'",
+            "uploaded_clips.transcript IS NOT NULL",
+            "trim(uploaded_clips.transcript) != ''",
+        ]
+        params: list[object] = []
+        selected_channels = _unique_channels([channel] if channel else channels)
+        if selected_channels:
+            placeholders = ", ".join("?" for _ in selected_channels)
+            filters.append(f"uploaded_clips.channel IN ({placeholders})")
+            params.extend(selected_channels)
+        if excluded_channels:
+            placeholders = ", ".join("?" for _ in excluded_channels)
+            filters.append(f"uploaded_clips.channel NOT IN ({placeholders})")
+            params.extend(excluded_channels)
+        feature_join = (
+            "JOIN uploaded_clip_features ON uploaded_clip_features.clip_key = uploaded_clips.key"
+            if featured_only
+            else ""
+        )
+        where_clause = "\n                    AND ".join(filters)
+        with sqlite3.connect(self.path) as connection:
+            row = connection.execute(
+                f"""
+                SELECT count(*)
+                FROM uploaded_clips
+                {feature_join}
+                WHERE {where_clause}
+                """,
+                tuple(params),
+            ).fetchone()
+        return int(row[0]) if row else 0
 
     def stats(self) -> dict[str, Any]:
         with sqlite3.connect(self.path) as connection:
@@ -711,6 +887,9 @@ class UploadedClipStore:
             correction_count = connection.execute(
                 "SELECT count(*) FROM uploaded_clip_transcript_corrections"
             ).fetchone()[0]
+            featured_count = connection.execute(
+                "SELECT count(*) FROM uploaded_clip_features"
+            ).fetchone()[0]
         channel_counts: dict[str, dict[str, int]] = {}
         for channel, status, count in channel_rows:
             channel_counts.setdefault(channel, {})[status] = count
@@ -718,6 +897,7 @@ class UploadedClipStore:
             "counts": {status: count for status, count in rows},
             "channel_counts": channel_counts,
             "transcript_correction_count": correction_count,
+            "featured_clip_count": featured_count,
             "recent": [
                 {
                     "key": key,
@@ -874,6 +1054,26 @@ class UploadedClipStore:
                 ON uploaded_clip_transcript_corrections(updated_at DESC, id DESC)
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS uploaded_clip_features (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clip_key TEXT NOT NULL UNIQUE,
+                    featured_at TEXT NOT NULL,
+                    featured_by TEXT,
+                    note TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(clip_key) REFERENCES uploaded_clips(key)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_uploaded_clip_features_featured_at
+                ON uploaded_clip_features(featured_at DESC, id DESC)
+                """
+            )
 
 
 class S3ClipReader:
@@ -1004,9 +1204,7 @@ def transcribe_audio_file(
                 relative_end_seconds=relative_end,
             )
         )
-    if rendered and _is_likely_static_hallucination(
-        " ".join(segment.text for segment in rendered)
-    ):
+    if rendered and _is_likely_static_hallucination(" ".join(segment.text for segment in rendered)):
         return []
     return rendered
 
@@ -1107,8 +1305,8 @@ def main() -> None:
             clip_store_backend=clip_store_backend,
         ),
     )
-    audio_filter = None if args.no_audio_filter else (
-        args.audio_filter or DEFAULT_SPEECH_AUDIO_FILTER
+    audio_filter = (
+        None if args.no_audio_filter else (args.audio_filter or DEFAULT_SPEECH_AUDIO_FILTER)
     )
     while True:
         summary = process_pending_uploads_once(

@@ -11,6 +11,7 @@ const audioStartedAt = "2026-05-31T20:00:00Z";
 let holdRecentClipResponses = false;
 let releaseRecentClipResponses = [];
 let topicClusterReturnsNotFound = false;
+const featuredClipIndexes = new Set([1, 7, 13, 49, 91]);
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -35,6 +36,9 @@ const server = createServer(async (request, response) => {
         });
       }
       return sendJson(response, recentClipPayload(url));
+    }
+    if (url.pathname === "/api/clips/features" && request.method === "POST") {
+      return sendJson(response, await clipFeaturePayload(request));
     }
     if (url.pathname === "/api/clips/search") {
       return sendJson(response, searchPayload(url));
@@ -262,11 +266,18 @@ try {
           current: button.getAttribute("aria-current"),
           disabled: button.disabled,
         })),
+        actionButtons: [...pagination.querySelectorAll(".pagination-actions button")].map((button) => ({
+          text: button.textContent?.trim() || "",
+          disabled: button.disabled,
+        })),
         ellipsisCount: pagination.querySelectorAll(".pagination-ellipsis").length,
       };
     });
-    if (!initialPagination.text.includes("Newest") || !initialPagination.text.includes("Oldest")) {
-      throw new Error(`pagination jump buttons missing: ${JSON.stringify(initialPagination)}`);
+    if (initialPagination.actionButtons.map((button) => button.text).join(",") !== "Next,Oldest") {
+      throw new Error(`first page pagination should hide unusable previous actions: ${JSON.stringify(initialPagination)}`);
+    }
+    if (initialPagination.actionButtons.some((button) => button.disabled)) {
+      throw new Error(`visible first page pagination actions should be usable: ${JSON.stringify(initialPagination)}`);
     }
     if (!initialPagination.buttons.some((button) => button.text === "1" && button.current === "page")) {
       throw new Error(`pagination current page button missing: ${JSON.stringify(initialPagination)}`);
@@ -277,6 +288,28 @@ try {
     if (initialPagination.ellipsisCount < 1) {
       throw new Error(`pagination ellipsis missing: ${JSON.stringify(initialPagination)}`);
     }
+    await page.locator("#clip-display-controls").getByRole("button", { name: "Hall of fame", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 2"));
+    const hallOfFameState = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      renderedClips: document.querySelectorAll("#clips .clip-card").length,
+      status: document.querySelector("#clip-status")?.textContent || "",
+      featuredPills: document.querySelectorAll("#clips .featured-pill").length,
+      activeShowMode: document
+        .querySelector("#clip-display-controls .clip-control-group:first-child button[aria-pressed='true']")
+        ?.textContent?.trim(),
+    }));
+    if (
+      hallOfFameState.activeShowMode !== "Hall of fame" ||
+      hallOfFameState.renderedClips !== featuredClipIndexes.size ||
+      hallOfFameState.featuredPills !== featuredClipIndexes.size ||
+      !hallOfFameState.status.includes("featured") ||
+      !hallOfFameState.firstTranscript.includes("Smoke clip 2")
+    ) {
+      throw new Error(`hall of fame filter did not show only featured clips: ${JSON.stringify(hallOfFameState)}`);
+    }
+    await page.locator("#clip-display-controls").getByRole("button", { name: "Recent", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
     await page.locator("#clip-pagination").getByRole("button", { name: "Page 2", exact: true }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"));
     const secondPagePagination = await page.evaluate(() => ({
@@ -343,12 +376,22 @@ try {
       numberedButtons: [...document.querySelectorAll("#clip-pagination .pagination-page-button")].map((button) =>
         button.textContent?.trim(),
       ),
+      actionButtons: [...document.querySelectorAll("#clip-pagination .pagination-actions button")].map((button) => ({
+        text: button.textContent?.trim() || "",
+        disabled: button.disabled,
+      })),
     }));
     if (oldestPagePagination.activePage !== "24") {
       throw new Error(`pagination oldest jump did not land on last page: ${JSON.stringify(oldestPagePagination)}`);
     }
     if (oldestPagePagination.numberedButtons.join(",") !== "20,21,22,23,24") {
       throw new Error(`pagination oldest window should show five nearby pages only: ${JSON.stringify(oldestPagePagination)}`);
+    }
+    if (oldestPagePagination.actionButtons.map((button) => button.text).join(",") !== "Newest,Previous") {
+      throw new Error(`oldest page pagination should hide unusable next actions: ${JSON.stringify(oldestPagePagination)}`);
+    }
+    if (oldestPagePagination.actionButtons.some((button) => button.disabled)) {
+      throw new Error(`visible oldest page pagination actions should be usable: ${JSON.stringify(oldestPagePagination)}`);
     }
     await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
@@ -370,7 +413,9 @@ try {
         buttonLabels: [...headerControls.querySelectorAll("button")].map((button) =>
           button.textContent?.trim(),
         ),
-        pageSizeButtons: [...headerControls.querySelectorAll(".clip-control-group:first-child button")].length,
+        pageSizeButtons: [
+          ...headerControls.querySelectorAll(".clip-control-group"),
+        ].find((group) => group.textContent?.includes("Clips per page"))?.querySelectorAll("button").length,
       };
     });
     if (!clipControlsBeforeFlip.pageStatus.includes("Page 1 of 3")) {
@@ -436,6 +481,12 @@ try {
     if (!clipControlsBeforeFlip.buttonLabels.includes("48") || clipControlsBeforeFlip.pageSizeButtons !== 4) {
       throw new Error(`mobile page size controls are incomplete: ${JSON.stringify(clipControlsBeforeFlip)}`);
     }
+    if (
+      !clipControlsBeforeFlip.buttonLabels.includes("Hall of fame") ||
+      !clipControlsBeforeFlip.buttonLabels.includes("Recent")
+    ) {
+      throw new Error(`mobile hall of fame filter controls are missing: ${JSON.stringify(clipControlsBeforeFlip)}`);
+    }
     if (!clipControlsBeforeFlip.firstTranscript.includes("Smoke clip 1")) {
       throw new Error(`expected newest page order before flip: ${clipControlsBeforeFlip.firstTranscript}`);
     }
@@ -447,6 +498,38 @@ try {
     }
     if (await page.getByRole("button", { name: "Fine Tuning" }).count()) {
       throw new Error("Fine Tuning tab should not crowd the primary mobile tabs");
+    }
+    await page.goto(`${baseUrl}/operator/`);
+    await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
+    await page
+      .locator("#clips .clip-card")
+      .first()
+      .getByRole("button", { name: "Add to Hall of Fame", exact: true })
+      .click();
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector("#clips .clip-card:first-child .feature-clip-button")
+          ?.getAttribute("aria-pressed") === "true",
+    );
+    const operatorFeatureState = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips .clip-card:first-child blockquote")?.textContent || "",
+      buttonText:
+        document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.textContent?.trim() || "",
+      buttonLabel:
+        document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.getAttribute("aria-label") ||
+        "",
+      featuredPill: document.querySelector("#clips .clip-card:first-child .featured-pill")?.textContent || "",
+      correctionOpen: Boolean(document.querySelector("#clips .clip-card:first-child .transcript-correction")),
+    }));
+    if (
+      !operatorFeatureState.firstTranscript.includes("Smoke clip 1") ||
+      operatorFeatureState.buttonText !== "★" ||
+      operatorFeatureState.buttonLabel !== "Remove from Hall of Fame" ||
+      operatorFeatureState.featuredPill !== "Featured" ||
+      !operatorFeatureState.correctionOpen
+    ) {
+      throw new Error(`operator feature action did not update the clip card: ${JSON.stringify(operatorFeatureState)}`);
     }
     await page.getByRole("button", { name: "Performance" }).click();
     await page.locator(".speech-training-panel .performance-card").first().waitFor({ state: "visible", timeout: 10000 });
@@ -694,13 +777,17 @@ function recentClipPayload(url) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 6), 1), 100);
   const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
   const total = 144;
+  const featuredOnly = url.searchParams.get("featured") === "true";
+  const indexes = featuredOnly
+    ? [...featuredClipIndexes].sort((left, right) => left - right)
+    : Array.from({ length: total }, (_value, index) => index);
+  const filteredTotal = indexes.length;
   return {
-    clips: Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_value, index) =>
-      recentClip(offset + index),
-    ),
+    clips: indexes.slice(offset, offset + limit).map((index) => recentClip(index)),
     clip_count: total,
-    filtered_clip_count: total,
-    channel_counts: { "14": total },
+    filtered_clip_count: filteredTotal,
+    featured: featuredOnly,
+    channel_counts: { "14": filteredTotal },
     channel_labels: { "14": "Vessel Traffic Service" },
     limit,
     offset,
@@ -718,8 +805,46 @@ function recentClip(index) {
     duration_seconds: 15,
     transcript: `Smoke clip ${index + 1}`,
     transcript_public: `Smoke clip ${index + 1}`,
+    featured: featuredClipIndexes.has(index),
+    featured_at: featuredClipIndexes.has(index) ? "2026-06-01T12:00:00Z" : null,
     playback_url: "",
   };
+}
+
+async function clipFeaturePayload(request) {
+  const rawBody = await readRequestBody(request);
+  const payload = JSON.parse(rawBody || "{}");
+  const clipIndex = clipIndexForStartedAt(String(payload.started_at || ""));
+  if (clipIndex < 0) {
+    return {
+      status: "unfeatured",
+      channel: payload.channel || "14",
+      started_at: payload.started_at || "",
+      featured: false,
+    };
+  }
+  const featured = Boolean(payload.featured);
+  if (featured) {
+    featuredClipIndexes.add(clipIndex);
+  } else {
+    featuredClipIndexes.delete(clipIndex);
+  }
+  return {
+    status: featured ? "featured" : "unfeatured",
+    channel: payload.channel || "14",
+    started_at: new Date(Date.parse("2026-05-31T20:00:00Z") - clipIndex * 60000).toISOString(),
+    featured,
+  };
+}
+
+function clipIndexForStartedAt(startedAt) {
+  const parsedMs = Date.parse(startedAt);
+  if (!Number.isFinite(parsedMs)) {
+    return -1;
+  }
+  const baseMs = Date.parse("2026-05-31T20:00:00Z");
+  const index = Math.round((baseMs - parsedMs) / 60000);
+  return index >= 0 ? index : -1;
 }
 
 function searchPayload(url) {
@@ -901,6 +1026,14 @@ function sendJson(response, payload, status = 200) {
     "cache-control": "no-store",
   });
   response.end(JSON.stringify(payload));
+}
+
+async function readRequestBody(request) {
+  const chunks = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function sendHtml(response, body) {

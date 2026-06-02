@@ -769,6 +769,42 @@ button {
   background: color-mix(in srgb, var(--teal), transparent 86%);
 }
 
+.pill.featured-pill {
+  color: #ffd166;
+  border-color: rgba(255, 209, 102, 0.5);
+  background: rgba(255, 209, 102, 0.1);
+}
+
+.feature-clip-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  color: #ffd166;
+  border-color: rgba(255, 209, 102, 0.45);
+  background: rgba(255, 209, 102, 0.08);
+  font-size: 1.05rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.feature-clip-button.is-active {
+  color: #06110f;
+  border-color: transparent;
+  background: #ffd166;
+}
+
+.feature-clip-button:disabled,
+.feature-clip-button.is-saving {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .clip-pagination {
   display: grid;
   justify-items: center;

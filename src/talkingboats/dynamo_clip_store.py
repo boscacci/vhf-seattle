@@ -11,6 +11,7 @@ import boto3
 
 from talkingboats.channel_metadata import CHANNEL_METADATA
 from talkingboats.clip_transcriber import (
+    ClipFeature,
     RecentTranscribedClip,
     TranscriptCorrection,
     UploadedClipRecord,
@@ -27,8 +28,10 @@ from talkingboats.schemas import ClipPresignRequest
 CLIP_STATE_SK = "state"
 TRANSCRIBED_PK = "clips#transcribed"
 CORRECTIONS_PK = "clip_corrections"
+FEATURED_PK = "clips#featured"
 STATUS_PREFIX = "clip_status#"
 CHANNEL_TRANSCRIBED_PREFIX = "clips#transcribed#channel#"
+CHANNEL_FEATURED_PREFIX = "clips#featured#channel#"
 
 
 @dataclass(frozen=True)
@@ -208,6 +211,7 @@ class DynamoUploadedClipStore:
         channel: str | None = None,
         channels: Iterable[str] | None = None,
         excluded_channels: tuple[str, ...] = (),
+        featured_only: bool = False,
     ) -> list[RecentTranscribedClip]:
         if limit <= 0:
             raise ValueError("limit must be positive")
@@ -219,7 +223,11 @@ class DynamoUploadedClipStore:
             for selected_channel in selected_channels:
                 index_items.extend(
                     self._query_items(
-                        _channel_transcribed_pk(selected_channel),
+                        (
+                            _channel_featured_pk(selected_channel)
+                            if featured_only
+                            else _channel_transcribed_pk(selected_channel)
+                        ),
                         scan_forward=False,
                         limit=offset + limit,
                     )
@@ -234,6 +242,7 @@ class DynamoUploadedClipStore:
                 limit=limit,
                 offset=offset,
                 excluded_channels={excluded.upper() for excluded in excluded_channels},
+                featured_only=featured_only,
             )
         return [_recent_from_item(item) for item in index_items]
 
@@ -255,6 +264,75 @@ class DynamoUploadedClipStore:
             limit=5,
         )
         return _recent_from_item(rows[0]) if rows else None
+
+    def set_clip_featured(
+        self,
+        *,
+        channel: str,
+        started_at: str,
+        featured: bool,
+        featured_by: str | None = None,
+        note: str | None = None,
+        excluded_channels: tuple[str, ...] = (),
+    ) -> ClipFeature:
+        clip = self.transcribed_clip_for_public_playback(
+            channel=channel,
+            started_at=started_at,
+            excluded_channels=excluded_channels,
+        )
+        if clip is None:
+            raise LookupError("clip not found")
+        item = self._state_item(clip.key)
+        if not item:
+            raise LookupError("clip not found")
+        featured_by_text = featured_by.strip() if featured_by else None
+        note_text = note.strip() if note else None
+        featured_at = item.get("featured_at") if featured else None
+        if featured and not featured_at:
+            featured_at = _format_utc(datetime.now(UTC))
+        item.update(
+            {
+                "featured": featured,
+                "featured_at": featured_at,
+                "featured_by": featured_by_text,
+                "feature_note": note_text,
+            }
+        )
+        self._put_state(item, old_status="transcribed")
+        feature = ClipFeature(
+            key=clip.key,
+            channel=str(item["channel"]),
+            started_at=str(item["started_at"]),
+            ended_at=_optional_str(item.get("ended_at")),
+            duration_seconds=_optional_float(item.get("duration_seconds")),
+            content_type=str(item["content_type"]),
+            featured=featured,
+            featured_at=_optional_str(featured_at),
+            featured_by=featured_by_text,
+            note=note_text,
+        )
+        event_type = "clip.featured" if featured else "clip.unfeatured"
+        self.event_store.record_clip_event(
+            event_type,
+            key=feature.key,
+            observed_at=_parse_utc(feature.started_at),
+            idempotency_key=(
+                f"{feature.key}:{event_type}:"
+                f"{stable_event_id(feature.featured, feature.featured_by, feature.note)}"
+            ),
+            payload={
+                "channel": feature.channel,
+                "started_at": feature.started_at,
+                "ended_at": feature.ended_at,
+                "duration_seconds": feature.duration_seconds,
+                "content_type": feature.content_type,
+                "featured": feature.featured,
+                "featured_at": feature.featured_at,
+                "featured_by": feature.featured_by,
+                "note": feature.note,
+            },
+        )
+        return feature
 
     def correct_transcript(
         self,
@@ -355,23 +433,48 @@ class DynamoUploadedClipStore:
         self,
         *,
         excluded_channels: tuple[str, ...] = (),
+        featured_only: bool = False,
     ) -> dict[str, int]:
         excluded = {channel.upper() for channel in excluded_channels}
         counts: dict[str, int] = {}
         for channel in sorted(CHANNEL_METADATA, key=_channel_sort_key):
             if channel.upper() in excluded:
                 continue
-            count = self._query_count(_channel_transcribed_pk(channel))
+            count = self._query_count(
+                _channel_featured_pk(channel) if featured_only else _channel_transcribed_pk(channel)
+            )
             if count:
                 counts[channel] = count
         return counts
 
+    def transcribed_clip_count(
+        self,
+        *,
+        channel: str | None = None,
+        channels: Iterable[str] | None = None,
+        excluded_channels: tuple[str, ...] = (),
+        featured_only: bool = False,
+    ) -> int:
+        selected_channels = _unique_channels([channel] if channel else channels)
+        pk_for_channel = _channel_featured_pk if featured_only else _channel_transcribed_pk
+        if selected_channels:
+            return sum(
+                self._query_count(pk_for_channel(selected)) for selected in selected_channels
+            )
+        if excluded_channels:
+            excluded = {excluded.upper() for excluded in excluded_channels}
+            return sum(
+                count
+                for selected, count in self.transcribed_channel_counts(
+                    excluded_channels=tuple(excluded),
+                    featured_only=featured_only,
+                ).items()
+                if selected.upper() not in excluded
+            )
+        return self._query_count(FEATURED_PK if featured_only else TRANSCRIBED_PK)
+
     def stats(self) -> dict[str, Any]:
-        states = [
-            item
-            for item in self._scan_items()
-            if item.get("entity_type") == "clip_state"
-        ]
+        states = [item for item in self._scan_items() if item.get("entity_type") == "clip_state"]
         counts: dict[str, int] = {}
         channel_counts: dict[str, dict[str, int]] = {}
         for item in states:
@@ -392,6 +495,7 @@ class DynamoUploadedClipStore:
             "counts": dict(sorted(counts.items())),
             "channel_counts": channel_counts,
             "transcript_correction_count": self._query_count(CORRECTIONS_PK),
+            "featured_clip_count": self._query_count(FEATURED_PK),
             "recent": [
                 {
                     "key": item["key"],
@@ -432,14 +536,25 @@ class DynamoUploadedClipStore:
             self._put_item(_index_item(_status_pk(status), item))
         if old_status == "transcribed" and status != "transcribed":
             self._delete_transcribed_indexes(channel, started_at, key)
+            self._delete_featured_indexes(channel, started_at, key)
         if status == "transcribed":
             self._put_item(_index_item(TRANSCRIBED_PK, item))
             self._put_item(_index_item(_channel_transcribed_pk(channel), item))
+            if bool(item.get("featured")):
+                self._put_item(_index_item(FEATURED_PK, item))
+                self._put_item(_index_item(_channel_featured_pk(channel), item))
+            else:
+                self._delete_featured_indexes(channel, started_at, key)
 
     def _delete_transcribed_indexes(self, channel: str, started_at: str, key: str) -> None:
         sk = _index_sk(started_at, key)
         self._delete_item({"pk": TRANSCRIBED_PK, "sk": sk})
         self._delete_item({"pk": _channel_transcribed_pk(channel), "sk": sk})
+
+    def _delete_featured_indexes(self, channel: str, started_at: str, key: str) -> None:
+        sk = _index_sk(started_at, key)
+        self._delete_item({"pk": FEATURED_PK, "sk": sk})
+        self._delete_item({"pk": _channel_featured_pk(channel), "sk": sk})
 
     def _state_item(self, key: str) -> dict[str, Any] | None:
         response = self.table.get_item(Key={"pk": _clip_pk(key), "sk": CLIP_STATE_SK})
@@ -510,10 +625,15 @@ class DynamoUploadedClipStore:
         limit: int,
         offset: int,
         excluded_channels: set[str],
+        featured_only: bool = False,
     ) -> list[dict[str, Any]]:
         needed = limit + offset
         fetch_limit = max(needed + len(excluded_channels) * 20, needed)
-        rows = self._query_items(TRANSCRIBED_PK, scan_forward=False, limit=fetch_limit)
+        rows = self._query_items(
+            FEATURED_PK if featured_only else TRANSCRIBED_PK,
+            scan_forward=False,
+            limit=fetch_limit,
+        )
         filtered = [
             row for row in rows if str(row.get("channel") or "").upper() not in excluded_channels
         ]
@@ -574,6 +694,10 @@ def _channel_transcribed_pk(channel: str) -> str:
     return f"{CHANNEL_TRANSCRIBED_PREFIX}{channel}"
 
 
+def _channel_featured_pk(channel: str) -> str:
+    return f"{CHANNEL_FEATURED_PREFIX}{channel}"
+
+
 def _index_sk(started_at: str, key: str) -> str:
     return f"{started_at}#{key}"
 
@@ -583,11 +707,7 @@ def _index_item(pk: str, item: dict[str, Any]) -> dict[str, Any]:
         "pk": pk,
         "sk": _index_sk(str(item["started_at"]), str(item["key"])),
         "entity_type": "clip_index",
-        **{
-            key: value
-            for key, value in item.items()
-            if key not in {"pk", "sk", "entity_type"}
-        },
+        **{key: value for key, value in item.items() if key not in {"pk", "sk", "entity_type"}},
     }
 
 
@@ -630,6 +750,8 @@ def _recent_from_item(item: dict[str, Any]) -> RecentTranscribedClip:
             for segment in _as_list(item.get("segments"))
         ],
         transcript_reviewed=bool(item.get("transcript_reviewed")),
+        featured=bool(item.get("featured")),
+        featured_at=_optional_str(item.get("featured_at")),
     )
 
 

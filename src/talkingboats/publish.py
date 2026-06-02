@@ -44,6 +44,8 @@ ALLOWED_CLIP_FIELDS = {
     "duration_seconds",
     "transcript_public",
     "transcript_reviewed",
+    "featured",
+    "featured_at",
     "audio_public_filename",
     "interestingness_score",
     "tags",
@@ -428,6 +430,8 @@ def _public_clip_from_recent(clip: RecentTranscribedClip) -> dict[str, Any]:
         "duration_seconds": clip.duration_seconds,
         "transcript_public": clip.transcript,
         "transcript_reviewed": clip.transcript_reviewed,
+        "featured": clip.featured,
+        "featured_at": clip.featured_at,
         "audio_public_filename": _public_audio_filename(clip),
     }
 
@@ -525,6 +529,7 @@ def main() -> None:
                 output_path,
                 ffmpeg_path=args.public_audio_ffmpeg_path,
             )
+
     clip_audio_quality_gate = None
     if not args.no_public_audio_quality_gate:
 

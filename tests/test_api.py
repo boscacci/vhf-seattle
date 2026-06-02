@@ -279,6 +279,116 @@ def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
     }
 
 
+def test_operator_can_star_clip_for_hall_of_fame_filter(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    event_store = CapturingEventStore()
+    client = _client(clip_db_path=db_path, event_store=event_store)
+    store = UploadedClipStore(db_path)
+    starred_key = "raw/channel=14/date=2026-05-20/featured.mp3"
+    plain_key = "raw/channel=68/date=2026-05-20/plain.mp3"
+    store.record_presigned_upload(key=starred_key, request=_clip_presign(channel="14"))
+    store.record_presigned_upload(
+        key=plain_key,
+        request=_clip_presign(channel="68").model_copy(
+            update={
+                "started_at": datetime(2026, 5, 20, 19, 13, tzinfo=UTC),
+                "ended_at": datetime(2026, 5, 20, 19, 13, 5, tzinfo=UTC),
+                "idempotency_key": "radio-event-68-plain",
+            }
+        ),
+    )
+    store.mark_transcribed(
+        starred_key,
+        [
+            _segment(
+                text="PAN-PAN all stations",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+    store.mark_transcribed(
+        plain_key,
+        [
+            _segment(
+                text="Routine recreational call",
+                started_at="2026-05-20T19:13:00Z",
+                ended_at="2026-05-20T19:13:04Z",
+            )
+        ],
+    )
+
+    response = client.post(
+        "/api/clips/features",
+        json={
+            "channel": "14",
+            "started_at": "2026-05-20T19:12:00Z",
+            "featured": True,
+            "featured_by": "operator-ui",
+        },
+    )
+    recent = client.get("/api/clips/recent?limit=5&featured=true")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "featured",
+        "channel": "14",
+        "started_at": "2026-05-20T19:12:00Z",
+        "featured": True,
+    }
+    body = recent.json()
+    assert [clip["transcript"] for clip in body["clips"]] == ["PAN-PAN all stations"]
+    assert body["clips"][0]["featured"] is True
+    assert body["clip_count"] == 2
+    assert body["filtered_clip_count"] == 1
+    assert starred_key not in recent.text
+    assert plain_key not in recent.text
+    assert event_store.events[-1]["event_type"] == "clip.featured"
+
+
+def test_operator_can_remove_clip_from_hall_of_fame(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/featured.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Featured once",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+    store.set_clip_featured(
+        channel="14",
+        started_at="2026-05-20T19:12:00Z",
+        featured=True,
+        featured_by="operator-ui",
+    )
+
+    response = client.post(
+        "/api/clips/features",
+        json={
+            "channel": "14",
+            "started_at": "2026-05-20T19:12:00Z",
+            "featured": False,
+            "featured_by": "operator-ui",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "unfeatured",
+        "channel": "14",
+        "started_at": "2026-05-20T19:12:00Z",
+        "featured": False,
+    }
+    assert client.get("/api/clips/recent?limit=5&featured=true").json()["clips"] == []
+
+
 def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     client = _client(clip_db_path=db_path)
@@ -310,9 +420,7 @@ def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) 
     records = [json.loads(line) for line in response.text.splitlines()]
     assert records == [
         {
-            "audio_url": (
-                "/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00Z"
-            ),
+            "audio_url": ("/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00Z"),
             "channel": "14",
             "started_at": "2026-05-20T19:12:00Z",
             "duration_seconds": 5.0,
@@ -409,9 +517,7 @@ def test_asr_feedback_status_is_not_ready_when_labels_match_latest_training(
                 _segment(
                     text=f"PON PON all stations {index}",
                     started_at=started_at.isoformat().replace("+00:00", "Z"),
-                    ended_at=(started_at + timedelta(seconds=4))
-                    .isoformat()
-                    .replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace("+00:00", "Z"),
                 )
             ],
         )
@@ -503,7 +609,7 @@ def test_recent_clips_skip_missing_playback_objects(tmp_path) -> None:
     assert playable_key not in response.text
 
 
-def test_recent_clips_pages_over_playable_clips_without_short_or_overlapping_pages(tmp_path) -> None:
+def test_recent_clips_pages_over_playable_clips(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     missing_key = "raw/channel=68/date=2026-05-20/fake-1.mp3"
     client = _client(
@@ -572,8 +678,7 @@ def test_public_clip_playback_url_can_be_refreshed_without_exposing_key(tmp_path
     )
 
     response = client.get(
-        "/api/clips/playback?"
-        "channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
+        "/api/clips/playback?channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
     )
 
     assert response.status_code == 200
@@ -609,8 +714,7 @@ def test_public_clip_audio_streams_same_origin_playback_without_exposing_key(tmp
     )
 
     response = client.get(
-        "/api/clips/audio?"
-        "channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
+        "/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
     )
 
     assert response.status_code == 200
@@ -646,8 +750,7 @@ def test_public_clip_playback_url_rejects_missing_playback_object(tmp_path) -> N
     )
 
     response = client.get(
-        "/api/clips/playback?"
-        "channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
+        "/api/clips/playback?channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
     )
 
     assert response.status_code == 404
@@ -675,8 +778,7 @@ def test_public_clip_playback_url_rejects_excluded_channels(tmp_path) -> None:
     )
 
     response = client.get(
-        "/api/clips/playback?"
-        "channel=WX&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
+        "/api/clips/playback?channel=WX&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
     )
 
     assert response.status_code == 404
@@ -815,6 +917,7 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
         "filtered_clip_count": 0,
         "limit": 5,
         "offset": 0,
+        "featured": False,
         "channel_counts": {"14": 1},
         "channel_labels": {
             "05A": "VTS / Port Ops",

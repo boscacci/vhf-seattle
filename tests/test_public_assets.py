@@ -64,6 +64,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "/api/live/current.mp3" in app_js
     assert "/api/live/channels" in app_js
     assert 'const clipCorrectionsUrl = "/api/clips/corrections";' in app_js
+    assert 'const clipFeaturesUrl = "/api/clips/features";' in app_js
     assert "/api/operator/session" not in app_js
     assert "operatorReviewEnabled" in app_js
     assert "fineTuningDashboardEnabled" not in app_js
@@ -81,7 +82,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "All but traffic" in app_js
     assert 'const trafficChannelIds = new Set(["14"]);' in app_js
     assert 'allButTrafficAction.dataset.preset = "all-but-traffic";' in app_js
-    assert 'dsp=warm_voice' not in app_js
+    assert "dsp=warm_voice" not in app_js
     assert "/public_manifest.json" in app_js
     assert "Elliott Bay VHF" in index_html
     assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml" />' in index_html
@@ -132,13 +133,10 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'button.classList.toggle("is-active", option.value === selectedValue);' in app_js
     assert "/analysis/lexical.json" in app_js
     assert (
-        'const liveLanguageAnalysisEnabled = window.location.hostname !== '
-        '"vhf.robertboscacci.com";'
+        'const liveLanguageAnalysisEnabled = window.location.hostname !== "vhf.robertboscacci.com";'
     ) in app_js
     assert (
-        "if (!liveLanguageAnalysisEnabled) {\n"
-        "    return loadPublishedLanguagePayload();\n"
-        "  }"
+        "if (!liveLanguageAnalysisEnabled) {\n    return loadPublishedLanguagePayload();\n  }"
     ) in app_js
     assert "renderLanguageDashboard" in app_js
     assert "topic_clusters.html" in app_js
@@ -216,7 +214,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
         in app_js
     )
     assert "renderClipSummaryOnly(currentClipPayload);" in app_js
-    assert "clipList.querySelectorAll(\".clip-card[data-clip-id]\")" in app_js
+    assert 'clipList.querySelectorAll(".clip-card[data-clip-id]")' in app_js
     assert "existing?.dataset.clipSignature === signature" in app_js
     assert ".stat.is-live-updated" in styles_css
     assert "loadAndRenderPerformance({ showLoading: false });" in app_js
@@ -293,7 +291,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "startLiveStatusPolling" in app_js
     assert "setTimeout(pollLiveStatus, liveStatusPollMs)" in app_js
     assert "closeLiveAudioStream" in app_js
-    assert "liveAudio.removeAttribute(\"src\")" in app_js
+    assert 'liveAudio.removeAttribute("src")' in app_js
     assert "closeLiveAudioStream();" in app_js
     assert "Waiting for transmission" in app_js
     assert '"Static"' not in app_js
@@ -339,7 +337,7 @@ def test_public_site_analysis_copy_clarifies_frequency_metrics() -> None:
     assert "busiestHoursSummary" not in app_js
     assert "No analyzed transmissions yet" in app_js
     assert "activeChannelSummary" in app_js
-    assert "formatCountNoun(vhfCount, \"channel\", \"channels\")" in app_js
+    assert 'formatCountNoun(vhfCount, "channel", "channels")' in app_js
     assert "VHF channels with at least one analyzed clip" in app_js
     assert "monitoredAnalysisChannels" in app_js
     assert "channelCountsWithMonitoredChannels" in app_js
@@ -357,8 +355,10 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert "const defaultClipPageSize = 6;" in app_js
     assert "const clipPageSizeOptions = [6, 12, 24, 48];" in app_js
     assert "let selectedClipPageSize = defaultClipPageSize;" in app_js
-    assert "let clipSortDirection = \"newest\";" in app_js
+    assert 'let clipSortDirection = "newest";' in app_js
+    assert 'let clipFeaturedFilter = "recent";' in app_js
     assert "limit=${selectedClipPageSize}" in app_js
+    assert "featured=true" in app_js
     assert "renderClipDisplayControls()" in app_js
     assert "renderClipDisplayControlSet()" in app_js
     assert "mobileClipDisplayControls()" not in app_js
@@ -366,12 +366,14 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert "clipList.replaceChildren(...clips.map(renderClipCard));" not in app_js
     assert "function clipRenderSignature(clip)" in app_js
     assert "applyClipSortForCurrentPage" in app_js
-    assert "clipSortDirection === \"oldest\"" in app_js
+    assert 'clipSortDirection === "oldest"' in app_js
     assert "let currentPageClips = [];" in app_js
     assert "function renderCurrentClipOrder()" in app_js
-    assert "clipSortDirection = \"newest\";\n        renderCurrentClipOrder();" in app_js
-    assert "clipSortDirection = \"oldest\";\n        renderCurrentClipOrder();" in app_js
+    assert 'clipSortDirection = "newest";\n        renderCurrentClipOrder();' in app_js
+    assert 'clipSortDirection = "oldest";\n        renderCurrentClipOrder();' in app_js
     assert "selectedClipPage = 1;" in app_js
+    assert '"Show clips"' in app_js
+    assert '"Hall of fame"' in app_js
     assert '"Flip page order"' in app_js
     assert 'id="clip-display-controls"' in index_html
     assert "clip-display-controls" in styles_css
@@ -397,7 +399,7 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     assert 'topicFrame.setAttribute("allow", "fullscreen")' in app_js
     assert "hideUnavailableTopicFrame(topicFrame, topicFrameShell)" in app_js
     assert 'topicFrame.addEventListener("load"' in app_js
-    assert '.topic-frame-shell[hidden]' in styles_css
+    assert ".topic-frame-shell[hidden]" in styles_css
     assert "mobileNlpSummary" not in app_js
     assert "nlpSummaryRows" not in app_js
     assert "Descriptive NLP summary" not in app_js
@@ -405,7 +407,7 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     assert 'termSection("Jargon", terms.semantic_buckets?.communication_markers || [])' in app_js
     assert "topicTitle(topic)" in app_js
     assert "topicKeywordWords(topic)" in app_js
-    assert 'title.textContent = `${topicTitle(topic)} · ${topic.count || 0}`;' in app_js
+    assert "title.textContent = `${topicTitle(topic)} · ${topic.count || 0}`;" in app_js
     assert "topic.id !== -1" in app_js
     assert 'topic.label || "Topic" !== "Outliers"' not in app_js
     assert ".language-panel-intro" in styles_css
@@ -451,7 +453,7 @@ def test_public_site_performance_chart_traces_are_lightweight() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert "dot.setAttribute(\"r\", \"2.2\")" in app_js
+    assert 'dot.setAttribute("r", "2.2")' in app_js
     assert ".performance-chart-line" in styles_css
     assert "stroke-width: 1.35;" in styles_css
     assert "stroke-width: 2.4;" not in styles_css
@@ -472,6 +474,17 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert "transcript" in app_js
     assert "transcript_public" in app_js
     assert "transcript_reviewed" in app_js
+    assert "featured" in app_js
+    assert "renderFeaturedClipAction" in app_js
+    assert "saveClipFeature" in app_js
+    assert 'button.textContent = featured ? "★" : "☆";' in app_js
+    assert (
+        'button.setAttribute("aria-label", featured ? '
+        '"Remove from Hall of Fame" : "Add to Hall of Fame");'
+        in app_js
+    )
+    assert '"Starred"' not in app_js
+    assert "Featured" in app_js
     assert "renderTranscriptCorrectionForm" in app_js
     assert "saveTranscriptCorrection" in app_js
     assert (
@@ -485,6 +498,10 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert "Saved for nightly training." in app_js
     assert ".transcript-correction" in styles_css
     assert ".reviewed-pill" in styles_css
+    assert ".featured-pill" in styles_css
+    assert ".feature-clip-button" in styles_css
+    assert "width: 30px;" in styles_css
+    assert "height: 30px;" in styles_css
     assert "formatDateTime" in app_js
     assert "channelLabel" in app_js
 
@@ -494,8 +511,8 @@ def test_public_site_uses_same_origin_live_api_urls() -> None:
 
     assert 'const defaultLiveStreamUrl = "/api/live/current.mp3";' in app_js
     assert 'const liveDspProfile = privateAppHost ? "warm_voice" : "";' in app_js
-    assert 'return `/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`;' in app_js
-    assert 'return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;' in app_js
+    assert "return `/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`;" in app_js
+    assert "return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;" in app_js
     assert "return withDspProfile(url);" in app_js
 
 
@@ -525,7 +542,7 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert "fine-tuning" not in app_js
     assert "tabFromLocation()" in app_js
     assert "updateTabRoute(name" in app_js
-    assert "window.addEventListener(\"popstate\"" in app_js
+    assert 'window.addEventListener("popstate"' in app_js
     assert "activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false })" in app_js
     for route in ("clips", "search", "live", "ais", "analysis"):
         assert f'"{route}/index.html"' in deploy_shell
@@ -651,8 +668,7 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
     assert "Live radio may appear in macOS and browser media controls." not in app_js
     assert "Live radio plays in Firefox without publishing system media controls." not in app_js
     system_controls_off_gate = (
-        'liveAudio.removeAttribute("src");\n'
-        '    liveStatus.textContent = "System controls off";'
+        'liveAudio.removeAttribute("src");\n    liveStatus.textContent = "System controls off";'
     )
     assert system_controls_off_gate not in app_js
     assert ".system-media-toggle" in styles_css
@@ -687,7 +703,7 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert "isEverythingQueueClipAfterStart(clip)" in app_js
     assert "await pollEverythingQueue({ playIfIdle: false, seedRecent: true });" in app_js
     assert (
-        'if (isEverythingLiveMode()) {\n'
+        "if (isEverythingLiveMode()) {\n"
         "      if (!everythingQueueEnabled) {\n"
         "        return;\n"
         "      }\n"
@@ -706,12 +722,9 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert "Queued active transmissions across monitored channels" in app_js
     assert "Queue delay" in app_js
     assert "Waiting for queued transmission" in app_js
-    assert 'if (isEverythingLiveMode()) {\n    return connectEverythingLive();\n  }' in app_js
+    assert "if (isEverythingLiveMode()) {\n    return connectEverythingLive();\n  }" in app_js
     assert (
-        'if (isEverythingLiveMode()) {\n'
-        "    handleEverythingClipEnded();\n"
-        "    return;\n"
-        "  }"
+        "if (isEverythingLiveMode()) {\n    handleEverythingClipEnded();\n    return;\n  }"
     ) in app_js
     assert ".live-queue" in styles_css
     assert ".live-queue-item" in styles_css
@@ -744,9 +757,7 @@ def test_public_site_everything_queue_survives_live_panel_navigation() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert (
-        "if (isEverythingLiveMode() && everythingQueueEnabled) {\n"
-        "    return true;\n"
-        "  }"
+        "if (isEverythingLiveMode() && everythingQueueEnabled) {\n    return true;\n  }"
     ) in app_js
     assert (
         "if (isEverythingLiveMode() && everythingQueueEnabled) {\n"
@@ -756,8 +767,7 @@ def test_public_site_everything_queue_survives_live_panel_navigation() -> None:
         "    }"
     ) in app_js
     assert (
-        "const shouldPollHiddenEverythingQueue = "
-        "isEverythingLiveMode() && everythingQueueEnabled;"
+        "const shouldPollHiddenEverythingQueue = isEverythingLiveMode() && everythingQueueEnabled;"
     ) in app_js
     assert "if (panels.live.hidden && !shouldPollHiddenEverythingQueue)" in app_js
 
@@ -817,8 +827,7 @@ def test_public_site_does_not_render_unknown_clip_duration_as_zero() -> None:
 
     assert 'const unknownPlaybackTimeLabel = "—";' in app_js
     assert (
-        "formatPlaybackTime(example.duration_seconds, "
-        "{ unknownLabel: unknownPlaybackTimeLabel })"
+        "formatPlaybackTime(example.duration_seconds, { unknownLabel: unknownPlaybackTimeLabel })"
     ) in app_js
     assert "if (!Number.isFinite(value) || value <= 0)" in app_js
     assert "return unknownLabel;" in app_js

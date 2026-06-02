@@ -562,6 +562,31 @@ def test_proxy_tailnet_dev_write_routes_are_disabled_by_default() -> None:
     assert response.status_code in {404, 405}
 
 
+def test_proxy_feature_clip_write_route_is_disabled_by_default() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("public proxy must not forward tailnet-dev feature routes")
+
+    app = create_app(
+        ProxySettings(private_api_url="http://private-api.test"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_post(
+            app,
+            "/api/clips/features",
+            headers={
+                "Host": "vhf-dev.robertboscacci.com",
+                "X-TalkingBoats-Tailnet-Dev": "1",
+                "Content-Type": "application/json",
+            },
+            content=b'{"channel":"14","featured":true}',
+        )
+    )
+
+    assert response.status_code in {404, 405}
+
+
 def test_proxy_transcript_correction_requires_tailnet_dev_proxy_marker() -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("private API should not be reached without tailnet dev marker")
@@ -583,6 +608,33 @@ def test_proxy_transcript_correction_requires_tailnet_dev_proxy_marker() -> None
                 "Content-Type": "application/json",
             },
             content=b'{"channel":"14"}',
+        )
+    )
+
+    assert response.status_code == 403
+
+
+def test_proxy_feature_clip_requires_tailnet_dev_proxy_marker() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("private API should not be reached without tailnet dev marker")
+
+    app = create_app(
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_post(
+            app,
+            "/api/clips/features",
+            headers={
+                "Host": "vhf-dev.robertboscacci.com",
+                "Content-Type": "application/json",
+            },
+            content=b'{"channel":"14","featured":true}',
         )
     )
 
@@ -634,6 +686,53 @@ def test_proxy_transcript_correction_forwards_tailnet_dev_request_and_strips_aut
     assert response.status_code == 200
     assert "set-cookie" not in response.headers
     assert response.json() == {"status": "corrected"}
+
+
+def test_proxy_feature_clip_forwards_tailnet_dev_request_and_strips_auth() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://private-api.test/api/clips/features"
+        assert request.headers["content-type"] == "application/json"
+        assert "authorization" not in request.headers
+        assert "cookie" not in request.headers
+        assert "x-talkingboats-operator-token" not in request.headers
+        assert "x-talkingboats-tailnet-dev" not in request.headers
+        assert request.content == b'{"channel":"14","featured":true}'
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "application/json",
+                "Set-Cookie": "talkingboats_operator_token=private-token",
+            },
+            json={"status": "featured", "featured": True},
+        )
+
+    app = create_app(
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            tailnet_dev_routes_enabled=True,
+        ),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(
+        _asgi_post(
+            app,
+            "/api/clips/features",
+            headers={
+                "Host": "vhf-dev.robertboscacci.com",
+                "X-TalkingBoats-Tailnet-Dev": "1",
+                "Content-Type": "application/json",
+                "Authorization": "Bearer viewer-token",
+                "Cookie": "talkingboats_operator_token=viewer-token",
+                "X-TalkingBoats-Operator-Token": "viewer-token",
+            },
+            content=b'{"channel":"14","featured":true}',
+        )
+    )
+
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
+    assert response.json() == {"status": "featured", "featured": True}
 
 
 def test_proxy_transcript_correction_export_requires_tailnet_dev_proxy_marker() -> None:
@@ -881,7 +980,7 @@ def test_proxy_performance_endpoint_keeps_public_timeseries_history(tmp_path: Pa
             "generatedAt": "2026-05-26T20:00:00Z",
             "hosts": [
                 {
-                "role": "OptiPlex ASR Box",
+                    "role": "OptiPlex ASR Box",
                     "cpu": {"utilizationPercent": 11.0, "status": "ok"},
                     "memory": {"usedPercent": 21.0, "status": "ok"},
                     "thermal": {"temperatureC": 41.0, "throttled": "0x0", "status": "ok"},
@@ -973,10 +1072,7 @@ def test_proxy_performance_history_store_uses_memory_and_sqlite_windows(tmp_path
     payload = store.record(snapshot("2026-05-26T19:00:05Z", 21.0))
 
     history = payload["hosts"][0]["history"]
-    assert [
-        sample["generatedAt"]
-        for sample in history
-    ] == [
+    assert [sample["generatedAt"] for sample in history] == [
         "2026-05-26T12:00:00Z",
         "2026-05-26T19:00:00Z",
         "2026-05-26T19:00:05Z",
@@ -1045,10 +1141,9 @@ def test_proxy_performance_static_shell_hooks_are_dev_only() -> None:
     assert 'const performanceUrl = "/api/live/performance";' in response.text
     assert "performanceDashboardEnabled" in response.text
     assert (
-        "const privateAppHost = localAppHost || tailnetAppHost || tailnetDevHost;"
-        in response.text
+        "const privateAppHost = localAppHost || tailnetAppHost || tailnetDevHost;" in response.text
     )
-    assert 'const performanceDashboardEnabled = privateAppHost;' in response.text
+    assert "const performanceDashboardEnabled = privateAppHost;" in response.text
     assert "renderPerformanceDashboard" in response.text
     assert 'id="tab-performance" type="button" data-tab="performance" hidden' in index_response.text
 

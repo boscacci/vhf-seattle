@@ -403,9 +403,7 @@ class ProxySettings:
             ),
             ais_catcher_dev_hosts=_env_csv("TALKINGBOATS_PROXY_AIS_CATCHER_DEV_HOSTS")
             or cls.ais_catcher_dev_hosts,
-            ais_catcher_dev_origin_hosts=_env_csv(
-                "TALKINGBOATS_PROXY_AIS_CATCHER_DEV_ORIGIN_HOSTS"
-            )
+            ais_catcher_dev_origin_hosts=_env_csv("TALKINGBOATS_PROXY_AIS_CATCHER_DEV_ORIGIN_HOSTS")
             or cls.ais_catcher_dev_origin_hosts,
             active_channel_id=os.environ.get(
                 "TALKINGBOATS_PROXY_ACTIVE_CHANNEL_ID",
@@ -448,9 +446,7 @@ class ProxySettings:
             ),
             performance_dev_hosts=_env_csv("TALKINGBOATS_PROXY_PERFORMANCE_DEV_HOSTS")
             or cls.performance_dev_hosts,
-            performance_dev_origin_hosts=_env_csv(
-                "TALKINGBOATS_PROXY_PERFORMANCE_DEV_ORIGIN_HOSTS"
-            )
+            performance_dev_origin_hosts=_env_csv("TALKINGBOATS_PROXY_PERFORMANCE_DEV_ORIGIN_HOSTS")
             or cls.performance_dev_origin_hosts,
             cors_origins=_env_csv("TALKINGBOATS_PROXY_CORS_ORIGINS") or cls.cors_origins,
         )
@@ -792,6 +788,17 @@ def create_app(
             return await _proxy_private_api(
                 request,
                 "/api/clips/corrections",
+                settings,
+                client_factory,
+                forward_content_type=True,
+            )
+
+        @app.post("/api/clips/features")
+        async def clip_feature(request: Request) -> Response:
+            _require_tailnet_operator(request)
+            return await _proxy_private_api(
+                request,
+                "/api/clips/features",
                 settings,
                 client_factory,
                 forward_content_type=True,
@@ -1857,18 +1864,14 @@ def _ais_catcher_target_url(base_url: str, proxy_path: str, query: str) -> str:
 def _ais_catcher_request_headers(request: Request) -> dict[str, str]:
     allowed_headers = {"accept", "accept-language", "range", "user-agent"}
     return {
-        name: value
-        for name, value in request.headers.items()
-        if name.lower() in allowed_headers
+        name: value for name, value in request.headers.items() if name.lower() in allowed_headers
     }
 
 
 def _ais_catcher_response_headers(upstream: httpx.Response, base_url: str) -> dict[str, str]:
     allowed_headers = {"content-type", "etag", "last-modified", "location"}
     response_headers = {
-        name: value
-        for name, value in upstream.headers.items()
-        if name.lower() in allowed_headers
+        name: value for name, value in upstream.headers.items() if name.lower() in allowed_headers
     }
     location = response_headers.get("location") or response_headers.get("Location")
     if location:

@@ -42,6 +42,8 @@ from talkingboats.lexical_analysis import (
     read_published_lexical_analysis,
 )
 from talkingboats.schemas import (
+    ClipFeatureRequest,
+    ClipFeatureResponse,
     ClipPresignRequest,
     ClipPresignResponse,
     LiveChannelResponse,
@@ -207,6 +209,7 @@ async def recent_clips(
     offset: Annotated[int, Query(ge=0)] = 0,
     channel: Annotated[str | None, Query(min_length=1, max_length=8)] = None,
     channels: Annotated[list[str] | None, Query()] = None,
+    featured: bool = False,
 ) -> dict[str, object]:
     if clip_store is None:
         return {
@@ -215,18 +218,27 @@ async def recent_clips(
             "filtered_clip_count": 0,
             "limit": limit,
             "offset": offset,
+            "featured": featured,
             "channel_counts": {},
             "channel_labels": public_monitored_channel_labels(),
         }
-    channel_counts = clip_store.transcribed_channel_counts(
+    all_channel_counts = clip_store.transcribed_channel_counts(
         excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
     )
-    clip_count = sum(channel_counts.values())
+    channel_counts = (
+        clip_store.transcribed_channel_counts(
+            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+            featured_only=True,
+        )
+        if featured
+        else all_channel_counts
+    )
+    clip_count = sum(all_channel_counts.values())
     selected_channels = _requested_public_channels(channel=channel, channels=channels)
     filtered_clip_count = (
         sum(channel_counts.get(selected_channel, 0) for selected_channel in selected_channels)
         if selected_channels
-        else clip_count
+        else sum(channel_counts.values())
     )
     if (channel or channels) and not selected_channels:
         return {
@@ -235,6 +247,7 @@ async def recent_clips(
             "filtered_clip_count": 0,
             "limit": limit,
             "offset": offset,
+            "featured": featured,
             "channel_counts": channel_counts,
             "channel_labels": public_monitored_channel_labels(channel_counts),
         }
@@ -246,6 +259,7 @@ async def recent_clips(
         offset=offset,
         channel=channel if not channels else None,
         channels=selected_channels,
+        featured_only=featured,
     )
     return {
         "clips": clips,
@@ -253,6 +267,7 @@ async def recent_clips(
         "filtered_clip_count": filtered_clip_count,
         "limit": limit,
         "offset": offset,
+        "featured": featured,
         "channel_counts": channel_counts,
         "channel_labels": public_monitored_channel_labels(channel_counts),
     }
@@ -267,6 +282,7 @@ def _recent_playable_clip_page(
     offset: int,
     channel: str | None,
     channels: list[str],
+    featured_only: bool = False,
 ) -> list[dict[str, object]]:
     clips: list[dict[str, object]] = []
     playable_seen = 0
@@ -279,6 +295,7 @@ def _recent_playable_clip_page(
             channel=channel,
             channels=channels,
             excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+            featured_only=featured_only,
         )
         if not candidates:
             break
@@ -307,6 +324,8 @@ def _recent_playable_clip_page(
                     "content_type": clip.content_type,
                     "transcript": clip.transcript,
                     "transcript_reviewed": clip.transcript_reviewed,
+                    "featured": clip.featured,
+                    "featured_at": clip.featured_at,
                     "segments": clip.segments,
                     "playback_url": playback_url,
                     "playback_expires_in_seconds": settings.playback_presign_seconds,
@@ -412,6 +431,43 @@ async def correct_clip_transcript(
         original_transcript=correction.original_transcript,
         corrected_transcript=correction.corrected_transcript,
         transcript_reviewed=True,
+    )
+
+
+@app.post(
+    "/api/clips/features",
+    response_model=ClipFeatureResponse,
+)
+async def feature_clip(
+    request: ClipFeatureRequest,
+    clip_store: Annotated[
+        UploadedClipStore | DynamoUploadedClipStore | None,
+        Depends(get_clip_store),
+    ],
+) -> ClipFeatureResponse:
+    if clip_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="clip store unavailable",
+        )
+    try:
+        feature = clip_store.set_clip_featured(
+            channel=request.channel,
+            started_at=request.started_at,
+            featured=request.featured,
+            featured_by=request.featured_by,
+            note=request.note,
+            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return ClipFeatureResponse(
+        status="featured" if feature.featured else "unfeatured",
+        channel=feature.channel,
+        started_at=feature.started_at,
+        featured=feature.featured,
     )
 
 
@@ -682,10 +738,13 @@ async def live_channel_stream(
 
 async def _iter_upstream_audio(url: str) -> AsyncIterator[bytes]:
     timeout = httpx.Timeout(connect=5.0, read=None, write=5.0, pool=5.0)
-    async with httpx.AsyncClient(
-        timeout=timeout,
-        follow_redirects=False,
-    ) as client, client.stream("GET", url) as response:
+    async with (
+        httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=False,
+        ) as client,
+        client.stream("GET", url) as response,
+    ):
         response.raise_for_status()
         async for chunk in response.aiter_bytes():
             if chunk:

@@ -55,6 +55,29 @@ def test_dynamo_clip_store_serves_recent_counts_pending_and_corrections() -> Non
         "PAN-PAN, all stations."
     )
 
+    feature = store.set_clip_featured(
+        channel="14",
+        started_at="2026-06-01T12:00:00Z",
+        featured=True,
+        featured_by="operator-ui",
+    )
+
+    assert feature.key == key
+    assert feature.featured is True
+    assert store.recent_transcribed(limit=5)[0].featured is True
+    assert [clip.key for clip in store.recent_transcribed(limit=5, featured_only=True)] == [key]
+    assert store.transcribed_clip_count(featured_only=True) == 1
+
+    store.set_clip_featured(
+        channel="14",
+        started_at="2026-06-01T12:00:00Z",
+        featured=False,
+        featured_by="operator-ui",
+    )
+
+    assert store.recent_transcribed(limit=5)[0].featured is False
+    assert store.recent_transcribed(limit=5, featured_only=True) == []
+
 
 def test_backfill_clip_read_model_replays_sqlite_into_dynamo(tmp_path: Path) -> None:
     from talkingboats.clip_transcriber import UploadedClipStore

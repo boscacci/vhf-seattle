@@ -4,6 +4,7 @@ const clipPlaybackUrl = "/api/clips/playback";
 const clipAudioUrl = "/api/clips/audio";
 const clipSearchUrl = "/api/clips/search";
 const clipCorrectionsUrl = "/api/clips/corrections";
+const clipFeaturesUrl = "/api/clips/features";
 const manifestUrl = "/public_manifest.json";
 const lexicalAnalysisUrl = "/api/analysis/lexical";
 const lexicalManifestUrl = "/analysis/lexical.json";
@@ -294,6 +295,7 @@ let selectedChannels = new Set();
 let selectedClipPage = 1;
 let selectedClipPageSize = defaultClipPageSize;
 let clipSortDirection = "newest";
+let clipFeaturedFilter = "recent";
 let currentClipPayload = null;
 let currentPageClips = [];
 let currentFilteredTotal = 0;
@@ -980,6 +982,8 @@ function normalizeCachedRecentClipPayload(payload) {
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript_public || clip.transcript || "",
       transcript_reviewed: Boolean(clip.transcript_reviewed),
+      featured: Boolean(clip.featured),
+      featured_at: clip.featured_at || "",
       audio_public_filename: clip.audio_public_filename || "",
     })),
   };
@@ -1079,6 +1083,10 @@ function mergeLiveClipStats(payload) {
     }
   }
   if (activeTab === "clips" && clipOffset() === 0 && selectedChannels.size === 0) {
+    if (clipFeaturedFilter !== "recent") {
+      renderStats(currentClipPayload || payload, currentPageClips.length ? currentPageClips : payload.clips || []);
+      return;
+    }
     if (addedClipCount > 0) {
       renderSite(currentClipPayload);
     } else {
@@ -1090,13 +1098,13 @@ function mergeLiveClipStats(payload) {
 }
 
 function clipRequestUrl() {
-  const offset = `offset=${clipOffset()}`;
-  const channels = selectedChannelValues();
-  if (!channels.length) {
-    return `/api/clips/recent?limit=${selectedClipPageSize}&${offset}`;
+  const params = [`limit=${selectedClipPageSize}`, `offset=${clipOffset()}`];
+  if (clipFeaturedFilter === "featured") {
+    params.push("featured=true");
   }
-  const channelParams = channels.map((channel) => `channels=${encodeURIComponent(channel)}`).join("&");
-  return `/api/clips/recent?limit=${selectedClipPageSize}&${offset}&${channelParams}`;
+  const channels = selectedChannelValues();
+  params.push(...channels.map((channel) => `channels=${encodeURIComponent(channel)}`));
+  return `/api/clips/recent?${params.join("&")}`;
 }
 
 async function loadPublishedManifest() {
@@ -1161,6 +1169,7 @@ function normalizeLivePayload(payload) {
         payload.clip_count ?? totalAvailableClipsFromCounts(payload.channel_counts) ?? clips.length,
       ),
       filtered_clip_count: Number(payload.filtered_clip_count ?? clips.length),
+      featured: Boolean(payload.featured),
       latest_started_at: latestStartedAt,
       limit: Number(payload.limit ?? selectedClipPageSize),
       offset: Number(payload.offset ?? clipOffset()),
@@ -1178,6 +1187,8 @@ function normalizeLivePayload(payload) {
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript || "",
       transcript_reviewed: Boolean(clip.transcript_reviewed),
+      featured: Boolean(clip.featured),
+      featured_at: clip.featured_at || "",
       playback_url: clip.playback_url || "",
       playback_expires_in_seconds: clip.playback_expires_in_seconds,
       playback_issued_at_ms: Date.now(),
@@ -1205,6 +1216,8 @@ function normalizePublishedManifest(payload) {
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript_public || clip.transcript || "",
       transcript_reviewed: Boolean(clip.transcript_reviewed),
+      featured: Boolean(clip.featured),
+      featured_at: clip.featured_at || "",
       audio_public_filename: clip.audio_public_filename || "",
     })),
   };
@@ -1290,7 +1303,11 @@ function renderStats(payload, clips) {
 
 function renderChannelFilter(payload) {
   const wasOpen = channelFilter.querySelector(".channel-filter-menu")?.open;
-  const channelCounts = payload.stats?.channel_counts || countBy(payload.clips || [], (clip) => clip.channel || "?");
+  const channelCountClips =
+    clipFeaturedFilter === "featured" && payload.source !== "live"
+      ? (payload.clips || []).filter((clip) => clip.featured)
+      : payload.clips || [];
+  const channelCounts = payload.stats?.channel_counts || countBy(channelCountClips, (clip) => clip.channel || "?");
   const configuredChannels = Object.keys(payload.stats?.channel_labels || payload.channel_labels || {});
   const channels = [...new Set([...Object.keys(channelCounts), ...configuredChannels])].sort(compareChannels);
   for (const channel of selectedChannelValues()) {
@@ -1370,6 +1387,32 @@ function renderClipDisplayControls() {
 }
 
 function renderClipDisplayControlSet() {
+  const featuredControl = segmentedControl("Show clips", [
+    {
+      label: "Recent",
+      active: clipFeaturedFilter === "recent",
+      onClick: () => {
+        if (clipFeaturedFilter === "recent") {
+          return;
+        }
+        clipFeaturedFilter = "recent";
+        selectedClipPage = 1;
+        loadAndRender();
+      },
+    },
+    {
+      label: "Hall of fame",
+      active: clipFeaturedFilter === "featured",
+      onClick: () => {
+        if (clipFeaturedFilter === "featured") {
+          return;
+        }
+        clipFeaturedFilter = "featured";
+        selectedClipPage = 1;
+        loadAndRender();
+      },
+    },
+  ]);
   const pageSizeControl = segmentedControl(
     "Clips per page",
     clipPageSizeOptions.map((pageSize) => ({
@@ -1409,7 +1452,7 @@ function renderClipDisplayControlSet() {
       },
     },
   ]);
-  return [pageSizeControl, sortControl];
+  return [featuredControl, pageSizeControl, sortControl];
 }
 
 function segmentedControl(labelText, options) {
@@ -1511,10 +1554,12 @@ function formatChannelFilterSummary(channelCounts) {
 }
 
 function filterClipsByChannel(clips) {
+  const visibleClips =
+    clipFeaturedFilter === "featured" ? clips.filter((clip) => clip.featured) : clips;
   if (!selectedChannels.size) {
-    return clips;
+    return visibleClips;
   }
-  return clips.filter((clip) => selectedChannels.has(clip.channel));
+  return visibleClips.filter((clip) => selectedChannels.has(clip.channel));
 }
 
 function paginateClips(clips) {
@@ -1539,7 +1584,11 @@ function renderClips(clips) {
     const empty = document.createElement("div");
     empty.className = "empty";
     empty.textContent =
-      selectedChannels.size === 0
+      clipFeaturedFilter === "featured"
+        ? selectedChannels.size === 0
+          ? "No Hall of Fame clips yet."
+          : "No Hall of Fame clips for the selected channels."
+        : selectedChannels.size === 0
         ? "No playable clips are available yet."
         : "No playable clips are available for the selected channels.";
     clipList.replaceChildren(empty);
@@ -1588,16 +1637,24 @@ function renderClipPagination(totalClips, { pending = false } = {}) {
   }
   const actions = document.createElement("div");
   actions.className = "pagination-actions";
-  actions.append(
-    paginationButton("Newest", selectedClipPage <= 1, () => goToClipPage(1), {
-      ariaLabel: "Newest page",
-    }),
-    paginationButton("Previous", selectedClipPage <= 1, () => goToClipPage(selectedClipPage - 1)),
-    paginationButton("Next", selectedClipPage >= totalPages, () => goToClipPage(selectedClipPage + 1)),
-    paginationButton("Oldest", selectedClipPage >= totalPages, () => goToClipPage(totalPages), {
-      ariaLabel: "Oldest page",
-    }),
-  );
+  const actionButtons = [];
+  if (selectedClipPage > 1) {
+    actionButtons.push(
+      paginationButton("Newest", false, () => goToClipPage(1), {
+        ariaLabel: "Newest page",
+      }),
+      paginationButton("Previous", false, () => goToClipPage(selectedClipPage - 1)),
+    );
+  }
+  if (selectedClipPage < totalPages) {
+    actionButtons.push(
+      paginationButton("Next", false, () => goToClipPage(selectedClipPage + 1)),
+      paginationButton("Oldest", false, () => goToClipPage(totalPages), {
+        ariaLabel: "Oldest page",
+      }),
+    );
+  }
+  actions.append(...actionButtons);
   clipPagination.hidden = false;
   clipPagination.classList.toggle("is-pending", pending);
   if (pending) {
@@ -1702,6 +1759,13 @@ function renderClipCard(clip) {
     meta.append(reviewed);
     article.classList.add("is-reviewed");
   }
+  if (clip.featured) {
+    meta.append(renderFeaturedPill());
+    article.classList.add("is-featured");
+  }
+  if (operatorReviewEnabled && canReviewClip(clip)) {
+    meta.append(renderFeaturedClipAction(clip, article));
+  }
 
   const title = document.createElement("h3");
   title.textContent = titleForClip(clip);
@@ -1734,6 +1798,8 @@ function clipRenderSignature(clip) {
     clip.duration_seconds || "",
     clip.transcript_public || "",
     clip.transcript_reviewed ? "reviewed" : "unreviewed",
+    clip.featured ? "featured" : "standard",
+    clip.featured_at || "",
     clip.playback_url ? "has-live-audio" : clip.audio_public_filename ? "has-static-audio" : "no-audio",
     operatorReviewEnabled && canReviewClip(clip) ? "reviewable" : "read-only",
   ].join("\u001f");
@@ -1835,6 +1901,92 @@ function postTranscriptCorrection(clip, transcript) {
       started_at: clip.started_at,
       transcript,
       reviewer: "operator-ui",
+    }),
+  });
+}
+
+function renderFeaturedPill() {
+  const featured = renderPill("Featured");
+  featured.classList.add("featured-pill");
+  return featured;
+}
+
+function renderFeaturedClipAction(clip, article) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "feature-clip-button";
+  setFeaturedClipButtonState(button, Boolean(clip.featured));
+  button.addEventListener("click", async () => {
+    await saveClipFeature(clip, !clip.featured, { button, article });
+  });
+  return button;
+}
+
+function setFeaturedClipButtonState(button, featured) {
+  button.classList.toggle("is-active", featured);
+  button.setAttribute("aria-pressed", String(featured));
+  button.setAttribute("aria-label", featured ? "Remove from Hall of Fame" : "Add to Hall of Fame");
+  button.textContent = featured ? "★" : "☆";
+  button.title = featured ? "Remove from Hall of Fame" : "Add to Hall of Fame";
+}
+
+async function saveClipFeature(clip, featured, controls) {
+  const { button, article } = controls;
+  button.disabled = true;
+  button.classList.add("is-saving");
+  try {
+    const response = await postClipFeature(clip, featured);
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        button.title = "Open the operator page over Tailscale to change Hall of Fame clips.";
+        return;
+      }
+      throw new Error(`feature HTTP ${response.status}`);
+    }
+    const body = await response.json();
+    clip.featured = Boolean(body.featured);
+    setFeaturedClipButtonState(button, clip.featured);
+    updateFeaturedClipCard(article, clip.featured);
+    if (clipFeaturedFilter === "featured" && !clip.featured) {
+      loadAndRender();
+    }
+  } catch (error) {
+    console.error(error);
+    setFeaturedClipButtonState(button, Boolean(clip.featured));
+  } finally {
+    button.classList.remove("is-saving");
+    button.disabled = false;
+  }
+}
+
+function updateFeaturedClipCard(article, featured) {
+  article.classList.toggle("is-featured", featured);
+  const meta = article.querySelector(".clip-meta");
+  const existingPill = meta?.querySelector(".featured-pill");
+  if (featured && !existingPill) {
+    const action = meta?.querySelector(".feature-clip-button");
+    const pill = renderFeaturedPill();
+    if (action) {
+      meta.insertBefore(pill, action);
+    } else {
+      meta?.append(pill);
+    }
+  }
+  if (!featured && existingPill) {
+    existingPill.remove();
+  }
+}
+
+function postClipFeature(clip, featured) {
+  return fetch(clipFeaturesUrl, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      channel: clip.channel,
+      started_at: clip.started_at,
+      featured,
+      featured_by: "operator-ui",
     }),
   });
 }
@@ -4418,20 +4570,29 @@ function selectedChannelStatusScope() {
 
 function statusText(payload, clips, filteredTotal) {
   if (!filteredTotal) {
+    if (clipFeaturedFilter === "featured") {
+      return selectedChannels.size === 0
+        ? "No Hall of Fame clips yet"
+        : "No Hall of Fame clips for the selected channels yet";
+    }
     return selectedChannels.size === 0 ? "No clips yet" : "No clips for the selected channels yet";
   }
   const scopeText = selectedChannelStatusScope();
   const pageText =
     clips.length === filteredTotal ? `${clips.length}` : `${clips.length} of ${filteredTotal}`;
   const clipNoun = filteredTotal === 1 ? "clip" : "clips";
+  const collectionText = clipFeaturedFilter === "featured" ? "featured " : "";
   if (payload.source === "live") {
-    return `${pageText} ${clipNoun}${scopeText} from the live DB`;
+    return `${pageText} ${collectionText}${clipNoun}${scopeText} from the live DB`;
   }
   const generated = payload.generated_at ? ` · exported ${formatDateTime(payload.generated_at)}` : "";
-  return `${pageText} published ${clipNoun}${scopeText}${generated}`;
+  return `${pageText} published ${collectionText}${clipNoun}${scopeText}${generated}`;
 }
 
 function filteredClipCount(payload, clips) {
+  if (clipFeaturedFilter === "featured" && payload.source !== "live") {
+    return clips.length;
+  }
   if (selectedChannels.size) {
     const channelCounts = payload.stats?.channel_counts;
     if (channelCounts) {

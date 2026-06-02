@@ -351,12 +351,68 @@ def test_transcript_corrections_override_recent_text_and_export_training_pairs(t
     ]
 
 
+def test_featured_clips_can_be_starred_filtered_and_unstarred(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    event_store = CapturingEventStore()
+    store = UploadedClipStore(db_path, event_store=event_store)
+    older_key = "raw/channel=14/date=2026-05-24/20260524T210000Z-older.mp3"
+    newer_key = "raw/channel=68/date=2026-05-24/20260524T213000Z-newer.mp3"
+    store.record_presigned_upload(
+        key=older_key,
+        request=_clip_request(channel="14", started_at="2026-05-24T21:00:00Z"),
+    )
+    store.record_presigned_upload(
+        key=newer_key,
+        request=_clip_request(channel="68", started_at="2026-05-24T21:30:00Z"),
+    )
+    store.mark_transcribed(
+        older_key,
+        [_segment("Routine traffic", "2026-05-24T21:00:00Z", "2026-05-24T21:00:03Z")],
+    )
+    store.mark_transcribed(
+        newer_key,
+        [_segment("Hall of fame audio", "2026-05-24T21:30:00Z", "2026-05-24T21:30:03Z")],
+    )
+
+    feature = store.set_clip_featured(
+        channel="68",
+        started_at="2026-05-24T21:30:00Z",
+        featured=True,
+        featured_by="operator-ui",
+    )
+
+    assert feature.key == newer_key
+    assert feature.featured is True
+    assert feature.featured_by == "operator-ui"
+    recent = store.recent_transcribed(limit=10)
+    assert [(clip.key, clip.featured) for clip in recent] == [
+        (newer_key, True),
+        (older_key, False),
+    ]
+    hall_of_fame = store.recent_transcribed(limit=10, featured_only=True)
+    assert [clip.key for clip in hall_of_fame] == [newer_key]
+    assert store.transcribed_clip_count(featured_only=True) == 1
+    assert [event["event_type"] for event in event_store.events][-1] == "clip.featured"
+
+    removed = store.set_clip_featured(
+        channel="68",
+        started_at="2026-05-24T21:30:00Z",
+        featured=False,
+        featured_by="operator-ui",
+    )
+
+    assert removed.featured is False
+    assert store.recent_transcribed(limit=10, featured_only=True) == []
+    assert store.transcribed_clip_count(featured_only=True) == 0
+    assert [event["event_type"] for event in event_store.events][-1] == "clip.unfeatured"
+
+
 def _clip_request(
     *,
     channel: str = "68",
     started_at: str = "2026-05-24T21:00:00Z",
 ) -> ClipPresignRequest:
-    ended_at = (datetime.fromisoformat(started_at.replace("Z", "+00:00")) + timedelta(seconds=5))
+    ended_at = datetime.fromisoformat(started_at.replace("Z", "+00:00")) + timedelta(seconds=5)
     ended_at_text = ended_at.isoformat().replace("+00:00", "Z")
     return ClipPresignRequest(
         channel=channel,

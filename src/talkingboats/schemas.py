@@ -93,6 +93,21 @@ class TranscriptCorrectionResponse(BaseModel):
     transcript_reviewed: bool
 
 
+class ClipFeatureRequest(BaseModel):
+    channel: str = Field(min_length=1, max_length=8)
+    started_at: str = Field(min_length=1, max_length=64)
+    featured: bool = True
+    featured_by: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class ClipFeatureResponse(BaseModel):
+    status: Literal["featured", "unfeatured"]
+    channel: str
+    started_at: str
+    featured: bool
+
+
 class LiveChannelResponse(BaseModel):
     channel: str
     label: str

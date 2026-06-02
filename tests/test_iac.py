@@ -161,6 +161,7 @@ def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
     assert 'path_pattern             = "/api/clips/playback"' in main_tf
     assert 'path_pattern             = "/api/clips/audio"' in main_tf
     assert 'path_pattern             = "/api/clips/corrections*"' not in main_tf
+    assert 'path_pattern             = "/api/clips/features*"' not in main_tf
     assert 'path_pattern             = "/api/operator/session*"' not in main_tf
     assert 'path_pattern             = "/api/analysis/lexical"' in main_tf
     assert 'path_pattern             = "/ais-catcher/*"' in main_tf
@@ -172,8 +173,10 @@ def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
     assert 'path_pattern             = "/ais-catcher/*"' in dev_distribution
     assert main_tf.count("target_origin_id         = local.live_origin_id") == 6
     assert 'path_pattern             = "/api/clips/corrections*"' not in prod_distribution
+    assert 'path_pattern             = "/api/clips/features*"' not in prod_distribution
     assert 'path_pattern             = "/api/operator/session*"' not in prod_distribution
     assert 'path_pattern             = "/api/clips/corrections*"' not in dev_distribution
+    assert 'path_pattern             = "/api/clips/features*"' not in dev_distribution
     assert 'path_pattern             = "/api/operator/session*"' not in dev_distribution
     assert 'enabled             = false' in dev_distribution
     assert main_tf.count("target_origin_id         = local.dev_live_origin_id") == 7
