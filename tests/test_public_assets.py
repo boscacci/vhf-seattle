@@ -355,8 +355,10 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert "const defaultClipPageSize = 6;" in app_js
-    assert "const clipPageSizeOptions = [6, 12, 24, 48];" in app_js
+    assert "const clipPageSizeOptions = [6, 12, 24];" in app_js
+    assert "48" not in app_js.partition("const clipPageSizeOptions = [")[2].partition("];")[0]
     assert "let selectedClipPageSize = defaultClipPageSize;" in app_js
+    assert "let selectedClipOffset = 0;" in app_js
     assert 'let clipSortDirection = "newest";' in app_js
     assert 'let clipFeaturedFilter = "recent";' in app_js
     assert "limit=${selectedClipPageSize}" in app_js
@@ -366,9 +368,10 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert "function setClipPageSize(pageSize)" in app_js
     assert "const firstVisibleClipOffset = clipOffset();" in app_js
     assert (
-        "selectedClipPage = Math.floor(firstVisibleClipOffset / selectedClipPageSize) + 1;"
+        "selectedClipOffset = firstVisibleClipOffset;"
         in app_js
     )
+    assert "function goToClipOffset(offset)" in app_js
     assert "mobileClipDisplayControls()" not in app_js
     assert "const insertAfter = Math.min(6, cards.length);" not in app_js
     assert "clipList.replaceChildren(...clips.map(renderClipCard));" not in app_js

@@ -91,7 +91,11 @@ try {
     if (lazyClipShell.placeholderCount < 3) {
       throw new Error(`recent clip lazy placeholders did not render: ${JSON.stringify(lazyClipShell)}`);
     }
-    if (!lazyClipShell.controlsText.includes("Clips per page") || !lazyClipShell.controlsText.includes("48")) {
+    if (
+      !lazyClipShell.controlsText.includes("Clips per page") ||
+      !lazyClipShell.controlsText.includes("24") ||
+      lazyClipShell.controlsText.includes("48")
+    ) {
       throw new Error(`recent clip controls were not available during lazy load: ${JSON.stringify(lazyClipShell)}`);
     }
     if (!lazyClipShell.status.includes("Loading recent clips")) {
@@ -415,8 +419,39 @@ try {
     }
     await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
-    await page.locator("#clip-display-controls").getByRole("button", { name: "48", exact: true }).click();
-    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
+    await page.locator("#clip-pagination").getByRole("button", { name: "Next", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"));
+    const sixClipPageTwo = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      renderedClips: document.querySelectorAll("#clips .clip-card").length,
+      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
+      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+    }));
+    if (
+      sixClipPageTwo.renderedClips !== 6 ||
+      sixClipPageTwo.activePage !== "2" ||
+      !sixClipPageTwo.firstTranscript.includes("Smoke clip 7")
+    ) {
+      throw new Error(`6-per-page second page did not establish the anchor: ${JSON.stringify(sixClipPageTwo)}`);
+    }
+    await page.locator("#clip-display-controls").getByRole("button", { name: "12", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 12);
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"));
+    const twelveClipAnchoredPage = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      renderedClips: document.querySelectorAll("#clips .clip-card").length,
+      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
+      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+    }));
+    if (
+      twelveClipAnchoredPage.renderedClips !== 12 ||
+      !twelveClipAnchoredPage.firstTranscript.includes("Smoke clip 7")
+    ) {
+      throw new Error(`12-per-page change did not keep the top clip anchored: ${JSON.stringify(twelveClipAnchoredPage)}`);
+    }
+    await page.locator("#clip-display-controls").getByRole("button", { name: "24", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 24);
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"));
     const clipControlsBeforeFlip = await page.evaluate(() => {
       const headerControls = document.querySelector("#clip-display-controls");
       const inlineControls = document.querySelector("#clips .clip-display-controls-inline");
@@ -429,6 +464,7 @@ try {
         display: controlStyle.display,
         inlineControlsPresent: Boolean(inlineControls),
         firstTranscript,
+        renderedClips: document.querySelectorAll("#clips .clip-card").length,
         pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
         buttonLabels: [...headerControls.querySelectorAll("button")].map((button) =>
           button.textContent?.trim(),
@@ -438,62 +474,11 @@ try {
         ].find((group) => group.textContent?.includes("Clips per page"))?.querySelectorAll("button").length,
       };
     });
-    if (!clipControlsBeforeFlip.pageStatus.includes("Page 1 of 3")) {
-      throw new Error(`48-per-page did not recalculate total pages: ${JSON.stringify(clipControlsBeforeFlip)}`);
-    }
-    await page.locator("#clip-pagination").getByRole("button", { name: "Next", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 49"));
-    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
-    const fortyEightNextPage = await page.evaluate(() => ({
-      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-      renderedClips: document.querySelectorAll("#clips .clip-card").length,
-      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
-      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-    }));
     if (
-      fortyEightNextPage.renderedClips !== 48 ||
-      fortyEightNextPage.activePage !== "2" ||
-      !fortyEightNextPage.pageStatus.includes("Page 2 of 3") ||
-      !fortyEightNextPage.firstTranscript.includes("Smoke clip 49")
+      clipControlsBeforeFlip.renderedClips !== 24 ||
+      !clipControlsBeforeFlip.firstTranscript.includes("Smoke clip 7")
     ) {
-      throw new Error(`48-per-page next did not load the second full page: ${JSON.stringify(fortyEightNextPage)}`);
-    }
-    await page.locator("#clip-display-controls").getByRole("button", { name: "12", exact: true }).click();
-    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 12);
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 49"));
-    const anchoredPageSizeChange = await page.evaluate(() => ({
-      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-      renderedClips: document.querySelectorAll("#clips .clip-card").length,
-      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
-      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-    }));
-    if (
-      anchoredPageSizeChange.renderedClips !== 12 ||
-      anchoredPageSizeChange.activePage !== "5" ||
-      !anchoredPageSizeChange.pageStatus.includes("Page 5 of 12") ||
-      !anchoredPageSizeChange.firstTranscript.includes("Smoke clip 49")
-    ) {
-      throw new Error(`page size change did not keep the visible clip anchored: ${JSON.stringify(anchoredPageSizeChange)}`);
-    }
-    await page.locator("#clip-display-controls").getByRole("button", { name: "48", exact: true }).click();
-    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 49"));
-    await page.locator("#clip-pagination").getByRole("button", { name: "Previous", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
-    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 48);
-    const fortyEightPreviousPage = await page.evaluate(() => ({
-      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-      renderedClips: document.querySelectorAll("#clips .clip-card").length,
-      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
-      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-    }));
-    if (
-      fortyEightPreviousPage.renderedClips !== 48 ||
-      fortyEightPreviousPage.activePage !== "1" ||
-      !fortyEightPreviousPage.pageStatus.includes("Page 1 of 3") ||
-      !fortyEightPreviousPage.firstTranscript.includes("Smoke clip 1")
-    ) {
-      throw new Error(`48-per-page previous did not return to the first full page: ${JSON.stringify(fortyEightPreviousPage)}`);
+      throw new Error(`24-per-page change did not keep the top clip anchored: ${JSON.stringify(clipControlsBeforeFlip)}`);
     }
     await page.locator("#clip-display-controls").getByRole("button", { name: "Oldest", exact: true }).click();
     await page.waitForFunction(
@@ -518,7 +503,11 @@ try {
     if (clipControlsBeforeFlip.inlineControlsPresent) {
       throw new Error(`mobile clip controls were duplicated in the clip list: ${JSON.stringify(clipControlsBeforeFlip)}`);
     }
-    if (!clipControlsBeforeFlip.buttonLabels.includes("48") || clipControlsBeforeFlip.pageSizeButtons !== 4) {
+    if (
+      clipControlsBeforeFlip.buttonLabels.includes("48") ||
+      !clipControlsBeforeFlip.buttonLabels.includes("24") ||
+      clipControlsBeforeFlip.pageSizeButtons !== 3
+    ) {
       throw new Error(`mobile page size controls are incomplete: ${JSON.stringify(clipControlsBeforeFlip)}`);
     }
     if (
@@ -527,13 +516,13 @@ try {
     ) {
       throw new Error(`mobile hall of fame filter controls are missing: ${JSON.stringify(clipControlsBeforeFlip)}`);
     }
-    if (!clipControlsBeforeFlip.firstTranscript.includes("Smoke clip 1")) {
+    if (!clipControlsBeforeFlip.firstTranscript.includes("Smoke clip 7")) {
       throw new Error(`expected newest page order before flip: ${clipControlsBeforeFlip.firstTranscript}`);
     }
-    if (!clipControlsAfterFlip.firstTranscript.includes("Smoke clip 48")) {
+    if (!clipControlsAfterFlip.firstTranscript.includes("Smoke clip 30")) {
       throw new Error(`expected oldest page order after flip: ${clipControlsAfterFlip.firstTranscript}`);
     }
-    if (clipControlsAfterFlip.renderedClips !== 48 || !clipControlsAfterFlip.pageStatus.includes("Page 1")) {
+    if (clipControlsAfterFlip.renderedClips !== 24) {
       throw new Error(`clip controls did not keep the larger first page: ${JSON.stringify(clipControlsAfterFlip)}`);
     }
     if (await page.getByRole("button", { name: "Fine Tuning" }).count()) {

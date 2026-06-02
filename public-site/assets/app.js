@@ -1,5 +1,5 @@
 const defaultClipPageSize = 6;
-const clipPageSizeOptions = [6, 12, 24, 48];
+const clipPageSizeOptions = [6, 12, 24];
 const clipPlaybackUrl = "/api/clips/playback";
 const clipAudioUrl = "/api/clips/audio";
 const clipSearchUrl = "/api/clips/search";
@@ -294,6 +294,7 @@ let currentClipPlayback = null;
 let quietSince = null;
 let selectedChannels = new Set();
 let selectedClipPage = 1;
+let selectedClipOffset = 0;
 let selectedClipPageSize = defaultClipPageSize;
 let clipSortDirection = "newest";
 let clipFeaturedFilter = "recent";
@@ -460,7 +461,7 @@ channelFilter.addEventListener("click", (event) => {
   } else {
     selectedChannels.clear();
   }
-  selectedClipPage = 1;
+  resetClipPagination();
   loadAndRender();
 });
 
@@ -478,7 +479,7 @@ channelFilter.addEventListener("change", (event) => {
   } else {
     selectedChannels.delete(channel);
   }
-  selectedClipPage = 1;
+  resetClipPagination();
   loadAndRender();
 });
 
@@ -1397,7 +1398,7 @@ function renderClipDisplayControlSet() {
           return;
         }
         clipFeaturedFilter = "recent";
-        selectedClipPage = 1;
+        resetClipPagination();
         loadAndRender();
       },
     },
@@ -1409,7 +1410,7 @@ function renderClipDisplayControlSet() {
           return;
         }
         clipFeaturedFilter = "featured";
-        selectedClipPage = 1;
+        resetClipPagination();
         loadAndRender();
       },
     },
@@ -1461,8 +1462,14 @@ function setClipPageSize(pageSize) {
   }
   const firstVisibleClipOffset = clipOffset();
   selectedClipPageSize = nextPageSize;
-  selectedClipPage = Math.floor(firstVisibleClipOffset / selectedClipPageSize) + 1;
+  selectedClipOffset = firstVisibleClipOffset;
+  syncClipPageFromOffset();
   return true;
+}
+
+function resetClipPagination() {
+  selectedClipOffset = 0;
+  selectedClipPage = 1;
 }
 
 function segmentedControl(labelText, options) {
@@ -1585,7 +1592,7 @@ function applyClipSortForCurrentPage(clips) {
 }
 
 function clipOffset() {
-  return (selectedClipPage - 1) * selectedClipPageSize;
+  return selectedClipOffset;
 }
 
 function renderClips(clips) {
@@ -1633,7 +1640,8 @@ function renderClipPagination(totalClips, { pending = false } = {}) {
     clipPagination.replaceChildren();
     return;
   }
-  selectedClipPage = Math.min(Math.max(selectedClipPage, 1), totalPages);
+  clampClipOffset(totalClips);
+  syncClipPageFromOffset();
   const pageStatus = document.createElement("span");
   pageStatus.className = "clip-page-status";
   pageStatus.textContent = pending
@@ -1648,17 +1656,17 @@ function renderClipPagination(totalClips, { pending = false } = {}) {
   const actions = document.createElement("div");
   actions.className = "pagination-actions";
   const actionButtons = [];
-  if (selectedClipPage > 1) {
+  if (clipOffset() > 0) {
     actionButtons.push(
-      paginationButton("Newest", false, () => goToClipPage(1), {
+      paginationButton("Newest", false, () => goToClipOffset(0), {
         ariaLabel: "Newest page",
       }),
-      paginationButton("Previous", false, () => goToClipPage(selectedClipPage - 1)),
+      paginationButton("Previous", false, () => goToClipOffset(clipOffset() - selectedClipPageSize)),
     );
   }
-  if (selectedClipPage < totalPages) {
+  if (clipOffset() + selectedClipPageSize < totalClips) {
     actionButtons.push(
-      paginationButton("Next", false, () => goToClipPage(selectedClipPage + 1)),
+      paginationButton("Next", false, () => goToClipOffset(clipOffset() + selectedClipPageSize)),
       paginationButton("Oldest", false, () => goToClipPage(totalPages), {
         ariaLabel: "Oldest page",
       }),
@@ -1707,6 +1715,16 @@ function clipPaginationItems(currentPage, totalPages) {
   return items;
 }
 
+function syncClipPageFromOffset() {
+  selectedClipPage = Math.floor(clipOffset() / selectedClipPageSize) + 1;
+}
+
+function clampClipOffset(totalClips) {
+  const totalPages = Math.max(1, Math.ceil(totalClips / selectedClipPageSize));
+  const maxOffset = (totalPages - 1) * selectedClipPageSize;
+  selectedClipOffset = Math.min(Math.max(clipOffset(), 0), maxOffset);
+}
+
 function paginationPageButton(pageNumber) {
   const button = paginationButton(String(pageNumber), selectedClipPage === pageNumber, () => {
     goToClipPage(pageNumber);
@@ -1730,10 +1748,23 @@ function paginationEllipsis() {
 
 function goToClipPage(pageNumber) {
   const nextPage = Math.max(1, Math.floor(Number(pageNumber) || 1));
-  if (nextPage === selectedClipPage) {
+  const nextOffset = (nextPage - 1) * selectedClipPageSize;
+  if (nextOffset === clipOffset()) {
     return;
   }
   selectedClipPage = nextPage;
+  selectedClipOffset = nextOffset;
+  renderClipPagePendingState();
+  loadAndRender();
+}
+
+function goToClipOffset(offset) {
+  const nextOffset = Math.max(0, Math.floor(Number(offset) || 0));
+  if (nextOffset === clipOffset()) {
+    return;
+  }
+  selectedClipOffset = nextOffset;
+  syncClipPageFromOffset();
   renderClipPagePendingState();
   loadAndRender();
 }
