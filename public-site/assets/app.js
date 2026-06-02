@@ -79,6 +79,7 @@ const unknownPlaybackTimeLabel = "—";
 const everythingLiveChannel = "everything";
 const everythingInitialQueueLimit = 3;
 const trafficChannelIds = new Set(["14"]);
+const hallOfFameRouteSegment = "hall-of-fame";
 const tailnetHostSuffix = ".tailbea63b.ts.net";
 const tailnetDevHost = window.location.hostname === "vhf-dev.robertboscacci.com";
 const localAppHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
@@ -112,6 +113,7 @@ const tabRouteSegments = {
 };
 const tabRouteAliases = {
   clips: "clips",
+  "hall-of-fame": "clips",
   search: "search",
   live: "live",
   ais: "map",
@@ -266,6 +268,7 @@ const languageStatus = document.querySelector("#language-status");
 const lexicalAnalysis = document.querySelector("#lexical-analysis");
 const performanceStatus = document.querySelector("#performance-status");
 const performanceDashboard = document.querySelector("#performance-dashboard");
+const clipsTitle = document.querySelector("#clips-title");
 
 if (operatorLabelingLink) {
   operatorLabelingLink.hidden = !privateAppHost || operatorReviewEnabled;
@@ -297,7 +300,8 @@ let selectedClipPage = 1;
 let selectedClipOffset = 0;
 let selectedClipPageSize = defaultClipPageSize;
 let clipSortDirection = "newest";
-let clipFeaturedFilter = "recent";
+const initialRouteState = routeStateFromLocation();
+let clipFeaturedFilter = initialRouteState.clipFeaturedFilter;
 let currentClipPayload = null;
 let currentPageClips = [];
 let currentFilteredTotal = 0;
@@ -306,7 +310,7 @@ let clipStatsTimer = null;
 let clipStatsAbortController = null;
 let lastRenderedClipTotal = null;
 let selectedLiveChannel = everythingLiveChannel;
-let activeTab = "clips";
+let activeTab = initialRouteState.tab;
 let mapPayloadLoaded = false;
 let languagePayloadLoaded = false;
 let performancePayloadLoaded = false;
@@ -510,7 +514,7 @@ window.addEventListener("pagehide", () => {
 });
 
 window.addEventListener("popstate", () => {
-  activateTab(tabFromLocation(), { updateRoute: false });
+  applyRouteStateFromLocation();
 });
 
 liveAudio.addEventListener("playing", () => {
@@ -1232,6 +1236,7 @@ function renderSite(payload) {
   document.querySelector("#site-title").textContent = payload.site?.title || fallbackManifest.site.title;
   document.querySelector("#site-subtitle").textContent =
     payload.site?.subtitle || fallbackManifest.site.subtitle;
+  renderClipHeading();
   renderClipDisplayControls();
   renderChannelFilter(payload);
   const filteredClips = filterClipsByChannel(clips);
@@ -1248,6 +1253,7 @@ function renderSite(payload) {
 
 function renderClipSummaryOnly(payload) {
   const clips = payload.clips || [];
+  renderClipHeading();
   const filteredClips = filterClipsByChannel(clips);
   const pageClips = payload.source === "live" ? filteredClips : paginateClips(filteredClips);
   const filteredTotal = filteredClipCount(payload, filteredClips);
@@ -1388,6 +1394,13 @@ function renderClipDisplayControls() {
   clipDisplayControls.replaceChildren(...renderClipDisplayControlSet());
 }
 
+function renderClipHeading() {
+  if (!clipsTitle) {
+    return;
+  }
+  clipsTitle.textContent = clipFeaturedFilter === "featured" ? "Hall of Fame" : "Recent Clips";
+}
+
 function renderClipDisplayControlSet() {
   const featuredControl = segmentedControl("Show clips", [
     {
@@ -1399,6 +1412,7 @@ function renderClipDisplayControlSet() {
         }
         clipFeaturedFilter = "recent";
         resetClipPagination();
+        updateTabRoute("clips");
         loadAndRender();
       },
     },
@@ -1411,6 +1425,7 @@ function renderClipDisplayControlSet() {
         }
         clipFeaturedFilter = "featured";
         resetClipPagination();
+        updateTabRoute("clips");
         loadAndRender();
       },
     },
@@ -2193,18 +2208,42 @@ function normalizeTabName(name) {
   return tabRouteAliases[String(name || "").toLowerCase()] || "clips";
 }
 
-function tabFromLocation() {
+function routeStateFromLocation() {
   const url = new URL(window.location.href);
   const tabParam = url.searchParams.get("tab");
   const hashSegment = url.hash.replace(/^#\/?/, "");
   const pathSegments = url.pathname.split("/").filter(Boolean);
   const pathSegment = pathSegments[pathSegments.length - 1] || "";
-  return normalizeTabName(tabParam || hashSegment || pathSegment || "clips");
+  const routeName = tabParam || hashSegment || pathSegment || "clips";
+  const hallOfFameRoute =
+    String(routeName).toLowerCase() === hallOfFameRouteSegment ||
+    url.searchParams.get("featured") === "true";
+  return {
+    tab: normalizeTabName(routeName),
+    clipFeaturedFilter: hallOfFameRoute ? "featured" : "recent",
+  };
+}
+
+function applyRouteStateFromLocation() {
+  const routeState = routeStateFromLocation();
+  const nextTab = enabledTabName(routeState.tab);
+  const filterChanged = clipFeaturedFilter !== routeState.clipFeaturedFilter;
+  clipFeaturedFilter = routeState.clipFeaturedFilter;
+  if (filterChanged) {
+    resetClipPagination();
+  }
+  activateTab(nextTab, { updateRoute: false });
+  if (nextTab === "clips" && filterChanged) {
+    loadAndRender();
+  }
 }
 
 function tabRouteUrl(name) {
   const url = new URL(window.location.href);
-  const routeSegment = tabRouteSegments[name] || tabRouteSegments.clips;
+  const routeSegment =
+    name === "clips" && clipFeaturedFilter === "featured"
+      ? hallOfFameRouteSegment
+      : tabRouteSegments[name] || tabRouteSegments.clips;
   url.pathname = `/${routeSegment}/`;
   url.search = "";
   url.hash = "";
@@ -4708,4 +4747,4 @@ function shortTime(value) {
 loadLiveChannels();
 loadAndRender();
 startClipStatsPolling();
-activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false });
+activateTab(initialRouteState.tab, { replaceRoute: true, updateRoute: false });

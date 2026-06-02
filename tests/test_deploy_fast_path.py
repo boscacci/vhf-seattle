@@ -15,6 +15,7 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
         '"/assets/*"',
         '"/favicon.svg"',
         '"/clips/*"',
+        '"/hall-of-fame/*"',
         '"/live/*"',
         '"/ais/*"',
         '"/analysis/index.html"',
@@ -23,6 +24,8 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     ):
         assert path in script
     assert "dev_only_route_index_paths" in script
+    assert '"hall-of-fame/index.html"' in script
+    assert '"hall-of-fame/"' in script
     assert '"performance/index.html"' in script
     assert '"operator/index.html"' in script
     assert 'if [[ "${environment}" == "dev" ]]; then' in script

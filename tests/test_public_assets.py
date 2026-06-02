@@ -65,6 +65,15 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "/api/live/channels" in app_js
     assert 'const clipCorrectionsUrl = "/api/clips/corrections";' in app_js
     assert 'const clipFeaturesUrl = "/api/clips/features";' in app_js
+    assert 'const hallOfFameRouteSegment = "hall-of-fame";' in app_js
+    assert "function routeStateFromLocation()" in app_js
+    assert 'clipFeaturedFilter: hallOfFameRoute ? "featured" : "recent",' in app_js
+    assert (
+        'clipsTitle.textContent = clipFeaturedFilter === "featured" ? '
+        '"Hall of Fame" : "Recent Clips";'
+        in app_js
+    )
+    assert "updateTabRoute(\"clips\"" in app_js
     assert "/api/operator/session" not in app_js
     assert "operatorReviewEnabled" in app_js
     assert "featureClipWriteEnabled" in app_js
@@ -360,7 +369,8 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert "let selectedClipPageSize = defaultClipPageSize;" in app_js
     assert "let selectedClipOffset = 0;" in app_js
     assert 'let clipSortDirection = "newest";' in app_js
-    assert 'let clipFeaturedFilter = "recent";' in app_js
+    assert "const initialRouteState = routeStateFromLocation();" in app_js
+    assert "let clipFeaturedFilter = initialRouteState.clipFeaturedFilter;" in app_js
     assert "limit=${selectedClipPageSize}" in app_js
     assert "featured=true" in app_js
     assert "renderClipDisplayControls()" in app_js
@@ -553,11 +563,15 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert 'performance: "performance"' in app_js
     assert "fineTuning" not in app_js
     assert "fine-tuning" not in app_js
-    assert "tabFromLocation()" in app_js
+    assert "routeStateFromLocation()" in app_js
+    assert "applyRouteStateFromLocation()" in app_js
     assert "updateTabRoute(name" in app_js
     assert 'window.addEventListener("popstate"' in app_js
-    assert "activateTab(tabFromLocation(), { replaceRoute: true, updateRoute: false })" in app_js
-    for route in ("clips", "search", "live", "ais", "analysis"):
+    assert (
+        "activateTab(initialRouteState.tab, { replaceRoute: true, updateRoute: false })"
+        in app_js
+    )
+    for route in ("clips", "hall-of-fame", "search", "live", "ais", "analysis"):
         assert f'"{route}/index.html"' in deploy_shell
         assert f'"{route}/index.html"' in deploy_full
         assert f'"{route}/"' in deploy_shell

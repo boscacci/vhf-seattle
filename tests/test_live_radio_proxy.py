@@ -1158,6 +1158,16 @@ def test_proxy_static_shell_routes_include_search_tab() -> None:
     assert "clip-search-form" in response.text
 
 
+def test_proxy_static_shell_routes_include_hall_of_fame_deep_link() -> None:
+    app = create_app(ProxySettings())
+
+    response = _run(_asgi_get(app, "/hall-of-fame/"))
+
+    assert response.status_code == 200
+    assert 'id="clips-title">Recent Clips</h2>' in response.text
+    assert 'data-tab="clips"' in response.text
+
+
 def test_proxy_performance_disk_snapshot_collapses_duplicate_filesystems(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -945,6 +945,8 @@ def create_app(
     @app.get("/index.html", include_in_schema=False)
     @app.get("/clips", include_in_schema=False)
     @app.get("/clips/", include_in_schema=False)
+    @app.get("/hall-of-fame", include_in_schema=False)
+    @app.get("/hall-of-fame/", include_in_schema=False)
     @app.get("/search", include_in_schema=False)
     @app.get("/search/", include_in_schema=False)
     @app.get("/live", include_in_schema=False)
