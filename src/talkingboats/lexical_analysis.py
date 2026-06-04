@@ -534,6 +534,20 @@ def load_transcribed_clips_from_store(
 ) -> Iterable[TranscriptClip]:
     if page_size <= 0:
         raise ValueError("page_size must be positive")
+    iter_recent_transcribed = getattr(clip_store, "iter_recent_transcribed", None)
+    if callable(iter_recent_transcribed):
+        clips = []
+        for clip in iter_recent_transcribed(
+            page_size=page_size,
+            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+        ):
+            clips.append(clip)
+            if limit is not None and len(clips) >= limit:
+                break
+        for clip in reversed(clips):
+            yield _transcript_clip_from_recent(clip)
+        return
+
     offset = 0
     remaining = limit
     while remaining is None or remaining > 0:
@@ -546,20 +560,24 @@ def load_transcribed_clips_from_store(
         if not batch:
             break
         for clip in reversed(batch):
-            yield TranscriptClip(
-                key=str(clip.key),
-                channel=str(clip.channel),
-                started_at=str(clip.started_at),
-                ended_at=str(clip.ended_at) if clip.ended_at else None,
-                duration_seconds=clip.duration_seconds,
-                content_type=str(clip.content_type),
-                transcript=_public_text(str(clip.transcript)),
-            )
+            yield _transcript_clip_from_recent(clip)
         offset += len(batch)
         if remaining is not None:
             remaining -= len(batch)
         if len(batch) < batch_size:
             break
+
+
+def _transcript_clip_from_recent(clip: Any) -> TranscriptClip:
+    return TranscriptClip(
+        key=str(clip.key),
+        channel=str(clip.channel),
+        started_at=str(clip.started_at),
+        ended_at=str(clip.ended_at) if clip.ended_at else None,
+        duration_seconds=clip.duration_seconds,
+        content_type=str(clip.content_type),
+        transcript=_public_text(str(clip.transcript)),
+    )
 
 
 def load_transcribed_clips(

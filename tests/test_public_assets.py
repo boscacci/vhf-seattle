@@ -70,12 +70,18 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "tailnetLiveBase" not in app_js
     assert "tailnetHostSuffix" in app_js
     assert ".tailbea63b.ts.net" in app_js
+    assert "optiplex.tailbea63b.ts.net" not in app_js
+    assert 'const privateApiBaseUrl = "";' in app_js
+    assert "function apiUrl(path)" in app_js
     assert "America/Los_Angeles" in app_js
     assert "timeZoneName" in app_js
-    assert "/api/live/current.mp3" in app_js
-    assert "/api/live/channels" in app_js
-    assert 'const clipCorrectionsUrl = "/api/clips/corrections";' in app_js
-    assert 'const clipFeaturesUrl = "/api/clips/features";' in app_js
+    assert "/live/current.m3u8" not in app_js
+    assert 'const defaultLiveStreamUrl = apiUrl("/api/live/current.mp3");' in app_js
+    assert 'const liveChannelsUrl = apiUrl("/api/live/channels");' in app_js
+    assert 'const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353' in app_js
+    assert 'const aisCatcherFallbackUrl = "https://aiscatcher.org/";' in app_js
+    assert 'const clipCorrectionsUrl = apiUrl("/api/clips/corrections");' in app_js
+    assert 'const clipFeaturesUrl = apiUrl("/api/clips/features");' in app_js
     assert 'const hallOfFameRouteSegment = "hall-of-fame";' in app_js
     assert "function routeStateFromLocation()" in app_js
     assert 'clipFeaturedFilter: hallOfFameRoute ? "featured" : "recent",' in app_js
@@ -96,11 +102,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "operatorLabelingLink.hidden = !privateAppHost || operatorReviewEnabled;" in app_js
     assert ".operator-labeling-link" in styles_css
     assert "\n[hidden] {\n  display: none !important;\n}" in styles_css
-    assert 'const asrFeedbackStatusUrl = "/api/asr-feedback/status";' in app_js
+    assert 'const asrFeedbackStatusUrl = apiUrl("/api/asr-feedback/status");' in app_js
     assert "privateAppHost" in app_js
-    assert "tailnetDevHost" in app_js
+    assert "devAppHost" in app_js
     assert 'window.location.pathname.startsWith("/operator")' in app_js
-    assert 'hostname === "vhf-dev.robertboscacci.com"' in app_js
+    assert 'window.location.hostname === "vhf-dev.robertboscacci.com"' in app_js
     assert "All but traffic" in app_js
     assert 'const trafficChannelIds = new Set(["14"]);' in app_js
     assert 'allButTrafficAction.dataset.preset = "all-but-traffic";' in app_js
@@ -146,7 +152,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "languageDashboardEnabled" in app_js
     assert '"vhf.robertboscacci.com"' in app_js
     assert "/api/analysis/lexical" in app_js
-    assert 'const clipSearchUrl = "/api/clips/search";' in app_js
+    assert 'const clipSearchUrl = apiUrl("/api/clips/search");' in app_js
     assert "renderSearchSuggestions" in app_js
     assert "searchSuggestionGroupsFromPayload" in app_js
     assert "applySearchSuggestion" in app_js
@@ -235,6 +241,13 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
         "const latestStartedAt = payload.stats?.latest_started_at || clips[0]?.started_at;"
         in app_js
     )
+    assert '["Feed",' not in app_js
+    assert '"Live DB"' not in app_js
+    assert '"Published export"' not in app_js
+    assert "function formatStatValue(label, value)" in app_js
+    assert "return Number(value).toLocaleString();" in app_js
+    assert 'description.textContent = formatStatValue(label, value);' in app_js
+    assert "minmax(142px, 1.35fr)" in styles_css
     assert "renderClipSummaryOnly(currentClipPayload);" in app_js
     assert 'clipList.querySelectorAll(".clip-card[data-clip-id]")' in app_js
     assert "existing?.dataset.clipSignature === signature" in app_js
@@ -320,17 +333,15 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "static clips" not in app_js
     assert "Tailnet Protected" not in index_html
     assert "loadAndRenderMap" in app_js
-    assert (
-        'const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353'
-        '&zoom=13&setcoord=false&welcome=false&tab=map";'
-    ) in app_js
+    assert 'const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353' in app_js
+    assert 'const aisCatcherFallbackUrl = "https://aiscatcher.org/";' in app_js
     assert "renderAisCatcherFrame" in app_js
     assert "aisCatcherFrame.src = aisCatcherFrameUrl;" in app_js
     assert 'aisCatcherFrame.title = "AIS-catcher live map";' in app_js
     assert 'mapStatus.textContent = "Showing AIS-catcher live map";' in app_js
     assert ".tab-panel[hidden]" in styles_css
     assert "/api/ais/tracks" not in app_js
-    assert "loadLiveAisTracks" not in app_js
+    assert "loadLiveAisSnapshot" not in app_js
     assert "mapPayloadWithLiveAis" not in app_js
     assert "renderAisMapDashboard" not in app_js
     assert "renderVesselMap" not in app_js
@@ -339,10 +350,10 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel" in app_js
     assert "lexicalAnalysis.replaceChildren(cards, channelPanel, mapPanel" not in app_js
     assert ".ais-catcher-frame" in styles_css
-    assert ".vessel-map-panel" not in styles_css
+    assert ".vessel-map-panel" in styles_css
     assert ".nautical-map" not in styles_css
     assert ".vessel-marker" not in styles_css
-    assert "bay-map" not in index_html
+    assert "ais-catcher-frame" in index_html
     assert "Nearby Signals" not in index_html
     assert "Play AIS" not in index_html
     assert "L.tileLayer" not in app_js
@@ -417,6 +428,19 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert ".clip-segment-button {\n    flex: 1 1 0;" in styles_css
 
 
+def test_public_site_channel_selector_closes_on_outside_interaction() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "function closeChannelFilterMenu()" in app_js
+    assert "function closeChannelFilterOnOutsidePointer(event)" in app_js
+    assert "function closeChannelFilterOnOutsideFocus(event)" in app_js
+    assert "channelFilter.contains(event.target)" in app_js
+    assert 'document.addEventListener("pointerdown", closeChannelFilterOnOutsidePointer);' in app_js
+    assert 'document.addEventListener("focusin", closeChannelFilterOnOutsideFocus);' in app_js
+    assert 'const menu = channelFilter.querySelector(".channel-filter-menu");' in app_js
+    assert "menu.open = false;" in app_js
+
+
 def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
@@ -460,7 +484,7 @@ def test_public_site_analysis_examples_use_same_origin_clip_audio() -> None:
     assert "function analysisAudioUrlForClip(clip)" in app_js
     assert "return clipAudioRequestUrl(clip) || audioUrlForClip(clip);" in app_js
     assert "const audioUrl = analysisAudioUrlForClip(example);" in app_js
-    assert 'const clipAudioUrl = "/api/clips/audio";' in app_js
+    assert 'const clipAudioUrl = apiUrl("/api/clips/audio");' in app_js
 
 
 def test_public_site_performance_metric_values_average_selected_window() -> None:
@@ -497,7 +521,7 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
 
     assert "playback_url" in app_js
     assert "audio_public_filename" in app_js
-    assert 'const clipPlaybackUrl = "/api/clips/playback";' in app_js
+    assert 'const clipPlaybackUrl = apiUrl("/api/clips/playback");' in app_js
     assert "playback_issued_at_ms: Date.now()" in app_js
     assert "shouldRefreshPlaybackUrl" in app_js
     assert "refreshPlaybackUrl" in app_js
@@ -543,21 +567,30 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
 def test_public_site_uses_same_origin_live_api_urls() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
-    assert 'const defaultLiveStreamUrl = "/api/live/current.mp3";' in app_js
-    assert 'const liveDspProfile = privateAppHost ? "warm_voice" : "";' in app_js
-    assert "return `/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`;" in app_js
-    assert "return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;" in app_js
-    assert "return withDspProfile(url);" in app_js
+    assert 'const defaultLiveStreamUrl = apiUrl("/api/live/current.mp3");' in app_js
+    assert "liveDspProfile" not in app_js
+    assert (
+        "return apiUrl(`/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`);"
+        in app_js
+    )
+    assert (
+        "return apiUrl(`/api/live/${encodeURIComponent(selectedLiveChannel)}/status`);"
+        in app_js
+    )
+    assert "return withDspProfile(url);" not in app_js
 
 
-def test_public_site_hides_ais_tab_in_production() -> None:
+def test_public_site_keeps_ais_tab_private_until_cloud_feed_exists() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
 
     assert "aisDashboardEnabled" in app_js
+    assert 'vhf.robertboscacci.com"].includes' in app_js
     assert "mapTab.hidden = !aisDashboardEnabled" in app_js
     assert 'name === "map" && !aisDashboardEnabled' in app_js
     assert "panels.map.hidden = !aisDashboardEnabled" in app_js
+    assert "renderAisCatcherFrame" in app_js
+    assert "aisCatcherFallbackUrl" in app_js
     assert 'id="tab-map" type="button" data-tab="map" hidden' in index_html
 
 
@@ -664,7 +697,8 @@ def test_public_site_uses_native_audio_controls_for_clip_playback_and_metadata()
 
     assert 'document.createElement("audio")' in app_js
     assert "audio.controls = true" in app_js
-    assert 'audio.preload = "metadata"' in app_js
+    assert 'audio.preload = "none"' in app_js
+    assert 'audio.preload = "metadata"' not in app_js
     assert "audio.src = audioUrl" in app_js
     assert "refreshClipAudioPlayback(example, audio, time)" in app_js
     assert 'audio.addEventListener("error"' in app_js
@@ -724,7 +758,7 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert index_html.index('class="live-actions"') < index_html.index('class="tuner-display"')
     assert ".live-header-stack" in styles_css
     assert "const liveQueuePollMs = 5000;" in app_js
-    assert 'const liveQueueUrl = "/api/clips/recent?limit=24";' in app_js
+    assert 'const liveQueueUrl = apiUrl("/api/clips/recent?limit=24");' in app_js
     assert "const everythingInitialQueueLimit = 3;" in app_js
     assert "let liveQueue = [];" in app_js
     assert "let currentLiveQueueClip = null;" in app_js
@@ -771,7 +805,7 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
 def test_public_site_everything_mode_uses_same_origin_audio_for_waveform_samples() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
-    assert 'const clipAudioUrl = "/api/clips/audio";' in app_js
+    assert 'const clipAudioUrl = apiUrl("/api/clips/audio");' in app_js
     assert "clipAudioRequestUrl(currentLiveQueueClip)" in app_js
     assert "currentLiveQueueClip.audio_url" in app_js
     assert "ensureAudioAnalyser();" in app_js

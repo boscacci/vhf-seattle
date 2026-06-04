@@ -57,7 +57,7 @@ a {
 
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(480px, 0.72fr);
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 0.62fr);
   gap: 28px;
   align-items: end;
   margin-bottom: 24px;
@@ -113,7 +113,7 @@ h3 {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(96px, 1fr) minmax(96px, 1fr) minmax(142px, 1.35fr);
   gap: 10px;
   margin: 0;
 }
@@ -1317,7 +1317,8 @@ audio {
 
 .language-dashboard,
 .performance-dashboard,
-.ais-catcher-shell {
+.ais-catcher-shell,
+.vessel-map-panel {
   display: grid;
   gap: 14px;
 }
@@ -1435,14 +1436,15 @@ audio {
   text-align: right;
 }
 
-.ais-catcher-shell {
+.ais-catcher-shell,
+.vessel-map-panel {
   min-height: min(78vh, 840px);
 }
 
 .ais-catcher-frame {
-  display: block;
   width: 100%;
-  min-height: min(78vh, 840px);
+  min-height: min(72vh, 760px);
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #07110f;
@@ -1929,7 +1931,7 @@ audio {
   }
 
   .stats {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: minmax(96px, 1fr) minmax(96px, 1fr) minmax(142px, 1.35fr);
   }
 
   .live-monitor-grid {
@@ -2126,6 +2128,10 @@ audio {
 
   .stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stat:nth-child(3) {
+    grid-column: 1 / -1;
   }
 
   .clip-card {

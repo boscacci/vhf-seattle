@@ -88,12 +88,26 @@ def test_storage_lists_only_allowed_raw_audio_keys() -> None:
     assert client.paginate_calls == [{"Bucket": "raw-bucket", "Prefix": "raw/"}]
 
 
+def test_playback_exists_caches_positive_results_across_storage_instances() -> None:
+    S3AudioStorage._playback_exists_cache.clear()
+    client = CapturingS3Client()
+    key = "raw/channel=14/date=2026-05-20/file.mp3"
+    storage = S3AudioStorage(_settings(), client=client)
+    other_storage = S3AudioStorage(_settings(), client=client)
+
+    assert storage.playback_exists(key) is True
+    assert other_storage.playback_exists(key) is True
+
+    assert client.head_calls == [{"Bucket": "raw-bucket", "Key": key}]
+
+
 class CapturingS3Client:
     def __init__(self, pages=None) -> None:
         self.presigned_params = {}
         self.tagging_calls = []
         self.pages = pages or []
         self.paginate_calls = []
+        self.head_calls = []
 
     def generate_presigned_url(self, operation, *, Params, ExpiresIn):
         assert operation == "put_object"
@@ -103,6 +117,9 @@ class CapturingS3Client:
 
     def put_object_tagging(self, **kwargs):
         self.tagging_calls.append(kwargs)
+
+    def head_object(self, **kwargs):
+        self.head_calls.append(kwargs)
 
     def get_paginator(self, operation):
         assert operation == "list_objects_v2"

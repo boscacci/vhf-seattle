@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, ClassVar
 
 import boto3
 
-from talkingboats.channel_metadata import CHANNEL_METADATA
 from talkingboats.clip_transcriber import (
     ClipFeature,
     RecentTranscribedClip,
@@ -33,6 +34,7 @@ FEATURED_PK = "clips#featured"
 STATUS_PREFIX = "clip_status#"
 CHANNEL_TRANSCRIBED_PREFIX = "clips#transcribed#channel#"
 CHANNEL_FEATURED_PREFIX = "clips#featured#channel#"
+CHANNEL_COUNT_CACHE_TTL_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,9 @@ class DynamoClipStoreConfig:
 
 
 class DynamoUploadedClipStore:
+    _channel_counts_cache: ClassVar[dict[tuple[object, ...], tuple[float, dict[str, int]]]] = {}
+    _channel_counts_cache_lock: ClassVar[threading.Lock] = threading.Lock()
+
     def __init__(
         self,
         config: DynamoClipStoreConfig,
@@ -52,10 +57,16 @@ class DynamoUploadedClipStore:
     ) -> None:
         self.config = config
         self.event_store = event_store or NullDurableEventStore()
+        table_was_injected = table is not None
         if table is None:
             resource = boto3.resource("dynamodb", region_name=config.aws_region)
             table = resource.Table(config.table_name)
         self.table = table
+        self._cache_scope = (
+            ("injected", id(table))
+            if table_was_injected
+            else ("table", config.aws_region, config.table_name, config.environment)
+        )
 
     def record_presigned_upload(self, *, key: str, request: ClipPresignRequest) -> None:
         existing = self._state_item(key)
@@ -252,6 +263,28 @@ class DynamoUploadedClipStore:
             )
         return [_recent_from_item(item) for item in index_items]
 
+    def iter_recent_transcribed(
+        self,
+        *,
+        page_size: int,
+        excluded_channels: tuple[str, ...] = (),
+        featured_only: bool = False,
+    ) -> Iterable[RecentTranscribedClip]:
+        if page_size <= 0:
+            raise ValueError("page_size must be positive")
+        excluded = {excluded.upper() for excluded in excluded_channels}
+        pk = FEATURED_PK if featured_only else TRANSCRIBED_PK
+        for item in self._iter_query_items(
+            pk,
+            scan_forward=False,
+            page_size=page_size,
+        ):
+            if str(item.get("channel") or "").upper() in excluded:
+                continue
+            if not _is_displayable_index_item(item):
+                continue
+            yield _recent_from_item(item)
+
     def transcribed_clip_for_public_playback(
         self,
         *,
@@ -444,17 +477,33 @@ class DynamoUploadedClipStore:
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
     ) -> dict[str, int]:
-        excluded = {channel.upper() for channel in excluded_channels}
+        excluded = tuple(sorted({channel.upper() for channel in excluded_channels}))
+        cache_key = (*self._cache_scope, "channel_counts", featured_only, excluded)
+        cached = self._cached_channel_counts(cache_key)
+        if cached is not None:
+            return cached
+        excluded_set = set(excluded)
         counts: dict[str, int] = {}
-        for channel in sorted(CHANNEL_METADATA, key=_channel_sort_key):
-            if channel.upper() in excluded:
+        pk = FEATURED_PK if featured_only else TRANSCRIBED_PK
+        for item in self._iter_query_items(
+            pk,
+            scan_forward=False,
+            page_size=500,
+            projection_expression="#channel, display_transcript, transcript",
+            expression_attribute_names={"#channel": "channel"},
+        ):
+            channel = str(item.get("channel") or "?")
+            if channel.upper() in excluded_set:
                 continue
-            count = self._query_displayable_count(
-                _channel_featured_pk(channel) if featured_only else _channel_transcribed_pk(channel)
-            )
-            if count:
-                counts[channel] = count
-        return counts
+            if _is_displayable_index_item(item):
+                counts[channel] = counts.get(channel, 0) + 1
+        ordered_counts = {
+            channel: counts[channel]
+            for channel in sorted(counts, key=_channel_sort_key)
+            if counts[channel]
+        }
+        self._cache_channel_counts(cache_key, ordered_counts)
+        return dict(ordered_counts)
 
     def transcribed_clip_count(
         self,
@@ -535,6 +584,7 @@ class DynamoUploadedClipStore:
         )
 
     def _put_state(self, item: dict[str, Any], *, old_status: str | None) -> None:
+        self._invalidate_channel_counts_cache()
         key = str(item["key"])
         channel = str(item["channel"])
         started_at = str(item["started_at"])
@@ -613,6 +663,65 @@ class DynamoUploadedClipStore:
             if not start_key:
                 break
         return items[:limit] if limit is not None else items
+
+    def _iter_query_items(
+        self,
+        pk: str,
+        *,
+        sk_prefix: str | None = None,
+        scan_forward: bool = True,
+        page_size: int,
+        projection_expression: str | None = None,
+        expression_attribute_names: dict[str, str] | None = None,
+    ) -> Iterable[dict[str, Any]]:
+        expression = "pk = :pk"
+        values: dict[str, Any] = {":pk": pk}
+        if sk_prefix is not None:
+            expression += " AND begins_with(sk, :sk_prefix)"
+            values[":sk_prefix"] = sk_prefix
+        kwargs: dict[str, Any] = {
+            "KeyConditionExpression": expression,
+            "ExpressionAttributeValues": values,
+            "ScanIndexForward": scan_forward,
+            "Limit": page_size,
+        }
+        if projection_expression is not None:
+            kwargs["ProjectionExpression"] = projection_expression
+        if expression_attribute_names is not None:
+            kwargs["ExpressionAttributeNames"] = expression_attribute_names
+        start_key: dict[str, Any] | None = None
+        while True:
+            page_kwargs = dict(kwargs)
+            if start_key is not None:
+                page_kwargs["ExclusiveStartKey"] = start_key
+            response = self.table.query(**page_kwargs)
+            for item in response.get("Items", []):
+                yield _from_dynamodb_item(item)
+            start_key = response.get("LastEvaluatedKey")
+            if not start_key:
+                break
+
+    def _cached_channel_counts(self, cache_key: tuple[object, ...]) -> dict[str, int] | None:
+        now = time.monotonic()
+        with self._channel_counts_cache_lock:
+            cached = self._channel_counts_cache.get(cache_key)
+            if cached is None:
+                return None
+            cached_at, counts = cached
+            if now - cached_at > CHANNEL_COUNT_CACHE_TTL_SECONDS:
+                self._channel_counts_cache.pop(cache_key, None)
+                return None
+            return dict(counts)
+
+    def _cache_channel_counts(self, cache_key: tuple[object, ...], counts: dict[str, int]) -> None:
+        with self._channel_counts_cache_lock:
+            self._channel_counts_cache[cache_key] = (time.monotonic(), dict(counts))
+
+    def _invalidate_channel_counts_cache(self) -> None:
+        with self._channel_counts_cache_lock:
+            for key in list(self._channel_counts_cache):
+                if key[: len(self._cache_scope)] == self._cache_scope:
+                    self._channel_counts_cache.pop(key, None)
 
     def _query_count(self, pk: str) -> int:
         total = 0

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
+import time
 from datetime import UTC
-from typing import Any
+from typing import Any, ClassVar
 
 import boto3
 from botocore.exceptions import ClientError
@@ -24,9 +26,13 @@ EXTENSIONS_BY_CONTENT_TYPE = {
     "audio/x-wav": ".wav",
 }
 RAW_CLIP_FEATURED_TAG_KEY = "talkingboats-featured"
+PLAYBACK_EXISTS_CACHE_TTL_SECONDS = 60.0
 
 
 class S3AudioStorage:
+    _playback_exists_cache: ClassVar[dict[tuple[str, str], float]] = {}
+    _playback_exists_cache_lock: ClassVar[threading.Lock] = threading.Lock()
+
     def __init__(self, settings: Settings, client=None) -> None:
         self.settings = settings
         self.client = client or boto3.client("s3", region_name=settings.aws_region)
@@ -93,6 +99,9 @@ class S3AudioStorage:
             raise ValueError("playback key must be in raw/ or hall-of-fame/")
         if not self.settings.raw_bucket:
             raise RuntimeError("TALKINGBOATS_RAW_BUCKET is not configured")
+        cache_key = (self.settings.raw_bucket, key)
+        if self._cached_playback_exists(cache_key):
+            return True
         try:
             self.client.head_object(Bucket=self.settings.raw_bucket, Key=key)
         except ClientError as exc:
@@ -102,7 +111,23 @@ class S3AudioStorage:
             if status_code == 404 or code in {"404", "NoSuchKey", "NotFound"}:
                 return False
             raise RuntimeError(f"playback object check failed: {code or status_code}") from exc
+        self._cache_playback_exists(cache_key)
         return True
+
+    def _cached_playback_exists(self, cache_key: tuple[str, str]) -> bool:
+        now = time.monotonic()
+        with self._playback_exists_cache_lock:
+            cached_at = self._playback_exists_cache.get(cache_key)
+            if cached_at is None:
+                return False
+            if now - cached_at > PLAYBACK_EXISTS_CACHE_TTL_SECONDS:
+                self._playback_exists_cache.pop(cache_key, None)
+                return False
+            return True
+
+    def _cache_playback_exists(self, cache_key: tuple[str, str]) -> None:
+        with self._playback_exists_cache_lock:
+            self._playback_exists_cache[cache_key] = time.monotonic()
 
     def open_playback(self, key: str) -> Any:
         if not is_allowed_audio_key(key):

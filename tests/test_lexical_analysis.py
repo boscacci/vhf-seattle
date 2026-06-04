@@ -173,6 +173,36 @@ def test_generate_lexical_analysis_can_use_cloud_clip_store(tmp_path: Path) -> N
     assert store.calls == [{"limit": 500, "excluded_channels": ("WX",), "offset": 0}]
 
 
+def test_generate_lexical_analysis_streams_cloud_clip_store_when_available(
+    tmp_path: Path,
+) -> None:
+    clips = [
+        TranscriptClip(
+            key=f"raw/channel=14/date=2026-05-25/cloud-{index}.mp3",
+            channel="14",
+            started_at=f"2026-05-25T22:1{index}:00Z",
+            ended_at=f"2026-05-25T22:1{index}:08Z",
+            duration_seconds=8.0,
+            content_type="audio/mpeg",
+            transcript=f"Seattle Traffic streamed transcript {index}.",
+        )
+        for index in range(3)
+    ]
+    store = StreamingAnalysisClipStore(clips)
+
+    payload = generate_lexical_analysis_from_store(
+        clip_store=store,
+        output_dir=tmp_path / "site",
+        page_size=2,
+        limit=2,
+        generated_at=datetime(2026, 5, 26, 1, 2, 3, tzinfo=UTC),
+    )
+
+    assert payload["source_clip_count"] == 2
+    assert store.iter_calls == [{"page_size": 2, "excluded_channels": ("WX",)}]
+    assert store.recent_calls == []
+
+
 def test_generate_lexical_analysis_skips_legacy_ellipsis_transcripts(tmp_path: Path) -> None:
     db_path = tmp_path / "clips.sqlite3"
     output_dir = tmp_path / "site"
@@ -716,6 +746,28 @@ class FakeAnalysisClipStore:
             }
         )
         return self.clips[offset : offset + limit]
+
+
+class StreamingAnalysisClipStore:
+    def __init__(self, clips: list[TranscriptClip]) -> None:
+        self.clips = clips
+        self.iter_calls: list[dict[str, object]] = []
+        self.recent_calls: list[dict[str, object]] = []
+
+    def iter_recent_transcribed(
+        self,
+        *,
+        page_size: int,
+        excluded_channels: tuple[str, ...] = (),
+    ):
+        self.iter_calls.append(
+            {"page_size": page_size, "excluded_channels": excluded_channels}
+        )
+        yield from self.clips
+
+    def recent_transcribed(self, **kwargs):
+        self.recent_calls.append(kwargs)
+        raise AssertionError("offset pagination should not be used")
 
 
 class _Segment:

@@ -1,20 +1,27 @@
 const defaultClipPageSize = 6;
 const clipPageSizeOptions = [6, 12, 24];
-const clipPlaybackUrl = "/api/clips/playback";
-const clipAudioUrl = "/api/clips/audio";
-const clipSearchUrl = "/api/clips/search";
-const clipCorrectionsUrl = "/api/clips/corrections";
-const clipFeaturesUrl = "/api/clips/features";
+const devAppHost = window.location.hostname === "vhf-dev.robertboscacci.com";
+const localAppHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
+const tailnetHostSuffix = ".tailbea63b.ts.net";
+const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
+const privateAppHost = localAppHost || tailnetAppHost || devAppHost;
+const privateApiBaseUrl = "";
+const clipPlaybackUrl = apiUrl("/api/clips/playback");
+const clipAudioUrl = apiUrl("/api/clips/audio");
+const clipSearchUrl = apiUrl("/api/clips/search");
+const clipCorrectionsUrl = apiUrl("/api/clips/corrections");
+const clipFeaturesUrl = apiUrl("/api/clips/features");
 const manifestUrl = "/public_manifest.json";
-const lexicalAnalysisUrl = "/api/analysis/lexical";
+const lexicalAnalysisUrl = apiUrl("/api/analysis/lexical");
 const lexicalManifestUrl = "/analysis/lexical.json";
-const performanceUrl = "/api/live/performance";
-const asrFeedbackStatusUrl = "/api/asr-feedback/status";
+const performanceUrl = apiUrl("/api/live/performance");
+const asrFeedbackStatusUrl = apiUrl("/api/asr-feedback/status");
 const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353&zoom=13&setcoord=false&welcome=false&tab=map";
+const aisCatcherFallbackUrl = "https://aiscatcher.org/";
 const topicClusterFallbackUrl = "/analysis/topic_clusters.html";
-const liveChannelsUrl = "/api/live/channels";
-const liveQueueUrl = "/api/clips/recent?limit=24";
-const defaultLiveStreamUrl = "/api/live/current.mp3";
+const liveChannelsUrl = apiUrl("/api/live/channels");
+const liveQueueUrl = apiUrl("/api/clips/recent?limit=24");
+const defaultLiveStreamUrl = apiUrl("/api/live/current.mp3");
 const systemMediaControlsStorageKey = "talkingboats.systemMediaControls";
 const recentClipsCacheKeyPrefix = "talkingboats.recentClipsCache.v1";
 const recentClipsCacheMaxAgeMs = 5 * 60 * 1000;
@@ -80,12 +87,6 @@ const everythingLiveChannel = "everything";
 const everythingInitialQueueLimit = 3;
 const trafficChannelIds = new Set(["14"]);
 const hallOfFameRouteSegment = "hall-of-fame";
-const tailnetHostSuffix = ".tailbea63b.ts.net";
-const tailnetDevHost = window.location.hostname === "vhf-dev.robertboscacci.com";
-const localAppHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
-const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
-const privateAppHost = localAppHost || tailnetAppHost || tailnetDevHost;
-const liveDspProfile = privateAppHost ? "warm_voice" : "";
 const languageDashboardEnabled = [
   "vhf.robertboscacci.com",
   "vhf-dev.robertboscacci.com",
@@ -193,6 +194,10 @@ const defaultChannelLabels = {
 };
 const monitoredAnalysisChannels = ["05A", "06", "09", "13", "14", "16", "22A", "67", "68", "69", "71", "72"];
 
+function apiUrl(path) {
+  return privateApiBaseUrl ? `${privateApiBaseUrl}${path}` : path;
+}
+
 const fallbackManifest = {
   site: {
     title: "Elliott Bay VHF",
@@ -267,6 +272,7 @@ const systemMediaControlsToggle = document.querySelector("#system-media-controls
 const systemMediaNote = document.querySelector("#system-media-note");
 const mapStatus = document.querySelector("#map-status");
 const aisCatcherFrame = document.querySelector("#ais-catcher-frame");
+const aisFallbackLink = document.querySelector("#ais-fallback-link");
 const languageStatus = document.querySelector("#language-status");
 const lexicalAnalysis = document.querySelector("#lexical-analysis");
 const performanceStatus = document.querySelector("#performance-status");
@@ -436,6 +442,27 @@ clearBrowserMediaSession();
 updateSystemMediaControlsUi();
 renderSearchControls();
 
+function closeChannelFilterMenu() {
+  const menu = channelFilter.querySelector(".channel-filter-menu");
+  if (menu) {
+    menu.open = false;
+  }
+}
+
+function closeChannelFilterOnOutsidePointer(event) {
+  if (event.target instanceof Node && channelFilter.contains(event.target)) {
+    return;
+  }
+  closeChannelFilterMenu();
+}
+
+function closeChannelFilterOnOutsideFocus(event) {
+  if (event.target instanceof Node && channelFilter.contains(event.target)) {
+    return;
+  }
+  closeChannelFilterMenu();
+}
+
 refreshButton.addEventListener("click", () => {
   if (activeTab === "performance") {
     loadAndRenderPerformance({ showLoading: false });
@@ -491,6 +518,9 @@ channelFilter.addEventListener("change", (event) => {
   resetClipPagination();
   loadAndRender();
 });
+
+document.addEventListener("pointerdown", closeChannelFilterOnOutsidePointer);
+document.addEventListener("focusin", closeChannelFilterOnOutsideFocus);
 
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
@@ -1057,7 +1087,7 @@ async function pollClipStats() {
   clipStatsAbortController?.abort();
   clipStatsAbortController = new AbortController();
   try {
-    const response = await fetch("/api/clips/recent?limit=1", {
+    const response = await fetch(apiUrl("/api/clips/recent?limit=1"), {
       cache: "no-store",
       signal: clipStatsAbortController.signal,
     });
@@ -1120,7 +1150,7 @@ function clipRequestUrl(offset = clipOffset()) {
   }
   const channels = selectedChannelValues();
   params.push(...channels.map((channel) => `channels=${encodeURIComponent(channel)}`));
-  return `/api/clips/recent?${params.join("&")}`;
+  return apiUrl(`/api/clips/recent?${params.join("&")}`);
 }
 
 function prefetchNeighborClipPages(payload) {
@@ -1376,7 +1406,6 @@ function renderStats(payload, clips) {
     ["Clips", clipTotal],
     ["Channels", channelTotal],
     ["Latest", latest],
-    ["Feed", payload.source === "live" ? "Live DB" : "Published export"],
   ];
 
   stats.replaceChildren(
@@ -1389,12 +1418,19 @@ function renderStats(payload, clips) {
       const term = document.createElement("dt");
       term.textContent = label;
       const description = document.createElement("dd");
-      description.textContent = String(value);
+      description.textContent = formatStatValue(label, value);
       item.append(term, description);
       return item;
     }),
   );
   lastRenderedClipTotal = Number(clipTotal);
+}
+
+function formatStatValue(label, value) {
+  if (label === "Clips" || label === "Channels") {
+    return Number(value).toLocaleString();
+  }
+  return String(value);
 }
 
 function renderChannelFilter(payload) {
@@ -2431,12 +2467,21 @@ async function loadAndRenderMap({ showLoading = true } = {}) {
 }
 
 function renderAisCatcherFrame() {
-  const expectedSrc = new URL(aisCatcherFrameUrl, window.location.href).href;
-  if (aisCatcherFrame.src !== expectedSrc) {
-    aisCatcherFrame.src = aisCatcherFrameUrl;
+  if (!aisCatcherFrame || !mapStatus) {
+    return;
   }
-  aisCatcherFrame.title = "AIS-catcher live map";
-  mapStatus.textContent = "Showing AIS-catcher live map";
+  if (privateAppHost) {
+    aisCatcherFrame.src = aisCatcherFrameUrl;
+    aisCatcherFrame.title = "AIS-catcher live map";
+    mapStatus.textContent = "Showing AIS-catcher live map";
+  } else {
+    aisCatcherFrame.src = aisCatcherFallbackUrl;
+    aisCatcherFrame.title = "AIS-catcher shared public map";
+    mapStatus.textContent = "Showing AIS-catcher shared public map";
+  }
+  if (aisFallbackLink) {
+    aisFallbackLink.href = aisCatcherFallbackUrl;
+  }
 }
 
 function renderLanguageDashboard(payload) {
@@ -3263,7 +3308,7 @@ function renderExamplePlayer(example) {
 
   const audio = document.createElement("audio");
   audio.controls = true;
-  audio.preload = "metadata";
+  audio.preload = "none";
   audio.src = audioUrl;
   audio.setAttribute("controlslist", "nodownload noplaybackrate noremoteplayback");
   audio.setAttribute("disableremoteplayback", "");
@@ -3938,8 +3983,7 @@ function stopLiveActivityPolling() {
 }
 
 function liveStreamUrl() {
-  const url = rawLiveStreamUrl();
-  return withDspProfile(url);
+  return rawLiveStreamUrl();
 }
 
 function rawLiveStreamUrl() {
@@ -3949,29 +3993,21 @@ function rawLiveStreamUrl() {
   if (selectedLiveChannel === "14") {
     return defaultLiveStreamUrl;
   }
-  return `/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`;
-}
-
-function withDspProfile(url) {
-  if (!liveDspProfile) {
-    return url;
-  }
-  const joiner = url.includes("?") ? "&" : "?";
-  return `${url}${joiner}dsp=${encodeURIComponent(liveDspProfile)}`;
+  return apiUrl(`/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`);
 }
 
 function liveStatusUrl() {
   if (isEverythingLiveMode()) {
     return "";
   }
-  return `/api/live/${encodeURIComponent(selectedLiveChannel)}/status`;
+  return apiUrl(`/api/live/${encodeURIComponent(selectedLiveChannel)}/status`);
 }
 
 function lastCommunicationUrl() {
   if (isEverythingLiveMode()) {
     return liveQueueUrl;
   }
-  return `/api/clips/recent?limit=1&channel=${encodeURIComponent(selectedLiveChannel)}`;
+  return apiUrl(`/api/clips/recent?limit=1&channel=${encodeURIComponent(selectedLiveChannel)}`);
 }
 
 async function pollLiveStatus() {

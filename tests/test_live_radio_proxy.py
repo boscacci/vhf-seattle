@@ -313,6 +313,32 @@ def test_proxy_live_status_reports_selected_stream_channel_and_allows_public_ui_
     }
 
 
+def test_proxy_cors_allows_dev_operator_post_preflight() -> None:
+    app = create_app(
+        ProxySettings(
+            cors_origins=("https://vhf-dev.robertboscacci.com",),
+            tailnet_dev_routes_enabled=True,
+        )
+    )
+
+    response = _run(
+        _asgi_options(
+            app,
+            "/api/clips/corrections",
+            headers={
+                "Origin": "https://vhf-dev.robertboscacci.com",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == (
+        "https://vhf-dev.robertboscacci.com"
+    )
+    assert "POST" in response.headers["access-control-allow-methods"]
+
+
 def test_proxy_live_status_uses_receiver_status_when_audio_mount_is_missing() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url) == "http://pi.test/current-status.json":
@@ -947,6 +973,13 @@ def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
             },
         )
     )
+    direct_tailnet_response = _run(
+        _asgi_get(
+            app,
+            "/api/live/performance",
+            headers={"Host": "optiplex.tailbea63b.ts.net"},
+        )
+    )
     spoofed_header_response = _run(
         _asgi_get(
             app,
@@ -960,6 +993,7 @@ def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
 
     assert dev_response.status_code == 200
     assert dev_origin_response.status_code == 200
+    assert direct_tailnet_response.status_code == 200
     dev_payload = dev_response.json()
     assert dev_payload["host"]["role"] == "OptiPlex ASR Box"
     assert "services" not in dev_payload
@@ -1138,11 +1172,11 @@ def test_proxy_performance_static_shell_hooks_are_dev_only() -> None:
     index_response = _run(_asgi_get(create_app(ProxySettings()), "/"))
 
     assert response.status_code == 200
-    assert 'const performanceUrl = "/api/live/performance";' in response.text
+    assert 'const performanceUrl = apiUrl("/api/live/performance");' in response.text
     assert "performanceDashboardEnabled" in response.text
-    assert (
-        "const privateAppHost = localAppHost || tailnetAppHost || tailnetDevHost;" in response.text
-    )
+    assert "const privateAppHost = localAppHost || tailnetAppHost || devAppHost;" in response.text
+    assert 'const privateApiBaseUrl = "";' in response.text
+    assert "optiplex.tailbea63b.ts.net" not in response.text
     assert "const performanceDashboardEnabled = privateAppHost;" in response.text
     assert "renderPerformanceDashboard" in response.text
     assert 'id="tab-performance" type="button" data-tab="performance" hidden' in index_response.text
@@ -1431,6 +1465,12 @@ async def _asgi_post(app, path: str, **kwargs) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         return await client.post(path, **kwargs)
+
+
+async def _asgi_options(app, path: str, **kwargs) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        return await client.options(path, **kwargs)
 
 
 def _run(awaitable):

@@ -169,6 +169,89 @@ def test_dynamo_clip_store_hides_legacy_ellipsis_only_rows() -> None:
     assert store.transcribed_clip_count(channel="14") == 1
 
 
+def test_dynamo_clip_store_streams_recent_transcribed_with_cursor_pages() -> None:
+    table = FakeDynamoTable(page_size=2)
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    expected_keys: list[str] = []
+    for index in range(5):
+        key = f"raw/channel=14/date=2026-06-01/example-{index}.mp3"
+        expected_keys.insert(0, key)
+        store.record_presigned_upload(key=key, request=_request(channel="14"))
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Seattle Traffic {index}",
+                    started_at=f"2026-06-01T12:00:0{index}Z",
+                    ended_at=f"2026-06-01T12:00:0{index + 1}Z",
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+
+    table.query_calls.clear()
+    clips = list(store.iter_recent_transcribed(page_size=2))
+
+    assert [clip.key for clip in clips] == expected_keys
+    transcribed_queries = [
+        call
+        for call in table.query_calls
+        if call["ExpressionAttributeValues"][":pk"] == "clips#transcribed"
+    ]
+    assert len(transcribed_queries) == 3
+    assert [call.get("Limit") for call in transcribed_queries] == [2, 2, 2]
+    assert "ExclusiveStartKey" not in transcribed_queries[0]
+    assert "ExclusiveStartKey" in transcribed_queries[1]
+    assert "ExclusiveStartKey" in transcribed_queries[2]
+
+
+def test_dynamo_clip_store_counts_channels_with_projected_cached_global_query() -> None:
+    table = FakeDynamoTable(page_size=2)
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    for index, channel in enumerate(["14", "68", "14"]):
+        key = f"raw/channel={channel}/date=2026-06-01/example-{index}.mp3"
+        store.record_presigned_upload(key=key, request=_request(channel=channel))
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Seattle Traffic {index}",
+                    started_at=f"2026-06-01T12:00:0{index}Z",
+                    ended_at=f"2026-06-01T12:00:0{index + 1}Z",
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+
+    table.query_calls.clear()
+
+    assert store.transcribed_channel_counts() == {"14": 2, "68": 1}
+    assert store.transcribed_channel_counts() == {"14": 2, "68": 1}
+
+    count_queries = [
+        call
+        for call in table.query_calls
+        if call["ExpressionAttributeValues"][":pk"] == "clips#transcribed"
+    ]
+    assert len(count_queries) == 2
+    assert all(
+        call["ProjectionExpression"] == "#channel, display_transcript, transcript"
+        for call in count_queries
+    )
+    assert all(
+        call["ExpressionAttributeNames"] == {"#channel": "channel"}
+        for call in count_queries
+    )
+
+
 def _request(*, channel: str) -> ClipPresignRequest:
     return ClipPresignRequest(
         channel=channel,
@@ -249,6 +332,7 @@ class FakeDynamoTable:
     def __init__(self, *, page_size: int | None = None) -> None:
         self.items: dict[tuple[str, str], dict[str, object]] = {}
         self.page_size = page_size
+        self.query_calls: list[dict[str, object]] = []
 
     def put_item(self, *, Item, **kwargs):
         self.items[(Item["pk"], Item["sk"])] = Item
@@ -261,6 +345,7 @@ class FakeDynamoTable:
         return {"Item": item} if item else {}
 
     def query(self, **kwargs):
+        self.query_calls.append(dict(kwargs))
         values = kwargs["ExpressionAttributeValues"]
         pk = values[":pk"]
         sk_prefix = values.get(":sk_prefix")
@@ -283,7 +368,7 @@ class FakeDynamoTable:
             }
         if kwargs.get("Select") == "COUNT":
             return {"Count": len(page_rows), **response}
-        return {"Items": page_rows, **response}
+        return {"Items": self._project_rows(page_rows, kwargs), **response}
 
     def scan(self, **kwargs):
         rows = list(self.items.values())
@@ -308,6 +393,18 @@ class FakeDynamoTable:
             if item["pk"] == exclusive_start_key["pk"] and item["sk"] == exclusive_start_key["sk"]:
                 return rows[index + 1 :]
         return rows
+
+    def _project_rows(self, rows, kwargs):
+        projection = kwargs.get("ProjectionExpression")
+        if not projection:
+            return list(rows)
+        names = kwargs.get("ExpressionAttributeNames", {})
+        fields = [
+            names.get(field.strip(), field.strip())
+            for field in str(projection).split(",")
+            if field.strip()
+        ]
+        return [{field: item[field] for field in fields if field in item} for item in rows]
 
 
 class FakeBatchWriter:

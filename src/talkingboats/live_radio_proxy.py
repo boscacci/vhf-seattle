@@ -45,14 +45,16 @@ PERFORMANCE_DISK_PATHS = (
     ("home", Path("/home/rob")),
     ("talkingboats spool", Path("/opt/talkingboats")),
 )
+TAILNET_DEV_API_HOSTS = ("optiplex.tailbea63b.ts.net",)
 PERFORMANCE_DEV_HOSTS = (
     "vhf-dev.robertboscacci.com",
     "localhost",
     "127.0.0.1",
     "testserver",
     "",
+    *TAILNET_DEV_API_HOSTS,
 )
-PERFORMANCE_DEV_ORIGIN_HOSTS = ("optiplex.tailbea63b.ts.net",)
+PERFORMANCE_DEV_ORIGIN_HOSTS = TAILNET_DEV_API_HOSTS
 OPTIPLEX_PERFORMANCE_ROLE = "OptiPlex ASR Box"
 PI_PERFORMANCE_ROLE = "Raspberry Pi Decoder"
 PERFORMANCE_PUBLIC_ROLES = (OPTIPLEX_PERFORMANCE_ROLE, PI_PERFORMANCE_ROLE)
@@ -63,7 +65,13 @@ PERFORMANCE_ROLE_ALIASES = {
 PERFORMANCE_PUBLIC_STATUSES = {"ok", "watch", "high", "unknown"}
 TAILSCALE_IDENTITY_HEADER = "tailscale-user-login"
 TAILNET_DEV_PROXY_HEADER = "x-talkingboats-tailnet-dev"
-TAILNET_OPERATOR_LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "testserver"}
+TAILNET_OPERATOR_LOCAL_HOSTS = {
+    "",
+    "localhost",
+    "127.0.0.1",
+    "testserver",
+    *TAILNET_DEV_API_HOSTS,
+}
 PERFORMANCE_SAMPLE_INTERVAL_SECONDS = 5.0
 PERFORMANCE_MEMORY_HISTORY_SECONDS = 6 * 60 * 60
 PERFORMANCE_PERSIST_INTERVAL_SECONDS = 60.0
@@ -760,7 +768,7 @@ def create_app(
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(settings.cors_origins),
-            allow_methods=["GET"],
+            allow_methods=["GET", "POST"],
             allow_headers=["*"],
         )
 
