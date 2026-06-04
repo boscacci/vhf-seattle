@@ -44,6 +44,18 @@ def test_proxy_root_serves_clip_console() -> None:
     assert "bay-map" not in response.text
 
 
+def test_proxy_serves_static_shell_for_linkable_map_alias() -> None:
+    app = create_app(ProxySettings())
+
+    response = _run(_asgi_get(app, "/map"))
+    slash_response = _run(_asgi_get(app, "/map/"))
+
+    assert response.status_code == 200
+    assert slash_response.status_code == 200
+    assert "Elliott Bay VHF" in response.text
+    assert "Elliott Bay VHF" in slash_response.text
+
+
 def test_proxy_current_live_stream_uses_first_available_mount() -> None:
     requests = []
 

@@ -962,6 +962,8 @@ def create_app(
     @app.get("/live/", include_in_schema=False)
     @app.get("/ais", include_in_schema=False)
     @app.get("/ais/", include_in_schema=False)
+    @app.get("/map", include_in_schema=False)
+    @app.get("/map/", include_in_schema=False)
     @app.get("/analysis", include_in_schema=False)
     @app.get("/analysis/", include_in_schema=False)
     @app.get("/performance", include_in_schema=False)
