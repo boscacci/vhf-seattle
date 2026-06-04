@@ -838,8 +838,21 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert "seedRecent = false" in app_js
     assert "includeBackfill = false" in app_js
     assert "mostRecentEverythingQueueClips(normalizedClips, everythingInitialQueueLimit)" in app_js
+    assert "markEverythingQueueBackfill(normalizedClips)" in app_js
+    assert "Catching up on latest 3 transmissions" in app_js
+    assert "Catching up on recent transmission" in app_js
+    assert "startLiveWaveformForPlayback();" in app_js
+    assert "function queuedLivePlaybackStatus()" in app_js
     assert "isEverythingQueueClipAfterStart(clip)" in app_js
     assert "await pollEverythingQueue({ playIfIdle: false, seedRecent: true });" in app_js
+    connect_everything = app_js[
+        app_js.index("async function connectEverythingLive()") : app_js.index(
+            "function scheduleLiveReconnect()"
+        )
+    ]
+    assert connect_everything.index(
+        "await pollEverythingQueue({ playIfIdle: false, seedRecent: true });"
+    ) < connect_everything.index("startLiveWaveformForPlayback();")
     assert (
         "if (isEverythingLiveMode()) {\n"
         "      if (!everythingQueueEnabled) {\n"

@@ -87,6 +87,7 @@ const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();
 const unknownPlaybackTimeLabel = "—";
 const everythingLiveChannel = "everything";
 const everythingInitialQueueLimit = 3;
+const everythingCatchUpLabel = "Catching up on latest 3 transmissions";
 const trafficChannelIds = new Set(["14"]);
 const hallOfFameRouteSegment = "hall-of-fame";
 const languageDashboardEnabled = [
@@ -553,13 +554,17 @@ window.addEventListener("popstate", () => {
 });
 
 liveAudio.addEventListener("playing", () => {
-  liveStatus.textContent = isEverythingLiveMode() ? "Playing queued transmission" : "Streaming";
+  liveStatus.textContent = isEverythingLiveMode()
+    ? currentLiveQueueClip?.catch_up
+      ? "Catching up on recent transmission"
+      : "Playing queued transmission"
+    : "Streaming";
   setLivePlayButton("pause");
   updateLiveMediaSession("playing");
 });
 
 liveAudio.addEventListener("waiting", () => {
-  liveStatus.textContent = "Buffering";
+  liveStatus.textContent = queuedLivePlaybackStatus() || "Buffering";
 });
 
 liveAudio.addEventListener("pause", () => {
@@ -4119,11 +4124,7 @@ async function connectLive() {
     liveAudio.load();
   }
   try {
-    ensureAudioAnalyser();
-    if (audioContext?.state === "suspended") {
-      await audioContext.resume();
-    }
-    startWaveform();
+    await startLiveWaveformForPlayback();
     stopOtherAudio(liveAudio);
     liveAudio.muted = false;
     await liveAudio.play();
@@ -4137,22 +4138,19 @@ async function connectLive() {
 async function connectEverythingLive() {
   clearTimeout(liveRetryTimer);
   everythingQueueEnabled = true;
+  const shouldCatchUp = !everythingQueueSeeded;
   if (!everythingQueueStartedAtMs) {
     everythingQueueStartedAtMs = Date.now();
   }
   configureEverythingQueueAudioElement();
   setLivePlayButton("pause");
-  liveStatus.textContent = "Waiting for queued transmission";
+  liveStatus.textContent = shouldCatchUp ? everythingCatchUpLabel : "Waiting for queued transmission";
   drawWaitingFrame({ showWaiting: true });
   renderLiveStatus(everythingChannelOption());
   try {
-    ensureAudioAnalyser();
-    if (audioContext?.state === "suspended") {
-      await audioContext.resume();
-    }
-    startWaveform();
     stopOtherAudio(liveAudio);
     await pollEverythingQueue({ playIfIdle: false, seedRecent: true });
+    await startLiveWaveformForPlayback();
     if (!currentLiveQueueClip) {
       await playNextEverythingQueueClip();
     }
@@ -4161,6 +4159,18 @@ async function connectEverythingLive() {
   } finally {
     renderEverythingQueuePanel();
     updateLiveMediaSession(everythingQueueEnabled ? "playing" : "paused");
+  }
+}
+
+async function startLiveWaveformForPlayback() {
+  try {
+    ensureAudioAnalyser();
+    if (audioContext?.state === "suspended") {
+      await audioContext.resume();
+    }
+    startWaveform();
+  } catch {
+    // Playback should still work if the browser refuses the visualizer graph.
   }
 }
 
@@ -4344,6 +4354,7 @@ function enqueueEverythingClips(clips, { includeBackfill = false } = {}) {
     .filter(Boolean);
   if (includeBackfill) {
     normalizedClips = mostRecentEverythingQueueClips(normalizedClips, everythingInitialQueueLimit);
+    normalizedClips = markEverythingQueueBackfill(normalizedClips);
   } else {
     normalizedClips = normalizedClips.filter(isEverythingQueueClipAfterStart);
   }
@@ -4363,6 +4374,10 @@ function mostRecentEverythingQueueClips(clips, limit) {
   return [...clips]
     .sort((left, right) => queueClipRelevantTime(right) - queueClipRelevantTime(left))
     .slice(0, limit);
+}
+
+function markEverythingQueueBackfill(clips) {
+  return clips.map((clip) => ({ ...clip, catch_up: true }));
 }
 
 function isEverythingQueueClipAfterStart(clip) {
@@ -4390,6 +4405,7 @@ function normalizeEverythingQueueClip(clip) {
     playback_url: playbackUrl,
     playback_expires_in_seconds: clip.playback_expires_in_seconds,
     playback_issued_at_ms: Date.now(),
+    catch_up: Boolean(clip.catch_up),
   };
 }
 
@@ -4459,7 +4475,9 @@ async function playNextEverythingQueueClip() {
     liveAudio.src = clipUrl;
     liveAudio.load();
   }
-  liveStatus.textContent = `Playing ${channelLabel(currentLiveQueueClip.channel)}`;
+  liveStatus.textContent = currentLiveQueueClip.catch_up
+    ? "Catching up on recent transmission"
+    : `Playing ${channelLabel(currentLiveQueueClip.channel)}`;
   setLivePlayButton("pause");
   renderLiveTelemetry();
   updateLiveMediaSession("playing");
@@ -4550,13 +4568,17 @@ function renderEverythingQueuePanel() {
   }
   const mode = liveQueueItem(
     everythingQueueEnabled ? "Everything mode on" : "Everything mode ready",
-    "All channels feed one playback queue",
+    hasEverythingQueueCatchUp() ? everythingCatchUpLabel : "All channels feed one playback queue",
   );
   const nowPlaying = currentLiveQueueClip
     ? liveQueueItem("Now playing", channelLabel(currentLiveQueueClip.channel))
     : liveQueueItem("Now playing", everythingQueueEnabled ? "Waiting for queued transmission" : "Press Play to start");
   const waiting = liveQueueItem("Queued", `${liveQueue.length} transmission${liveQueue.length === 1 ? "" : "s"}`);
   liveQueuePanel.replaceChildren(mode, nowPlaying, waiting);
+}
+
+function hasEverythingQueueCatchUp() {
+  return Boolean(currentLiveQueueClip?.catch_up || liveQueue.some((clip) => clip.catch_up));
 }
 
 function liveQueueItem(label, value) {
@@ -4696,16 +4718,17 @@ function drawWaveform() {
   const rms = waveformRms(waveformData);
   const now = performance.now();
   const isReceiving = rms > 0.018;
+  const queuedStatus = queuedLivePlaybackStatus();
   if (isReceiving) {
     quietSince = null;
-    liveStatus.textContent = "Receiving transmission";
+    liveStatus.textContent = queuedStatus || "Receiving transmission";
   } else {
     quietSince ||= now;
     const quietDurationMs = now - quietSince;
     if (quietDurationMs >= quietTransmissionDelayMs && !liveAudio.paused) {
-      liveStatus.textContent = "Waiting for transmission";
+      liveStatus.textContent = queuedStatus || "Waiting for transmission";
     } else if (!liveAudio.paused && liveAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      liveStatus.textContent = "Monitoring";
+      liveStatus.textContent = queuedStatus || "Monitoring";
     }
   }
   const waitedThroughQuiet =
@@ -4713,6 +4736,13 @@ function drawWaveform() {
   waveformPanel.classList.toggle("is-waiting", waitedThroughQuiet);
   liveSignalDot.classList.toggle("is-active", isReceiving);
   renderWaveform(waveformData, { isReceiving, rms });
+}
+
+function queuedLivePlaybackStatus() {
+  if (!isEverythingLiveMode() || liveAudio.paused || !currentLiveQueueClip) {
+    return "";
+  }
+  return currentLiveQueueClip.catch_up ? "Catching up on recent transmission" : "Playing queued transmission";
 }
 
 function drawWaitingFrame({ showWaiting } = { showWaiting: true }) {

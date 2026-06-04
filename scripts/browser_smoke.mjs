@@ -141,6 +141,33 @@ try {
     ) {
       throw new Error(`dev clip review star action is not visible without transcript editing: ${JSON.stringify(devClipFeatureState)}`);
     }
+    await page.getByRole("button", { name: "Live Monitor" }).click();
+    await page.locator("#live-queue").waitFor({ state: "visible", timeout: 10000 });
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
+    await page.waitForFunction(() => {
+      const queueText = document.querySelector("#live-queue")?.textContent || "";
+      const liveStatus = document.querySelector("#live-status")?.textContent || "";
+      return (
+        queueText.includes("Catching up on latest 3 transmissions") &&
+        (liveStatus.includes("Catching up") || queueText.includes("Now playing"))
+      );
+    });
+    const liveCatchupState = await page.evaluate(() => ({
+      status: document.querySelector("#live-status")?.textContent || "",
+      queue: document.querySelector("#live-queue")?.textContent || "",
+      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
+      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
+    }));
+    if (
+      !liveCatchupState.queue.includes("Catching up on latest 3 transmissions") ||
+      !liveCatchupState.queue.includes("Queued2 transmissions") ||
+      !liveCatchupState.src.includes("/api/clips/audio?channel=14&started_at=") ||
+      liveCatchupState.playLabel !== "Pause"
+    ) {
+      throw new Error(`live monitor did not catch up on recent clips: ${JSON.stringify(liveCatchupState)}`);
+    }
+    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
+    await page.getByRole("button", { name: "Clip Review" }).click();
     await page.getByRole("link", { name: "Label clips" }).click();
     await page.waitForURL(`${baseUrl}/operator/`, { timeout: 10000 });
     await page.locator("#clips .transcript-correction").first().waitFor({ state: "visible", timeout: 10000 });
@@ -805,6 +832,7 @@ try {
           status: "ok",
           baseUrl,
           lazyClipShell,
+          liveCatchupState,
           ...result,
           clipControls: {
             initialPagination,
