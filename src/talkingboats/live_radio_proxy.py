@@ -373,6 +373,7 @@ class ProxySettings:
     performance_persist_interval_seconds: float = PERFORMANCE_PERSIST_INTERVAL_SECONDS
     performance_persist_history_seconds: int = PERFORMANCE_PERSIST_HISTORY_SECONDS
     performance_history_db_path: str = str(DEFAULT_PERFORMANCE_HISTORY_DB_PATH)
+    public_site_dir: str = str(REPO_ROOT / "outputs/public-site")
     performance_dev_hosts: tuple[str, ...] = PERFORMANCE_DEV_HOSTS
     performance_dev_origin_hosts: tuple[str, ...] = PERFORMANCE_DEV_ORIGIN_HOSTS
     cors_origins: tuple[str, ...] = (
@@ -451,6 +452,10 @@ class ProxySettings:
             performance_history_db_path=os.environ.get(
                 "TALKINGBOATS_PROXY_PERFORMANCE_HISTORY_DB_PATH",
                 cls.performance_history_db_path,
+            ),
+            public_site_dir=os.environ.get(
+                "TALKINGBOATS_PROXY_PUBLIC_SITE_DIR",
+                os.environ.get("TALKINGBOATS_PUBLIC_SITE_DIR", cls.public_site_dir),
             ),
             performance_dev_hosts=_env_csv("TALKINGBOATS_PROXY_PERFORMANCE_DEV_HOSTS")
             or cls.performance_dev_hosts,
@@ -977,6 +982,14 @@ def create_app(
     @app.get("/public_manifest.json", include_in_schema=False)
     async def clip_console_manifest() -> Response:
         return _shell_asset_response("public_manifest.json")
+
+    @app.get("/analysis/topic_clusters.html", include_in_schema=False)
+    async def topic_clusters_html() -> Response:
+        return _generated_public_site_asset_response(
+            settings,
+            "analysis/topic_clusters.html",
+            media_type="text/html",
+        )
 
     app.mount("/", StaticFiles(directory=CLIP_CONSOLE_DIR, html=True), name="clip-console")
     return app
@@ -1548,6 +1561,27 @@ def _shell_asset_response(relative_path: str) -> Response:
         content=path.read_bytes(),
         headers={"Cache-Control": "no-store", "Pragma": "no-cache", "Expires": "0"},
         media_type=SHELL_ASSET_TYPES.get(relative_path, "application/octet-stream"),
+    )
+
+
+def _generated_public_site_asset_response(
+    settings: ProxySettings,
+    relative_path: str,
+    *,
+    media_type: str,
+) -> Response:
+    root = Path(settings.public_site_dir).resolve()
+    path = (root / relative_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="asset not found") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="asset not found")
+    return Response(
+        content=path.read_bytes(),
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache", "Expires": "0"},
+        media_type=media_type,
     )
 
 

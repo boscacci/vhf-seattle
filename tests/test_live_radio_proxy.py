@@ -525,6 +525,27 @@ def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:
     assert response.json() == {"status": "ok", "source_clip_count": 1, "entities": []}
 
 
+def test_proxy_serves_generated_topic_cluster_plot(tmp_path: Path) -> None:
+    public_site_dir = tmp_path / "site"
+    analysis_dir = public_site_dir / "analysis"
+    analysis_dir.mkdir(parents=True)
+    (analysis_dir / "topic_clusters.html").write_text(
+        "<html><body>generated topics</body></html>",
+        encoding="utf-8",
+    )
+
+    app = create_app(ProxySettings(public_site_dir=str(public_site_dir)))
+
+    response = _run(_asgi_get(app, "/analysis/topic_clusters.html"))
+
+    assert response.status_code == 200
+    assert response.text == "<html><body>generated topics</body></html>"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["expires"] == "0"
+    assert response.headers["content-type"].startswith("text/html")
+
+
 def test_proxy_clip_search_endpoint_is_public_read_only() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == (
