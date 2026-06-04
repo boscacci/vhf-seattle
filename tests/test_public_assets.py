@@ -160,12 +160,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "let selectedSearchLimit = 10;" in app_js
     assert 'button.classList.toggle("is-active", option.value === selectedValue);' in app_js
     assert "/analysis/lexical.json" in app_js
-    assert (
-        'const liveLanguageAnalysisEnabled = window.location.hostname !== "vhf.robertboscacci.com";'
-    ) in app_js
+    assert "liveLanguageAnalysisEnabled" not in app_js
     assert (
         "if (!liveLanguageAnalysisEnabled) {\n    return loadPublishedLanguagePayload();\n  }"
-    ) in app_js
+    ) not in app_js
+    assert "return loadPublishedLanguagePayload();" in app_js
     assert "renderLanguageDashboard" in app_js
     assert "topic_clusters.html" in app_js
     assert "Suspected vessels" in app_js

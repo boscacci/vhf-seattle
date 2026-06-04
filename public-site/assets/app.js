@@ -98,7 +98,6 @@ const languageDashboardEnabled = [
 ].includes(
   window.location.hostname,
 );
-const liveLanguageAnalysisEnabled = window.location.hostname !== "vhf.robertboscacci.com";
 const performanceDashboardEnabled = privateAppHost;
 const aisDashboardEnabled = true;
 const featureClipWriteEnabled = privateAppHost;
@@ -1298,9 +1297,6 @@ async function loadPublishedManifest() {
 }
 
 async function loadLanguagePayload() {
-  if (!liveLanguageAnalysisEnabled) {
-    return loadPublishedLanguagePayload();
-  }
   try {
     const response = await fetch(lexicalAnalysisUrl, { cache: "no-store" });
     if (!response.ok) {
