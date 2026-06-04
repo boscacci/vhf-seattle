@@ -681,7 +681,7 @@ def test_public_site_tabs_have_linkable_routes() -> None:
         "activateTab(initialRouteState.tab, { replaceRoute: true, updateRoute: false })"
         in app_js
     )
-    for route in ("clips", "hall-of-fame", "search", "live", "ais", "analysis"):
+    for route in ("clips", "hall-of-fame", "search", "live", "ais", "map", "analysis"):
         assert f'"{route}/index.html"' in deploy_shell
         assert f'"{route}/index.html"' in deploy_full
         assert f'"{route}/"' in deploy_shell
@@ -985,9 +985,21 @@ def test_public_site_education_reference_cards_use_aligned_grid_layout() -> None
     assert "grid-template-rows: minmax(2.5em, auto) auto;" in styles_css
     assert "justify-self: end;" in styles_css
     assert 'item.className = "education-card education-card-link";' in app_js
-    assert 'cue.textContent = "Open reference";' in app_js
+    assert 'item.tabIndex = 0;' in app_js
+    assert 'item.setAttribute("role", "link");' in app_js
+    assert "openEducationReference(resource);" in app_js
+    assert 'cue.textContent = "Open ->";' in app_js
+    assert 'action.className = "education-card-action";' in app_js
+    assert 'chipRow.className = "education-card-chip-row";' in app_js
+    assert 'chip.className = "education-card-chip";' in app_js
+    assert 'cue.textContent = "Tap for details";' in app_js
     assert ".education-card-link" in styles_css
     assert ".reference-open-cue" in styles_css
+    assert ".education-card-action" in styles_css
+    assert ".education-card-chip-row" in styles_css
+    assert ".education-card-chip" in styles_css
+    assert ".education-guide-card summary:hover" in styles_css
+    assert ".education-guide-card summary:focus-visible" in styles_css
 
 
 def test_public_site_analysis_channel_chart_can_hide_traffic_outlier() -> None:

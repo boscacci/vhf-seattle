@@ -1809,12 +1809,29 @@ audio {
   height: 100%;
   gap: 10px;
   align-items: start;
+  margin: -8px;
+  padding: 8px;
+  border-radius: 8px;
   cursor: pointer;
   list-style: none;
+  touch-action: manipulation;
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
 }
 
 .education-guide-card summary::-webkit-details-marker {
   display: none;
+}
+
+.education-guide-card summary:hover,
+.education-guide-card summary:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--teal), transparent 92%);
+}
+
+.education-guide-card summary:active {
+  transform: scale(0.992);
 }
 
 .guide-summary-copy {
@@ -1882,11 +1899,13 @@ audio {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  align-items: start;
+  align-items: center;
 }
 
 .education-card-link {
   position: relative;
+  cursor: pointer;
+  touch-action: manipulation;
   transition:
     border-color 160ms ease,
     background 160ms ease,
@@ -1894,18 +1913,31 @@ audio {
 }
 
 .education-card-link:hover,
-.education-card-link:focus-within {
+.education-card-link:focus-within,
+.education-card-link:focus-visible {
+  outline: none;
   border-color: color-mix(in srgb, var(--blue), transparent 34%);
   background: color-mix(in srgb, var(--blue), transparent 93%);
   transform: translateY(-1px);
+}
+
+.education-card-link:active {
+  transform: scale(0.992);
+}
+
+.education-card-action {
+  display: inline-flex;
+  position: relative;
+  z-index: 1;
+  text-decoration: none;
 }
 
 .reference-open-cue {
   display: inline-flex;
   align-items: center;
   justify-self: end;
-  min-height: 24px;
-  padding: 2px 8px;
+  min-height: 34px;
+  padding: 5px 10px;
   border: 1px solid color-mix(in srgb, var(--blue), transparent 42%);
   border-radius: 999px;
   color: var(--blue);
@@ -1913,6 +1945,27 @@ audio {
   font-size: 0.72rem;
   font-weight: 850;
   white-space: nowrap;
+}
+
+.education-card-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 26px;
+}
+
+.education-card-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--teal), transparent 55%);
+  border-radius: 999px;
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal), transparent 91%);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.15;
 }
 
 .entity-meta {

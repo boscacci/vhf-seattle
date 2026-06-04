@@ -239,6 +239,7 @@ route_index_paths=(
   "search/index.html"
   "live/index.html"
   "ais/index.html"
+  "map/index.html"
   "analysis/index.html"
 )
 route_direct_paths=(
@@ -252,6 +253,8 @@ route_direct_paths=(
   "live"
   "ais/"
   "ais"
+  "map/"
+  "map"
   "analysis/"
   "analysis"
 )
@@ -302,6 +305,8 @@ invalidate_paths=(
   "/live/*"
   "/ais"
   "/ais/*"
+  "/map"
+  "/map/*"
   "/analysis"
   "/analysis/"
   "/analysis/index.html"

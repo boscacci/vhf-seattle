@@ -3613,27 +3613,69 @@ function educationList(resources) {
     ...resources.map((resource) => {
       const item = document.createElement("article");
       item.className = "education-card education-card-link";
+      item.tabIndex = 0;
+      item.setAttribute("role", "link");
+      item.setAttribute(
+        "aria-label",
+        `Open ${resource.title || resource.source || "maritime radio reference"}`,
+      );
+      item.addEventListener("click", (event) => {
+        if (event.target.closest("a")) {
+          return;
+        }
+        openEducationReference(resource);
+      });
+      item.addEventListener("keydown", (event) => {
+        if (event.target.closest("a")) {
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openEducationReference(resource);
+        }
+      });
       const heading = document.createElement("div");
       heading.className = "education-card-heading";
+      const url = resource.url || "#";
       const title = document.createElement("a");
-      title.href = resource.url || "#";
+      title.href = url;
       title.rel = "noopener noreferrer";
       title.target = "_blank";
       title.textContent = resource.title || resource.source || "Reference";
+      const action = document.createElement("a");
+      action.className = "education-card-action";
+      action.href = url;
+      action.rel = "noopener noreferrer";
+      action.target = "_blank";
+      action.setAttribute("aria-label", `Open ${title.textContent}`);
       const cue = document.createElement("span");
       cue.className = "reference-open-cue";
-      cue.textContent = "Open reference";
-      heading.append(title, cue);
-      const meta = document.createElement("p");
-      meta.className = "entity-meta";
-      meta.textContent = [resource.source, resource.category].filter(Boolean).join(" · ");
+      cue.textContent = "Open ->";
+      action.append(cue);
+      heading.append(title, action);
+      const chipRow = document.createElement("div");
+      chipRow.className = "education-card-chip-row";
+      [resource.source, resource.category].filter(Boolean).forEach((value) => {
+        const chip = document.createElement("span");
+        chip.className = "education-card-chip";
+        chip.textContent = value;
+        chipRow.append(chip);
+      });
       const relevance = document.createElement("p");
       relevance.textContent = resource.local_relevance || "";
-      item.append(heading, meta, relevance);
+      item.append(heading, chipRow, relevance);
       return item;
     }),
   );
   return list;
+}
+
+function openEducationReference(resource) {
+  const url = String(resource?.url || "").trim();
+  if (!url || url === "#") {
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function educationGuideList(sections) {
@@ -3672,7 +3714,7 @@ function educationGuideList(sections) {
       summaryCopy.append(title, signals);
       const cue = document.createElement("span");
       cue.className = "guide-expand-cue";
-      cue.textContent = "Details";
+      cue.textContent = "Tap for details";
       summary.append(summaryCopy, cue);
       const body = document.createElement("div");
       body.className = "guide-card-body";
