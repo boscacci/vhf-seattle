@@ -657,6 +657,76 @@ def test_recent_clips_skip_missing_playback_objects(tmp_path) -> None:
     assert playable_key not in response.text
 
 
+def test_recent_clips_reports_published_playable_counts_separately(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    public_site_dir = tmp_path / "public-site"
+    public_site_dir.mkdir()
+    (public_site_dir / "public_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-06-04T15:19:15Z",
+                "stats": {
+                    "clip_count": 2,
+                    "channel_counts": {"14": 1, "68": 1},
+                },
+                "clips": [
+                    {
+                        "id": "clip-one",
+                        "channel": "14",
+                        "started_at": "2026-06-04T15:00:00Z",
+                        "audio_public_filename": "one.mp3",
+                        "transcript_public": "Seattle traffic one",
+                    },
+                    {
+                        "id": "clip-two",
+                        "channel": "68",
+                        "started_at": "2026-06-04T15:03:00Z",
+                        "audio_public_filename": "two.mp3",
+                        "transcript_public": "Recreational two",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _client(clip_db_path=db_path, public_site_dir=public_site_dir)
+    store = UploadedClipStore(db_path)
+    for index in range(3):
+        channel = "14" if index != 1 else "68"
+        key = f"raw/channel={channel}/date=2026-06-04/fake-{index}.mp3"
+        started_at = datetime(2026, 6, 4, 15, index, tzinfo=UTC)
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel=channel).model_copy(
+                update={
+                    "started_at": started_at,
+                    "ended_at": started_at + timedelta(seconds=4),
+                    "idempotency_key": f"radio-event-playable-count-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"Transcript {index}",
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace("+00:00", "Z"),
+                )
+            ],
+        )
+
+    response = client.get("/api/clips/recent?limit=5")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["clip_count"] == 3
+    assert body["playable_clip_count"] == 2
+    assert body["filtered_playable_clip_count"] == 2
+    assert body["playable_channel_counts"] == {"14": 1, "68": 1}
+    assert body["latest_playable_started_at"] == "2026-06-04T15:03:00Z"
+
+
 def test_recent_clips_pages_over_playable_clips(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     missing_key = "raw/channel=68/date=2026-05-20/fake-1.mp3"
@@ -963,6 +1033,10 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
         "clips": [],
         "clip_count": 1,
         "filtered_clip_count": 0,
+        "playable_clip_count": 0,
+        "filtered_playable_clip_count": 0,
+        "playable_channel_counts": {},
+        "latest_playable_started_at": None,
         "limit": 5,
         "offset": 0,
         "featured": False,
@@ -1210,6 +1284,7 @@ def _client(
     clip_store_backend: str = "sqlite",
     storage: FakeStorage | None = None,
     event_store: CapturingEventStore | None = None,
+    public_site_dir: Path | None = None,
 ) -> AsgiTestClient:
     app.dependency_overrides.clear()
 
@@ -1221,7 +1296,7 @@ def _client(
             ingest_token="ingest-token",
             raw_presign_seconds=900,
             playback_presign_seconds=300,
-            public_site_dir=Path("outputs/public-site"),
+            public_site_dir=public_site_dir or Path("/tmp/talkingboats-missing-public-site"),
             public_base_url="https://vhf.robertboscacci.com",
             live_channels={
                 "68": LiveChannel(

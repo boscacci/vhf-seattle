@@ -236,13 +236,19 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "startClipStatsPolling" in app_js
     assert "pollClipStats" in app_js
     assert "latest_started_at" in app_js
-    assert (
-        "const latestStartedAt = payload.stats?.latest_started_at || clips[0]?.started_at;"
-        in app_js
-    )
+    assert "payload.stats?.latest_playable_started_at || payload.stats?.latest_started_at" in app_js
+    assert "|| clips[0]?.started_at" in app_js
     assert '["Feed",' not in app_js
     assert '"Live DB"' not in app_js
     assert '"Published export"' not in app_js
+    assert '["Playable clips", clipTotal]' in app_js
+    assert '["Clips", clipTotal]' not in app_js
+    assert '["Latest clip", latest]' in app_js
+    assert "payload.stats?.playable_channel_counts ||" in app_js
+    assert 'const clipNoun = filteredTotal === 1 ? "playable clip" : "playable clips";' in app_js
+    assert '"Analyzed transcripts"' in app_js
+    assert '"Intelligible transcript records; audio may age out"' in app_js
+    assert 'languageCard("Transmissions", String(payload.source_clip_count || 0)' not in app_js
     assert "function formatStatValue(label, value)" in app_js
     assert "return Number(value).toLocaleString();" in app_js
     assert 'description.textContent = formatStatValue(label, value);' in app_js

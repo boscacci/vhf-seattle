@@ -120,6 +120,16 @@ Clip processing:
 - The OptiPlex runs `faster-whisper`, review/correction workflows, lexical
   analysis, topic clustering, and public exports.
 
+Default edge audio/transcription settings:
+
+```bash
+TALKINGBOATS_AUDIO_FILTER_ENABLED=true
+TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ=16000
+TALKINGBOATS_TRANSCRIBE_BEAM_SIZE=5
+TALKINGBOATS_TRANSCRIBE_HOTWORDS="Seattle Traffic,VTS,Puget Sound"
+TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true
+```
+
 Retention and export:
 
 - Unstarred raw `raw/` audio expires after 90 days.

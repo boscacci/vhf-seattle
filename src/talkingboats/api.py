@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
 from typing import Annotated, Any
@@ -131,6 +131,49 @@ if SHARED_UI_DIR.exists():
     app.mount("/operator", StaticFiles(directory=SHARED_UI_DIR, html=True), name="operator")
 
 
+def _published_playable_clip_summary(
+    public_site_dir: FilePath,
+    *,
+    featured_only: bool = False,
+) -> dict[str, object]:
+    manifest_path = public_site_dir / "public_manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "playable_clip_count": 0,
+            "playable_channel_counts": {},
+            "latest_playable_started_at": None,
+        }
+    clips = []
+    for clip in payload.get("clips", []):
+        if not isinstance(clip, Mapping):
+            continue
+        if featured_only and not clip.get("featured"):
+            continue
+        if not clip.get("audio_public_filename"):
+            continue
+        channel = str(clip.get("channel") or "")
+        if channel.upper() in PUBLIC_EXCLUDED_CHANNELS:
+            continue
+        clips.append(clip)
+    channel_counts: dict[str, int] = {}
+    started_values: list[str] = []
+    for clip in clips:
+        channel = str(clip.get("channel") or "?")
+        channel_counts[channel] = channel_counts.get(channel, 0) + 1
+        started_at = str(clip.get("started_at") or "")
+        if started_at:
+            started_values.append(started_at)
+    return {
+        "playable_clip_count": len(clips),
+        "playable_channel_counts": dict(
+            sorted(channel_counts.items(), key=lambda item: item[0])
+        ),
+        "latest_playable_started_at": max(started_values) if started_values else None,
+    }
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -214,11 +257,30 @@ async def recent_clips(
     channels: Annotated[list[str] | None, Query()] = None,
     featured: bool = False,
 ) -> dict[str, object]:
+    playable_summary = _published_playable_clip_summary(
+        settings.public_site_dir,
+        featured_only=featured,
+    )
+    playable_channel_counts = dict(playable_summary["playable_channel_counts"])
+    playable_clip_count = int(playable_summary["playable_clip_count"])
+    selected_channels = _requested_public_channels(channel=channel, channels=channels)
+    filtered_playable_clip_count = (
+        sum(
+            playable_channel_counts.get(selected_channel, 0)
+            for selected_channel in selected_channels
+        )
+        if selected_channels
+        else playable_clip_count
+    )
     if clip_store is None:
         return {
             "clips": [],
             "clip_count": 0,
             "filtered_clip_count": 0,
+            "playable_clip_count": playable_clip_count,
+            "filtered_playable_clip_count": filtered_playable_clip_count,
+            "playable_channel_counts": playable_channel_counts,
+            "latest_playable_started_at": playable_summary["latest_playable_started_at"],
             "limit": limit,
             "offset": offset,
             "featured": featured,
@@ -237,7 +299,6 @@ async def recent_clips(
         else all_channel_counts
     )
     clip_count = sum(all_channel_counts.values())
-    selected_channels = _requested_public_channels(channel=channel, channels=channels)
     filtered_clip_count = (
         sum(channel_counts.get(selected_channel, 0) for selected_channel in selected_channels)
         if selected_channels
@@ -248,6 +309,10 @@ async def recent_clips(
             "clips": [],
             "clip_count": clip_count,
             "filtered_clip_count": 0,
+            "playable_clip_count": playable_clip_count,
+            "filtered_playable_clip_count": 0,
+            "playable_channel_counts": playable_channel_counts,
+            "latest_playable_started_at": playable_summary["latest_playable_started_at"],
             "limit": limit,
             "offset": offset,
             "featured": featured,
@@ -268,6 +333,10 @@ async def recent_clips(
         "clips": clips,
         "clip_count": clip_count,
         "filtered_clip_count": filtered_clip_count,
+        "playable_clip_count": playable_clip_count,
+        "filtered_playable_clip_count": filtered_playable_clip_count,
+        "playable_channel_counts": playable_channel_counts,
+        "latest_playable_started_at": playable_summary["latest_playable_started_at"],
         "limit": limit,
         "offset": offset,
         "featured": featured,

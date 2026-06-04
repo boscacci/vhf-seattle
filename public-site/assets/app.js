@@ -1335,6 +1335,14 @@ async function loadPublishedLanguagePayload() {
 function normalizeLivePayload(payload) {
   const clips = Array.isArray(payload.clips) ? payload.clips : [];
   const latestStartedAt = payload.latest_started_at || clips[0]?.started_at || null;
+  const playableChannelCounts = payload.playable_channel_counts || payload.stats?.playable_channel_counts || {};
+  const playableClipCount = Number(
+    payload.playable_clip_count ??
+      payload.stats?.playable_clip_count ??
+      payload.clip_count ??
+      totalAvailableClipsFromCounts(payload.channel_counts) ??
+      clips.length,
+  );
   return {
     source: "live",
     site: fallbackManifest.site,
@@ -1343,11 +1351,18 @@ function normalizeLivePayload(payload) {
         payload.clip_count ?? totalAvailableClipsFromCounts(payload.channel_counts) ?? clips.length,
       ),
       filtered_clip_count: Number(payload.filtered_clip_count ?? clips.length),
+      playable_clip_count: playableClipCount,
+      filtered_playable_clip_count: Number(
+        payload.filtered_playable_clip_count ?? payload.stats?.filtered_playable_clip_count ?? playableClipCount,
+      ),
       featured: Boolean(payload.featured),
       latest_started_at: latestStartedAt,
+      latest_playable_started_at:
+        payload.latest_playable_started_at || payload.stats?.latest_playable_started_at || latestStartedAt,
       limit: Number(payload.limit ?? selectedClipPageSize),
       offset: Number(payload.offset ?? clipOffset()),
       channel_counts: payload.channel_counts || countBy(clips, (clip) => clip.channel || "?"),
+      playable_channel_counts: playableChannelCounts,
       channel_labels: payload.channel_labels || {},
     },
     generated_at: new Date().toISOString(),
@@ -1447,22 +1462,26 @@ function renderCurrentClipOrder() {
 }
 
 function renderStats(payload, clips) {
-  const channelCounts = payload.stats?.channel_counts || countBy(clips, (clip) => clip.channel || "?");
+  const channelCounts =
+    payload.stats?.playable_channel_counts ||
+    payload.stats?.channel_counts ||
+    countBy(clips, (clip) => clip.channel || "?");
   const channelTotal = Object.keys(channelCounts).length;
-  const clipTotal = totalDatabaseClips(payload, clips);
-  const latestStartedAt = payload.stats?.latest_started_at || clips[0]?.started_at;
+  const clipTotal = totalPlayableClips(payload, clips);
+  const latestStartedAt =
+    payload.stats?.latest_playable_started_at || payload.stats?.latest_started_at || clips[0]?.started_at;
   const latest = latestStartedAt ? shortTime(latestStartedAt) : "None";
   const statItems = [
-    ["Clips", clipTotal],
+    ["Playable clips", clipTotal],
     ["Channels", channelTotal],
-    ["Latest", latest],
+    ["Latest clip", latest],
   ];
 
   stats.replaceChildren(
     ...statItems.map(([label, value]) => {
       const item = document.createElement("div");
       item.className = "stat";
-      if (label === "Clips" && lastRenderedClipTotal !== null && Number(value) > lastRenderedClipTotal) {
+      if (label === "Playable clips" && lastRenderedClipTotal !== null && Number(value) > lastRenderedClipTotal) {
         item.classList.add("is-live-updated");
       }
       const term = document.createElement("dt");
@@ -1477,7 +1496,7 @@ function renderStats(payload, clips) {
 }
 
 function formatStatValue(label, value) {
-  if (label === "Clips" || label === "Channels") {
+  if (label === "Playable clips" || label === "Channels") {
     return Number(value).toLocaleString();
   }
   return String(value);
@@ -1489,7 +1508,10 @@ function renderChannelFilter(payload) {
     clipFeaturedFilter === "featured" && payload.source !== "live"
       ? (payload.clips || []).filter((clip) => clip.featured)
       : payload.clips || [];
-  const channelCounts = payload.stats?.channel_counts || countBy(channelCountClips, (clip) => clip.channel || "?");
+  const channelCounts =
+    payload.stats?.playable_channel_counts ||
+    payload.stats?.channel_counts ||
+    countBy(channelCountClips, (clip) => clip.channel || "?");
   const configuredChannels = Object.keys(payload.stats?.channel_labels || payload.channel_labels || {});
   const channels = [...new Set([...Object.keys(channelCounts), ...configuredChannels])].sort(compareChannels);
   for (const channel of selectedChannelValues()) {
@@ -2544,7 +2566,11 @@ function renderLanguageDashboard(payload) {
   const cards = document.createElement("div");
   cards.className = "language-grid";
   cards.append(
-    languageCard("Transmissions", String(payload.source_clip_count || 0), "Analyzed transcript clips"),
+    languageCard(
+      "Analyzed transcripts",
+      String(payload.source_clip_count || 0),
+      "Intelligible transcript records; audio may age out",
+    ),
     languageCard(
       "Analyzed channels",
       activeChannelSummary(channelCounts),
@@ -4857,7 +4883,7 @@ function statusText(payload, clips, filteredTotal) {
   const scopeText = selectedChannelStatusScope();
   const pageText =
     clips.length === filteredTotal ? `${clips.length}` : `${clips.length} of ${filteredTotal}`;
-  const clipNoun = filteredTotal === 1 ? "clip" : "clips";
+  const clipNoun = filteredTotal === 1 ? "playable clip" : "playable clips";
   const collectionText = clipFeaturedFilter === "featured" ? "featured " : "";
   if (payload.source === "live") {
     return `${pageText} ${collectionText}${clipNoun}${scopeText} from the live DB`;
@@ -4867,22 +4893,29 @@ function statusText(payload, clips, filteredTotal) {
 }
 
 function filteredClipCount(payload, clips) {
+  if (payload.stats?.filtered_playable_clip_count !== undefined) {
+    return Number(payload.stats.filtered_playable_clip_count);
+  }
   if (clipFeaturedFilter === "featured" && payload.source !== "live") {
     return clips.length;
   }
   if (selectedChannels.size) {
-    const channelCounts = payload.stats?.channel_counts;
+    const channelCounts = payload.stats?.playable_channel_counts || payload.stats?.channel_counts;
     if (channelCounts) {
       return selectedChannelValues().reduce((total, channel) => total + Number(channelCounts[channel] || 0), 0);
     }
     return Number(payload.stats?.filtered_clip_count ?? clips.length);
   }
-  return Number(payload.stats?.filtered_clip_count ?? totalDatabaseClips(payload, clips));
+  return Number(payload.stats?.filtered_clip_count ?? totalPlayableClips(payload, clips));
 }
 
-function totalDatabaseClips(payload, clips) {
+function totalPlayableClips(payload, clips) {
   return Number(
-    payload.stats?.clip_count ?? totalAvailableClipsFromCounts(payload.stats?.channel_counts) ?? clips.length,
+    payload.stats?.playable_clip_count ??
+      payload.stats?.clip_count ??
+      totalAvailableClipsFromCounts(payload.stats?.playable_channel_counts) ??
+      totalAvailableClipsFromCounts(payload.stats?.channel_counts) ??
+      clips.length,
   );
 }
 
