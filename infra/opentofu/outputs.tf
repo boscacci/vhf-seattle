@@ -48,6 +48,16 @@ output "ais_connections_table_name" {
   value       = aws_dynamodb_table.ais_connections.name
 }
 
+output "ais_ingest_secret_name" {
+  description = "Secrets Manager secret name containing the raw AIS ingest token."
+  value       = aws_secretsmanager_secret.ais_ingest_token.name
+}
+
+output "ais_ingest_secret_kms_key_arn" {
+  description = "KMS key ARN encrypting the AIS ingest token secret."
+  value       = aws_kms_key.ais_ingest_secret.arn
+}
+
 output "dev_site_fqdn" {
   description = "Dev public site hostname."
   value       = local.dev_site_fqdn

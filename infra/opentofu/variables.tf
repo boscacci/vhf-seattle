@@ -28,10 +28,15 @@ variable "ais_live_subdomain" {
   default     = "ais-live"
 }
 
-variable "ais_ingest_token" {
-  description = "Shared secret required by the AIS HTTP ingest Lambda. Set through tfvars or TF_VAR_ais_ingest_token, not repo files."
+variable "ais_ingest_token_sha256" {
+  description = "SHA-256 hex digest of the AIS ingest token. The raw token lives in AWS Secrets Manager, not OpenTofu state."
   type        = string
   sensitive   = true
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.ais_ingest_token_sha256))
+    error_message = "ais_ingest_token_sha256 must be a lowercase 64-character SHA-256 hex digest."
+  }
 }
 
 variable "dev_tailnet_ipv4_addresses" {

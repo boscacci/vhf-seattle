@@ -52,6 +52,23 @@ def test_full_public_deploy_supports_external_tofu_state_dir() -> None:
     assert 'cd "${tofu_dir}"' in script
 
 
+def test_ais_cloud_deploy_stores_raw_token_in_secrets_manager_not_tofu_state() -> None:
+    script = Path("scripts/deploy_ais_cloud.sh").read_text(encoding="utf-8")
+
+    assert "openssl rand -base64 48" in script
+    assert "shasum -a 256" in script
+    assert "TF_VAR_ais_ingest_token_sha256" in script
+    assert "TF_VAR_ais_ingest_token=" not in script
+    assert "aws secretsmanager get-secret-value" in script
+    assert "aws secretsmanager put-secret-value" in script
+    assert "ais_ingest_secret_name" in script
+    assert "ais_ingest_secret_kms_key_arn" in script
+    assert "--secret-string" in script
+    assert "set -x" not in script
+    assert "token=" in script
+    assert "echo \"${token}" not in script
+
+
 def test_deploy_scripts_discover_existing_aws_targets_when_tofu_outputs_are_missing() -> None:
     for path in ("scripts/deploy_static_shell.sh", "scripts/deploy_public_site.sh"):
         script = Path(path).read_text(encoding="utf-8")

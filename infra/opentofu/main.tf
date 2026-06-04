@@ -49,6 +49,11 @@ locals {
     ".",
     "-",
   )
+  ais_ingest_secret_name = replace(
+    "${var.project_name}-${var.resource_site_subdomain}-ais-ingest-token",
+    ".",
+    "-",
+  )
   dev_radio_events_table = replace(
     "${var.project_name}-${var.dev_resource_site_subdomain}-events",
     ".",
@@ -222,6 +227,34 @@ resource "aws_dynamodb_table" "ais_connections" {
   })
 }
 
+resource "aws_kms_key" "ais_ingest_secret" {
+  description             = "Encrypt the Talking Boats AIS ingest token in Secrets Manager"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-ingest-secret-kms"
+  })
+}
+
+resource "aws_kms_alias" "ais_ingest_secret" {
+  name          = "alias/${local.ais_ingest_secret_name}"
+  target_key_id = aws_kms_key.ais_ingest_secret.key_id
+}
+
+resource "aws_secretsmanager_secret" "ais_ingest_token" {
+  name                    = local.ais_ingest_secret_name
+  description             = "Raw AIS ingest token for the Raspberry Pi forwarder"
+  kms_key_id              = aws_kms_key.ais_ingest_secret.arn
+  recovery_window_in_days = 7
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-ingest-token"
+  })
+}
+
 data "aws_iam_policy_document" "ais_lambda_assume_role" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -313,7 +346,7 @@ resource "aws_lambda_function" "ais_ingest" {
   environment {
     variables = {
       TALKINGBOATS_AIS_CONNECTIONS_TABLE   = aws_dynamodb_table.ais_connections.name
-      TALKINGBOATS_AIS_INGEST_TOKEN_SHA256 = sha256(var.ais_ingest_token)
+      TALKINGBOATS_AIS_INGEST_TOKEN_SHA256 = var.ais_ingest_token_sha256
       TALKINGBOATS_AIS_SNAPSHOT_BUCKET     = aws_s3_bucket.public_site.bucket
       TALKINGBOATS_AIS_SNAPSHOT_KEY        = "ais/latest.json"
       TALKINGBOATS_AIS_STATION             = "Elliott Bay VHF"

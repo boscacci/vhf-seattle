@@ -231,12 +231,22 @@ def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_ori
     versions_tf = Path("infra/opentofu/versions.tf").read_text(encoding="utf-8")
 
     assert 'archive = {' in versions_tf
-    assert 'variable "ais_ingest_token"' in variables_tf
-    ingest_token = _variable_block(variables_tf, "ais_ingest_token")
-    assert "sensitive   = true" in ingest_token
-    assert "default" not in ingest_token
+    assert 'variable "ais_ingest_token"' not in variables_tf
+    assert 'variable "ais_ingest_token_sha256"' in variables_tf
+    ingest_token_sha256 = _variable_block(variables_tf, "ais_ingest_token_sha256")
+    assert "sensitive   = true" in ingest_token_sha256
+    assert "validation {" in ingest_token_sha256
+    assert "^[0-9a-f]{64}$" in ingest_token_sha256
+    assert "default" not in ingest_token_sha256
     assert 'variable "ais_live_subdomain"' in variables_tf
     assert 'default     = "ais-live"' in _variable_block(variables_tf, "ais_live_subdomain")
+    assert 'resource "aws_kms_key" "ais_ingest_secret"' in main_tf
+    assert 'resource "aws_kms_alias" "ais_ingest_secret"' in main_tf
+    assert 'resource "aws_secretsmanager_secret" "ais_ingest_token"' in main_tf
+    assert 'aws_secretsmanager_secret_version' not in main_tf
+    ais_secret = _resource_block(main_tf, "aws_secretsmanager_secret", "ais_ingest_token")
+    assert re.search(r"kms_key_id\s+=\s+aws_kms_key\.ais_ingest_secret\.arn", ais_secret)
+    assert 'Environment = "prod"' in ais_secret
     assert 'data "archive_file" "ais_lambda"' in main_tf
     assert 'filename = "talkingboats/ais_live.py"' in main_tf
     assert 'filename = "talkingboats/ais_history.py"' in main_tf
@@ -264,7 +274,7 @@ def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_ori
     assert 'ttl {' in _resource_block(main_tf, "aws_dynamodb_table", "ais_connections")
     assert 'TALKINGBOATS_AIS_SNAPSHOT_BUCKET' in main_tf
     assert 'TALKINGBOATS_AIS_CONNECTIONS_TABLE' in main_tf
-    assert 'TALKINGBOATS_AIS_INGEST_TOKEN_SHA256 = sha256(var.ais_ingest_token)' in main_tf
+    assert 'TALKINGBOATS_AIS_INGEST_TOKEN_SHA256 = var.ais_ingest_token_sha256' in main_tf
     assert 'execute-api:ManageConnections' in main_tf
     assert "/${aws_apigatewayv2_stage.ais_websocket.name}" in main_tf
     assert "vpc_config" not in _resource_block(main_tf, "aws_lambda_function", "ais_ingest")
@@ -273,6 +283,8 @@ def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_ori
     )
     assert 'output "ais_http_ingest_url"' in outputs_tf
     assert 'output "ais_websocket_url"' in outputs_tf
+    assert 'output "ais_ingest_secret_name"' in outputs_tf
+    assert 'output "ais_ingest_secret_kms_key_arn"' in outputs_tf
     assert 'wss://${local.ais_live_fqdn}/v1' in outputs_tf
 
 
