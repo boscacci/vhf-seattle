@@ -2524,15 +2524,9 @@ function renderAisCatcherFrame() {
   if (!aisCatcherFrame || !mapStatus) {
     return;
   }
-  if (privateAppHost) {
-    aisCatcherFrame.src = aisCatcherFrameUrl;
-    aisCatcherFrame.title = "AIS-catcher live map";
-    mapStatus.textContent = "Showing AIS-catcher live map";
-  } else {
-    aisCatcherFrame.src = aisCatcherFallbackUrl;
-    aisCatcherFrame.title = "AIS-catcher shared public map";
-    mapStatus.textContent = "Showing AIS-catcher shared public map";
-  }
+  aisCatcherFrame.src = aisCatcherFrameUrl;
+  aisCatcherFrame.title = "AIS-catcher live map";
+  mapStatus.textContent = "Showing AIS-catcher live map";
   if (aisFallbackLink) {
     aisFallbackLink.href = aisCatcherFallbackUrl;
   }

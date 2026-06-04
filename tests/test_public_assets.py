@@ -619,6 +619,9 @@ def test_public_site_shows_public_ais_tab() -> None:
     assert "panels.map.hidden = !aisDashboardEnabled" in app_js
     assert "renderAisCatcherFrame" in app_js
     assert "aisCatcherFallbackUrl" in app_js
+    assert 'aisCatcherFrame.src = aisCatcherFrameUrl;' in app_js
+    assert 'aisCatcherFrame.title = "AIS-catcher live map";' in app_js
+    assert "if (privateAppHost) {\n    aisCatcherFrame.src = aisCatcherFrameUrl;" not in app_js
     assert 'id="tab-map" type="button" data-tab="map" hidden' in index_html
 
 
