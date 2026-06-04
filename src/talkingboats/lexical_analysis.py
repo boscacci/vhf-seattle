@@ -909,13 +909,19 @@ def _build_topics(
                     generated_at=generated_at,
                 ),
             )
-        marker_colors = [_topic_color(topic_id) for topic_id in topics]
+        plot_indices = [
+            index for index, topic_id in enumerate(topics) if int(topic_id) != -1
+        ]
+        plot_topics = [int(topics[index]) for index in plot_indices]
+        plot_documents = [documents[index] for index in plot_indices]
+        coordinate_columns = [list(coordinates[:, column]) for column in range(3)]
+        marker_colors = [_topic_color(topic_id) for topic_id in plot_topics]
         figure = go.Figure(
             data=[
                 go.Scatter3d(
-                    x=coordinates[:, 0],
-                    y=coordinates[:, 1],
-                    z=coordinates[:, 2],
+                    x=[coordinate_columns[0][index] for index in plot_indices],
+                    y=[coordinate_columns[1][index] for index in plot_indices],
+                    z=[coordinate_columns[2][index] for index in plot_indices],
                     mode="markers",
                     marker={
                         "size": 5,
@@ -924,9 +930,10 @@ def _build_topics(
                         "opacity": 0.88,
                         "line": {"color": "rgba(7,17,15,0.45)", "width": 1},
                     },
-                    text=[_short_text(doc, limit=160) for doc in documents],
+                    text=[_short_text(doc, limit=160) for doc in plot_documents],
                     customdata=[
-                        topic_labels.get(topic_id, "Keywords pending") for topic_id in topics
+                        topic_labels.get(topic_id, "Keywords pending")
+                        for topic_id in plot_topics
                     ],
                     hovertemplate="%{customdata}<br>%{text}<extra></extra>",
                 )

@@ -646,6 +646,138 @@ def test_bertopic_model_is_configured_for_condensed_topic_count(
     assert all(not item["label"].startswith("Topic ") for item in payload["items"])
 
 
+def test_topic_cluster_plot_excludes_outlier_documents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeSentenceTransformer:
+        def __init__(self, _model_name: str) -> None:
+            pass
+
+        def encode(
+            self,
+            documents: list[str],
+            *,
+            show_progress_bar: bool,
+        ) -> list[tuple[float, float, float]]:
+            return [
+                (float(index), float(index + 1), float(index + 2))
+                for index, _document in enumerate(documents)
+            ]
+
+    class _Coordinates:
+        def __init__(self, row_count: int) -> None:
+            self.row_count = row_count
+
+        def __getitem__(self, key: tuple[slice | list[int], int]) -> list[float]:
+            rows, column = key
+            values = [float(index + column) for index in range(self.row_count)]
+            if isinstance(rows, list):
+                return [values[index] for index in rows]
+            return values
+
+    class FakeUMAP:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def fit_transform(self, embeddings: list[tuple[float, float, float]]) -> _Coordinates:
+            return _Coordinates(len(embeddings))
+
+    class FakeBERTopic:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def fit_transform(
+            self,
+            documents: list[str],
+            *,
+            embeddings: list[tuple[float, float, float]],
+        ) -> tuple[list[int], None]:
+            return [-1, 0, 0, 1, -1, 1], None
+
+        def get_topic(self, topic_id: int) -> list[tuple[str, float]]:
+            return {
+                0: [("seattle traffic", 1.0), ("roger", 0.9)],
+                1: [("tug barge", 1.0), ("southbound", 0.9)],
+            }[topic_id]
+
+    class FakeScatter3d:
+        def __init__(self, **kwargs: object) -> None:
+            captured["scatter_kwargs"] = kwargs
+
+    class FakeFigure:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def to_html(
+            self,
+            *,
+            full_html: bool,
+            include_plotlyjs: str,
+            config: dict[str, object] | None = None,
+        ) -> str:
+            return "<html>topics</html>"
+
+    monkeypatch.setitem(sys.modules, "bertopic", types.SimpleNamespace(BERTopic=FakeBERTopic))
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=FakeSentenceTransformer),
+    )
+    monkeypatch.setitem(sys.modules, "umap", types.SimpleNamespace(UMAP=FakeUMAP))
+    monkeypatch.setitem(
+        sys.modules,
+        "plotly",
+        types.SimpleNamespace(
+            graph_objects=types.SimpleNamespace(
+                Figure=FakeFigure,
+                Scatter3d=FakeScatter3d,
+            )
+        ),
+    )
+
+    clips = [
+        lexical_analysis.TranscriptClip(
+            key=f"clip-{index}.mp3",
+            channel="14",
+            started_at=f"2026-05-26T00:0{index}:00Z",
+            ended_at=None,
+            duration_seconds=None,
+            content_type="audio/mpeg",
+            transcript=transcript,
+        )
+        for index, transcript in enumerate(
+            [
+                "Outlier zero should stay out of the topic map.",
+                "Seattle Traffic regular cluster point one.",
+                "Seattle Traffic regular cluster point two.",
+                "Tug barge southbound cluster point one.",
+                "Outlier four should stay out of the topic map.",
+                "Tug barge southbound cluster point two.",
+            ]
+        )
+    ]
+
+    payload = lexical_analysis._build_topics(
+        clips,
+        html_output_path=tmp_path / "topic_clusters.html",
+        min_topic_documents=6,
+    )
+
+    scatter_kwargs = captured["scatter_kwargs"]
+    assert isinstance(scatter_kwargs, dict)
+    assert scatter_kwargs["x"] == [1.0, 2.0, 3.0, 5.0]
+    assert scatter_kwargs["y"] == [2.0, 3.0, 4.0, 6.0]
+    assert scatter_kwargs["z"] == [3.0, 4.0, 5.0, 7.0]
+    assert len(scatter_kwargs["text"]) == 4
+    assert all("Outlier" not in text for text in scatter_kwargs["text"])
+    assert "Outliers" not in scatter_kwargs["customdata"]
+    assert lexical_analysis.TOPIC_OUTLIER_COLOR not in scatter_kwargs["marker"]["color"]
+    assert any(item["id"] == -1 for item in payload["items"])
+
+
 def test_mobile_topic_plot_html_supports_two_finger_camera_zoom() -> None:
     base_html = "<html><head><title>Topics</title></head><body><div>plot</div></body></html>"
 
