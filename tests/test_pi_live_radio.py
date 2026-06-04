@@ -261,6 +261,48 @@ def test_pi_installer_adds_serial_pinned_voice_and_ais_catcher_service() -> None
     assert "EnvironmentFile=/etc/talkingboats/live-radio.env" in profile_unit
 
 
+def test_pi_installer_adds_cloud_hls_and_ais_forwarder_as_gated_relays() -> None:
+    installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
+    hls_unit = Path("deploy/systemd/talkingboats-live-hls-relay.service.example").read_text(
+        encoding="utf-8"
+    )
+    ais_forwarder_unit = Path(
+        "deploy/systemd/talkingboats-ais-forwarder.service.example"
+    ).read_text(encoding="utf-8")
+    hls_wrapper = Path("deploy/pi/live-radio/talkingboats-live-hls-relay").read_text(
+        encoding="utf-8"
+    )
+    env_example = Path("deploy/pi/talkingboats-capture.env.example").read_text(
+        encoding="utf-8"
+    )
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+
+    assert "talkingboats-live-hls-relay" in installer
+    assert "talkingboats-ais-forwarder.service" in installer
+    assert 'append_env_if_missing TALKINGBOATS_CLOUD_HLS_ENABLED "false"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_PUBLIC_SITE_BUCKET ""' in installer
+    assert "TALKINGBOATS_CLOUD_HLS_ENABLED:-false" in installer
+    assert "TALKINGBOATS_PUBLIC_SITE_BUCKET:-" in installer
+    assert "TALKINGBOATS_AIS_HTTP_INGEST_URL:-" in installer
+    assert "TALKINGBOATS_AIS_INGEST_TOKEN:-" in installer
+    assert "AIS forwarder installed but disabled" in installer
+    assert "ExecStart=/opt/talkingboats/bin/talkingboats-live-hls-relay" in hls_unit
+    assert "CPUQuota=65%" in hls_unit
+    assert "ExecStart=/usr/bin/python3 -m talkingboats.ais_forwarder" in ais_forwarder_unit
+    assert "TALKINGBOATS_CLOUD_HLS_ENABLED:-false" in hls_wrapper
+    assert "python3 -m talkingboats.hls_publisher" in hls_wrapper
+    assert "ffmpeg" in hls_wrapper
+    assert "TALKINGBOATS_AIS_HTTP_INGEST_URL=" in env_example
+    assert "TALKINGBOATS_AIS_INGEST_TOKEN=" in env_example
+    assert (
+        'if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" && '
+        '-n "${TALKINGBOATS_AIS_INGEST_TOKEN:-}" ]]; then'
+        in Path("deploy/pi/live-radio/talkingboats-ais-catcher").read_text(encoding="utf-8")
+    )
+    assert 'talkingboats-forward-ais = "talkingboats.ais_forwarder:main"' in pyproject
+    assert 'talkingboats-publish-live-hls = "talkingboats.hls_publisher:main"' in pyproject
+
+
 def test_pi_installer_streams_every_balanced_voice_net_channel_to_icecast() -> None:
     installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
     expected_channels = ("05A", "06", "09", "13", "14", "16", "22A", "67", "68", "69", "71", "72")

@@ -40,7 +40,9 @@ asr-train = [
 
 [project.scripts]
 talkingboats-api = "talkingboats.api:main"
+talkingboats-forward-ais = "talkingboats.ais_forwarder:main"
 talkingboats-fetch-ais-history = "talkingboats.ais_history:main"
+talkingboats-publish-live-hls = "talkingboats.hls_publisher:main"
 talkingboats-simulate-radio = "talkingboats.simulator:main"
 talkingboats-upload-clip = "talkingboats.capture_uploader:main"
 talkingboats-edge-capture = "talkingboats.edge_capture:main"

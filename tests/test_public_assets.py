@@ -441,6 +441,34 @@ def test_public_site_channel_selector_closes_on_outside_interaction() -> None:
     assert "menu.open = false;" in app_js
 
 
+def test_public_site_prod_degrades_to_published_manifest_before_live_api() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert 'const publicAppHost = window.location.hostname === "vhf.robertboscacci.com";' in app_js
+    assert "const publicLiveApiTimeoutMs = 2500;" in app_js
+    assert "function shouldLoadPublishedManifestFirst()" in app_js
+    assert (
+        "return publicAppHost && clipFeaturedFilter === \"recent\" && selectedChannels.size === 0;"
+        in app_js
+    )
+    assert "const payload = await loadPublishedManifest();" in app_js
+    assert "refreshLiveClipPayloadInBackground(requestUrl, requestId);" in app_js
+    assert "async function refreshLiveClipPayloadInBackground(requestUrl, requestId)" in app_js
+    assert "fetchJsonWithTimeout(requestUrl, { timeoutMs: publicLiveApiTimeoutMs })" in app_js
+    assert "function fetchJsonWithTimeout(url, { timeoutMs } = {})" in app_js
+    assert "new AbortController()" in app_js
+    assert "window.setTimeout(() => controller.abort(), timeoutMs)" in app_js
+
+
+def test_static_shell_deploy_excludes_cloud_runtime_data_objects() -> None:
+    deploy_shell = Path("scripts/deploy_static_shell.sh").read_text(encoding="utf-8")
+
+    assert '--exclude "live/current.m3u8"' in deploy_shell
+    assert '--exclude "live/channels.json"' in deploy_shell
+    assert '--exclude "live/channels/*"' in deploy_shell
+    assert '--exclude "ais/latest.json"' in deploy_shell
+
+
 def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")

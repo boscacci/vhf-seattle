@@ -13,9 +13,30 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
   name = "Managed-CachingDisabled"
 }
 
+data "archive_file" "ais_lambda" {
+  type        = "zip"
+  output_path = "${path.module}/.terraform/talkingboats-ais-live.zip"
+
+  source {
+    filename = "talkingboats/__init__.py"
+    content  = file("${path.module}/../../src/talkingboats/__init__.py")
+  }
+
+  source {
+    filename = "talkingboats/ais_history.py"
+    content  = file("${path.module}/../../src/talkingboats/ais_history.py")
+  }
+
+  source {
+    filename = "talkingboats/ais_live.py"
+    content  = file("${path.module}/../../src/talkingboats/ais_live.py")
+  }
+}
+
 locals {
   site_fqdn            = "${var.site_subdomain}.${var.root_domain}"
   dev_site_fqdn        = "${var.dev_site_subdomain}.${var.root_domain}"
+  ais_live_fqdn        = "${var.ais_live_subdomain}.${var.root_domain}"
   bucket_base          = replace("${var.project_name}-${var.resource_site_subdomain}", ".", "-")
   dev_bucket_base      = replace("${var.project_name}-${var.dev_resource_site_subdomain}", ".", "-")
   public_bucket        = coalesce(var.public_site_bucket_name, "${local.bucket_base}-${data.aws_caller_identity.current.account_id}-public")
@@ -23,25 +44,23 @@ locals {
   dev_public_bucket    = coalesce(var.dev_public_site_bucket_name, "${local.dev_bucket_base}-${data.aws_caller_identity.current.account_id}-public")
   dev_raw_audio_bucket = coalesce(var.dev_raw_audio_bucket_name, "${local.dev_bucket_base}-${data.aws_caller_identity.current.account_id}-raw")
   radio_events_table   = replace("${var.project_name}-${var.resource_site_subdomain}-events", ".", "-")
+  ais_connections_table = replace(
+    "${var.project_name}-${var.resource_site_subdomain}-ais-connections",
+    ".",
+    "-",
+  )
   dev_radio_events_table = replace(
     "${var.project_name}-${var.dev_resource_site_subdomain}-events",
     ".",
     "-",
   )
+  ais_lambda_name                  = replace("${var.project_name}-${var.resource_site_subdomain}-ais-ingest", ".", "-")
+  ais_websocket_lambda_name        = replace("${var.project_name}-${var.resource_site_subdomain}-ais-websocket", ".", "-")
   site_cert_validation_domains     = toset([local.site_fqdn])
   dev_site_cert_validation_domains = toset([local.dev_site_fqdn])
+  ais_live_cert_validation_domains = toset([local.ais_live_fqdn])
   origin_id                        = "s3-public-site"
   dev_origin_id                    = "s3-dev-public-site"
-  live_origin_id                   = "live-radio-proxy"
-  dev_live_origin_id               = "dev-live-radio-proxy"
-  dev_live_origin_domain_name = coalesce(
-    var.dev_live_origin_domain_name,
-    var.live_origin_domain_name,
-  )
-  dev_live_origin_https_port = coalesce(
-    var.dev_live_origin_https_port,
-    var.live_origin_https_port,
-  )
   common_tags = {
     Application    = "elliott-bay-vhf"
     BillingProject = var.project_name
@@ -178,6 +197,356 @@ resource "aws_dynamodb_table" "radio_events" {
   })
 }
 
+resource "aws_dynamodb_table" "ais_connections" {
+  name         = local.ais_connections_table
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "connection_id"
+
+  attribute {
+    name = "connection_id"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expires_at"
+    enabled        = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-websocket-connections"
+  })
+}
+
+data "aws_iam_policy_document" "ais_lambda_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ais_lambda" {
+  name               = replace("${var.project_name}-${var.resource_site_subdomain}-ais-lambda", ".", "-")
+  assume_role_policy = data.aws_iam_policy_document.ais_lambda_assume_role.json
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-lambda"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ais_lambda_basic_execution" {
+  role       = aws_iam_role.ais_lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+data "aws_iam_policy_document" "ais_lambda_access" {
+  statement {
+    sid       = "WritePublicAisSnapshot"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.public_site.arn}/ais/latest.json"]
+  }
+
+  statement {
+    sid = "TrackWebsocketConnections"
+    actions = [
+      "dynamodb:DeleteItem",
+      "dynamodb:PutItem",
+      "dynamodb:Scan",
+    ]
+    resources = [aws_dynamodb_table.ais_connections.arn]
+  }
+
+  statement {
+    sid     = "FanOutAisSnapshots"
+    actions = ["execute-api:ManageConnections"]
+    resources = [
+      "arn:aws:execute-api:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${aws_apigatewayv2_api.ais_websocket.id}/*/POST/@connections/*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "ais_lambda_access" {
+  name   = replace("${var.project_name}-${var.resource_site_subdomain}-ais-lambda-access", ".", "-")
+  role   = aws_iam_role.ais_lambda.id
+  policy = data.aws_iam_policy_document.ais_lambda_access.json
+}
+
+resource "aws_cloudwatch_log_group" "ais_ingest" {
+  name              = "/aws/lambda/${local.ais_lambda_name}"
+  retention_in_days = 30
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-ingest-logs"
+  })
+}
+
+resource "aws_cloudwatch_log_group" "ais_websocket" {
+  name              = "/aws/lambda/${local.ais_websocket_lambda_name}"
+  retention_in_days = 30
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-websocket-logs"
+  })
+}
+
+resource "aws_lambda_function" "ais_ingest" {
+  function_name    = local.ais_lambda_name
+  role             = aws_iam_role.ais_lambda.arn
+  filename         = data.archive_file.ais_lambda.output_path
+  source_code_hash = data.archive_file.ais_lambda.output_base64sha256
+  runtime          = "python3.12"
+  handler          = "talkingboats.ais_live.ais_lambda_handler"
+  timeout          = 10
+  memory_size      = 256
+
+  environment {
+    variables = {
+      TALKINGBOATS_AIS_CONNECTIONS_TABLE   = aws_dynamodb_table.ais_connections.name
+      TALKINGBOATS_AIS_INGEST_TOKEN_SHA256 = sha256(var.ais_ingest_token)
+      TALKINGBOATS_AIS_SNAPSHOT_BUCKET     = aws_s3_bucket.public_site.bucket
+      TALKINGBOATS_AIS_SNAPSHOT_KEY        = "ais/latest.json"
+      TALKINGBOATS_AIS_STATION             = "Elliott Bay VHF"
+      TALKINGBOATS_AIS_WEBSOCKET_ENDPOINT  = "${replace(aws_apigatewayv2_api.ais_websocket.api_endpoint, "wss://", "https://")}/${aws_apigatewayv2_stage.ais_websocket.name}"
+    }
+  }
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-ingest"
+  })
+
+  depends_on = [
+    aws_cloudwatch_log_group.ais_ingest,
+    aws_iam_role_policy_attachment.ais_lambda_basic_execution,
+    aws_iam_role_policy.ais_lambda_access,
+  ]
+}
+
+resource "aws_lambda_function" "ais_websocket" {
+  function_name    = local.ais_websocket_lambda_name
+  role             = aws_iam_role.ais_lambda.arn
+  filename         = data.archive_file.ais_lambda.output_path
+  source_code_hash = data.archive_file.ais_lambda.output_base64sha256
+  runtime          = "python3.12"
+  handler          = "talkingboats.ais_live.ais_websocket_handler"
+  timeout          = 10
+  memory_size      = 256
+
+  environment {
+    variables = {
+      TALKINGBOATS_AIS_CONNECTIONS_TABLE      = aws_dynamodb_table.ais_connections.name
+      TALKINGBOATS_AIS_CONNECTION_TTL_SECONDS = "3600"
+    }
+  }
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-websocket"
+  })
+
+  depends_on = [
+    aws_cloudwatch_log_group.ais_websocket,
+    aws_iam_role_policy_attachment.ais_lambda_basic_execution,
+    aws_iam_role_policy.ais_lambda_access,
+  ]
+}
+
+resource "aws_apigatewayv2_api" "ais_http" {
+  name          = replace("${var.project_name}-${var.resource_site_subdomain}-ais-http", ".", "-")
+  protocol_type = "HTTP"
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-http-ingest"
+  })
+}
+
+resource "aws_apigatewayv2_integration" "ais_http" {
+  api_id                 = aws_apigatewayv2_api.ais_http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.ais_ingest.invoke_arn
+  integration_method     = "POST"
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "ais_http_ingest" {
+  api_id    = aws_apigatewayv2_api.ais_http.id
+  route_key = "POST /ais"
+  target    = "integrations/${aws_apigatewayv2_integration.ais_http.id}"
+}
+
+resource "aws_apigatewayv2_stage" "ais_http" {
+  api_id      = aws_apigatewayv2_api.ais_http.id
+  name        = "$default"
+  auto_deploy = true
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-http-ingest-stage"
+  })
+}
+
+resource "aws_lambda_permission" "ais_http" {
+  statement_id  = "AllowAisHttpInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ais_ingest.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.ais_http.execution_arn}/*/*/ais"
+}
+
+resource "aws_apigatewayv2_api" "ais_websocket" {
+  name                       = replace("${var.project_name}-${var.resource_site_subdomain}-ais-websocket", ".", "-")
+  protocol_type              = "WEBSOCKET"
+  route_selection_expression = "$request.body.action"
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-public-websocket"
+  })
+}
+
+resource "aws_apigatewayv2_integration" "ais_websocket" {
+  api_id           = aws_apigatewayv2_api.ais_websocket.id
+  integration_type = "AWS_PROXY"
+  integration_uri  = aws_lambda_function.ais_websocket.invoke_arn
+}
+
+resource "aws_apigatewayv2_route" "ais_websocket_connect" {
+  api_id    = aws_apigatewayv2_api.ais_websocket.id
+  route_key = "$connect"
+  target    = "integrations/${aws_apigatewayv2_integration.ais_websocket.id}"
+}
+
+resource "aws_apigatewayv2_route" "ais_websocket_disconnect" {
+  api_id    = aws_apigatewayv2_api.ais_websocket.id
+  route_key = "$disconnect"
+  target    = "integrations/${aws_apigatewayv2_integration.ais_websocket.id}"
+}
+
+resource "aws_apigatewayv2_route" "ais_websocket_default" {
+  api_id    = aws_apigatewayv2_api.ais_websocket.id
+  route_key = "$default"
+  target    = "integrations/${aws_apigatewayv2_integration.ais_websocket.id}"
+}
+
+resource "aws_apigatewayv2_stage" "ais_websocket" {
+  api_id      = aws_apigatewayv2_api.ais_websocket.id
+  name        = "v1"
+  auto_deploy = true
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-public-websocket-stage"
+  })
+}
+
+resource "aws_lambda_permission" "ais_websocket" {
+  statement_id  = "AllowAisWebsocketInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ais_websocket.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.ais_websocket.execution_arn}/*"
+}
+
+resource "aws_acm_certificate" "ais_live" {
+  domain_name       = local.ais_live_fqdn
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-live-tls-certificate"
+  })
+}
+
+resource "aws_route53_record" "ais_live_cert_validation" {
+  for_each = local.ais_live_cert_validation_domains
+
+  zone_id = data.aws_route53_zone.root.zone_id
+  name = one([
+    for dvo in aws_acm_certificate.ais_live.domain_validation_options : dvo.resource_record_name
+    if dvo.domain_name == each.value
+  ])
+  type = one([
+    for dvo in aws_acm_certificate.ais_live.domain_validation_options : dvo.resource_record_type
+    if dvo.domain_name == each.value
+  ])
+  ttl = 60
+  records = [
+    one([
+      for dvo in aws_acm_certificate.ais_live.domain_validation_options : dvo.resource_record_value
+      if dvo.domain_name == each.value
+    ])
+  ]
+
+  allow_overwrite = true
+}
+
+resource "aws_acm_certificate_validation" "ais_live" {
+  certificate_arn         = aws_acm_certificate.ais_live.arn
+  validation_record_fqdns = [for record in aws_route53_record.ais_live_cert_validation : record.fqdn]
+}
+
+resource "aws_apigatewayv2_domain_name" "ais_live" {
+  domain_name = local.ais_live_fqdn
+
+  domain_name_configuration {
+    certificate_arn = aws_acm_certificate_validation.ais_live.certificate_arn
+    endpoint_type   = "REGIONAL"
+    security_policy = "TLS_1_2"
+  }
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-live-websocket-domain"
+  })
+}
+
+resource "aws_apigatewayv2_api_mapping" "ais_websocket" {
+  api_id          = aws_apigatewayv2_api.ais_websocket.id
+  domain_name     = aws_apigatewayv2_domain_name.ais_live.id
+  stage           = aws_apigatewayv2_stage.ais_websocket.name
+  api_mapping_key = "v1"
+}
+
+resource "aws_route53_record" "ais_live_a" {
+  zone_id = data.aws_route53_zone.root.zone_id
+  name    = local.ais_live_fqdn
+  type    = "A"
+
+  alias {
+    name                   = aws_apigatewayv2_domain_name.ais_live.domain_name_configuration[0].target_domain_name
+    zone_id                = aws_apigatewayv2_domain_name.ais_live.domain_name_configuration[0].hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "ais_live_aaaa" {
+  zone_id = data.aws_route53_zone.root.zone_id
+  name    = local.ais_live_fqdn
+  type    = "AAAA"
+
+  alias {
+    name                   = aws_apigatewayv2_domain_name.ais_live.domain_name_configuration[0].target_domain_name
+    zone_id                = aws_apigatewayv2_domain_name.ais_live.domain_name_configuration[0].hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
 resource "aws_acm_certificate" "site" {
   provider          = aws.us_east_1
   domain_name       = local.site_fqdn
@@ -230,23 +599,6 @@ resource "aws_cloudfront_origin_access_control" "public_site" {
   signing_protocol                  = "sigv4"
 }
 
-resource "aws_cloudfront_origin_request_policy" "live_api" {
-  name    = "${var.project_name}-live-api-origin-request"
-  comment = "Forward query strings to the read-only Elliott Bay VHF live API origin"
-
-  cookies_config {
-    cookie_behavior = "none"
-  }
-
-  headers_config {
-    header_behavior = "none"
-  }
-
-  query_strings_config {
-    query_string_behavior = "all"
-  }
-}
-
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
   comment             = "Talking Boats public static site"
@@ -261,19 +613,6 @@ resource "aws_cloudfront_distribution" "site" {
     origin_access_control_id = aws_cloudfront_origin_access_control.public_site.id
   }
 
-  origin {
-    domain_name = var.live_origin_domain_name
-    origin_id   = local.live_origin_id
-
-    custom_origin_config {
-      http_port              = 80
-      https_port             = var.live_origin_https_port
-      origin_protocol_policy = "https-only"
-      origin_read_timeout    = 60
-      origin_ssl_protocols   = ["TLSv1.2"]
-    }
-  }
-
   default_cache_behavior {
     target_origin_id       = local.origin_id
     viewer_protocol_policy = "redirect-to-https"
@@ -281,72 +620,6 @@ resource "aws_cloudfront_distribution" "site" {
     cached_methods         = ["GET", "HEAD"]
     compress               = true
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/live/*"
-    target_origin_id         = local.live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = false
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/clips/recent"
-    target_origin_id         = local.live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/clips/search"
-    target_origin_id         = local.live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/clips/playback"
-    target_origin_id         = local.live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/clips/audio"
-    target_origin_id         = local.live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = false
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/analysis/lexical"
-    target_origin_id         = local.live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
   }
 
   ordered_cache_behavior {
@@ -621,24 +894,6 @@ resource "aws_cloudfront_distribution" "dev_site" {
     origin_access_control_id = aws_cloudfront_origin_access_control.dev_public_site.id
   }
 
-  origin {
-    domain_name = local.dev_live_origin_domain_name
-    origin_id   = local.dev_live_origin_id
-
-    custom_header {
-      name  = "X-TalkingBoats-Environment"
-      value = "dev"
-    }
-
-    custom_origin_config {
-      http_port              = 80
-      https_port             = local.dev_live_origin_https_port
-      origin_protocol_policy = "https-only"
-      origin_read_timeout    = 60
-      origin_ssl_protocols   = ["TLSv1.2"]
-    }
-  }
-
   default_cache_behavior {
     target_origin_id       = local.dev_origin_id
     viewer_protocol_policy = "redirect-to-https"
@@ -646,83 +901,6 @@ resource "aws_cloudfront_distribution" "dev_site" {
     cached_methods         = ["GET", "HEAD"]
     compress               = true
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/live/*"
-    target_origin_id         = local.dev_live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = false
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/clips/recent"
-    target_origin_id         = local.dev_live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/clips/search"
-    target_origin_id         = local.dev_live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/clips/playback"
-    target_origin_id         = local.dev_live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/clips/audio"
-    target_origin_id         = local.dev_live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = false
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/api/analysis/lexical"
-    target_origin_id         = local.dev_live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
-  }
-
-  ordered_cache_behavior {
-    path_pattern             = "/ais-catcher/*"
-    target_origin_id         = local.dev_live_origin_id
-    viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
   }
 
   ordered_cache_behavior {

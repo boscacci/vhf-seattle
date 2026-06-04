@@ -1,11 +1,13 @@
 const defaultClipPageSize = 6;
 const clipPageSizeOptions = [6, 12, 24];
 const devAppHost = window.location.hostname === "vhf-dev.robertboscacci.com";
+const publicAppHost = window.location.hostname === "vhf.robertboscacci.com";
 const localAppHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
 const tailnetHostSuffix = ".tailbea63b.ts.net";
 const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
 const privateAppHost = localAppHost || tailnetAppHost || devAppHost;
 const privateApiBaseUrl = "";
+const publicLiveApiTimeoutMs = 2500;
 const clipPlaybackUrl = apiUrl("/api/clips/playback");
 const clipAudioUrl = apiUrl("/api/clips/audio");
 const clipSearchUrl = apiUrl("/api/clips/search");
@@ -595,6 +597,19 @@ liveAudio.addEventListener("ended", () => {
 async function loadAndRender() {
   const requestId = ++clipRequestSequence;
   const requestUrl = clipRequestUrl();
+  if (shouldLoadPublishedManifestFirst()) {
+    if (!currentClipPayload || !currentPageClips.length) {
+      renderClipLoadingState();
+    }
+    const payload = await loadPublishedManifest();
+    if (requestId !== clipRequestSequence) {
+      return;
+    }
+    currentClipPayload = payload;
+    renderSite(payload);
+    refreshLiveClipPayloadInBackground(requestUrl, requestId);
+    return;
+  }
   const cachedPayload = prefetchedClipPagePayload(requestUrl) || loadCachedRecentClipPayload(requestUrl);
   if (cachedPayload) {
     currentClipPayload = cachedPayload;
@@ -619,19 +634,58 @@ async function loadAndRender() {
   }
 }
 
+function shouldLoadPublishedManifestFirst() {
+  return publicAppHost && clipFeaturedFilter === "recent" && selectedChannels.size === 0;
+}
+
+async function refreshLiveClipPayloadInBackground(requestUrl, requestId) {
+  try {
+    const payload = normalizeLivePayload(
+      await fetchJsonWithTimeout(requestUrl, { timeoutMs: publicLiveApiTimeoutMs }),
+    );
+    if (requestId !== clipRequestSequence) {
+      return;
+    }
+    currentClipPayload = payload;
+    renderSite(payload);
+    storeClipPageMemoryPayload(requestUrl, payload);
+    storeRecentClipPayload(requestUrl, payload);
+    prefetchNeighborClipPages(payload);
+  } catch {
+    // The published manifest remains the public fallback when the home proxy is down.
+  }
+}
+
 async function loadClipPayload(requestUrl = clipRequestUrl(), { allowFallback = true } = {}) {
   try {
-    const response = await fetch(requestUrl, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`live clip HTTP ${response.status}`);
-    }
-    const payload = await response.json();
+    const payload = await fetchJsonWithTimeout(requestUrl, {
+      timeoutMs: publicAppHost ? publicLiveApiTimeoutMs : 0,
+    });
     return normalizeLivePayload(payload);
   } catch (error) {
     if (!allowFallback) {
       throw error;
     }
     return loadPublishedManifest();
+  }
+}
+
+async function fetchJsonWithTimeout(url, { timeoutMs } = {}) {
+  const controller = new AbortController();
+  const timeoutId =
+    Number(timeoutMs) > 0
+      ? window.setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return response.json();
+  } finally {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
   }
 }
 

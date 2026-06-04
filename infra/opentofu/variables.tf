@@ -22,6 +22,18 @@ variable "dev_site_subdomain" {
   default     = "vhf-dev"
 }
 
+variable "ais_live_subdomain" {
+  description = "Subdomain for the public AIS websocket API Gateway custom domain."
+  type        = string
+  default     = "ais-live"
+}
+
+variable "ais_ingest_token" {
+  description = "Shared secret required by the AIS HTTP ingest Lambda. Set through tfvars or TF_VAR_ais_ingest_token, not repo files."
+  type        = string
+  sensitive   = true
+}
+
 variable "dev_tailnet_ipv4_addresses" {
   description = "Tailnet IPv4 addresses for the dev site DNS record."
   type        = list(string)
@@ -44,30 +56,6 @@ variable "dev_resource_site_subdomain" {
   description = "Legacy dev subdomain stem used in bucket names. Keep stable when changing public DNS."
   type        = string
   default     = "dev.talkingboats"
-}
-
-variable "live_origin_domain_name" {
-  description = "Public HTTPS origin domain for read-only live radio API routes. Do not include a scheme."
-  type        = string
-  default     = "optiplex.tailbea63b.ts.net"
-}
-
-variable "live_origin_https_port" {
-  description = "HTTPS port for the read-only live radio origin."
-  type        = number
-  default     = 10000
-}
-
-variable "dev_live_origin_domain_name" {
-  description = "Optional dev override for the read-only live radio origin domain."
-  type        = string
-  default     = null
-}
-
-variable "dev_live_origin_https_port" {
-  description = "Optional dev override for the read-only live radio origin HTTPS port."
-  type        = number
-  default     = null
 }
 
 variable "project_name" {

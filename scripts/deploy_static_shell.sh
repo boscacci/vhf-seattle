@@ -289,7 +289,15 @@ invalidate_paths=(
   "/operator"
   "/operator/*"
 )
-sync_excludes=( --exclude "public_manifest.json" --exclude "clips/*" --exclude "analysis/*" )
+sync_excludes=(
+  --exclude "public_manifest.json"
+  --exclude "clips/*"
+  --exclude "analysis/*"
+  --exclude "live/current.m3u8"
+  --exclude "live/channels.json"
+  --exclude "live/channels/*"
+  --exclude "ais/latest.json"
+)
 
 if [[ ! -d "${site_source}" ]]; then
   echo "Static shell source does not exist: ${site_source}" >&2

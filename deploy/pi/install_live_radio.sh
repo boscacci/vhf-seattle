@@ -68,6 +68,9 @@ install -m 0755 \
 install -m 0755 \
   "${repo_root}/deploy/pi/live-radio/talkingboats-ais-catcher" \
   /opt/talkingboats/bin/talkingboats-ais-catcher
+install -m 0755 \
+  "${repo_root}/deploy/pi/live-radio/talkingboats-live-hls-relay" \
+  /opt/talkingboats/bin/talkingboats-live-hls-relay
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-live-radio-stream.service.example" \
   /etc/systemd/system/talkingboats-live-radio-stream.service
@@ -83,6 +86,12 @@ install -m 0644 \
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-ais-catcher.service.example" \
   /etc/systemd/system/talkingboats-ais-catcher.service
+install -m 0644 \
+  "${repo_root}/deploy/systemd/talkingboats-ais-forwarder.service.example" \
+  /etc/systemd/system/talkingboats-ais-forwarder.service
+install -m 0644 \
+  "${repo_root}/deploy/systemd/talkingboats-live-hls-relay.service.example" \
+  /etc/systemd/system/talkingboats-live-hls-relay.service
 generate_password() {
   openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_'
 }
@@ -127,6 +136,15 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_EDGE_MAX_TEMP_C=%q\n' "72"
     printf 'TALKINGBOATS_EDGE_RESUME_TEMP_C=%q\n' "66"
     printf 'TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU=%q\n' "0.85"
+    printf 'TALKINGBOATS_CLOUD_HLS_ENABLED=%q\n' "false"
+    printf 'TALKINGBOATS_PUBLIC_SITE_BUCKET=%q\n' ""
+    printf 'TALKINGBOATS_CLOUD_HLS_DIR=%q\n' "/opt/talkingboats/hls"
+    printf 'TALKINGBOATS_CLOUD_HLS_S3_PREFIX=%q\n' "live"
+    printf 'TALKINGBOATS_CLOUD_HLS_SEGMENT_SECONDS=%q\n' "2"
+    printf 'TALKINGBOATS_CLOUD_HLS_LIST_SIZE=%q\n' "6"
+    printf 'TALKINGBOATS_CLOUD_HLS_PUBLISH_INTERVAL_SECONDS=%q\n' "1"
+    printf 'TALKINGBOATS_CLOUD_HLS_DEFAULT_CHANNEL=%q\n' "14"
+    printf 'TALKINGBOATS_CLOUD_HLS_CHANNELS=%q\n' "05A,06,09,13,14,16,22A,67,68,69,71,72"
     printf 'TALKINGBOATS_CAPTURE_PROFILE=%q\n' "debug"
     printf 'TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS=%q\n' "180"
     printf 'TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS=%q\n' "5000"
@@ -153,6 +171,11 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_AIS_SHARE_LOC=%q\n' "on"
     printf 'TALKINGBOATS_AIS_FRIENDS_HOST=%q\n' "ais.aisfriends.com"
     printf 'TALKINGBOATS_AIS_FRIENDS_UDP_PORT=%q\n' ""
+    printf 'TALKINGBOATS_AIS_HTTP_INGEST_URL=%q\n' ""
+    printf 'TALKINGBOATS_AIS_INGEST_TOKEN=%q\n' ""
+    printf 'TALKINGBOATS_AIS_FORWARDER_HOST=%q\n' "127.0.0.1"
+    printf 'TALKINGBOATS_AIS_FORWARDER_PORT=%q\n' "8110"
+    printf 'TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS=%q\n' "1"
     printf 'TALKINGBOATS_ICECAST_SOURCE_PASSWORD=%q\n' "$(generate_password)"
     printf 'TALKINGBOATS_ICECAST_RELAY_PASSWORD=%q\n' "$(generate_password)"
     printf 'TALKINGBOATS_ICECAST_ADMIN_PASSWORD=%q\n' "$(generate_password)"
@@ -199,6 +222,15 @@ append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3 "true"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER \
   "highpass=f=250,lowpass=f=3200,afftdn=nf=-28,acompressor=threshold=0.06:ratio=3:attack=8:release=180:makeup=4,loudnorm=I=-16:LRA=8:TP=-6"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD "false"
+append_env_if_missing TALKINGBOATS_CLOUD_HLS_ENABLED "false"
+append_env_if_missing TALKINGBOATS_PUBLIC_SITE_BUCKET ""
+append_env_if_missing TALKINGBOATS_CLOUD_HLS_DIR "/opt/talkingboats/hls"
+append_env_if_missing TALKINGBOATS_CLOUD_HLS_S3_PREFIX "live"
+append_env_if_missing TALKINGBOATS_CLOUD_HLS_SEGMENT_SECONDS "2"
+append_env_if_missing TALKINGBOATS_CLOUD_HLS_LIST_SIZE "6"
+append_env_if_missing TALKINGBOATS_CLOUD_HLS_PUBLISH_INTERVAL_SECONDS "1"
+append_env_if_missing TALKINGBOATS_CLOUD_HLS_DEFAULT_CHANNEL "14"
+append_env_if_missing TALKINGBOATS_CLOUD_HLS_CHANNELS "05A,06,09,13,14,16,22A,67,68,69,71,72"
 append_env_if_missing TALKINGBOATS_EDGE_THRESHOLD_RMS "8000"
 append_env_if_missing TALKINGBOATS_EDGE_MIN_CLIP_SECONDS "1.0"
 append_env_if_missing TALKINGBOATS_EDGE_PRE_ROLL_SECONDS "0"
@@ -232,6 +264,11 @@ append_env_if_missing TALKINGBOATS_AIS_LON "-122.3595353"
 append_env_if_missing TALKINGBOATS_AIS_SHARE_LOC "on"
 append_env_if_missing TALKINGBOATS_AIS_FRIENDS_HOST "ais.aisfriends.com"
 append_env_if_missing TALKINGBOATS_AIS_FRIENDS_UDP_PORT ""
+append_env_if_missing TALKINGBOATS_AIS_HTTP_INGEST_URL ""
+append_env_if_missing TALKINGBOATS_AIS_INGEST_TOKEN ""
+append_env_if_missing TALKINGBOATS_AIS_FORWARDER_HOST "127.0.0.1"
+append_env_if_missing TALKINGBOATS_AIS_FORWARDER_PORT "8110"
+append_env_if_missing TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS "1"
 append_env_if_missing TALKINGBOATS_ICECAST_NETRC "/etc/talkingboats/icecast.netrc"
 append_env_if_missing TALKINGBOATS_ICECAST_SOURCE_PASSWORD "$(generate_password)"
 append_env_if_missing TALKINGBOATS_ICECAST_RELAY_PASSWORD "$(generate_password)"
@@ -443,13 +480,26 @@ systemctl restart icecast2.service
 systemctl disable --now talkingboats-live-radio-stream.service 2>/dev/null || true
 systemctl disable --now talkingboats-edge-live-radio-stream.service 2>/dev/null || true
 systemctl enable --now talkingboats-spool-uploader.service
+if [[ "${TALKINGBOATS_CLOUD_HLS_ENABLED:-false}" == "true" && -n "${TALKINGBOATS_PUBLIC_SITE_BUCKET:-}" ]]; then
+  systemctl enable --now talkingboats-live-hls-relay.service
+else
+  systemctl disable --now talkingboats-live-hls-relay.service 2>/dev/null || true
+fi
 if [[ -n "${TALKINGBOATS_AIS_SDR_SERIAL:-}" || -n "${TALKINGBOATS_AIS_DEVICE_INDEX:-}" ]]; then
   systemctl enable --now talkingboats-ais-catcher.service
 else
   systemctl disable --now talkingboats-ais-catcher.service 2>/dev/null || true
   echo "AIS services installed but disabled; set TALKINGBOATS_AIS_SDR_SERIAL or TALKINGBOATS_AIS_DEVICE_INDEX and rerun."
 fi
+if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" && -n "${TALKINGBOATS_AIS_INGEST_TOKEN:-}" ]]; then
+  systemctl enable --now talkingboats-ais-forwarder.service
+else
+  systemctl disable --now talkingboats-ais-forwarder.service 2>/dev/null || true
+  if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" ]]; then
+    echo "AIS forwarder installed but disabled; set TALKINGBOATS_AIS_INGEST_TOKEN and rerun." >&2
+  fi
+fi
 systemctl enable --now talkingboats-profile-capture.service
 
 echo "Talking Boats capture profile installed."
-echo "The single browser UI is served by the OptiPlex/public-site clip app."
+echo "The single browser UI is served by CloudFront from the public-site bucket."

@@ -28,6 +28,26 @@ output "radio_events_table_name" {
   value       = aws_dynamodb_table.radio_events.name
 }
 
+output "ais_http_ingest_url" {
+  description = "AWS HTTP endpoint for the Pi AIS forwarder. Configure TALKINGBOATS_AIS_HTTP_INGEST_URL with this value."
+  value       = "${aws_apigatewayv2_api.ais_http.api_endpoint}/ais"
+}
+
+output "ais_websocket_url" {
+  description = "Public AIS websocket URL used by the CloudFront static site."
+  value       = "wss://${local.ais_live_fqdn}/v1"
+}
+
+output "ais_live_fqdn" {
+  description = "Public AIS websocket custom hostname."
+  value       = local.ais_live_fqdn
+}
+
+output "ais_connections_table_name" {
+  description = "DynamoDB table for short-lived public AIS websocket connections."
+  value       = aws_dynamodb_table.ais_connections.name
+}
+
 output "dev_site_fqdn" {
   description = "Dev public site hostname."
   value       = local.dev_site_fqdn

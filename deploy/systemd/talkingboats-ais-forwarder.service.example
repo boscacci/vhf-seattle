@@ -1,0 +1,20 @@
+[Unit]
+Description=Talking Boats AIS outbound AWS forwarder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/talkingboats/live-radio.env
+Environment=PYTHONPATH=/opt/talkingboats/app/src
+ExecStart=/usr/bin/python3 -m talkingboats.ais_forwarder
+Restart=always
+RestartSec=5
+User=rob
+Group=rob
+SyslogIdentifier=talkingboats-ais-forwarder
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

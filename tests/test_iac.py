@@ -142,39 +142,37 @@ def test_deploy_script_uses_opentofu_cli_only() -> None:
     assert "terraform " not in deploy_script.lower()
 
 
-def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
+def test_cloudfront_keeps_prod_static_and_dev_tailnet_only() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
     variables_tf = Path("infra/opentofu/variables.tf").read_text(encoding="utf-8")
 
-    assert 'variable "live_origin_domain_name"' in variables_tf
-    assert 'default     = "optiplex.tailbea63b.ts.net"' in variables_tf
+    assert 'variable "live_origin_domain_name"' not in variables_tf
+    assert "optiplex.tailbea63b.ts.net" not in main_tf
+    assert "optiplex.tailbea63b.ts.net" not in variables_tf
     assert 'variable "dev_tailnet_ipv4_addresses"' in variables_tf
     assert 'default     = ["100.124.5.39"]' in variables_tf
     assert 'variable "dev_tailnet_ipv6_addresses"' in variables_tf
     assert 'default     = ["fd7a:115c:a1e0::2601:597"]' in variables_tf
-    assert 'resource "aws_cloudfront_origin_request_policy" "live_api"' in main_tf
+    assert 'resource "aws_cloudfront_origin_request_policy" "live_api"' not in main_tf
     assert 'resource "aws_cloudfront_origin_request_policy" "operator_api"' not in main_tf
-    assert 'query_string_behavior = "all"' in main_tf
     assert 'X-TalkingBoats-Operator-Token' not in main_tf
-    assert 'origin_protocol_policy = "https-only"' in main_tf
-    assert 'https_port             = var.live_origin_https_port' in main_tf
-    assert 'path_pattern             = "/api/live/*"' in main_tf
-    assert 'path_pattern             = "/api/clips/recent"' in main_tf
-    assert 'path_pattern             = "/api/clips/search"' in main_tf
-    assert 'path_pattern             = "/api/clips/playback"' in main_tf
-    assert 'path_pattern             = "/api/clips/audio"' in main_tf
+    assert 'path_pattern             = "/api/live/*"' not in main_tf
+    assert 'path_pattern             = "/api/clips/recent"' not in main_tf
+    assert 'path_pattern             = "/api/clips/search"' not in main_tf
+    assert 'path_pattern             = "/api/clips/playback"' not in main_tf
+    assert 'path_pattern             = "/api/clips/audio"' not in main_tf
     assert 'path_pattern             = "/api/clips/corrections*"' not in main_tf
     assert 'path_pattern             = "/api/clips/features*"' not in main_tf
     assert 'path_pattern             = "/api/operator/session*"' not in main_tf
-    assert 'path_pattern             = "/api/analysis/lexical"' in main_tf
-    assert 'path_pattern             = "/ais-catcher/*"' in main_tf
+    assert 'path_pattern             = "/api/analysis/lexical"' not in main_tf
+    assert 'path_pattern             = "/ais-catcher/*"' not in main_tf
     prod_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "site")
     dev_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "dev_site")
     dev_a_record = _resource_block(main_tf, "aws_route53_record", "dev_site_a")
     dev_aaaa_record = _resource_block(main_tf, "aws_route53_record", "dev_site_aaaa")
     assert 'path_pattern             = "/ais-catcher/*"' not in prod_distribution
-    assert 'path_pattern             = "/ais-catcher/*"' in dev_distribution
-    assert main_tf.count("target_origin_id         = local.live_origin_id") == 6
+    assert 'path_pattern             = "/ais-catcher/*"' not in dev_distribution
+    assert "target_origin_id         = local.live_origin_id" not in main_tf
     assert 'path_pattern             = "/api/clips/corrections*"' not in prod_distribution
     assert 'path_pattern             = "/api/clips/features*"' not in prod_distribution
     assert 'path_pattern             = "/api/operator/session*"' not in prod_distribution
@@ -182,8 +180,11 @@ def test_cloudfront_routes_public_read_only_live_api_to_live_origin() -> None:
     assert 'path_pattern             = "/api/clips/features*"' not in dev_distribution
     assert 'path_pattern             = "/api/operator/session*"' not in dev_distribution
     assert 'enabled             = false' in dev_distribution
-    assert main_tf.count("target_origin_id         = local.dev_live_origin_id") == 7
-    assert "origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id" in main_tf
+    assert "target_origin_id         = local.dev_live_origin_id" not in main_tf
+    assert (
+        "origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id"
+        not in main_tf
+    )
     assert (
         "origin_request_policy_id = aws_cloudfront_origin_request_policy.operator_api.id"
         not in main_tf
@@ -213,14 +214,66 @@ def test_opentofu_uses_static_certificate_validation_record_keys() -> None:
     assert "dvo.domain_name =>" not in dev_record
 
 
-def test_dev_cloudfront_marks_live_origin_requests_as_dev_only() -> None:
+def test_dev_cloudfront_does_not_proxy_private_api_routes() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
     prod_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "site")
     dev_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "dev_site")
 
-    assert 'name  = "X-TalkingBoats-Environment"' in dev_distribution
-    assert 'value = "dev"' in dev_distribution
+    assert 'name  = "X-TalkingBoats-Environment"' not in dev_distribution
+    assert 'value = "dev"' not in dev_distribution
     assert "X-TalkingBoats-Environment" not in prod_distribution
+
+
+def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_origin() -> None:
+    main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+    variables_tf = Path("infra/opentofu/variables.tf").read_text(encoding="utf-8")
+    outputs_tf = Path("infra/opentofu/outputs.tf").read_text(encoding="utf-8")
+    versions_tf = Path("infra/opentofu/versions.tf").read_text(encoding="utf-8")
+
+    assert 'archive = {' in versions_tf
+    assert 'variable "ais_ingest_token"' in variables_tf
+    ingest_token = _variable_block(variables_tf, "ais_ingest_token")
+    assert "sensitive   = true" in ingest_token
+    assert "default" not in ingest_token
+    assert 'variable "ais_live_subdomain"' in variables_tf
+    assert 'default     = "ais-live"' in _variable_block(variables_tf, "ais_live_subdomain")
+    assert 'data "archive_file" "ais_lambda"' in main_tf
+    assert 'filename = "talkingboats/ais_live.py"' in main_tf
+    assert 'filename = "talkingboats/ais_history.py"' in main_tf
+    assert 'resource "aws_lambda_function" "ais_ingest"' in main_tf
+    assert 'resource "aws_lambda_function" "ais_websocket"' in main_tf
+    assert re.search(r'handler\s+=\s+"talkingboats\.ais_live\.ais_lambda_handler"', main_tf)
+    assert re.search(r'handler\s+=\s+"talkingboats\.ais_live\.ais_websocket_handler"', main_tf)
+    assert 'resource "aws_apigatewayv2_api" "ais_http"' in main_tf
+    assert re.search(
+        r'protocol_type\s+=\s+"HTTP"',
+        _resource_block(main_tf, "aws_apigatewayv2_api", "ais_http"),
+    )
+    assert 'route_key = "POST /ais"' in main_tf
+    assert 'resource "aws_apigatewayv2_api" "ais_websocket"' in main_tf
+    assert re.search(
+        r'protocol_type\s+=\s+"WEBSOCKET"',
+        _resource_block(main_tf, "aws_apigatewayv2_api", "ais_websocket"),
+    )
+    assert 'route_key = "$connect"' in main_tf
+    assert 'route_key = "$disconnect"' in main_tf
+    assert 'route_key = "$default"' in main_tf
+    assert 'resource "aws_apigatewayv2_domain_name" "ais_live"' in main_tf
+    assert 'api_mapping_key = "v1"' in main_tf
+    assert 'resource "aws_dynamodb_table" "ais_connections"' in main_tf
+    assert 'ttl {' in _resource_block(main_tf, "aws_dynamodb_table", "ais_connections")
+    assert 'TALKINGBOATS_AIS_SNAPSHOT_BUCKET' in main_tf
+    assert 'TALKINGBOATS_AIS_CONNECTIONS_TABLE' in main_tf
+    assert 'TALKINGBOATS_AIS_INGEST_TOKEN_SHA256 = sha256(var.ais_ingest_token)' in main_tf
+    assert 'execute-api:ManageConnections' in main_tf
+    assert "/${aws_apigatewayv2_stage.ais_websocket.name}" in main_tf
+    assert "vpc_config" not in _resource_block(main_tf, "aws_lambda_function", "ais_ingest")
+    assert "optiplex.tailbea63b.ts.net" not in _resource_block(
+        main_tf, "aws_apigatewayv2_api", "ais_websocket"
+    )
+    assert 'output "ais_http_ingest_url"' in outputs_tf
+    assert 'output "ais_websocket_url"' in outputs_tf
+    assert 'wss://${local.ais_live_fqdn}/v1' in outputs_tf
 
 
 def test_paused_native_mobile_auth_resources_are_not_managed() -> None:
@@ -259,3 +312,10 @@ def _locals_block(main_tf: str) -> str:
     start = main_tf.index("locals {")
     end = main_tf.index('\nresource "', start)
     return main_tf[start:end]
+
+
+def _variable_block(variables_tf: str, variable_name: str) -> str:
+    start = variables_tf.index(f'variable "{variable_name}"')
+    next_variable = variables_tf.find('\nvariable "', start + 1)
+    end = next_variable if next_variable != -1 else len(variables_tf)
+    return variables_tf[start:end]

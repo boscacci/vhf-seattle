@@ -1,0 +1,23 @@
+[Unit]
+Description=Talking Boats cloud HLS relay
+After=network-online.target icecast2.service talkingboats-profile-capture.service
+Wants=network-online.target
+Requires=icecast2.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/talkingboats/live-radio.env
+Environment=PYTHONPATH=/opt/talkingboats/app/src
+ExecStart=/opt/talkingboats/bin/talkingboats-live-hls-relay
+Restart=always
+RestartSec=5
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+CPUQuota=65%
+SyslogIdentifier=talkingboats-live-hls-relay
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

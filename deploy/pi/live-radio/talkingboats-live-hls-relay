@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${TALKINGBOATS_CLOUD_HLS_ENABLED:-false}" != "true" ]]; then
+  echo "event=hls_relay_disabled reason=TALKINGBOATS_CLOUD_HLS_ENABLED" >&2
+  exit 0
+fi
+
+: "${TALKINGBOATS_PUBLIC_SITE_BUCKET:?missing public site bucket}"
+
+hls_dir="${TALKINGBOATS_CLOUD_HLS_DIR:-/opt/talkingboats/hls}"
+hls_prefix="${TALKINGBOATS_CLOUD_HLS_S3_PREFIX:-live}"
+segment_seconds="${TALKINGBOATS_CLOUD_HLS_SEGMENT_SECONDS:-2}"
+list_size="${TALKINGBOATS_CLOUD_HLS_LIST_SIZE:-6}"
+publish_interval="${TALKINGBOATS_CLOUD_HLS_PUBLISH_INTERVAL_SECONDS:-1}"
+icecast_host="${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}"
+icecast_port="${TALKINGBOATS_ICECAST_PORT:-8000}"
+bitrate="${TALKINGBOATS_LIVE_BITRATE:-64k}"
+default_channel="${TALKINGBOATS_CLOUD_HLS_DEFAULT_CHANNEL:-14}"
+channels_csv="${TALKINGBOATS_CLOUD_HLS_CHANNELS:-05A,06,09,13,14,16,22A,67,68,69,71,72}"
+
+IFS=',' read -r -a channels <<< "${channels_csv}"
+mkdir -p "${hls_dir}"
+
+python3 - "${hls_dir}" "${default_channel}" "${channels[@]}" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+from talkingboats.channel_metadata import CHANNEL_METADATA
+
+root = Path(sys.argv[1])
+default_channel = sys.argv[2]
+channels = [channel.strip() for channel in sys.argv[3:] if channel.strip()]
+generated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+payload = {
+    "defaultChannel": default_channel,
+    "channels": [],
+}
+for channel in channels:
+    metadata = CHANNEL_METADATA[channel]
+    frequency_mhz = f"{metadata.frequency_hz / 1_000_000:.3f}"
+    payload["channels"].append(
+        {
+            "channel": channel,
+            "frequencyMhz": frequency_mhz,
+            "label": metadata.label,
+            "statusPath": f"/live/channels/{channel}/status.json",
+            "streamPath": f"/live/channels/{channel}/current.m3u8",
+        }
+    )
+    channel_dir = root / "channels" / channel
+    channel_dir.mkdir(parents=True, exist_ok=True)
+    status = {
+        "activeChannelId": f"vhf_{channel.lower()}",
+        "channel": channel,
+        "frequencyMhz": frequency_mhz,
+        "label": metadata.label,
+        "streamDelaySeconds": {"minimum": 2, "maximum": 10},
+        "updatedAt": generated_at,
+    }
+    (channel_dir / "status.json").write_text(
+        json.dumps(status, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+(root / "channels.json").write_text(
+    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+(root / "current.m3u8").write_text(
+    "#EXTM3U\n"
+    "#EXT-X-VERSION:3\n"
+    "#EXT-X-STREAM-INF:BANDWIDTH=64000,CODECS=\"mp4a.40.34\"\n"
+    f"channels/{default_channel}/current.m3u8\n",
+    encoding="utf-8",
+)
+PY
+
+mount_for_channel() {
+  case "$1" in
+    05A) printf '%s\n' "/talkingboats-05a.mp3" ;;
+    06) printf '%s\n' "/talkingboats-06.mp3" ;;
+    09) printf '%s\n' "/talkingboats-09.mp3" ;;
+    13) printf '%s\n' "/talkingboats-13.mp3" ;;
+    14) printf '%s\n' "${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}" ;;
+    16) printf '%s\n' "/talkingboats-16.mp3" ;;
+    22A) printf '%s\n' "/talkingboats-22a.mp3" ;;
+    67) printf '%s\n' "/talkingboats-67.mp3" ;;
+    68) printf '%s\n' "/talkingboats-68.mp3" ;;
+    69) printf '%s\n' "/talkingboats-69.mp3" ;;
+    71) printf '%s\n' "/talkingboats-71.mp3" ;;
+    72) printf '%s\n' "/talkingboats-72.mp3" ;;
+    *)
+      echo "Unsupported HLS relay channel: $1" >&2
+      return 64
+      ;;
+  esac
+}
+
+pids=()
+cleanup() {
+  for pid in "${pids[@]}"; do
+    kill "${pid}" 2>/dev/null || true
+  done
+}
+trap cleanup EXIT
+
+python3 -m talkingboats.hls_publisher \
+  --root-dir "${hls_dir}" \
+  --bucket "${TALKINGBOATS_PUBLIC_SITE_BUCKET}" \
+  --prefix "${hls_prefix}" \
+  --interval-seconds "${publish_interval}" &
+pids+=("$!")
+
+for channel in "${channels[@]}"; do
+  channel="$(printf '%s' "${channel}" | xargs)"
+  [[ -n "${channel}" ]] || continue
+  mount="$(mount_for_channel "${channel}")"
+  output_dir="${hls_dir}/channels/${channel}"
+  mkdir -p "${output_dir}"
+  ffmpeg \
+    -hide_banner \
+    -loglevel warning \
+    -reconnect 1 \
+    -reconnect_streamed 1 \
+    -reconnect_delay_max 2 \
+    -i "http://${icecast_host}:${icecast_port}${mount}" \
+    -vn \
+    -c:a aac \
+    -b:a "${bitrate}" \
+    -f hls \
+    -hls_time "${segment_seconds}" \
+    -hls_list_size "${list_size}" \
+    -hls_flags delete_segments+omit_endlist+program_date_time \
+    -hls_segment_filename "${output_dir}/segment-%05d.ts" \
+    "${output_dir}/current.m3u8" &
+  pids+=("$!")
+done
+
+wait -n "${pids[@]}"

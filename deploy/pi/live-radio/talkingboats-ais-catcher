@@ -46,6 +46,13 @@ if [[ -n "${TALKINGBOATS_AIS_FRIENDS_UDP_PORT:-}" ]]; then
   ais_friends_args=(-u "${ais_friends_host}" "${TALKINGBOATS_AIS_FRIENDS_UDP_PORT}")
 fi
 
+http_args=()
+if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" && -n "${TALKINGBOATS_AIS_INGEST_TOKEN:-}" ]]; then
+  forwarder_host="${TALKINGBOATS_AIS_FORWARDER_HOST:-127.0.0.1}"
+  forwarder_port="${TALKINGBOATS_AIS_FORWARDER_PORT:-8110}"
+  http_args=(-H "http://${forwarder_host}:${forwarder_port}/" "${TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS:-1}")
+fi
+
 web_args=(
   -N "${TALKINGBOATS_AIS_WEB_PORT:-8100}"
   station "${TALKINGBOATS_AIS_STATION_NAME:-Elliott Bay VHF}"
@@ -59,5 +66,6 @@ exec /usr/local/bin/AIS-catcher \
   "${device_args[@]}" \
   "${sharing_args[@]}" \
   "${ais_friends_args[@]}" \
+  "${http_args[@]}" \
   -o 0 \
   "${web_args[@]}"
