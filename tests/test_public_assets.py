@@ -352,7 +352,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "renderVesselMap" not in app_js
     assert "No AIS vessel positions received yet" not in app_js
     assert "Vessel positions in the public manifest" not in app_js
-    assert "lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel" in app_js
+    assert (
+        "lexicalAnalysis.replaceChildren(cards, topicPanel, wordsPanel, "
+        "entityPanel, educationPanel, channelPanel);"
+    ) in app_js
+    assert "lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel" not in app_js
     assert "lexicalAnalysis.replaceChildren(cards, channelPanel, mapPanel" not in app_js
     assert ".ais-catcher-frame" in styles_css
     assert ".vessel-map-panel" in styles_css
@@ -488,6 +492,8 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     assert 'topicFrame.setAttribute("allow", "fullscreen")' in app_js
     assert "hideUnavailableTopicFrame(topicFrame, topicFrameShell)" in app_js
     assert 'topicFrame.addEventListener("load"' in app_js
+    assert "renderTopicExamples(topic, item)" in app_js
+    assert "renderAnalysisExampleCorrection(reviewExample, quote, item)" in app_js
     assert ".topic-frame-shell[hidden]" in styles_css
     assert "mobileNlpSummary" not in app_js
     assert "nlpSummaryRows" not in app_js
@@ -967,6 +973,7 @@ def test_public_site_does_not_render_unknown_clip_duration_as_zero() -> None:
 
 
 def test_public_site_education_reference_cards_use_aligned_grid_layout() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert ".education-guide-list {\n  display: grid;" in styles_css
@@ -977,3 +984,26 @@ def test_public_site_education_reference_cards_use_aligned_grid_layout() -> None
     assert "height: 100%;" in styles_css
     assert "grid-template-rows: minmax(2.5em, auto) auto;" in styles_css
     assert "justify-self: end;" in styles_css
+    assert 'item.className = "education-card education-card-link";' in app_js
+    assert 'cue.textContent = "Open reference";' in app_js
+    assert ".education-card-link" in styles_css
+    assert ".reference-open-cue" in styles_css
+
+
+def test_public_site_analysis_channel_chart_can_hide_traffic_outlier() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "let hideAnalysisTrafficOutlier = true;" in app_js
+    assert "renderAnalysisTrafficToggle()" in app_js
+    assert (
+        'button.textContent = hideAnalysisTrafficOutlier ? "Show Seattle Traffic" '
+        ': "Hide Seattle Traffic";'
+    ) in app_js
+    assert 'entries = entries.filter(([channel]) => !trafficChannelIds.has(channel));' in app_js
+    assert (
+        'note.textContent = "Seattle Traffic hidden so the other channels can scale up.";'
+        in app_js
+    )
+    assert ".chart-panel-header" in styles_css
+    assert ".analysis-chart-toggle" in styles_css

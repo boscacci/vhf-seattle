@@ -1398,6 +1398,37 @@ audio {
   padding: 16px;
 }
 
+.chart-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chart-panel-header p {
+  margin: 0;
+}
+
+.analysis-chart-toggle {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--blue), transparent 42%);
+  border-radius: 8px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue), transparent 90%);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.analysis-chart-toggle:hover,
+.analysis-chart-toggle:focus-visible {
+  color: #07110f;
+  background: var(--blue);
+}
+
 .channel-bar-list {
   display: grid;
   gap: 10px;
@@ -1752,6 +1783,20 @@ audio {
   line-height: 1.25;
 }
 
+.topic-example {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.topic-example blockquote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--amber);
+  color: #eef6f2;
+  line-height: 1.45;
+}
+
 .education-guide-card p {
   margin: 0;
   color: #dbe5e1;
@@ -1831,6 +1876,43 @@ audio {
   display: grid;
   gap: 12px;
   padding-top: 2px;
+}
+
+.education-card-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.education-card-link {
+  position: relative;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.education-card-link:hover,
+.education-card-link:focus-within {
+  border-color: color-mix(in srgb, var(--blue), transparent 34%);
+  background: color-mix(in srgb, var(--blue), transparent 93%);
+  transform: translateY(-1px);
+}
+
+.reference-open-cue {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--blue), transparent 42%);
+  border-radius: 999px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue), transparent 90%);
+  font-size: 0.72rem;
+  font-weight: 850;
+  white-space: nowrap;
 }
 
 .entity-meta {
@@ -1932,6 +2014,21 @@ audio {
 
   .channel-bar-row {
     grid-template-columns: minmax(0, 1fr) minmax(4ch, auto);
+  }
+
+  .chart-panel-header,
+  .education-card-heading {
+    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chart-panel-header {
+    display: grid;
+  }
+
+  .analysis-chart-toggle,
+  .reference-open-cue {
+    justify-self: start;
   }
 
   .channel-bar-track {

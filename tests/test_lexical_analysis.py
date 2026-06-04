@@ -846,6 +846,42 @@ def test_topic_items_fall_back_to_document_keywords_when_model_words_are_empty()
     assert items[1]["label"] == "colman dock / cape san juan / departing"
 
 
+def test_topic_items_include_clip_metadata_for_reviewable_examples() -> None:
+    class FakeTopicModel:
+        def get_topic(self, _topic_id: int) -> list[tuple[str, float]]:
+            return [("seattle traffic", 1.0), ("west waterway", 0.9)]
+
+    clips = [
+        lexical_analysis.TranscriptClip(
+            key="clip-1",
+            channel="14",
+            started_at="2026-06-04T15:00:00Z",
+            ended_at="2026-06-04T15:00:06Z",
+            duration_seconds=6.0,
+            content_type="audio/wav",
+            transcript="Seattle Traffic, west waterway test.",
+        )
+    ]
+
+    items = lexical_analysis._topic_items(
+        FakeTopicModel(),
+        topics=[0],
+        documents=[clips[0].transcript],
+        clips=clips,
+        public_audio_keys={"clip-1"},
+    )
+
+    assert items[0]["examples"] == [
+        {
+            "channel": "14",
+            "started_at": "2026-06-04T15:00:00Z",
+            "duration_seconds": 6.0,
+            "text": "Seattle Traffic, west waterway test.",
+            "audio_public_filename": lexical_analysis._public_audio_filename(clips[0]),
+        }
+    ]
+
+
 def test_topic_display_words_filter_radio_filler_contractions() -> None:
     assert lexical_analysis._topic_display_words(
         ["we'll", "i'll", "that's", "seattle traffic", "wind direction"],

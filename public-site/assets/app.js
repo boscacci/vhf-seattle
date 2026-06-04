@@ -327,6 +327,7 @@ let performancePayloadLoaded = false;
 let performanceRefreshTimer = null;
 let latestPerformancePayload = null;
 let latestLanguagePayload = null;
+let hideAnalysisTrafficOutlier = true;
 let selectedPerformanceRangeHours = 2;
 let selectedSearchRecency = "7d";
 let selectedSearchLimit = 10;
@@ -2585,7 +2586,16 @@ function renderLanguageDashboard(payload) {
   );
 
   const channelPanel = languagePanel("Analyzed transcript clips by VHF channel");
-  channelPanel.append(channelActivityChart(channelCounts));
+  const chartHeader = document.createElement("div");
+  chartHeader.className = "chart-panel-header";
+  const note = document.createElement("p");
+  note.className = "muted-inline";
+  note.textContent = "Seattle Traffic hidden so the other channels can scale up.";
+  if (!hideAnalysisTrafficOutlier) {
+    note.textContent = "Showing all analyzed channels.";
+  }
+  chartHeader.append(note, renderAnalysisTrafficToggle());
+  channelPanel.append(chartHeader, channelActivityChart(channelCounts));
 
   const wordsPanel = languagePanel("Radio words");
   wordsPanel.append(
@@ -2620,7 +2630,7 @@ function renderLanguageDashboard(payload) {
     referenceIndex(payload.education || []),
   );
 
-  lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel, entityPanel, topicPanel, educationPanel);
+  lexicalAnalysis.replaceChildren(cards, topicPanel, wordsPanel, entityPanel, educationPanel, channelPanel);
 }
 
 function hideUnavailableTopicFrame(topicFrame, topicFrameShell) {
@@ -3519,10 +3529,49 @@ function topicList(topics) {
       words.className = "entity-meta";
       words.textContent = topicKeywordWords(topic).join(", ");
       item.append(title, words);
+      const examples = renderTopicExamples(topic, item);
+      if (examples) {
+        item.append(examples);
+      }
       return item;
     }),
   );
   return list;
+}
+
+function renderTopicExamples(topic, item) {
+  const example = topicExampleForDisplay(topic);
+  if (!example) {
+    return null;
+  }
+  const wrapper = document.createElement("div");
+  wrapper.className = "topic-example";
+  const label = document.createElement("p");
+  label.className = "language-label";
+  label.textContent = "Example";
+  const quote = document.createElement("blockquote");
+  quote.textContent = example.text || example.transcript_public || "";
+  wrapper.append(label, quote);
+  const player = renderExamplePlayer(example);
+  if (player) {
+    wrapper.append(player);
+  }
+  const reviewExample = analysisReviewClip(example);
+  const correction = renderAnalysisExampleCorrection(reviewExample, quote, item);
+  if (correction) {
+    wrapper.append(correction);
+  }
+  return wrapper;
+}
+
+function topicExampleForDisplay(topic) {
+  const examples = Array.isArray(topic?.examples) ? topic.examples : [];
+  return (
+    examples.find((example) => example?.channel && example?.started_at) ||
+    examples.find((example) => analysisAudioUrlForClip(example)) ||
+    examples[0] ||
+    null
+  );
 }
 
 function topicTitle(topic) {
@@ -3563,18 +3612,24 @@ function educationList(resources) {
   list.append(
     ...resources.map((resource) => {
       const item = document.createElement("article");
-      item.className = "education-card";
+      item.className = "education-card education-card-link";
+      const heading = document.createElement("div");
+      heading.className = "education-card-heading";
       const title = document.createElement("a");
       title.href = resource.url || "#";
       title.rel = "noopener noreferrer";
       title.target = "_blank";
       title.textContent = resource.title || resource.source || "Reference";
+      const cue = document.createElement("span");
+      cue.className = "reference-open-cue";
+      cue.textContent = "Open reference";
+      heading.append(title, cue);
       const meta = document.createElement("p");
       meta.className = "entity-meta";
       meta.textContent = [resource.source, resource.category].filter(Boolean).join(" · ");
       const relevance = document.createElement("p");
       relevance.textContent = resource.local_relevance || "";
-      item.append(title, meta, relevance);
+      item.append(heading, meta, relevance);
       return item;
     }),
   );
@@ -3655,16 +3710,23 @@ function referenceIndex(resources) {
 }
 
 function channelActivityChart(channels) {
-  const entries = Object.entries(channels || {})
+  let entries = Object.entries(channels || {})
     .map(([channel, count]) => [channel, Number(count || 0)])
     .filter(([, count]) => count > 0)
     .sort((left, right) => right[1] - left[1] || compareChannels(left[0], right[0]));
+  const hasTrafficOutlier = entries.some(([channel]) => trafficChannelIds.has(channel));
+  if (hideAnalysisTrafficOutlier) {
+    entries = entries.filter(([channel]) => !trafficChannelIds.has(channel));
+  }
   const list = document.createElement("div");
   list.className = "channel-bar-list";
   if (!entries.length) {
     const empty = document.createElement("p");
     empty.className = "muted-inline";
-    empty.textContent = "No analyzed transmissions yet";
+    empty.textContent =
+      hideAnalysisTrafficOutlier && hasTrafficOutlier
+        ? "Only Seattle Traffic has analyzed clips; show it to view the bar."
+        : "No analyzed transmissions yet";
     list.append(empty);
     return list;
   }
@@ -3692,6 +3754,21 @@ function channelActivityChart(channels) {
     }),
   );
   return list;
+}
+
+function renderAnalysisTrafficToggle() {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "analysis-chart-toggle";
+  button.textContent = hideAnalysisTrafficOutlier ? "Show Seattle Traffic" : "Hide Seattle Traffic";
+  button.setAttribute("aria-pressed", String(!hideAnalysisTrafficOutlier));
+  button.addEventListener("click", () => {
+    hideAnalysisTrafficOutlier = !hideAnalysisTrafficOutlier;
+    if (latestLanguagePayload) {
+      renderLanguageDashboard(latestLanguagePayload);
+    }
+  });
+  return button;
 }
 
 function dominantThemeSummary(topics) {

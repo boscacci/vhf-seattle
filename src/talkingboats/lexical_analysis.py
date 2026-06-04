@@ -990,12 +990,17 @@ def _build_topics(
             "status": "ok",
             "reason": None,
             "plot_url": TOPIC_PLOT_PATH,
-            "items": _topic_items(
-                topic_model,
-                topics,
-                documents,
-                max_items=MAX_BERTOPIC_TOPICS,
+        "items": _topic_items(
+            topic_model,
+            topics,
+            documents,
+            clips=topic_clips,
+            public_audio_keys=_public_audio_keys(
+                topic_clips,
+                limit=PUBLIC_AUDIO_EXAMPLE_LIMIT,
             ),
+            max_items=MAX_BERTOPIC_TOPICS,
+        ),
         }
     except Exception as exc:  # noqa: BLE001 - keep analysis useful without model artifacts.
         _write_placeholder_topic_html(
@@ -1282,9 +1287,13 @@ def _topic_items(
     topics: Sequence[int],
     documents: Sequence[str],
     *,
+    clips: Sequence[TranscriptClip] | None = None,
+    public_audio_keys: set[str] | None = None,
     max_items: int | None = None,
 ) -> list[dict[str, Any]]:
     counts = Counter(topics)
+    source_clips = list(clips or [])
+    playable_keys = public_audio_keys or set()
     items = []
     for topic_id, count in counts.most_common():
         if max_items is not None and len(items) >= max_items:
@@ -1301,11 +1310,13 @@ def _topic_items(
             )
             words = _topic_display_words(raw_words, limit=12)
             label = _topic_label_from_words(raw_words)
-        examples = [
-            {"text": _short_text(document, limit=260)}
-            for document, assigned_topic in zip(documents, topics, strict=True)
-            if assigned_topic == topic_id
-        ][:3]
+        examples = _topic_examples(
+            topic_id=topic_id,
+            topics=topics,
+            documents=documents,
+            clips=source_clips,
+            public_audio_keys=playable_keys,
+        )
         items.append(
             {
                 "id": int(topic_id),
@@ -1316,6 +1327,37 @@ def _topic_items(
             }
         )
     return items
+
+
+def _topic_examples(
+    *,
+    topic_id: int,
+    topics: Sequence[int],
+    documents: Sequence[str],
+    clips: Sequence[TranscriptClip],
+    public_audio_keys: set[str],
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    examples: list[dict[str, Any]] = []
+    for index, (document, assigned_topic) in enumerate(zip(documents, topics, strict=True)):
+        if assigned_topic != topic_id:
+            continue
+        clip = clips[index] if index < len(clips) else None
+        if clip is None:
+            examples.append({"text": _short_text(document, limit=260)})
+        else:
+            example: dict[str, Any] = {
+                "channel": clip.channel,
+                "started_at": clip.started_at,
+                "duration_seconds": clip.duration_seconds,
+                "text": _short_text(clip.transcript, limit=260),
+            }
+            if clip.key in public_audio_keys:
+                example["audio_public_filename"] = _public_audio_filename(clip)
+            examples.append(example)
+        if len(examples) >= limit:
+            break
+    return examples
 
 
 def _topic_words(topic_model: Any, topic_id: int) -> list[str]:
