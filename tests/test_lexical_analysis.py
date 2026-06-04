@@ -373,6 +373,37 @@ def test_entity_examples_prefer_short_analysis_clips(tmp_path: Path) -> None:
     assert all(example["duration_seconds"] <= 12.0 for example in examples)
 
 
+def test_entity_examples_prefer_recent_audio_over_stale_short_clips(tmp_path: Path) -> None:
+    db_path = tmp_path / "clips.sqlite3"
+    store = UploadedClipStore(db_path)
+    _transcribe(
+        store,
+        key="raw/channel=14/date=2026-05-26/stale-short.mp3",
+        channel="14",
+        started_at="2026-05-26T02:00:00Z",
+        text="Seattle Traffic stale short example.",
+        duration_seconds=5.0,
+    )
+    _transcribe(
+        store,
+        key="raw/channel=14/date=2026-06-04/recent-long.mp3",
+        channel="14",
+        started_at="2026-06-04T13:00:00Z",
+        text="Seattle Traffic recent improved-audio example.",
+        duration_seconds=31.0,
+    )
+
+    payload = generate_lexical_analysis(
+        db_path=db_path,
+        output_dir=tmp_path / "site",
+        generated_at=datetime(2026, 6, 4, 14, 0, 0, tzinfo=UTC),
+    )
+
+    example = _entity(payload, "Seattle Traffic")["examples"][0]
+    assert example["started_at"] == "2026-06-04T13:00:00Z"
+    assert example["audio_public_filename"].startswith("20260604T130000Z")
+
+
 def test_entity_examples_keep_playable_fallback_for_long_clips(tmp_path: Path) -> None:
     db_path = tmp_path / "clips.sqlite3"
     store = UploadedClipStore(db_path)

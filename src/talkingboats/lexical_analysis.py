@@ -11,7 +11,7 @@ import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -31,6 +31,7 @@ PUBLIC_EXCLUDED_CHANNELS = ("WX",)
 TOPIC_PLOT_PATH = "/analysis/topic_clusters.html"
 PUBLIC_AUDIO_EXAMPLE_LIMIT = DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 MAX_ENTITY_EXAMPLE_DURATION_SECONDS = 12.0
+RECENT_ANALYSIS_EXAMPLE_WINDOW_DAYS = 3
 MAX_BERTOPIC_TOPICS = 18
 TOPIC_COLOR_PALETTE = (
     "#40e0bf",
@@ -1480,6 +1481,7 @@ def _extract_entities(
 ) -> list[dict[str, Any]]:
     entities: dict[str, dict[str, Any]] = {}
     playable_keys = public_audio_keys or set()
+    recent_cutoff = _recent_analysis_example_cutoff(clips)
 
     def add(name: str, kind: str, clip: TranscriptClip) -> None:
         clean_name = " ".join(name.split())
@@ -1511,8 +1513,9 @@ def _extract_entities(
     for clip in sorted(
         clips,
         key=lambda item: (
-            _is_short_entity_example(item),
+            _is_recent_analysis_example(item, recent_cutoff),
             item.key in playable_keys,
+            _is_short_entity_example(item),
             item.started_at,
         ),
         reverse=True,
@@ -1552,6 +1555,19 @@ def _extract_entities(
 def _is_short_entity_example(clip: TranscriptClip) -> bool:
     duration = clip.duration_seconds
     return duration is not None and duration <= MAX_ENTITY_EXAMPLE_DURATION_SECONDS
+
+
+def _recent_analysis_example_cutoff(clips: list[TranscriptClip]) -> datetime | None:
+    if not clips:
+        return None
+    latest_started_at = max(_parse_utc(clip.started_at) for clip in clips)
+    return latest_started_at - timedelta(days=RECENT_ANALYSIS_EXAMPLE_WINDOW_DAYS)
+
+
+def _is_recent_analysis_example(clip: TranscriptClip, cutoff: datetime | None) -> bool:
+    if cutoff is None:
+        return False
+    return _parse_utc(clip.started_at) >= cutoff
 
 
 def _public_audio_keys(clips: list[TranscriptClip], *, limit: int) -> set[str]:
