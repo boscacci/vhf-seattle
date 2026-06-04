@@ -40,6 +40,9 @@ const server = createServer(async (request, response) => {
     if (url.pathname === "/api/clips/features" && request.method === "POST") {
       return sendJson(response, await clipFeaturePayload(request));
     }
+    if (url.pathname === "/api/clips/corrections" && request.method === "POST") {
+      return sendJson(response, await transcriptCorrectionPayload(request));
+    }
     if (url.pathname === "/api/clips/search") {
       return sendJson(response, searchPayload(url));
     }
@@ -194,6 +197,7 @@ try {
       return {
         activeChannelMetric: activeCard?.querySelector("strong")?.textContent,
         audioCount: document.querySelectorAll("#lexical-analysis audio").length,
+        correctionCount: document.querySelectorAll("#lexical-analysis .analysis-correction").length,
         topicFrame: {
           allow: topicFrame.getAttribute("allow"),
           allowFullscreen: topicFrame.allowFullscreen,
@@ -218,6 +222,9 @@ try {
     }
     if (!String(result.metadata.src).includes("/api/clips/audio?channel=14&started_at=")) {
       throw new Error(`analysis audio did not use same-origin clip API: ${result.metadata.src}`);
+    }
+    if (result.correctionCount !== 0) {
+      throw new Error(`plain analysis route should stay read-only: ${JSON.stringify(result)}`);
     }
     if (!Number.isFinite(result.metadata.duration) || result.metadata.duration <= 0) {
       throw new Error(`analysis audio metadata was not playable: ${result.metadata.duration}`);
@@ -560,6 +567,29 @@ try {
     ) {
       throw new Error(`operator feature action did not update the clip card: ${JSON.stringify(operatorFeatureState)}`);
     }
+    await page.getByRole("button", { name: "Analysis" }).click();
+    await page.locator("#lexical-analysis .analysis-correction").first().waitFor({ state: "visible", timeout: 10000 });
+    await page.locator("#lexical-analysis .analysis-correction summary").first().click();
+    await page
+      .locator("#lexical-analysis .analysis-correction textarea")
+      .first()
+      .fill("Seattle Traffic corrected showcase example.");
+    await page.locator("#lexical-analysis .analysis-correction button[type='submit']").first().click();
+    await page.waitForFunction(() =>
+      document.querySelector("#lexical-analysis .entity-card:first-child blockquote")?.textContent?.includes("corrected showcase"),
+    );
+    const operatorAnalysisCorrection = await page.evaluate(() => ({
+      summary: document.querySelector("#lexical-analysis .analysis-correction summary")?.textContent?.trim() || "",
+      status: document.querySelector("#lexical-analysis .analysis-correction .transcript-correction-status")?.textContent?.trim() || "",
+      quote: document.querySelector("#lexical-analysis .entity-card:first-child blockquote")?.textContent || "",
+    }));
+    if (
+      operatorAnalysisCorrection.summary !== "Edit correction" ||
+      !operatorAnalysisCorrection.status.includes("Saved") ||
+      !operatorAnalysisCorrection.quote.includes("corrected showcase")
+    ) {
+      throw new Error(`operator analysis correction did not save: ${JSON.stringify(operatorAnalysisCorrection)}`);
+    }
     await page.getByRole("button", { name: "Performance" }).click();
     await page.locator(".speech-training-panel .performance-card").first().waitFor({ state: "visible", timeout: 10000 });
     const speechTraining = await page.evaluate(() => ({
@@ -863,6 +893,18 @@ async function clipFeaturePayload(request) {
     channel: payload.channel || "14",
     started_at: new Date(Date.parse("2026-05-31T20:00:00Z") - clipIndex * 60000).toISOString(),
     featured,
+  };
+}
+
+async function transcriptCorrectionPayload(request) {
+  const rawBody = await readRequestBody(request);
+  const payload = JSON.parse(rawBody || "{}");
+  return {
+    status: "ok",
+    channel: payload.channel || "14",
+    started_at: payload.started_at || "",
+    corrected_transcript: payload.transcript || "",
+    reviewed_by: payload.reviewer || "operator-ui",
   };
 }
 

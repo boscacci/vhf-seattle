@@ -819,8 +819,13 @@ button {
 }
 
 .pagination-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 104px;
   padding: 8px 12px;
+  text-align: center;
+  line-height: 1.1;
   color: var(--ink);
   background: var(--panel-strong);
 }
@@ -892,6 +897,10 @@ blockquote {
   display: grid;
   gap: 8px;
   padding-top: 2px;
+}
+
+.analysis-correction {
+  margin-top: 2px;
 }
 
 .transcript-correction summary {
@@ -2096,7 +2105,14 @@ audio {
     gap: 8px;
   }
 
+  .pagination-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(104px, 100%), 1fr));
+    max-width: 460px;
+  }
+
   .pagination-actions .pagination-button {
+    width: 100%;
     flex: 1 1 0;
     min-width: 0;
     min-height: 44px;

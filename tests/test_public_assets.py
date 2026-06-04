@@ -507,11 +507,28 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
 
 def test_public_site_analysis_examples_use_same_origin_clip_audio() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert "function analysisAudioUrlForClip(clip)" in app_js
     assert "return clipAudioRequestUrl(clip) || audioUrlForClip(clip);" in app_js
     assert "const audioUrl = analysisAudioUrlForClip(example);" in app_js
     assert 'const clipAudioUrl = apiUrl("/api/clips/audio");' in app_js
+    assert "renderAnalysisExampleCorrection" in app_js
+    assert "operatorReviewEnabled && canReviewClip(example)" in app_js
+    assert 'summary.textContent = "Review transcript";' in app_js
+    assert "renderTranscriptCorrectionForm(example, transcriptElement, article)" in app_js
+    assert ".analysis-correction" in styles_css
+
+
+def test_public_site_mobile_pagination_action_labels_stay_centered() -> None:
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert ".pagination-button {\n  display: inline-flex;" in styles_css
+    assert "align-items: center;" in styles_css
+    assert "justify-content: center;" in styles_css
+    assert ".pagination-actions {\n    display: grid;" in styles_css
+    assert "grid-template-columns: repeat(auto-fit, minmax(min(104px, 100%), 1fr));" in styles_css
+    assert ".pagination-actions .pagination-button {\n    width: 100%;" in styles_css
 
 
 def test_public_site_performance_metric_values_average_selected_window() -> None:

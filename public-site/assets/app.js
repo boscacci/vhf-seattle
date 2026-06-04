@@ -3323,12 +3323,17 @@ function entityList(entities) {
       }
       const playableExample = entityExampleWithAudio(entity);
       const displayedExample = playableExample || entity.examples?.[0] || {};
-      const example = document.createElement("blockquote");
-      example.textContent = displayedExample.text || "";
-      item.append(title, meta, channels, example);
+      const quote = document.createElement("blockquote");
+      quote.textContent = displayedExample.text || "";
+      item.append(title, meta, channels, quote);
       const player = renderExamplePlayer(playableExample || {});
       if (player) {
         item.append(player);
+      }
+      const reviewExample = analysisReviewClip(displayedExample);
+      const correction = renderAnalysisExampleCorrection(reviewExample, quote, item);
+      if (correction) {
+        item.append(correction);
       }
       return item;
     }),
@@ -3389,6 +3394,27 @@ function renderExamplePlayer(example) {
 
   player.append(audio, time);
   return player;
+}
+
+function analysisReviewClip(example) {
+  return {
+    ...example,
+    transcript_public: example?.transcript_public ?? example?.text ?? "",
+    transcript_reviewed: Boolean(example?.transcript_reviewed),
+  };
+}
+
+function renderAnalysisExampleCorrection(example, transcriptElement, article) {
+  if (operatorReviewEnabled && canReviewClip(example)) {
+    const details = renderTranscriptCorrectionForm(example, transcriptElement, article);
+    details.classList.add("analysis-correction");
+    const summary = details.querySelector("summary");
+    if (summary) {
+      summary.textContent = "Review transcript";
+    }
+    return details;
+  }
+  return null;
 }
 
 function analysisAudioUrlForClip(clip) {
