@@ -594,7 +594,7 @@ liveAudio.addEventListener("ended", () => {
   scheduleLiveReconnect();
 });
 
-async function loadAndRender() {
+async function loadAndRender({ useCachedPayload = true } = {}) {
   const requestId = ++clipRequestSequence;
   const requestUrl = clipRequestUrl();
   if (shouldLoadPublishedManifestFirst()) {
@@ -610,7 +610,9 @@ async function loadAndRender() {
     refreshLiveClipPayloadInBackground(requestUrl, requestId);
     return;
   }
-  const cachedPayload = prefetchedClipPagePayload(requestUrl) || loadCachedRecentClipPayload(requestUrl);
+  const cachedPayload = useCachedPayload
+    ? prefetchedClipPagePayload(requestUrl) || loadCachedRecentClipPayload(requestUrl)
+    : null;
   if (cachedPayload) {
     currentClipPayload = cachedPayload;
     renderSite(cachedPayload);
@@ -1617,7 +1619,7 @@ function renderClipDisplayControlSet() {
         if (!setClipPageSize(pageSize)) {
           return;
         }
-        loadAndRender();
+        loadAndRender({ useCachedPayload: false });
       },
     })),
   );
@@ -1948,7 +1950,7 @@ function goToClipPage(pageNumber) {
   selectedClipPage = nextPage;
   selectedClipOffset = nextOffset;
   renderClipPagePendingState();
-  loadAndRender();
+  loadAndRender({ useCachedPayload: false });
 }
 
 function goToClipOffset(offset) {
@@ -1959,7 +1961,7 @@ function goToClipOffset(offset) {
   selectedClipOffset = nextOffset;
   syncClipPageFromOffset();
   renderClipPagePendingState();
-  loadAndRender();
+  loadAndRender({ useCachedPayload: false });
 }
 
 function paginationButton(label, disabled, onClick, { ariaLabel = "" } = {}) {
