@@ -625,6 +625,13 @@ def test_public_site_shows_public_ais_tab() -> None:
     assert 'id="tab-map" type="button" data-tab="map" hidden' in index_html
 
 
+def test_public_site_cache_busts_app_module() -> None:
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+
+    assert '<script src="/assets/app.js?v=' in index_html
+    assert '<script src="/assets/app.js" type="module"></script>' not in index_html
+
+
 def test_public_site_tabs_have_linkable_routes() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     deploy_shell = Path("scripts/deploy_static_shell.sh").read_text(encoding="utf-8")

@@ -141,6 +141,29 @@ upload_route_indexes() {
   done
 }
 
+upload_shell_entrypoint() {
+  local source_dir="$1"
+  local target_bucket="$2"
+
+  aws s3api put-object \
+    --bucket "${target_bucket}" \
+    --key "index.html" \
+    --body "${source_dir}/index.html" \
+    --content-type "text/html" \
+    --cache-control "no-store" \
+    --output json
+
+  if [[ -f "${source_dir}/assets/app.js" ]]; then
+    aws s3api put-object \
+      --bucket "${target_bucket}" \
+      --key "assets/app.js" \
+      --body "${source_dir}/assets/app.js" \
+      --content-type "text/javascript" \
+      --cache-control "no-store" \
+      --output json
+  fi
+}
+
 delete_retired_route_indexes() {
   local target_bucket="$1"
   local retired_route_path
@@ -281,6 +304,7 @@ fqdn="$(deploy_output_raw "${fqdn_output}")"
 
 echo "Deploying ${site_dir} from ${branch} to ${environment}: https://${fqdn}"
 aws s3 sync "${site_dir}" "s3://${bucket}/" --delete
+upload_shell_entrypoint "${site_dir}" "${bucket}"
 upload_route_indexes "${site_dir}" "${bucket}"
 delete_retired_route_indexes "${bucket}"
 aws cloudfront create-invalidation \

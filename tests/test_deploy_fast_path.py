@@ -43,6 +43,10 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert "TALKINGBOATS_DEV_TAILNET_PUBLIC_SITE_DIR" in script
     assert "TALKINGBOATS_SKIP_TAILNET_DEV_SYNC" in script
     assert "rsync -az" in script
+    assert "upload_shell_entrypoint" in script
+    assert '--key "index.html"' in script
+    assert '--key "assets/app.js"' in script
+    assert '--cache-control "no-store"' in script
 
 
 def test_full_public_deploy_supports_external_tofu_state_dir() -> None:
@@ -92,6 +96,18 @@ def test_deploy_scripts_allow_archive_sources_for_dev_only() -> None:
             "Refusing prod deploy from branch" in script
             or "Refusing prod shell deploy from branch" in script
         )
+
+
+def test_deploy_scripts_force_shell_revalidation() -> None:
+    for path in ("scripts/deploy_static_shell.sh", "scripts/deploy_public_site.sh"):
+        script = Path(path).read_text(encoding="utf-8")
+
+        assert "upload_shell_entrypoint" in script
+        assert '--key "index.html"' in script
+        assert '--key "assets/app.js"' in script
+        assert '--content-type "text/html"' in script
+        assert '--content-type "text/javascript"' in script
+        assert '--cache-control "no-store"' in script
 
 
 def test_native_mobile_auth_env_writer_is_removed_while_paused() -> None:
