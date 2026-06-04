@@ -100,9 +100,7 @@ const languageDashboardEnabled = [
 );
 const liveLanguageAnalysisEnabled = window.location.hostname !== "vhf.robertboscacci.com";
 const performanceDashboardEnabled = privateAppHost;
-const aisDashboardEnabled = !["vhf.robertboscacci.com"].includes(
-  window.location.hostname,
-);
+const aisDashboardEnabled = true;
 const featureClipWriteEnabled = privateAppHost;
 const operatorReviewEnabled =
   window.location.pathname.startsWith("/operator") && privateAppHost;

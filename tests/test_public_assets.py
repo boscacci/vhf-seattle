@@ -608,12 +608,12 @@ def test_public_site_uses_same_origin_live_api_urls() -> None:
     assert "return withDspProfile(url);" not in app_js
 
 
-def test_public_site_keeps_ais_tab_private_until_cloud_feed_exists() -> None:
+def test_public_site_shows_public_ais_tab() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
 
     assert "aisDashboardEnabled" in app_js
-    assert 'vhf.robertboscacci.com"].includes' in app_js
+    assert "const aisDashboardEnabled = true;" in app_js
     assert "mapTab.hidden = !aisDashboardEnabled" in app_js
     assert 'name === "map" && !aisDashboardEnabled' in app_js
     assert "panels.map.hidden = !aisDashboardEnabled" in app_js

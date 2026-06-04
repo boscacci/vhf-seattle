@@ -851,10 +851,6 @@ def create_app(
         include_in_schema=False,
     )
     async def ais_catcher_viewer(request: Request, proxy_path: str = "") -> Response:
-        if not settings.tailnet_dev_routes_enabled:
-            raise HTTPException(status_code=404, detail="AIS-catcher map is dev-only")
-        if not _ais_catcher_host_allowed(request, settings):
-            raise HTTPException(status_code=404, detail="AIS-catcher map is dev-only")
         return await _proxy_ais_catcher(request, proxy_path, settings, client_factory)
 
     @app.get("/api/live/current.mp3")

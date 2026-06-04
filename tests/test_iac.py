@@ -142,37 +142,37 @@ def test_deploy_script_uses_opentofu_cli_only() -> None:
     assert "terraform " not in deploy_script.lower()
 
 
-def test_cloudfront_keeps_prod_static_and_dev_tailnet_only() -> None:
+def test_cloudfront_routes_prod_read_only_live_api_to_live_origin() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
     variables_tf = Path("infra/opentofu/variables.tf").read_text(encoding="utf-8")
 
-    assert 'variable "live_origin_domain_name"' not in variables_tf
-    assert "optiplex.tailbea63b.ts.net" not in main_tf
-    assert "optiplex.tailbea63b.ts.net" not in variables_tf
+    assert 'variable "live_origin_domain_name"' in variables_tf
+    assert 'default     = "optiplex.tailbea63b.ts.net"' in variables_tf
     assert 'variable "dev_tailnet_ipv4_addresses"' in variables_tf
     assert 'default     = ["100.124.5.39"]' in variables_tf
     assert 'variable "dev_tailnet_ipv6_addresses"' in variables_tf
     assert 'default     = ["fd7a:115c:a1e0::2601:597"]' in variables_tf
-    assert 'resource "aws_cloudfront_origin_request_policy" "live_api"' not in main_tf
+    assert 'resource "aws_cloudfront_origin_request_policy" "live_api"' in main_tf
     assert 'resource "aws_cloudfront_origin_request_policy" "operator_api"' not in main_tf
+    assert 'query_string_behavior = "all"' in main_tf
     assert 'X-TalkingBoats-Operator-Token' not in main_tf
-    assert 'path_pattern             = "/api/live/*"' not in main_tf
-    assert 'path_pattern             = "/api/clips/recent"' not in main_tf
-    assert 'path_pattern             = "/api/clips/search"' not in main_tf
-    assert 'path_pattern             = "/api/clips/playback"' not in main_tf
-    assert 'path_pattern             = "/api/clips/audio"' not in main_tf
+    assert 'path_pattern             = "/api/live/*"' in main_tf
+    assert 'path_pattern             = "/api/clips/recent"' in main_tf
+    assert 'path_pattern             = "/api/clips/search"' in main_tf
+    assert 'path_pattern             = "/api/clips/playback"' in main_tf
+    assert 'path_pattern             = "/api/clips/audio"' in main_tf
     assert 'path_pattern             = "/api/clips/corrections*"' not in main_tf
     assert 'path_pattern             = "/api/clips/features*"' not in main_tf
     assert 'path_pattern             = "/api/operator/session*"' not in main_tf
-    assert 'path_pattern             = "/api/analysis/lexical"' not in main_tf
-    assert 'path_pattern             = "/ais-catcher/*"' not in main_tf
+    assert 'path_pattern             = "/api/analysis/lexical"' in main_tf
+    assert 'path_pattern             = "/ais-catcher/*"' in main_tf
     prod_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "site")
     dev_distribution = _resource_block(main_tf, "aws_cloudfront_distribution", "dev_site")
     dev_a_record = _resource_block(main_tf, "aws_route53_record", "dev_site_a")
     dev_aaaa_record = _resource_block(main_tf, "aws_route53_record", "dev_site_aaaa")
-    assert 'path_pattern             = "/ais-catcher/*"' not in prod_distribution
+    assert 'path_pattern             = "/ais-catcher/*"' in prod_distribution
     assert 'path_pattern             = "/ais-catcher/*"' not in dev_distribution
-    assert "target_origin_id         = local.live_origin_id" not in main_tf
+    assert main_tf.count("target_origin_id         = local.live_origin_id") == 7
     assert 'path_pattern             = "/api/clips/corrections*"' not in prod_distribution
     assert 'path_pattern             = "/api/clips/features*"' not in prod_distribution
     assert 'path_pattern             = "/api/operator/session*"' not in prod_distribution
@@ -181,10 +181,7 @@ def test_cloudfront_keeps_prod_static_and_dev_tailnet_only() -> None:
     assert 'path_pattern             = "/api/operator/session*"' not in dev_distribution
     assert 'enabled             = false' in dev_distribution
     assert "target_origin_id         = local.dev_live_origin_id" not in main_tf
-    assert (
-        "origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id"
-        not in main_tf
-    )
+    assert "origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id" in main_tf
     assert (
         "origin_request_policy_id = aws_cloudfront_origin_request_policy.operator_api.id"
         not in main_tf

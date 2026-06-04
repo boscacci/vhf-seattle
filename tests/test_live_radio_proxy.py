@@ -850,7 +850,7 @@ def test_proxy_asr_feedback_status_requires_tailnet_dev_proxy_marker() -> None:
     assert response.status_code == 403
 
 
-def test_proxy_ais_catcher_viewer_is_dev_only_and_public_safe() -> None:
+def test_proxy_ais_catcher_viewer_is_public_read_only_and_public_safe() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "http://pi.test:8100/"
         assert "authorization" not in request.headers
@@ -866,10 +866,7 @@ def test_proxy_ais_catcher_viewer_is_dev_only_and_public_safe() -> None:
         )
 
     app = create_app(
-        ProxySettings(
-            ais_catcher_base_url="http://pi.test:8100",
-            tailnet_dev_routes_enabled=True,
-        ),
+        ProxySettings(ais_catcher_base_url="http://pi.test:8100"),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -878,20 +875,16 @@ def test_proxy_ais_catcher_viewer_is_dev_only_and_public_safe() -> None:
             app,
             "/ais-catcher/",
             headers={
-                "Host": "vhf-dev.robertboscacci.com",
+                "Host": "vhf.robertboscacci.com",
                 "Authorization": "Bearer private-token",
                 "Cookie": "talkingboats_operator_token=private-token",
             },
         )
     )
-    prod_response = _run(
-        _asgi_get(app, "/ais-catcher/", headers={"Host": "vhf.robertboscacci.com"})
-    )
 
     assert response.status_code == 200
     assert '<base href="/ais-catcher/" />' in response.text
     assert "set-cookie" not in response.headers
-    assert prod_response.status_code == 404
 
 
 def test_proxy_ais_catcher_subpaths_and_redirects_stay_under_dev_prefix() -> None:
