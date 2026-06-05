@@ -181,7 +181,7 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert '--icecast-output "68:/talkingboats-68.mp3:Talking Boats Recreational"' in installer
     assert "--icecast-source-password" in installer
     assert "<clients>48</clients>" in installer
-    assert "<sources>16</sources>" in installer
+    assert "<sources>24</sources>" in installer
     assert "<source-timeout>300</source-timeout>" in installer
     assert "<mount-name>/talkingboats-13.mp3</mount-name>" in installer
     assert "<mount-name>/talkingboats-68.mp3</mount-name>" in installer
@@ -305,9 +305,39 @@ def test_pi_installer_adds_cloud_hls_and_ais_forwarder_as_gated_relays() -> None
 
 def test_pi_installer_streams_every_balanced_voice_net_channel_to_icecast() -> None:
     installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
-    expected_channels = ("05A", "06", "09", "13", "14", "16", "22A", "67", "68", "69", "71", "72")
+    hls_wrapper = Path("deploy/pi/live-radio/talkingboats-live-hls-relay").read_text(
+        encoding="utf-8"
+    )
+    expected_channels = (
+        "05A",
+        "06",
+        "09",
+        "10",
+        "13",
+        "14",
+        "16",
+        "22A",
+        "65A",
+        "66A",
+        "67",
+        "68",
+        "69",
+        "71",
+        "72",
+        "73",
+        "74",
+        "77",
+        "78A",
+    )
 
-    assert "<sources>16</sources>" in installer
+    assert "<sources>24</sources>" in installer
+    assert "append_env_if_missing TALKINGBOATS_CLOUD_HLS_CHANNELS \\" in installer
+    assert '"05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A"' in installer
+    assert (
+        'channels_csv="${TALKINGBOATS_CLOUD_HLS_CHANNELS:-'
+        '05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A}"'
+        in hls_wrapper
+    )
     for channel in expected_channels:
         mount_channel = channel.lower()
         mount = (
@@ -317,6 +347,11 @@ def test_pi_installer_streams_every_balanced_voice_net_channel_to_icecast() -> N
         )
         assert f'--icecast-output "{channel}:' in installer
         assert f"<mount-name>{mount}</mount-name>" in installer
+        if channel != "14":
+            assert (
+                f'{channel}) printf \'%s\\n\' "/talkingboats-{mount_channel}.mp3" ;;'
+                in hls_wrapper
+            )
 
 
 def test_live_radio_audio_filter_is_flagged_and_default_on() -> None:

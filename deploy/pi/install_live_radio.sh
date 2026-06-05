@@ -42,15 +42,22 @@ install -d -m 0755 \
   "${airband_spool_root}/05A" \
   "${airband_spool_root}/06" \
   "${airband_spool_root}/09" \
+  "${airband_spool_root}/10" \
   "${airband_spool_root}/13" \
   "${airband_spool_root}/14" \
   "${airband_spool_root}/16" \
   "${airband_spool_root}/22A" \
+  "${airband_spool_root}/65A" \
+  "${airband_spool_root}/66A" \
   "${airband_spool_root}/67" \
   "${airband_spool_root}/68" \
   "${airband_spool_root}/69" \
   "${airband_spool_root}/71" \
   "${airband_spool_root}/72" \
+  "${airband_spool_root}/73" \
+  "${airband_spool_root}/74" \
+  "${airband_spool_root}/77" \
+  "${airband_spool_root}/78A" \
   /etc/talkingboats \
   /etc/systemd/system
 
@@ -144,7 +151,8 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_CLOUD_HLS_LIST_SIZE=%q\n' "6"
     printf 'TALKINGBOATS_CLOUD_HLS_PUBLISH_INTERVAL_SECONDS=%q\n' "1"
     printf 'TALKINGBOATS_CLOUD_HLS_DEFAULT_CHANNEL=%q\n' "14"
-    printf 'TALKINGBOATS_CLOUD_HLS_CHANNELS=%q\n' "05A,06,09,13,14,16,22A,67,68,69,71,72"
+    printf 'TALKINGBOATS_CLOUD_HLS_CHANNELS=%q\n' \
+      "05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A"
     printf 'TALKINGBOATS_CAPTURE_PROFILE=%q\n' "debug"
     printf 'TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS=%q\n' "180"
     printf 'TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS=%q\n' "5000"
@@ -230,7 +238,8 @@ append_env_if_missing TALKINGBOATS_CLOUD_HLS_SEGMENT_SECONDS "2"
 append_env_if_missing TALKINGBOATS_CLOUD_HLS_LIST_SIZE "6"
 append_env_if_missing TALKINGBOATS_CLOUD_HLS_PUBLISH_INTERVAL_SECONDS "1"
 append_env_if_missing TALKINGBOATS_CLOUD_HLS_DEFAULT_CHANNEL "14"
-append_env_if_missing TALKINGBOATS_CLOUD_HLS_CHANNELS "05A,06,09,13,14,16,22A,67,68,69,71,72"
+append_env_if_missing TALKINGBOATS_CLOUD_HLS_CHANNELS \
+  "05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A"
 append_env_if_missing TALKINGBOATS_EDGE_THRESHOLD_RMS "8000"
 append_env_if_missing TALKINGBOATS_EDGE_MIN_CLIP_SECONDS "1.0"
 append_env_if_missing TALKINGBOATS_EDGE_PRE_ROLL_SECONDS "0"
@@ -335,15 +344,22 @@ PYTHONPATH="${app_root}/src" python3 -m talkingboats.capture_profiles \
   --icecast-output "05A:/talkingboats-05a.mp3:Talking Boats VTS / Port Ops" \
   --icecast-output "06:/talkingboats-06.mp3:Talking Boats Intership Safety" \
   --icecast-output "09:/talkingboats-09.mp3:Talking Boats Calling / Commercial" \
+  --icecast-output "10:/talkingboats-10.mp3:Talking Boats Commercial" \
   --icecast-output "13:/talkingboats-13.mp3:Talking Boats Bridge-to-bridge" \
   --icecast-output "14:${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}:Talking Boats VTS / Seattle Traffic" \
   --icecast-output "16:/talkingboats-16.mp3:Talking Boats Distress / Calling" \
   --icecast-output "22A:/talkingboats-22a.mp3:Talking Boats USCG Liaison" \
+  --icecast-output "65A:/talkingboats-65a.mp3:Talking Boats Port Operations" \
+  --icecast-output "66A:/talkingboats-66a.mp3:Talking Boats Port Operations" \
   --icecast-output "67:/talkingboats-67.mp3:Talking Boats Commercial / Bridge" \
   --icecast-output "68:/talkingboats-68.mp3:Talking Boats Recreational" \
   --icecast-output "69:/talkingboats-69.mp3:Talking Boats Non-commercial" \
   --icecast-output "71:/talkingboats-71.mp3:Talking Boats Non-commercial" \
   --icecast-output "72:/talkingboats-72.mp3:Talking Boats Ship-to-ship" \
+  --icecast-output "73:/talkingboats-73.mp3:Talking Boats Port Operations" \
+  --icecast-output "74:/talkingboats-74.mp3:Talking Boats Port Operations" \
+  --icecast-output "77:/talkingboats-77.mp3:Talking Boats Ship-to-ship" \
+  --icecast-output "78A:/talkingboats-78a.mp3:Talking Boats Non-commercial" \
   --icecast-source-password "${TALKINGBOATS_ICECAST_SOURCE_PASSWORD}" \
   > /etc/talkingboats/rtl_airband-voice-net-balanced.conf
 chmod 0600 /etc/talkingboats/rtl_airband-voice-net-balanced.conf
@@ -358,7 +374,7 @@ cat > /etc/icecast2/icecast.xml <<EOF
   <admin>rob@localhost</admin>
   <limits>
     <clients>48</clients>
-    <sources>16</sources>
+    <sources>24</sources>
     <queue-size>524288</queue-size>
     <client-timeout>30</client-timeout>
     <header-timeout>15</header-timeout>
@@ -395,6 +411,11 @@ cat > /etc/icecast2/icecast.xml <<EOF
     <burst-size>65535</burst-size>
   </mount>
   <mount type="normal">
+    <mount-name>/talkingboats-10.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
     <mount-name>/talkingboats-13.mp3</mount-name>
     <public>0</public>
     <burst-size>65535</burst-size>
@@ -411,6 +432,16 @@ cat > /etc/icecast2/icecast.xml <<EOF
   </mount>
   <mount type="normal">
     <mount-name>/talkingboats-22a.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-65a.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-66a.mp3</mount-name>
     <public>0</public>
     <burst-size>65535</burst-size>
   </mount>
@@ -436,6 +467,26 @@ cat > /etc/icecast2/icecast.xml <<EOF
   </mount>
   <mount type="normal">
     <mount-name>/talkingboats-72.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-73.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-74.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-77.mp3</mount-name>
+    <public>0</public>
+    <burst-size>65535</burst-size>
+  </mount>
+  <mount type="normal">
+    <mount-name>/talkingboats-78a.mp3</mount-name>
     <public>0</public>
     <burst-size>65535</burst-size>
   </mount>

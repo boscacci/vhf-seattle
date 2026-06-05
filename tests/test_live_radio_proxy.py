@@ -194,19 +194,28 @@ def test_proxy_default_live_channels_match_balanced_voice_net_mounts() -> None:
         "05A",
         "06",
         "09",
+        "10",
         "13",
         "14",
         "16",
         "22A",
+        "65A",
+        "66A",
         "67",
         "68",
         "69",
         "71",
         "72",
+        "73",
+        "74",
+        "77",
+        "78A",
     }
     assert channels["05A"]["streamPath"] == "/api/live/05A/current.mp3"
+    assert channels["65A"]["frequencyMhz"] == "156.275"
     assert channels["22A"]["statusPath"] == "/api/live/22A/status"
     assert channels["72"]["label"] == "Ship-to-ship"
+    assert channels["78A"]["streamPath"] == "/api/live/78A/current.mp3"
     assert "192.168.1.114" not in response.text
 
 

@@ -383,7 +383,11 @@ def test_public_site_analysis_copy_clarifies_frequency_metrics() -> None:
     assert "VHF channels with at least one analyzed clip" in app_js
     assert "monitoredAnalysisChannels" in app_js
     assert "channelCountsWithMonitoredChannels" in app_js
-    assert '["05A", "06", "09", "13", "14", "16", "22A", "67", "68", "69", "71", "72"]' in app_js
+    assert (
+        '["05A", "06", "09", "10", "13", "14", "16", "22A", "65A", "66A", '
+        '"67", "68", "69", "71", "72", "73", "74", "77", "78A"]'
+        in app_js
+    )
     assert "activeAnalyzedChannelCount(channelCounts)" in app_js
     assert "Number(count || 0) > 0" in app_js
     assert ".filter(([, count]) => count > 0)" in app_js

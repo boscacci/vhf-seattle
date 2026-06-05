@@ -50,7 +50,7 @@ max_load_per_cpu="${TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU:-0.85}"
 live_audio_squelch_args=()
 
 case "${channel}" in
-  05A|13|14|16|22A|66A|68|69|71|72|74) ;;
+  05A|06|09|10|13|14|16|22A|65A|66A|67|68|69|71|72|73|74|77|78A) ;;
   *)
     echo "unsupported channel preset: ${channel}" >&2
     exit 2

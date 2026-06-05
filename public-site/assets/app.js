@@ -180,19 +180,24 @@ const defaultChannelLabels = {
   "05A": "VTS / Port Ops",
   "06": "Intership Safety",
   "09": "Calling / Commercial",
+  "10": "Commercial",
   "13": "Bridge-to-bridge",
   "14": "VTS / Seattle Traffic",
   "16": "Distress / Calling",
   "22A": "USCG Liaison",
+  "65A": "Port Operations",
   "66A": "Port Operations",
   "67": "Commercial / Bridge",
   "68": "Recreational",
   "69": "Non-commercial",
   "71": "Non-commercial",
   "72": "Ship-to-ship",
+  "73": "Port Operations",
   "74": "Port Operations",
+  "77": "Ship-to-ship",
+  "78A": "Non-commercial",
 };
-const monitoredAnalysisChannels = ["05A", "06", "09", "13", "14", "16", "22A", "67", "68", "69", "71", "72"];
+const monitoredAnalysisChannels = ["05A", "06", "09", "10", "13", "14", "16", "22A", "65A", "66A", "67", "68", "69", "71", "72", "73", "74", "77", "78A"];
 
 function apiUrl(path) {
   return privateApiBaseUrl ? `${privateApiBaseUrl}${path}` : path;
@@ -214,17 +219,22 @@ const channelColors = {
   "05A": "#78dcca",
   "06": "#67e8f9",
   "09": "#f9a8d4",
+  "10": "#c4b5fd",
   "13": "#6ab8ff",
   "14": "#40e0bf",
   "16": "#ff7777",
   "22A": "#f0b85a",
+  "65A": "#fcd34d",
   "66A": "#c084fc",
   "67": "#fca5a5",
   "68": "#8bd867",
   "69": "#f58fb2",
   "71": "#a5b4fc",
   "72": "#f7cf5d",
+  "73": "#93c5fd",
   "74": "#5eead4",
+  "77": "#fda4af",
+  "78A": "#86efac",
 };
 
 const clipList = document.querySelector("#clips");
@@ -360,6 +370,13 @@ let liveChannels = [
     statusPath: "/api/live/09/status",
   },
   {
+    channel: "10",
+    label: defaultChannelLabels["10"],
+    frequencyMhz: "156.500",
+    streamPath: "/api/live/10/current.mp3",
+    statusPath: "/api/live/10/status",
+  },
+  {
     channel: "13",
     label: defaultChannelLabels["13"],
     frequencyMhz: "156.650",
@@ -386,6 +403,20 @@ let liveChannels = [
     frequencyMhz: "157.100",
     streamPath: "/api/live/22A/current.mp3",
     statusPath: "/api/live/22A/status",
+  },
+  {
+    channel: "65A",
+    label: defaultChannelLabels["65A"],
+    frequencyMhz: "156.275",
+    streamPath: "/api/live/65A/current.mp3",
+    statusPath: "/api/live/65A/status",
+  },
+  {
+    channel: "66A",
+    label: defaultChannelLabels["66A"],
+    frequencyMhz: "156.325",
+    streamPath: "/api/live/66A/current.mp3",
+    statusPath: "/api/live/66A/status",
   },
   {
     channel: "67",
@@ -421,6 +452,34 @@ let liveChannels = [
     frequencyMhz: "156.625",
     streamPath: "/api/live/72/current.mp3",
     statusPath: "/api/live/72/status",
+  },
+  {
+    channel: "73",
+    label: defaultChannelLabels["73"],
+    frequencyMhz: "156.675",
+    streamPath: "/api/live/73/current.mp3",
+    statusPath: "/api/live/73/status",
+  },
+  {
+    channel: "74",
+    label: defaultChannelLabels["74"],
+    frequencyMhz: "156.725",
+    streamPath: "/api/live/74/current.mp3",
+    statusPath: "/api/live/74/status",
+  },
+  {
+    channel: "77",
+    label: defaultChannelLabels["77"],
+    frequencyMhz: "156.875",
+    streamPath: "/api/live/77/current.mp3",
+    statusPath: "/api/live/77/status",
+  },
+  {
+    channel: "78A",
+    label: defaultChannelLabels["78A"],
+    frequencyMhz: "156.925",
+    streamPath: "/api/live/78A/current.mp3",
+    statusPath: "/api/live/78A/status",
   },
 ];
 let currentChannelLabels = { ...defaultChannelLabels };
