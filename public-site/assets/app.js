@@ -2694,7 +2694,7 @@ function renderLanguageDashboard(payload) {
     referenceIndex(payload.education || []),
   );
 
-  lexicalAnalysis.replaceChildren(cards, topicPanel, wordsPanel, entityPanel, educationPanel, channelPanel);
+  lexicalAnalysis.replaceChildren(cards, wordsPanel, entityPanel, topicPanel, educationPanel, channelPanel);
 }
 
 function hideUnavailableTopicFrame(topicFrame, topicFrameShell) {

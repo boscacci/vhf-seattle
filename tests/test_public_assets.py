@@ -353,8 +353,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "No AIS vessel positions received yet" not in app_js
     assert "Vessel positions in the public manifest" not in app_js
     assert (
-        "lexicalAnalysis.replaceChildren(cards, topicPanel, wordsPanel, "
-        "entityPanel, educationPanel, channelPanel);"
+        "lexicalAnalysis.replaceChildren(cards, wordsPanel, entityPanel, "
+        "topicPanel, educationPanel, channelPanel);"
     ) in app_js
     assert "lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel" not in app_js
     assert "lexicalAnalysis.replaceChildren(cards, channelPanel, mapPanel" not in app_js
@@ -526,6 +526,19 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     assert "height: min(72dvh, 620px);" in styles_css
     assert "@media (max-width: 760px)" in styles_css
     assert ".topic-frame-shell {\n    display: none;" in styles_css
+
+
+def test_public_site_analysis_topics_sit_above_reference_index() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    order = app_js[
+        app_js.index("lexicalAnalysis.replaceChildren(") : app_js.index(
+            "function hideUnavailableTopicFrame"
+        )
+    ]
+
+    assert "entityPanel, topicPanel, educationPanel" in order
+    assert order.index("topicPanel") < order.index("educationPanel")
 
 
 def test_public_site_analysis_examples_use_same_origin_clip_audio() -> None:
