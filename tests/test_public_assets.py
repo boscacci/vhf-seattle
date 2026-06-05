@@ -496,8 +496,15 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     assert 'topicFrame.setAttribute("allow", "fullscreen")' in app_js
     assert "hideUnavailableTopicFrame(topicFrame, topicFrameShell)" in app_js
     assert 'topicFrame.addEventListener("load"' in app_js
-    assert "renderTopicExamples(topic, item)" in app_js
-    assert "renderAnalysisExampleCorrection(reviewExample, quote, item)" in app_js
+    assert "renderTopicExamples(topic)" in app_js
+    assert "function renderTopicExamples(topic) {" in app_js
+    topic_examples_source = app_js[
+        app_js.index("function renderTopicExamples(topic) {") : app_js.index(
+            "function topicExampleForDisplay(topic) {"
+        )
+    ]
+    assert "renderExamplePlayer" not in topic_examples_source
+    assert "renderAnalysisExampleCorrection" not in topic_examples_source
     assert ".topic-frame-shell[hidden]" in styles_css
     assert "mobileNlpSummary" not in app_js
     assert "nlpSummaryRows" not in app_js
@@ -534,6 +541,33 @@ def test_public_site_analysis_examples_use_same_origin_clip_audio() -> None:
     assert 'summary.textContent = "Review transcript";' in app_js
     assert "renderTranscriptCorrectionForm(example, transcriptElement, article)" in app_js
     assert ".analysis-correction" in styles_css
+
+
+def test_public_site_analysis_audio_examples_are_limited_to_entities() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    entity_source = app_js[
+        app_js.index("function entityList(entities) {") : app_js.index(
+            "function entityExampleWithAudio(entity) {"
+        )
+    ]
+    topic_source = app_js[
+        app_js.index("function renderTopicExamples(topic) {") : app_js.index(
+            "function topicExampleForDisplay(topic) {"
+        )
+    ]
+    topic_picker_source = app_js[
+        app_js.index("function topicExampleForDisplay(topic) {") : app_js.index(
+            "function topicTitle(topic) {"
+        )
+    ]
+
+    assert "renderExamplePlayer(playableExample || {})" in entity_source
+    assert "renderAnalysisExampleCorrection(reviewExample, quote, item)" in entity_source
+    assert "renderExamplePlayer" not in topic_source
+    assert "renderAnalysisExampleCorrection" not in topic_source
+    assert "analysisAudioUrlForClip" not in topic_picker_source
+    assert "return examples[0] || null;" in topic_picker_source
 
 
 def test_public_site_mobile_pagination_action_labels_stay_centered() -> None:

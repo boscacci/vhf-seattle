@@ -3593,7 +3593,7 @@ function topicList(topics) {
       words.className = "entity-meta";
       words.textContent = topicKeywordWords(topic).join(", ");
       item.append(title, words);
-      const examples = renderTopicExamples(topic, item);
+      const examples = renderTopicExamples(topic);
       if (examples) {
         item.append(examples);
       }
@@ -3603,7 +3603,7 @@ function topicList(topics) {
   return list;
 }
 
-function renderTopicExamples(topic, item) {
+function renderTopicExamples(topic) {
   const example = topicExampleForDisplay(topic);
   if (!example) {
     return null;
@@ -3616,26 +3616,12 @@ function renderTopicExamples(topic, item) {
   const quote = document.createElement("blockquote");
   quote.textContent = example.text || example.transcript_public || "";
   wrapper.append(label, quote);
-  const player = renderExamplePlayer(example);
-  if (player) {
-    wrapper.append(player);
-  }
-  const reviewExample = analysisReviewClip(example);
-  const correction = renderAnalysisExampleCorrection(reviewExample, quote, item);
-  if (correction) {
-    wrapper.append(correction);
-  }
   return wrapper;
 }
 
 function topicExampleForDisplay(topic) {
   const examples = Array.isArray(topic?.examples) ? topic.examples : [];
-  return (
-    examples.find((example) => example?.channel && example?.started_at) ||
-    examples.find((example) => analysisAudioUrlForClip(example)) ||
-    examples[0] ||
-    null
-  );
+  return examples[0] || null;
 }
 
 function topicTitle(topic) {
