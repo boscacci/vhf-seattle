@@ -55,6 +55,21 @@ def test_live_radio_systemd_units_restart_and_stay_lan_scoped() -> None:
     assert "EnvironmentFile=/etc/talkingboats/live-radio.env" in uploader_unit
 
 
+def test_pi_installer_restarts_source_loaded_services_after_code_copy() -> None:
+    installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
+
+    copy_index = installer.index('cp -a "${repo_root}/src/talkingboats"')
+    restart_uploader_index = installer.index(
+        "systemctl restart talkingboats-spool-uploader.service"
+    )
+    restart_capture_index = installer.index(
+        "systemctl restart talkingboats-profile-capture.service"
+    )
+
+    assert copy_index < restart_uploader_index
+    assert copy_index < restart_capture_index
+
+
 def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None:
     wrapper = Path("deploy/pi/live-radio/talkingboats-edge-live-radio-stream").read_text(
         encoding="utf-8"

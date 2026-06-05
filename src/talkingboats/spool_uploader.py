@@ -130,7 +130,10 @@ def discover_completed_audio_files(
         modified_at = datetime.fromtimestamp(stat.st_mtime, UTC)
         if (now - modified_at).total_seconds() < min_age_seconds:
             continue
-        channel = infer_spool_channel(audio_path)
+        try:
+            channel = infer_spool_channel(audio_path)
+        except ValueError:
+            continue
         started_at = _started_at_from_filename(audio_path) or modified_at
         clips.append(
             SpooledAudioClip(

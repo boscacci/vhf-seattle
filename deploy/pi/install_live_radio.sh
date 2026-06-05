@@ -530,27 +530,32 @@ systemctl enable icecast2.service
 systemctl restart icecast2.service
 systemctl disable --now talkingboats-live-radio-stream.service 2>/dev/null || true
 systemctl disable --now talkingboats-edge-live-radio-stream.service 2>/dev/null || true
-systemctl enable --now talkingboats-spool-uploader.service
+systemctl enable talkingboats-spool-uploader.service
+systemctl restart talkingboats-spool-uploader.service
 if [[ "${TALKINGBOATS_CLOUD_HLS_ENABLED:-false}" == "true" && -n "${TALKINGBOATS_PUBLIC_SITE_BUCKET:-}" ]]; then
-  systemctl enable --now talkingboats-live-hls-relay.service
+  systemctl enable talkingboats-live-hls-relay.service
+  systemctl restart talkingboats-live-hls-relay.service
 else
   systemctl disable --now talkingboats-live-hls-relay.service 2>/dev/null || true
 fi
 if [[ -n "${TALKINGBOATS_AIS_SDR_SERIAL:-}" || -n "${TALKINGBOATS_AIS_DEVICE_INDEX:-}" ]]; then
-  systemctl enable --now talkingboats-ais-catcher.service
+  systemctl enable talkingboats-ais-catcher.service
+  systemctl restart talkingboats-ais-catcher.service
 else
   systemctl disable --now talkingboats-ais-catcher.service 2>/dev/null || true
   echo "AIS services installed but disabled; set TALKINGBOATS_AIS_SDR_SERIAL or TALKINGBOATS_AIS_DEVICE_INDEX and rerun."
 fi
 if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" && -n "${TALKINGBOATS_AIS_INGEST_TOKEN:-}" ]]; then
-  systemctl enable --now talkingboats-ais-forwarder.service
+  systemctl enable talkingboats-ais-forwarder.service
+  systemctl restart talkingboats-ais-forwarder.service
 else
   systemctl disable --now talkingboats-ais-forwarder.service 2>/dev/null || true
   if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" ]]; then
     echo "AIS forwarder installed but disabled; set TALKINGBOATS_AIS_INGEST_TOKEN and rerun." >&2
   fi
 fi
-systemctl enable --now talkingboats-profile-capture.service
+systemctl enable talkingboats-profile-capture.service
+systemctl restart talkingboats-profile-capture.service
 
 echo "Talking Boats capture profile installed."
 echo "The single browser UI is served by CloudFront from the public-site bucket."
