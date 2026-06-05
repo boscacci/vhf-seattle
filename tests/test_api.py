@@ -724,7 +724,7 @@ def test_recent_clips_reports_published_playable_counts_separately(tmp_path) -> 
     assert body["playable_clip_count"] == 2
     assert body["filtered_playable_clip_count"] == 2
     assert body["playable_channel_counts"] == {"14": 1, "68": 1}
-    assert body["latest_playable_started_at"] == "2026-06-04T15:03:00Z"
+    assert body["latest_playable_started_at"] == "2026-06-04T15:02:00Z"
 
 
 def test_recent_clips_pages_over_playable_clips(tmp_path) -> None:

@@ -319,7 +319,7 @@ async def recent_clips(
             "channel_counts": channel_counts,
             "channel_labels": public_monitored_channel_labels(channel_counts),
         }
-    clips = _recent_playable_clip_page(
+    clips, live_latest_playable_started_at = _recent_playable_clip_page(
         settings=settings,
         storage=storage,
         clip_store=clip_store,
@@ -336,7 +336,9 @@ async def recent_clips(
         "playable_clip_count": playable_clip_count,
         "filtered_playable_clip_count": filtered_playable_clip_count,
         "playable_channel_counts": playable_channel_counts,
-        "latest_playable_started_at": playable_summary["latest_playable_started_at"],
+        "latest_playable_started_at": (
+            live_latest_playable_started_at or playable_summary["latest_playable_started_at"]
+        ),
         "limit": limit,
         "offset": offset,
         "featured": featured,
@@ -355,8 +357,9 @@ def _recent_playable_clip_page(
     channel: str | None,
     channels: list[str],
     featured_only: bool = False,
-) -> list[dict[str, object]]:
+) -> tuple[list[dict[str, object]], str | None]:
     clips: list[dict[str, object]] = []
+    latest_playable_started_at: str | None = None
     playable_seen = 0
     candidate_offset = 0
     batch_size = max(limit, 50)
@@ -383,6 +386,8 @@ def _recent_playable_clip_page(
                 ) from exc
             except ValueError:
                 continue
+            if latest_playable_started_at is None:
+                latest_playable_started_at = clip.started_at
             if playable_seen < offset:
                 playable_seen += 1
                 continue
@@ -409,7 +414,7 @@ def _recent_playable_clip_page(
         candidate_offset += len(candidates)
         if len(candidates) < batch_size:
             break
-    return clips
+    return clips, latest_playable_started_at
 
 
 @app.get(
