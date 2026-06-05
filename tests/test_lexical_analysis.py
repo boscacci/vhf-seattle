@@ -15,6 +15,7 @@ from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 from talkingboats.lexical_analysis import (
     TranscriptClip,
     generate_lexical_analysis,
+    generate_lexical_analysis_from_public_manifest,
     generate_lexical_analysis_from_store,
     main,
     missing_lexical_analysis,
@@ -171,6 +172,67 @@ def test_generate_lexical_analysis_can_use_cloud_clip_store(tmp_path: Path) -> N
     assert payload["channels"] == {"14": 1}
     assert ("seattle traffic", 1) in _term_pairs(payload["terms"]["bigrams"])
     assert store.calls == [{"limit": 500, "excluded_channels": ("WX",), "offset": 0}]
+
+
+def test_generate_lexical_analysis_uses_only_public_playable_manifest_clips(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "site"
+    public_manifest_path = tmp_path / "public_manifest.json"
+    public_manifest_path.write_text(
+        json.dumps(
+            {
+                "clips": [
+                    {
+                        "id": "clip-public-good",
+                        "channel": "14",
+                        "started_at": "2026-06-04T20:00:00Z",
+                        "ended_at": "2026-06-04T20:00:08Z",
+                        "duration_seconds": 8.0,
+                        "transcript_public": "Seattle Traffic, tug Osprey northbound.",
+                        "audio_public_filename": "20260604T200000Z-vhf-14-good.mp3",
+                    },
+                    {
+                        "id": "clip-no-audio",
+                        "channel": "14",
+                        "started_at": "2026-06-04T20:01:00Z",
+                        "transcript_public": "Seattle Traffic should not count.",
+                    },
+                    {
+                        "id": "clip-ellipsis",
+                        "channel": "14",
+                        "started_at": "2026-06-04T20:02:00Z",
+                        "transcript_public": "... ... ...",
+                        "audio_public_filename": "20260604T200200Z-vhf-14-ellipsis.mp3",
+                    },
+                    {
+                        "id": "clip-weather",
+                        "channel": "WX",
+                        "started_at": "2026-06-04T20:03:00Z",
+                        "transcript_public": "Seattle Traffic weather should not count.",
+                        "audio_public_filename": "20260604T200300Z-vhf-wx.mp3",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = generate_lexical_analysis_from_public_manifest(
+        public_manifest_path=public_manifest_path,
+        output_dir=output_dir,
+        generated_at=datetime(2026, 6, 4, 21, 0, 0, tzinfo=UTC),
+    )
+
+    assert payload["source_clip_count"] == 1
+    assert payload["channels"] == {"14": 1}
+    assert ("seattle traffic", 1) in _term_pairs(payload["terms"]["bigrams"])
+    rendered = json.dumps(payload)
+    assert "should not count" not in rendered
+    assert "... ... ..." not in rendered
+    assert payload["entities"][0]["examples"][0]["audio_public_filename"] == (
+        "20260604T200000Z-vhf-14-good.mp3"
+    )
 
 
 def test_generate_lexical_analysis_streams_cloud_clip_store_when_available(

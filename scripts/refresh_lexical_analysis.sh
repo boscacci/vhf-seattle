@@ -66,16 +66,8 @@ if [[ -z "${raw_bucket}" ]]; then
   raw_bucket="$(cd "${tofu_dir}" && tofu output -raw "${raw_bucket_output}")"
 fi
 
-echo "Refreshing lexical analysis from ${clip_store_backend} into ${output_dir}"
-export TALKINGBOATS_CLIP_STORE_BACKEND="${clip_store_backend}"
-rm -rf "${output_dir}/analysis"
-"${conda_bin}" run --no-capture-output -n "${conda_env}" \
-  talkingboats-analyze-transcripts \
-  --clip-store-backend "${clip_store_backend}" \
-  --output-dir "${output_dir}" \
-  --page-size "${page_size}"
-
 echo "Rebuilding public export from ${clip_store_backend}"
+export TALKINGBOATS_CLIP_STORE_BACKEND="${clip_store_backend}"
 "${conda_bin}" run --no-capture-output -n "${conda_env}" \
   talkingboats-export-public \
   --clip-store-backend "${clip_store_backend}" \
@@ -83,6 +75,14 @@ echo "Rebuilding public export from ${clip_store_backend}"
   --site-source public-site \
   --output-dir "${output_dir}" \
   --limit "${export_limit}"
+
+echo "Refreshing lexical analysis from playable public clips into ${output_dir}"
+rm -rf "${output_dir}/analysis"
+"${conda_bin}" run --no-capture-output -n "${conda_env}" \
+  talkingboats-analyze-transcripts \
+  --public-manifest-path "${output_dir}/public_manifest.json" \
+  --output-dir "${output_dir}" \
+  --page-size "${page_size}"
 
 echo "Deploying refreshed analysis to ${deploy_env}"
 scripts/deploy_public_site.sh "${deploy_env}" "${output_dir}"

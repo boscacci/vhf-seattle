@@ -448,6 +448,7 @@ class TranscriptClip:
     duration_seconds: float | None
     content_type: str
     transcript: str
+    audio_public_filename: str | None = None
 
 
 def generate_lexical_analysis(
@@ -485,6 +486,24 @@ def generate_lexical_analysis_from_store(
     if limit is not None and limit <= 0:
         raise ValueError("limit must be positive")
     clips = list(load_transcribed_clips_from_store(clip_store, page_size=page_size, limit=limit))
+    return generate_lexical_analysis_from_clips(
+        clips=clips,
+        output_dir=output_dir,
+        generated_at=generated_at,
+        db_path=None,
+    )
+
+
+def generate_lexical_analysis_from_public_manifest(
+    *,
+    public_manifest_path: Path,
+    output_dir: Path,
+    limit: int | None = None,
+    generated_at: datetime | None = None,
+) -> dict[str, Any]:
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be positive")
+    clips = list(load_transcribed_clips_from_public_manifest(public_manifest_path, limit=limit))
     return generate_lexical_analysis_from_clips(
         clips=clips,
         output_dir=output_dir,
@@ -579,6 +598,45 @@ def _transcript_clip_from_recent(clip: Any) -> TranscriptClip:
         content_type=str(clip.content_type),
         transcript=_public_text(str(clip.transcript)),
     )
+
+
+def load_transcribed_clips_from_public_manifest(
+    public_manifest_path: Path,
+    *,
+    limit: int | None,
+) -> Iterable[TranscriptClip]:
+    payload = json.loads(public_manifest_path.read_text(encoding="utf-8"))
+    clips = payload.get("clips", [])
+    if not isinstance(clips, list):
+        return
+    emitted = 0
+    for clip in clips:
+        if limit is not None and emitted >= limit:
+            break
+        if not isinstance(clip, dict):
+            continue
+        if not clip.get("audio_public_filename"):
+            continue
+        channel = str(clip.get("channel") or "?")
+        if channel.upper() in PUBLIC_EXCLUDED_CHANNELS:
+            continue
+        transcript = _public_text(
+            str(clip.get("transcript_public") or clip.get("transcript") or "")
+        )
+        if not is_displayable_transcript(transcript):
+            continue
+        audio_public_filename = str(clip["audio_public_filename"])
+        yield TranscriptClip(
+            key=str(clip.get("id") or audio_public_filename),
+            channel=channel,
+            started_at=str(clip.get("started_at") or ""),
+            ended_at=str(clip.get("ended_at") or "") or None,
+            duration_seconds=_public_manifest_duration_seconds(clip),
+            content_type=_content_type_for_public_audio_filename(audio_public_filename),
+            transcript=transcript,
+            audio_public_filename=audio_public_filename,
+        )
+        emitted += 1
 
 
 def load_transcribed_clips(
@@ -1674,11 +1732,30 @@ def _source_fingerprint(clips: list[TranscriptClip]) -> str:
 
 
 def _public_audio_filename(clip: TranscriptClip) -> str:
+    if clip.audio_public_filename:
+        return clip.audio_public_filename
     started_at = _parse_utc(clip.started_at)
     stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
     channel = "".join(character.lower() for character in clip.channel if character.isalnum())
     digest = f"sha{hashlib.sha256(clip.key.encode('utf-8')).hexdigest()[:12]}"
     return f"{stamp}-vhf-{channel}-{digest}{_suffix_for_content_type(clip.content_type)}"
+
+
+def _content_type_for_public_audio_filename(filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    return {
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".aac": "audio/aac",
+        ".flac": "audio/flac",
+        ".m4a": "audio/m4a",
+        ".ogg": "audio/ogg",
+    }.get(suffix, "application/octet-stream")
+
+
+def _public_manifest_duration_seconds(clip: dict[str, Any]) -> float | None:
+    value = clip.get("duration_seconds")
+    return float(value) if value is not None else None
 
 
 def _suffix_for_content_type(content_type: str) -> str:
@@ -1762,9 +1839,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/public-site"))
     parser.add_argument("--page-size", type=int, default=500)
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--public-manifest-path",
+        type=Path,
+        help="Analyze only clips present in a public manifest with playable audio.",
+    )
     args = parser.parse_args(argv)
 
-    if args.clip_store_backend == "dynamodb":
+    if args.public_manifest_path is not None:
+        payload = generate_lexical_analysis_from_public_manifest(
+            public_manifest_path=args.public_manifest_path,
+            output_dir=args.output_dir,
+            limit=args.limit,
+        )
+    elif args.clip_store_backend == "dynamodb":
         from talkingboats.dynamo_clip_store import dynamo_clip_store_from_env
 
         payload = generate_lexical_analysis_from_store(
