@@ -558,6 +558,26 @@ def test_proxy_serves_generated_topic_cluster_plot(tmp_path: Path) -> None:
     assert response.headers["content-type"].startswith("text/html")
 
 
+def test_proxy_serves_generated_public_manifest(tmp_path: Path) -> None:
+    public_site_dir = tmp_path / "site"
+    public_site_dir.mkdir()
+    (public_site_dir / "public_manifest.json").write_text(
+        '{"clips":[{"id":"fresh"}],"stats":{"clip_count":1}}\n',
+        encoding="utf-8",
+    )
+
+    app = create_app(ProxySettings(public_site_dir=str(public_site_dir)))
+
+    response = _run(_asgi_get(app, "/public_manifest.json"))
+
+    assert response.status_code == 200
+    assert response.json() == {"clips": [{"id": "fresh"}], "stats": {"clip_count": 1}}
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["expires"] == "0"
+    assert response.headers["content-type"].startswith("application/json")
+
+
 def test_proxy_clip_search_endpoint_is_public_read_only() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == (

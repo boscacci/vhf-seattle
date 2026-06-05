@@ -983,7 +983,11 @@ def create_app(
 
     @app.get("/public_manifest.json", include_in_schema=False)
     async def clip_console_manifest() -> Response:
-        return _shell_asset_response("public_manifest.json")
+        return _generated_public_site_asset_response(
+            settings,
+            "public_manifest.json",
+            media_type="application/json",
+        )
 
     @app.get("/analysis/topic_clusters.html", include_in_schema=False)
     async def topic_clusters_html() -> Response:
