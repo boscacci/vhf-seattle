@@ -10,6 +10,8 @@ const publicSiteRoot = join(repoRoot, "public-site");
 const audioStartedAt = "2026-05-31T20:00:00Z";
 let holdRecentClipResponses = false;
 let releaseRecentClipResponses = [];
+let holdFeatureClipResponses = false;
+let releaseFeatureClipResponses = [];
 let topicClusterReturnsNotFound = false;
 const featuredClipIndexes = new Set([1, 7, 13, 49, 91]);
 const mimeTypes = {
@@ -38,6 +40,11 @@ const server = createServer(async (request, response) => {
       return sendJson(response, recentClipPayload(url));
     }
     if (url.pathname === "/api/clips/features" && request.method === "POST") {
+      if (holdFeatureClipResponses) {
+        await new Promise((resolve) => {
+          releaseFeatureClipResponses.push(resolve);
+        });
+      }
       return sendJson(response, await clipFeaturePayload(request));
     }
     if (url.pathname === "/api/clips/corrections" && request.method === "POST") {
@@ -594,11 +601,44 @@ try {
     }
     await page.goto(`${baseUrl}/operator/`);
     await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
+    holdFeatureClipResponses = true;
     await page
       .locator("#clips .clip-card")
       .first()
       .getByRole("button", { name: "Add to Hall of Fame", exact: true })
       .click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#clips .clip-card:first-child .feature-clip-button")
+        ?.classList.contains("is-saving"),
+    );
+    const operatorFeatureImmediateState = await page.evaluate(() => ({
+      buttonText:
+        document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.textContent?.trim() || "",
+      buttonLabel:
+        document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.getAttribute("aria-label") ||
+        "",
+      buttonPressed:
+        document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.getAttribute("aria-pressed") ||
+        "",
+      buttonSaving: document
+        .querySelector("#clips .clip-card:first-child .feature-clip-button")
+        ?.classList.contains("is-saving"),
+      featuredPill: document.querySelector("#clips .clip-card:first-child .featured-pill")?.textContent || "",
+      cardFeatured: document.querySelector("#clips .clip-card:first-child")?.classList.contains("is-featured"),
+    }));
+    if (
+      operatorFeatureImmediateState.buttonText !== "★" ||
+      operatorFeatureImmediateState.buttonLabel !== "Remove from Hall of Fame" ||
+      operatorFeatureImmediateState.buttonPressed !== "true" ||
+      !operatorFeatureImmediateState.buttonSaving ||
+      operatorFeatureImmediateState.featuredPill !== "Featured" ||
+      !operatorFeatureImmediateState.cardFeatured
+    ) {
+      throw new Error(`operator feature action did not update immediately: ${JSON.stringify(operatorFeatureImmediateState)}`);
+    }
+    holdFeatureClipResponses = false;
+    releaseFeatureClipResponses.splice(0).forEach((release) => release());
     await page.waitForFunction(
       () =>
         document

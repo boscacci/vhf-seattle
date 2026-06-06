@@ -2284,31 +2284,39 @@ function setFeaturedClipButtonState(button, featured) {
 
 async function saveClipFeature(clip, featured, controls) {
   const { button, article } = controls;
+  const previousFeatured = Boolean(clip.featured);
+  const requestedFeatured = Boolean(featured);
+  applyClipFeatureState(clip, article, button, requestedFeatured);
   button.disabled = true;
   button.classList.add("is-saving");
   try {
-    const response = await postClipFeature(clip, featured);
+    const response = await postClipFeature(clip, requestedFeatured);
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
+        applyClipFeatureState(clip, article, button, previousFeatured);
         button.title = "Open the operator page over Tailscale to change Hall of Fame clips.";
         return;
       }
       throw new Error(`feature HTTP ${response.status}`);
     }
     const body = await response.json();
-    clip.featured = Boolean(body.featured);
-    setFeaturedClipButtonState(button, clip.featured);
-    updateFeaturedClipCard(article, clip.featured);
+    applyClipFeatureState(clip, article, button, Boolean(body.featured));
     if (clipFeaturedFilter === "featured" && !clip.featured) {
       loadAndRender();
     }
   } catch (error) {
     console.error(error);
-    setFeaturedClipButtonState(button, Boolean(clip.featured));
+    applyClipFeatureState(clip, article, button, previousFeatured);
   } finally {
     button.classList.remove("is-saving");
     button.disabled = false;
   }
+}
+
+function applyClipFeatureState(clip, article, button, featured) {
+  clip.featured = Boolean(featured);
+  setFeaturedClipButtonState(button, clip.featured);
+  updateFeaturedClipCard(article, clip.featured);
 }
 
 function updateFeaturedClipCard(article, featured) {
