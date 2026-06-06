@@ -2031,6 +2031,7 @@ function goToClipPage(pageNumber) {
   selectedClipPage = nextPage;
   selectedClipOffset = nextOffset;
   renderClipPagePendingState();
+  scrollClipListToTopForMobilePagination();
   loadAndRender({ useCachedPayload: false });
 }
 
@@ -2042,7 +2043,25 @@ function goToClipOffset(offset) {
   selectedClipOffset = nextOffset;
   syncClipPageFromOffset();
   renderClipPagePendingState();
+  scrollClipListToTopForMobilePagination();
   loadAndRender({ useCachedPayload: false });
+}
+
+function scrollClipListToTopForMobilePagination() {
+  if (!clipList || !shouldScrollClipListAfterMobilePagination()) {
+    return;
+  }
+  window.requestAnimationFrame(() => {
+    clipList.scrollIntoView({ block: "start", behavior: "auto" });
+  });
+}
+
+function shouldScrollClipListAfterMobilePagination() {
+  const mobilePaginationQuery = "(max-width: 760px), (hover: none) and (pointer: coarse)";
+  if (typeof window.matchMedia === "function") {
+    return window.matchMedia(mobilePaginationQuery).matches;
+  }
+  return window.innerWidth <= 760;
 }
 
 function paginationButton(label, disabled, onClick, { ariaLabel = "" } = {}) {

@@ -453,20 +453,38 @@ try {
     }
     await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    const mobilePaginationScrollBeforeNext = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
+    }));
     await page.locator("#clip-pagination").getByRole("button", { name: "Next", exact: true }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"));
-    const sixClipPageTwo = await page.evaluate(() => ({
-      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-      renderedClips: document.querySelectorAll("#clips .clip-card").length,
-      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
-      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-    }));
+    await page.waitForFunction(() => {
+      const clips = document.querySelector("#clips");
+      return clips instanceof HTMLElement && Math.abs(clips.getBoundingClientRect().top) <= 96;
+    });
+    const sixClipPageTwo = await page.evaluate(
+      (scrollBeforeNext) => ({
+        firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+        renderedClips: document.querySelectorAll("#clips .clip-card").length,
+        pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
+        activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+        clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
+        scrollYBeforeNext: scrollBeforeNext.scrollY,
+        clipsTopBeforeNext: scrollBeforeNext.clipsTop,
+      }),
+      mobilePaginationScrollBeforeNext,
+    );
     if (
       sixClipPageTwo.renderedClips !== 6 ||
       sixClipPageTwo.activePage !== "2" ||
       !sixClipPageTwo.firstTranscript.includes("Smoke clip 7")
     ) {
       throw new Error(`6-per-page second page did not establish the anchor: ${JSON.stringify(sixClipPageTwo)}`);
+    }
+    if (sixClipPageTwo.scrollYBeforeNext < 800 || Math.abs(sixClipPageTwo.clipsTop) > 96) {
+      throw new Error(`mobile next-page action did not return to the clip list top: ${JSON.stringify(sixClipPageTwo)}`);
     }
     await page.locator("#clip-display-controls").getByRole("button", { name: "12", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 12);
