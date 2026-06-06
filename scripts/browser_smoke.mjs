@@ -462,7 +462,12 @@ try {
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"));
     await page.waitForFunction(() => {
       const clips = document.querySelector("#clips");
-      return clips instanceof HTMLElement && Math.abs(clips.getBoundingClientRect().top) <= 96;
+      const tabs = document.querySelector(".tabs");
+      const tabsHeight = tabs instanceof HTMLElement ? tabs.getBoundingClientRect().height : 0;
+      const clipsTop = clips instanceof HTMLElement ? clips.getBoundingClientRect().top : Number.NaN;
+      const minTop = tabsHeight > 0 ? tabsHeight - 4 : -1;
+      const maxTop = tabsHeight > 0 ? tabsHeight + 24 : 96;
+      return clipsTop >= minTop && clipsTop <= maxTop;
     });
     const sixClipPageTwo = await page.evaluate(
       (scrollBeforeNext) => ({
@@ -471,6 +476,7 @@ try {
         pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
         activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
         clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
+        stickyTabsHeight: document.querySelector(".tabs")?.getBoundingClientRect().height ?? null,
         scrollYBeforeNext: scrollBeforeNext.scrollY,
         clipsTopBeforeNext: scrollBeforeNext.clipsTop,
       }),
@@ -483,7 +489,13 @@ try {
     ) {
       throw new Error(`6-per-page second page did not establish the anchor: ${JSON.stringify(sixClipPageTwo)}`);
     }
-    if (sixClipPageTwo.scrollYBeforeNext < 800 || Math.abs(sixClipPageTwo.clipsTop) > 96) {
+    const minClipsTop = sixClipPageTwo.stickyTabsHeight ? sixClipPageTwo.stickyTabsHeight - 4 : -1;
+    const maxClipsTop = sixClipPageTwo.stickyTabsHeight ? sixClipPageTwo.stickyTabsHeight + 24 : 96;
+    if (
+      sixClipPageTwo.scrollYBeforeNext < 800 ||
+      sixClipPageTwo.clipsTop < minClipsTop ||
+      sixClipPageTwo.clipsTop > maxClipsTop
+    ) {
       throw new Error(`mobile next-page action did not return to the clip list top: ${JSON.stringify(sixClipPageTwo)}`);
     }
     await page.locator("#clip-display-controls").getByRole("button", { name: "12", exact: true }).click();

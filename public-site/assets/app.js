@@ -2052,7 +2052,8 @@ function scrollClipListToTopForMobilePagination() {
     return;
   }
   window.requestAnimationFrame(() => {
-    clipList.scrollIntoView({ block: "start", behavior: "auto" });
+    const top = clipList.getBoundingClientRect().top + window.scrollY - mobileClipListScrollOffset();
+    window.scrollTo({ top: Math.max(0, top), behavior: "auto" });
   });
 }
 
@@ -2062,6 +2063,18 @@ function shouldScrollClipListAfterMobilePagination() {
     return window.matchMedia(mobilePaginationQuery).matches;
   }
   return window.innerWidth <= 760;
+}
+
+function mobileClipListScrollOffset() {
+  const tabs = document.querySelector(".tabs");
+  if (!(tabs instanceof HTMLElement)) {
+    return 0;
+  }
+  const tabsStyle = window.getComputedStyle(tabs);
+  if (tabsStyle.position !== "sticky" && tabsStyle.position !== "fixed") {
+    return 0;
+  }
+  return Math.ceil(tabs.getBoundingClientRect().height + 8);
 }
 
 function paginationButton(label, disabled, onClick, { ariaLabel = "" } = {}) {
