@@ -40,6 +40,9 @@ const server = createServer(async (request, response) => {
       return sendJson(response, recentClipPayload(url));
     }
     if (url.pathname === "/api/clips/features" && request.method === "POST") {
+      if (request.headers["x-talkingboats-tailnet-dev"] !== "1") {
+        return sendJson(response, { detail: "tailnet operator access required" }, 403);
+      }
       if (holdFeatureClipResponses) {
         await new Promise((resolve) => {
           releaseFeatureClipResponses.push(resolve);
@@ -48,6 +51,9 @@ const server = createServer(async (request, response) => {
       return sendJson(response, await clipFeaturePayload(request));
     }
     if (url.pathname === "/api/clips/corrections" && request.method === "POST") {
+      if (request.headers["x-talkingboats-tailnet-dev"] !== "1") {
+        return sendJson(response, { detail: "tailnet operator access required" }, 403);
+      }
       return sendJson(response, await transcriptCorrectionPayload(request));
     }
     if (url.pathname === "/api/clips/search") {

@@ -658,7 +658,9 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     )
     assert 'reviewer: "operator-ui"' in app_js
     assert 'credentials: "include"' in app_js
-    assert 'headers: { "Content-Type": "application/json" }' in app_js
+    assert "operatorWriteHeaders()" in app_js
+    assert 'headers["X-TalkingBoats-Tailnet-Dev"] = "1";' in app_js
+    assert 'headers: { "Content-Type": "application/json" }' not in app_js
     assert "X-TalkingBoats-Operator-Token" not in app_js
     assert "Saved for nightly training." in app_js
     assert ".transcript-correction" in styles_css

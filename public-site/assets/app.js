@@ -2247,7 +2247,7 @@ function postTranscriptCorrection(clip, transcript) {
   return fetch(clipCorrectionsUrl, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: operatorWriteHeaders(),
     body: JSON.stringify({
       channel: clip.channel,
       started_at: clip.started_at,
@@ -2341,7 +2341,7 @@ function postClipFeature(clip, featured) {
   return fetch(clipFeaturesUrl, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: operatorWriteHeaders(),
     body: JSON.stringify({
       channel: clip.channel,
       started_at: clip.started_at,
@@ -2349,6 +2349,14 @@ function postClipFeature(clip, featured) {
       featured_by: "operator-ui",
     }),
   });
+}
+
+function operatorWriteHeaders() {
+  const headers = { "Content-Type": "application/json" };
+  if (privateAppHost) {
+    headers["X-TalkingBoats-Tailnet-Dev"] = "1";
+  }
+  return headers;
 }
 
 function renderPill(text) {
