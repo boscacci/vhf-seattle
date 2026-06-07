@@ -227,6 +227,7 @@ route_index_paths=(
   "ais/index.html"
   "map/index.html"
   "analysis/index.html"
+  "about/index.html"
 )
 route_direct_paths=(
   "clips/"
@@ -243,6 +244,8 @@ route_direct_paths=(
   "map"
   "analysis/"
   "analysis"
+  "about/"
+  "about"
 )
 dev_only_route_index_paths=(
   "performance/index.html"

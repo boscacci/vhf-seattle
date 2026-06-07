@@ -422,11 +422,13 @@ try {
       busy: document.querySelector("#clip-pagination")?.getAttribute("aria-busy") || "",
       status: document.querySelector("#clip-status")?.textContent || "",
       firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      loadingBanner: document.querySelector("#clips .clip-page-loading-banner")?.textContent || "",
     }));
     if (
       pendingPagination.activePage !== "7" ||
       pendingPagination.busy !== "true" ||
-      !pendingPagination.status.includes("Loading page 7")
+      !pendingPagination.status.includes("Loading page 7") ||
+      !pendingPagination.loadingBanner.includes("Loading page 7")
     ) {
       throw new Error(`pagination did not provide immediate pending feedback: ${JSON.stringify(pendingPagination)}`);
     }
@@ -510,6 +512,82 @@ try {
       sixClipPageTwo.clipsTop > maxClipsTop
     ) {
       throw new Error(`mobile next-page action did not return to the clip list top: ${JSON.stringify(sixClipPageTwo)}`);
+    }
+    let desktopPaginationState = null;
+    const desktopPaginationContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    try {
+      const desktopPaginationPage = await desktopPaginationContext.newPage();
+      await desktopPaginationPage.goto(`${baseUrl}/clips/`);
+      await desktopPaginationPage.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
+      await desktopPaginationPage.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      const desktopPaginationBeforeNext = await desktopPaginationPage.evaluate(() => ({
+        scrollY: window.scrollY,
+        clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
+      }));
+      holdRecentClipResponses = true;
+      await desktopPaginationPage.locator("#clip-pagination").getByRole("button", { name: "Next", exact: true }).click();
+      await desktopPaginationPage.waitForFunction(() => {
+        const clips = document.querySelector("#clips");
+        const tabs = document.querySelector(".tabs");
+        const tabsHeight = tabs instanceof HTMLElement ? tabs.getBoundingClientRect().height : 0;
+        const clipsTop = clips instanceof HTMLElement ? clips.getBoundingClientRect().top : Number.NaN;
+        const minTop = tabsHeight > 0 ? tabsHeight - 4 : -1;
+        const maxTop = tabsHeight > 0 ? tabsHeight + 24 : 96;
+        return clipsTop >= minTop && clipsTop <= maxTop;
+      });
+      const desktopPaginationPending = await desktopPaginationPage.evaluate(
+        (scrollBeforeNext) => ({
+          activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+          loadingBanner: document.querySelector("#clips .clip-page-loading-banner")?.textContent || "",
+          busy: document.querySelector("#clip-pagination")?.getAttribute("aria-busy") || "",
+          clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
+          stickyTabsHeight: document.querySelector(".tabs")?.getBoundingClientRect().height ?? null,
+          scrollYBeforeNext: scrollBeforeNext.scrollY,
+          clipsTopBeforeNext: scrollBeforeNext.clipsTop,
+        }),
+        desktopPaginationBeforeNext,
+      );
+      const desktopMinClipsTop = desktopPaginationPending.stickyTabsHeight
+        ? desktopPaginationPending.stickyTabsHeight - 4
+        : -1;
+      const desktopMaxClipsTop = desktopPaginationPending.stickyTabsHeight
+        ? desktopPaginationPending.stickyTabsHeight + 24
+        : 96;
+      if (
+        desktopPaginationPending.activePage !== "2" ||
+        desktopPaginationPending.busy !== "true" ||
+        !desktopPaginationPending.loadingBanner.includes("Loading page 2") ||
+        desktopPaginationPending.clipsTopBeforeNext >= desktopMinClipsTop ||
+        desktopPaginationPending.clipsTop < desktopMinClipsTop ||
+        desktopPaginationPending.clipsTop > desktopMaxClipsTop
+      ) {
+        throw new Error(`desktop next-page action did not show loading at the clip list top: ${JSON.stringify(desktopPaginationPending)}`);
+      }
+      holdRecentClipResponses = false;
+      releaseRecentClipResponses.splice(0).forEach((release) => release());
+      await desktopPaginationPage.waitForFunction(() =>
+        document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"),
+      );
+      const desktopPaginationLoaded = await desktopPaginationPage.evaluate(() => ({
+        firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+        activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+        loadingBannerPresent: Boolean(document.querySelector("#clips .clip-page-loading-banner")),
+      }));
+      if (
+        desktopPaginationLoaded.activePage !== "2" ||
+        !desktopPaginationLoaded.firstTranscript.includes("Smoke clip 7") ||
+        desktopPaginationLoaded.loadingBannerPresent
+      ) {
+        throw new Error(`desktop next-page action did not settle on page 2: ${JSON.stringify(desktopPaginationLoaded)}`);
+      }
+      desktopPaginationState = {
+        pending: desktopPaginationPending,
+        loaded: desktopPaginationLoaded,
+      };
+    } finally {
+      holdRecentClipResponses = false;
+      releaseRecentClipResponses.splice(0).forEach((release) => release());
+      await desktopPaginationContext.close();
     }
     await page.locator("#clip-display-controls").getByRole("button", { name: "12", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 12);
@@ -710,6 +788,28 @@ try {
     }
     if (speechTraining.bodyText.includes("Export JSONL") || speechTraining.bodyText.includes("Nightly training")) {
       throw new Error(`performance speech training panel kept bulky operator actions: ${JSON.stringify(speechTraining)}`);
+    }
+    await page.getByRole("button", { name: "About" }).click();
+    await page.locator("#panel-about .about-link").waitFor({ state: "visible", timeout: 10000 });
+    const aboutState = await page.evaluate(() => ({
+      pathname: window.location.pathname,
+      hidden: document.querySelector("#panel-about")?.hidden ?? true,
+      activeTab: document.querySelector(".tab.is-active")?.textContent?.trim() || "",
+      linkHref: document.querySelector("#panel-about .about-link")?.getAttribute("href") || "",
+      linkText: document.querySelector("#panel-about .about-link")?.textContent?.trim() || "",
+      bodyText: document.querySelector("#panel-about")?.textContent || "",
+    }));
+    if (
+      aboutState.pathname !== "/about/" ||
+      aboutState.hidden ||
+      aboutState.activeTab !== "About" ||
+      aboutState.linkHref !== "https://robertboscacci.com/projects/elliott-bay-vhf/" ||
+      aboutState.linkText !== "Read the full project write-up" ||
+      !aboutState.bodyText.includes("Raspberry Pi radio edge") ||
+      !aboutState.bodyText.includes("OptiPlex") ||
+      !aboutState.bodyText.includes("Whisper")
+    ) {
+      throw new Error(`about tab did not expose the project write-up: ${JSON.stringify(aboutState)}`);
     }
     const desktopPerformanceContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     let performanceHover = null;
@@ -913,10 +1013,13 @@ try {
           clipControls: {
             initialPagination,
             secondPagePagination,
+            pendingPagination,
             oldestPagePagination,
+            desktopPaginationState,
             beforeFlip: clipControlsBeforeFlip,
             afterFlip: clipControlsAfterFlip,
           },
+          aboutState,
           speechTraining,
           searchDefaultState,
           performanceHover,
@@ -1171,7 +1274,9 @@ async function sendStatic(response, pathname) {
     relativePath === "/performance/" ||
     relativePath === "/performance" ||
     relativePath === "/analysis/" ||
-    relativePath === "/analysis"
+    relativePath === "/analysis" ||
+    relativePath === "/about/" ||
+    relativePath === "/about"
   ) {
     relativePath = "/index.html";
   }

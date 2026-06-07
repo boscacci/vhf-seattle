@@ -37,6 +37,9 @@
         <button class="tab" id="tab-performance" type="button" data-tab="performance" hidden>
           Performance
         </button>
+        <button class="tab" id="tab-about" type="button" data-tab="about">
+          About
+        </button>
         <button id="refresh-clips" class="refresh" type="button">Refresh</button>
       </nav>
 
@@ -199,6 +202,57 @@
           <p id="performance-status" class="status-text" aria-live="polite">Loading performance...</p>
         </div>
         <div id="performance-dashboard" class="performance-dashboard"></div>
+      </section>
+
+      <section class="tab-panel" id="panel-about" aria-labelledby="tab-about" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Project notes</p>
+            <h2>Elliott Bay Marine VHF Monitor</h2>
+          </div>
+          <p class="status-text">Local radio capture, transcription, AIS, and search for nearby marine traffic.</p>
+        </div>
+        <div class="about-panel">
+          <section class="about-intro" aria-label="Project overview">
+            <p>
+              This site is the public face of a home-lab marine VHF monitor for Elliott Bay. A Raspberry Pi radio edge
+              listens to nearby voice channels and AIS vessel reports, an OptiPlex processes activity
+              clips and transcripts, and AWS serves the public app, live audio, searchable clips, Hall of Fame
+              audio, vessel positions, and channel analysis.
+            </p>
+            <a
+              class="about-link"
+              href="https://robertboscacci.com/projects/elliott-bay-vhf/"
+              target="_blank"
+              rel="noopener"
+            >
+              Read the full project write-up
+            </a>
+          </section>
+          <div class="about-grid">
+            <section class="about-card">
+              <h3>Radio Edge</h3>
+              <p>
+                SDR receivers monitor marine VHF traffic and AIS around Elliott Bay, with VHF 14 as the
+                default Seattle Traffic feed.
+              </p>
+            </section>
+            <section class="about-card">
+              <h3>Processing</h3>
+              <p>
+                The OptiPlex private API handles uploads, transcription, transcript corrections, public
+                exports, and Whisper review loops for maritime radio audio.
+              </p>
+            </section>
+            <section class="about-card">
+              <h3>Public App</h3>
+              <p>
+                The browser experience focuses on live monitoring, clip review, semantic search, AIS maps,
+                and analysis views that make receiver traffic easier to explore.
+              </p>
+            </section>
+          </div>
+        </div>
       </section>
 
     </main>

@@ -594,6 +594,39 @@ def test_public_site_mobile_pagination_action_labels_stay_centered() -> None:
     assert ".pagination-actions .pagination-button {\n    width: 100%;" in styles_css
 
 
+def test_public_site_clip_pagination_scrolls_on_all_viewports_with_loading_banner() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "scrollClipListToTopForPagination();" in app_js
+    assert "scrollClipListToTopForMobilePagination" not in app_js
+    assert "shouldScrollClipListAfterMobilePagination" not in app_js
+    assert "renderClipPageLoadingBanner()" in app_js
+    assert "clip-page-loading-banner" in app_js
+    assert 'banner.setAttribute("role", "status");' in app_js
+    assert ".clip-page-loading-banner" in styles_css
+    assert "grid-column: 1 / -1;" in styles_css
+
+
+def test_public_site_has_about_tab_linking_project_writeup() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert 'id="tab-about"' in index_html
+    assert 'data-tab="about"' in index_html
+    assert 'id="panel-about"' in index_html
+    assert 'about: "about"' in app_js
+    assert 'about: document.querySelector("#panel-about")' in app_js
+    assert "Elliott Bay Marine VHF Monitor" in index_html
+    assert "https://robertboscacci.com/projects/elliott-bay-vhf/" in index_html
+    assert "Raspberry Pi radio edge" in index_html
+    assert "OptiPlex" in index_html
+    assert "Whisper" in index_html
+    assert ".about-panel" in styles_css
+    assert ".about-link" in styles_css
+
+
 def test_public_site_performance_metric_values_average_selected_window() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
@@ -724,6 +757,7 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert 'map: "ais"' in app_js
     assert 'language: "analysis"' in app_js
     assert 'performance: "performance"' in app_js
+    assert 'about: "about"' in app_js
     assert "fineTuning" not in app_js
     assert "fine-tuning" not in app_js
     assert "routeStateFromLocation()" in app_js
@@ -734,7 +768,7 @@ def test_public_site_tabs_have_linkable_routes() -> None:
         "activateTab(initialRouteState.tab, { replaceRoute: true, updateRoute: false })"
         in app_js
     )
-    for route in ("clips", "hall-of-fame", "search", "live", "ais", "map", "analysis"):
+    for route in ("clips", "hall-of-fame", "search", "live", "ais", "map", "analysis", "about"):
         assert f'"{route}/index.html"' in deploy_shell
         assert f'"{route}/index.html"' in deploy_full
         assert f'"{route}/"' in deploy_shell

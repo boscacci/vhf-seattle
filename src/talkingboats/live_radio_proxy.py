@@ -980,6 +980,8 @@ def create_app(
     @app.get("/map/", include_in_schema=False)
     @app.get("/analysis", include_in_schema=False)
     @app.get("/analysis/", include_in_schema=False)
+    @app.get("/about", include_in_schema=False)
+    @app.get("/about/", include_in_schema=False)
     @app.get("/performance", include_in_schema=False)
     @app.get("/performance/", include_in_schema=False)
     @app.get("/operator", include_in_schema=False)

@@ -1257,6 +1257,16 @@ def test_proxy_static_shell_routes_include_hall_of_fame_deep_link() -> None:
     assert 'data-tab="clips"' in response.text
 
 
+def test_proxy_static_shell_routes_include_about_project_writeup() -> None:
+    app = create_app(ProxySettings())
+
+    response = _run(_asgi_get(app, "/about/"))
+
+    assert response.status_code == 200
+    assert 'id="tab-about"' in response.text
+    assert "https://robertboscacci.com/projects/elliott-bay-vhf/" in response.text
+
+
 def test_proxy_performance_disk_snapshot_collapses_duplicate_filesystems(
     tmp_path: Path, monkeypatch
 ) -> None:

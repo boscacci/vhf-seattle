@@ -111,6 +111,7 @@ const tabRouteSegments = {
   map: "ais",
   language: "analysis",
   performance: "performance",
+  about: "about",
 };
 const tabRouteAliases = {
   clips: "clips",
@@ -122,6 +123,7 @@ const tabRouteAliases = {
   analysis: "language",
   language: "language",
   performance: "performance",
+  about: "about",
 };
 const liveStatusPollMs = 2000;
 const liveActivityPollMs = 15000;
@@ -263,6 +265,7 @@ const panels = {
   map: document.querySelector("#panel-map"),
   language: document.querySelector("#panel-language"),
   performance: document.querySelector("#panel-performance"),
+  about: document.querySelector("#panel-about"),
 };
 const liveAudio = document.querySelector("#live-audio");
 const liveStatus = document.querySelector("#live-status");
@@ -1079,6 +1082,21 @@ function renderClipPagePendingState() {
   }
   clipList.setAttribute("aria-busy", "true");
   clipStatus.textContent = `Loading page ${selectedClipPage}...`;
+  renderClipPageLoadingBanner();
+}
+
+function renderClipPageLoadingBanner() {
+  let banner = clipList.querySelector(".clip-page-loading-banner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.className = "clip-page-loading-banner";
+    banner.setAttribute("role", "status");
+    banner.setAttribute("aria-live", "polite");
+  }
+  banner.textContent = `Loading page ${selectedClipPage}...`;
+  if (clipList.firstElementChild !== banner) {
+    clipList.prepend(banner);
+  }
 }
 
 function renderClipPlaceholders() {
@@ -2031,7 +2049,7 @@ function goToClipPage(pageNumber) {
   selectedClipPage = nextPage;
   selectedClipOffset = nextOffset;
   renderClipPagePendingState();
-  scrollClipListToTopForMobilePagination();
+  scrollClipListToTopForPagination();
   loadAndRender({ useCachedPayload: false });
 }
 
@@ -2043,29 +2061,21 @@ function goToClipOffset(offset) {
   selectedClipOffset = nextOffset;
   syncClipPageFromOffset();
   renderClipPagePendingState();
-  scrollClipListToTopForMobilePagination();
+  scrollClipListToTopForPagination();
   loadAndRender({ useCachedPayload: false });
 }
 
-function scrollClipListToTopForMobilePagination() {
-  if (!clipList || !shouldScrollClipListAfterMobilePagination()) {
+function scrollClipListToTopForPagination() {
+  if (!clipList) {
     return;
   }
   window.requestAnimationFrame(() => {
-    const top = clipList.getBoundingClientRect().top + window.scrollY - mobileClipListScrollOffset();
+    const top = clipList.getBoundingClientRect().top + window.scrollY - clipListScrollOffset();
     window.scrollTo({ top: Math.max(0, top), behavior: "auto" });
   });
 }
 
-function shouldScrollClipListAfterMobilePagination() {
-  const mobilePaginationQuery = "(max-width: 760px), (hover: none) and (pointer: coarse)";
-  if (typeof window.matchMedia === "function") {
-    return window.matchMedia(mobilePaginationQuery).matches;
-  }
-  return window.innerWidth <= 760;
-}
-
-function mobileClipListScrollOffset() {
+function clipListScrollOffset() {
   const tabs = document.querySelector(".tabs");
   if (!(tabs instanceof HTMLElement)) {
     return 0;
