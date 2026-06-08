@@ -2862,6 +2862,7 @@ async function loadAsrFeedbackStatus() {
   const response = await fetch(asrFeedbackStatusUrl, {
     cache: "no-store",
     credentials: "include",
+    headers: operatorWriteHeaders(),
   });
   if (response.status === 403) {
     return asrFeedbackAccessUnavailable(response.status);

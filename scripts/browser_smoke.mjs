@@ -60,6 +60,9 @@ const server = createServer(async (request, response) => {
       return sendJson(response, searchPayload(url));
     }
     if (url.pathname === "/api/asr-feedback/status") {
+      if (request.headers["x-talkingboats-tailnet-dev"] !== "1") {
+        return sendJson(response, { detail: "tailnet operator access required" }, 403);
+      }
       return sendJson(response, asrFeedbackStatusPayload());
     }
     if (url.pathname === "/api/live/performance") {

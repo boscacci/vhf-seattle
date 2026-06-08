@@ -909,6 +909,13 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
 def test_public_site_performance_explains_restricted_asr_feedback() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
+    assert (
+        "const response = await fetch(asrFeedbackStatusUrl, {\n"
+        '    cache: "no-store",\n'
+        "    credentials: \"include\",\n"
+        "    headers: operatorWriteHeaders(),\n"
+        "  });"
+    ) in app_js
     assert "asrFeedbackAccessUnavailable" in app_js
     assert "asrFeedbackLoadUnavailable" in app_js
     assert "Tailnet only" in app_js
