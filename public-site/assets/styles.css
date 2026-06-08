@@ -1108,11 +1108,34 @@ audio {
   text-transform: uppercase;
 }
 
-.live-channel-picker {
+.live-channel-selector {
+  display: grid;
+  gap: 8px;
+}
+
+.live-primary-channel-picker {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 0;
+}
+
+.live-advanced-channel-selector {
+  min-width: 0;
+}
+
+.live-advanced-channel-selector summary {
+  cursor: pointer;
+  padding: 8px 2px;
+  color: var(--blue);
+  font-weight: 850;
+}
+
+.live-channel-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .live-channel-option {
@@ -1130,8 +1153,27 @@ audio {
   background: var(--teal);
 }
 
+.live-primary-channel-picker .live-channel-option {
+  color: var(--ink);
+  background: var(--panel-strong);
+}
+
+.live-primary-channel-picker .live-channel-option.is-active {
+  color: #06110f;
+  background: var(--teal);
+}
+
+.live-channel-picker .live-channel-option {
+  min-height: 42px;
+  font-size: 0.92rem;
+}
+
 .live-channel-option.is-everything {
   grid-column: 1 / -1;
+}
+
+.live-primary-channel-picker .live-channel-option.is-everything {
+  grid-column: auto;
 }
 
 .live-queue {

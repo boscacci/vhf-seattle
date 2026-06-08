@@ -155,6 +155,20 @@ try {
       throw new Error(`dev clip review star action is not visible without transcript editing: ${JSON.stringify(devClipFeatureState)}`);
     }
     await page.getByRole("button", { name: "Live Monitor" }).click();
+    const liveSelectorState = await page.evaluate(() => ({
+      primaryLabels: [...document.querySelectorAll("#live-primary-channel-picker .live-channel-option")].map((button) =>
+        button.textContent?.trim(),
+      ),
+      advancedOpen: Boolean(document.querySelector(".live-advanced-channel-selector")?.open),
+      advancedChannelButtons: document.querySelectorAll("#live-channel-picker .live-channel-option").length,
+    }));
+    if (
+      liveSelectorState.primaryLabels.join("|") !== "Everything|All but Traffic" ||
+      liveSelectorState.advancedOpen ||
+      liveSelectorState.advancedChannelButtons < 10
+    ) {
+      throw new Error(`live channel selector did not render compact controls: ${JSON.stringify(liveSelectorState)}`);
+    }
     await page.locator("#live-queue").waitFor({ state: "visible", timeout: 10000 });
     await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
     await page.waitForFunction(() => {
@@ -178,6 +192,27 @@ try {
       liveCatchupState.playLabel !== "Pause"
     ) {
       throw new Error(`live monitor did not catch up on recent clips: ${JSON.stringify(liveCatchupState)}`);
+    }
+    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
+    await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All but Traffic" }).click();
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
+    await page.waitForFunction(() => {
+      const queueText = document.querySelector("#live-queue")?.textContent || "";
+      const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
+      return queueText.includes("Seattle Traffic is filtered out") && src.includes("/api/clips/audio?channel=");
+    });
+    const allButTrafficState = await page.evaluate(() => ({
+      selectedMode: document.querySelector("#live-channel")?.textContent || "",
+      queue: document.querySelector("#live-queue")?.textContent || "",
+      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
+      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
+    }));
+    if (
+      allButTrafficState.selectedMode !== "All but Traffic" ||
+      allButTrafficState.src.includes("channel=14") ||
+      allButTrafficState.playLabel !== "Pause"
+    ) {
+      throw new Error(`all-but-traffic live mode did not exclude Seattle Traffic: ${JSON.stringify(allButTrafficState)}`);
     }
     await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
     await page.getByRole("button", { name: "Clip Review" }).click();
@@ -1057,6 +1092,8 @@ try {
           baseUrl,
           lazyClipShell,
           liveCatchupState,
+          liveSelectorState,
+          allButTrafficState,
           ...result,
           clipControls: {
             initialPagination,
@@ -1091,30 +1128,36 @@ try {
 function recentClipPayload(url) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 6), 1), 100);
   const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
+  const selectedChannels = url.searchParams.getAll("channels").map((channel) => channel.toUpperCase());
   const total = 144;
   const featuredOnly = url.searchParams.get("featured") === "true";
   const indexes = featuredOnly
     ? [...featuredClipIndexes].sort((left, right) => left - right)
     : Array.from({ length: total }, (_value, index) => index);
   const filteredTotal = indexes.length;
+  const payloadChannels = selectedChannels.length ? selectedChannels : ["14"];
   return {
-    clips: indexes.slice(offset, offset + limit).map((index) => recentClip(index)),
+    clips: indexes
+      .slice(offset, offset + limit)
+      .map((index) => recentClip(index, payloadChannels[index % payloadChannels.length] || "14")),
     clip_count: total,
     filtered_clip_count: filteredTotal,
     featured: featuredOnly,
-    channel_counts: { "14": filteredTotal },
-    channel_labels: { "14": "Vessel Traffic Service" },
+    channel_counts: Object.fromEntries(payloadChannels.map((channel) => [channel, filteredTotal])),
+    channel_labels: Object.fromEntries(
+      payloadChannels.map((channel) => [channel, channel === "14" ? "Vessel Traffic Service" : "Non-traffic"]),
+    ),
     limit,
     offset,
   };
 }
 
-function recentClip(index) {
+function recentClip(index, channel = "14") {
   const startedAt = new Date(Date.parse("2026-05-31T20:00:00Z") - index * 60000).toISOString();
   return {
     id: `clip-${index + 1}`,
-    channel: "14",
-    channel_label: "Vessel Traffic Service",
+    channel,
+    channel_label: channel === "14" ? "Vessel Traffic Service" : "Non-traffic",
     started_at: startedAt,
     ended_at: new Date(Date.parse(startedAt) + 15000).toISOString(),
     duration_seconds: 15,

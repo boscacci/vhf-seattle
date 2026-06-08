@@ -27,7 +27,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "channel-filter" in index_html
     assert '<select id="channel-filter"' not in index_html
     assert 'id="channel-filter" class="channel-filter channel-multiselect"' in index_html
-    assert "<summary" not in index_html
+    assert "More channel controls" in index_html
     assert "renderChannelFilter" in app_js
     assert "selectedChannels" in app_js
     assert "selectedChannelValues" in app_js
@@ -906,6 +906,15 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
     assert ".system-media-toggle" in styles_css
 
 
+def test_public_site_performance_explains_restricted_asr_feedback() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "asrFeedbackAccessUnavailable" in app_js
+    assert "asrFeedbackLoadUnavailable" in app_js
+    assert "Tailnet only" in app_js
+    assert "Open the tailnet/private app to inspect reviewed ASR corrections" in app_js
+
+
 def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
@@ -948,7 +957,7 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
         "await pollEverythingQueue({ playIfIdle: false, seedRecent: true });"
     ) < connect_everything.index("startLiveWaveformForPlayback();")
     assert (
-        "if (isEverythingLiveMode()) {\n"
+        "if (isQueuedLiveMode()) {\n"
         "      if (!everythingQueueEnabled) {\n"
         "        return;\n"
         "      }\n"
@@ -967,12 +976,31 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert "Queued active transmissions across monitored channels" in app_js
     assert "Queue delay" in app_js
     assert "Waiting for queued transmission" in app_js
-    assert "if (isEverythingLiveMode()) {\n    return connectEverythingLive();\n  }" in app_js
+    assert "if (isQueuedLiveMode()) {\n    return connectEverythingLive();\n  }" in app_js
     assert (
-        "if (isEverythingLiveMode()) {\n    handleEverythingClipEnded();\n    return;\n  }"
+        "if (isQueuedLiveMode()) {\n    handleEverythingClipEnded();\n    return;\n  }"
     ) in app_js
     assert ".live-queue" in styles_css
     assert ".live-queue-item" in styles_css
+
+
+def test_public_site_live_audio_uses_compact_primary_channel_selector() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert 'id="live-primary-channel-picker"' in index_html
+    assert 'class="live-advanced-channel-selector"' in index_html
+    assert "More channel controls" in index_html
+    assert 'const allButTrafficLiveChannel = "all-but-traffic";' in app_js
+    assert "allButTrafficChannelOption()" in app_js
+    assert "liveQueueRequestUrl()" in app_js
+    assert "queueChannelsForMode()" in app_js
+    assert "trafficChannelIds.has(channel.channel)" in app_js
+    assert "All but Traffic" in app_js
+    assert ".live-primary-channel-picker" in styles_css
+    assert ".live-advanced-channel-selector" in styles_css
+    assert ".live-channel-picker" in styles_css
 
 
 def test_public_site_everything_mode_uses_same_origin_audio_for_waveform_samples() -> None:
@@ -1002,17 +1030,17 @@ def test_public_site_everything_queue_survives_live_panel_navigation() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert (
-        "if (isEverythingLiveMode() && everythingQueueEnabled) {\n    return true;\n  }"
+        "if (isQueuedLiveMode() && everythingQueueEnabled) {\n    return true;\n  }"
     ) in app_js
     assert (
-        "if (isEverythingLiveMode() && everythingQueueEnabled) {\n"
+        "if (isQueuedLiveMode() && everythingQueueEnabled) {\n"
         "      startLiveActivityPolling();\n"
         "    } else {\n"
         "      stopLiveActivityPolling();\n"
         "    }"
     ) in app_js
     assert (
-        "const shouldPollHiddenEverythingQueue = isEverythingLiveMode() && everythingQueueEnabled;"
+        "const shouldPollHiddenEverythingQueue = isQueuedLiveMode() && everythingQueueEnabled;"
     ) in app_js
     assert "if (panels.live.hidden && !shouldPollHiddenEverythingQueue)" in app_js
 
@@ -1044,7 +1072,7 @@ def test_public_site_warms_live_stream_and_acknowledges_play_immediately() -> No
     assert "connectLive();" in app_js
     assert "} else {\n    prepareLiveAudio();" in app_js
     assert (
-        "if (liveAudio.src && !isEverythingLiveMode()) {\n"
+        "if (liveAudio.src && !isQueuedLiveMode()) {\n"
         "    liveAudio.src = liveStreamUrl();\n"
         "    liveAudio.load();"
     ) in app_js

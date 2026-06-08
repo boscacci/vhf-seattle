@@ -86,6 +86,7 @@ const searchSuggestionItemLimit = 6;
 const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();
 const unknownPlaybackTimeLabel = "—";
 const everythingLiveChannel = "everything";
+const allButTrafficLiveChannel = "all-but-traffic";
 const everythingInitialQueueLimit = 3;
 const everythingCatchUpLabel = "Catching up on latest 3 transmissions";
 const trafficChannelIds = new Set(["14"]);
@@ -273,6 +274,7 @@ const liveStatus = document.querySelector("#live-status");
 const liveLastCommunication = document.querySelector("#live-last-communication");
 const liveLatency = document.querySelector("#live-latency");
 const liveChannel = document.querySelector("#live-channel");
+const livePrimaryChannelPicker = document.querySelector("#live-primary-channel-picker");
 const liveChannelPicker = document.querySelector("#live-channel-picker");
 const liveQueuePanel = document.querySelector("#live-queue");
 const liveFrequency = document.querySelector("#live-frequency");
@@ -617,7 +619,7 @@ window.addEventListener("popstate", () => {
 });
 
 liveAudio.addEventListener("playing", () => {
-  liveStatus.textContent = isEverythingLiveMode()
+  liveStatus.textContent = isQueuedLiveMode()
     ? currentLiveQueueClip?.catch_up
       ? "Catching up on recent transmission"
       : "Playing queued transmission"
@@ -631,7 +633,7 @@ liveAudio.addEventListener("waiting", () => {
 });
 
 liveAudio.addEventListener("pause", () => {
-  if (isEverythingLiveMode() && everythingQueueEnabled) {
+  if (isQueuedLiveMode() && everythingQueueEnabled) {
     renderEverythingQueuePanel();
     return;
   }
@@ -641,7 +643,7 @@ liveAudio.addEventListener("pause", () => {
 });
 
 liveAudio.addEventListener("error", () => {
-  if (isEverythingLiveMode()) {
+  if (isQueuedLiveMode()) {
     handleEverythingClipEnded();
     return;
   }
@@ -651,7 +653,7 @@ liveAudio.addEventListener("error", () => {
 });
 
 liveAudio.addEventListener("ended", () => {
-  if (isEverythingLiveMode()) {
+  if (isQueuedLiveMode()) {
     handleEverythingClipEnded();
     return;
   }
@@ -2411,7 +2413,7 @@ async function loadLiveChannels() {
   }
   renderLiveChannelPicker();
   renderEverythingQueuePanel();
-  if (liveAudio.src && !isEverythingLiveMode()) {
+  if (liveAudio.src && !isQueuedLiveMode()) {
     liveAudio.src = liveStreamUrl();
     liveAudio.load();
   }
@@ -2430,11 +2432,14 @@ function normalizeLiveChannels(channels) {
 }
 
 function renderLiveChannelPicker() {
-  if (!liveChannelPicker) {
+  if (!liveChannelPicker || !livePrimaryChannelPicker) {
     return;
   }
+  livePrimaryChannelPicker.replaceChildren(
+    liveChannelOptionButton(everythingChannelOption(), { primary: true }),
+    liveChannelOptionButton(allButTrafficChannelOption(), { primary: true }),
+  );
   liveChannelPicker.replaceChildren();
-  liveChannelPicker.append(liveChannelOptionButton(everythingChannelOption()));
   for (const channel of liveChannels) {
     liveChannelPicker.append(liveChannelOptionButton(channel));
   }
@@ -2450,17 +2455,30 @@ function everythingChannelOption() {
   };
 }
 
-function liveChannelOptionButton(channel) {
+function allButTrafficChannelOption() {
+  return {
+    channel: allButTrafficLiveChannel,
+    label: "All but Traffic",
+    frequencyMhz: "",
+    streamPath: "",
+    statusPath: "",
+  };
+}
+
+function liveChannelOptionButton(channel, { primary = false } = {}) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "live-channel-option";
   button.classList.toggle("is-active", channel.channel === selectedLiveChannel);
   button.classList.toggle("is-everything", channel.channel === everythingLiveChannel);
+  button.classList.toggle("is-primary", primary);
   button.dataset.channel = channel.channel;
   button.textContent = channelLabel(channel.channel);
   button.title =
     channel.channel === everythingLiveChannel
       ? "Queue transmissions from all monitored live channels"
+      : channel.channel === allButTrafficLiveChannel
+        ? "Queue monitored live channels except Seattle Traffic on VHF 14"
       : channelLabel(channel.channel);
   button.setAttribute("aria-pressed", String(channel.channel === selectedLiveChannel));
   button.addEventListener("click", () => selectLiveChannel(channel.channel));
@@ -2481,15 +2499,15 @@ function selectLiveChannel(channel) {
   liveAudio.pause();
   updateLiveMediaSession(wasPlaying ? "playing" : "paused");
   liveStatus.textContent = wasPlaying
-    ? isEverythingLiveMode()
-      ? "Starting everything queue"
+    ? isQueuedLiveMode()
+      ? `Starting ${channelLabel(selectedLiveChannel)} queue`
       : "Reconnecting"
-    : isEverythingLiveMode()
-      ? "Everything queue ready"
+    : isQueuedLiveMode()
+      ? `${channelLabel(selectedLiveChannel)} queue ready`
       : "Warming stream";
   drawWaitingFrame({ showWaiting: false });
   pollLiveStatus();
-  if (isEverythingLiveMode()) {
+  if (isQueuedLiveMode()) {
     liveAudio.removeAttribute("src");
     liveAudio.load();
     renderEverythingQueuePanel();
@@ -2513,6 +2531,9 @@ function findLiveChannel(channel) {
   if (channel === everythingLiveChannel) {
     return everythingChannelOption();
   }
+  if (channel === allButTrafficLiveChannel) {
+    return allButTrafficChannelOption();
+  }
   const selected = liveChannels.find((item) => item.channel === channel);
   if (selected) {
     return selected;
@@ -2522,6 +2543,14 @@ function findLiveChannel(channel) {
 
 function isEverythingLiveMode() {
   return selectedLiveChannel === everythingLiveChannel;
+}
+
+function isAllButTrafficLiveMode() {
+  return selectedLiveChannel === allButTrafficLiveChannel;
+}
+
+function isQueuedLiveMode() {
+  return isEverythingLiveMode() || isAllButTrafficLiveMode();
 }
 
 function normalizeTabName(name) {
@@ -2807,7 +2836,10 @@ async function loadAndRenderPerformance({ showLoading = true } = {}) {
     }
     const payload = {
       ...performanceResult.value,
-      asrFeedback: asrFeedbackResult.status === "fulfilled" ? asrFeedbackResult.value : null,
+      asrFeedback:
+        asrFeedbackResult.status === "fulfilled"
+          ? asrFeedbackResult.value
+          : asrFeedbackLoadUnavailable(asrFeedbackResult.reason),
     };
     performancePayloadLoaded = true;
     latestPerformancePayload = payload;
@@ -2831,10 +2863,35 @@ async function loadAsrFeedbackStatus() {
     cache: "no-store",
     credentials: "include",
   });
+  if (response.status === 403) {
+    return asrFeedbackAccessUnavailable(response.status);
+  }
   if (!response.ok) {
     throw new Error(`asr feedback HTTP ${response.status}`);
   }
   return response.json();
+}
+
+function asrFeedbackAccessUnavailable(reason = "") {
+  return {
+    status: "restricted",
+    reason: String(reason || "tailnet operator access required"),
+    training_status: {
+      status: "restricted",
+      reason: "Open the tailnet/private app to inspect reviewed ASR corrections",
+    },
+  };
+}
+
+function asrFeedbackLoadUnavailable(reason = "") {
+  return {
+    status: "unavailable",
+    reason: String(reason || "ASR feedback status did not load"),
+    training_status: {
+      status: "unavailable",
+      reason: "ASR feedback status did not load",
+    },
+  };
 }
 
 function startPerformancePolling() {
@@ -2882,10 +2939,23 @@ function renderSpeechTrainingPanel(payload) {
   title.textContent = "Speech training";
   const cards = document.createElement("div");
   cards.className = "performance-grid speech-training-grid";
-  if (!payload) {
+  if (!payload || payload.status === "restricted" || payload.status === "unavailable") {
+    const isRestricted = payload?.status === "restricted";
     cards.append(
-      performanceCard("Reviewed corrections", "Unavailable", "ASR feedback status", "unknown"),
-      performanceCard("Last ASR run", "Unavailable", "Latest batch status", "unknown"),
+      performanceCard(
+        "Reviewed corrections",
+        isRestricted ? "Tailnet only" : "Unavailable",
+        isRestricted
+          ? "Open the tailnet/private app to inspect reviewed ASR corrections"
+          : "ASR feedback status did not load",
+        isRestricted ? "watch" : "unknown",
+      ),
+      performanceCard(
+        "Last ASR run",
+        isRestricted ? "Tailnet only" : "Unavailable",
+        isRestricted ? "ASR feedback status is restricted" : "Latest batch status did not load",
+        isRestricted ? "watch" : "unknown",
+      ),
     );
     panel.append(title, cards);
     return panel;
@@ -3599,7 +3669,7 @@ function suspendLiveView() {
   stopLiveStatusPolling();
   stopWaveform();
   if (shouldPreserveLiveAudioSession()) {
-    if (isEverythingLiveMode() && everythingQueueEnabled) {
+    if (isQueuedLiveMode() && everythingQueueEnabled) {
       startLiveActivityPolling();
     } else {
       stopLiveActivityPolling();
@@ -3612,7 +3682,7 @@ function suspendLiveView() {
 }
 
 function shouldPreserveLiveAudioSession() {
-  if (isEverythingLiveMode() && everythingQueueEnabled) {
+  if (isQueuedLiveMode() && everythingQueueEnabled) {
     return true;
   }
   return Boolean(liveAudio.src && !liveAudio.paused);
@@ -4118,12 +4188,12 @@ function updateLiveMediaSession(playbackState = liveAudio.paused ? "paused" : "p
     if ("MediaMetadata" in window) {
       navigator.mediaSession.metadata = new window.MediaMetadata({
         title: "Elliott Bay VHF",
-        artist: isEverythingLiveMode()
+        artist: isQueuedLiveMode()
           ? currentLiveQueueClip
             ? channelLabel(currentLiveQueueClip.channel)
-            : "Everything"
+            : channelLabel(selectedLiveChannel)
           : channelLabel(selectedLiveChannel),
-        album: isEverythingLiveMode() ? "Everything queue" : "Live radio",
+        album: isQueuedLiveMode() ? `${channelLabel(selectedLiveChannel)} queue` : "Live radio",
       });
     }
     navigator.mediaSession.playbackState = playbackState;
@@ -4142,12 +4212,12 @@ function updateLiveMediaSession(playbackState = liveAudio.paused ? "paused" : "p
 }
 
 function prepareLiveAudio() {
-  if (isEverythingLiveMode()) {
+  if (isQueuedLiveMode()) {
     configureEverythingQueueAudioElement({ muted: true });
-    liveStatus.textContent = "Everything queue ready";
+    liveStatus.textContent = `${channelLabel(selectedLiveChannel)} queue ready`;
     setLivePlayButton("play");
     drawWaitingFrame({ showWaiting: true });
-    renderLiveStatus(everythingChannelOption());
+    renderLiveStatus(findLiveChannel(selectedLiveChannel));
     updateLiveMediaSession("paused");
     return;
   }
@@ -4197,12 +4267,12 @@ function setLivePlayButton(mode) {
 }
 
 function toggleLivePlayback() {
-  if (isEverythingLiveMode()) {
+  if (isQueuedLiveMode()) {
     if (everythingQueueEnabled) {
       stopEverythingQueue({ clearQueue: false });
       liveAudio.pause();
       setLivePlayButton("play");
-      liveStatus.textContent = "Everything queue paused";
+      liveStatus.textContent = `${channelLabel(selectedLiveChannel)} queue paused`;
       renderEverythingQueuePanel();
       updateLiveMediaSession("paused");
       return;
@@ -4218,7 +4288,7 @@ function toggleLivePlayback() {
 }
 
 async function connectLive() {
-  if (isEverythingLiveMode()) {
+  if (isQueuedLiveMode()) {
     return connectEverythingLive();
   }
   clearTimeout(liveRetryTimer);
@@ -4254,7 +4324,7 @@ async function connectEverythingLive() {
   setLivePlayButton("pause");
   liveStatus.textContent = shouldCatchUp ? everythingCatchUpLabel : "Waiting for queued transmission";
   drawWaitingFrame({ showWaiting: true });
-  renderLiveStatus(everythingChannelOption());
+  renderLiveStatus(findLiveChannel(selectedLiveChannel));
   try {
     stopOtherAudio(liveAudio);
     await pollEverythingQueue({ playIfIdle: false, seedRecent: true });
@@ -4320,7 +4390,7 @@ function liveStreamUrl() {
 }
 
 function rawLiveStreamUrl() {
-  if (isEverythingLiveMode()) {
+  if (isQueuedLiveMode()) {
     return currentLiveQueueClip?.playback_url || "";
   }
   if (selectedLiveChannel === "14") {
@@ -4330,15 +4400,15 @@ function rawLiveStreamUrl() {
 }
 
 function liveStatusUrl() {
-  if (isEverythingLiveMode()) {
+  if (isQueuedLiveMode()) {
     return "";
   }
   return apiUrl(`/api/live/${encodeURIComponent(selectedLiveChannel)}/status`);
 }
 
 function lastCommunicationUrl() {
-  if (isEverythingLiveMode()) {
-    return liveQueueUrl;
+  if (isQueuedLiveMode()) {
+    return liveQueueRequestUrl();
   }
   return apiUrl(`/api/clips/recent?limit=1&channel=${encodeURIComponent(selectedLiveChannel)}`);
 }
@@ -4347,8 +4417,8 @@ async function pollLiveStatus() {
   if (panels.live.hidden) {
     return;
   }
-  if (isEverythingLiveMode()) {
-    renderLiveStatus(everythingChannelOption());
+  if (isQueuedLiveMode()) {
+    renderLiveStatus(findLiveChannel(selectedLiveChannel));
     liveStatusTimer = setTimeout(pollLiveStatus, liveStatusPollMs);
     return;
   }
@@ -4381,14 +4451,14 @@ async function pollLiveStatus() {
 }
 
 async function pollLiveActivity() {
-  const shouldPollHiddenEverythingQueue = isEverythingLiveMode() && everythingQueueEnabled;
+  const shouldPollHiddenEverythingQueue = isQueuedLiveMode() && everythingQueueEnabled;
   if (panels.live.hidden && !shouldPollHiddenEverythingQueue) {
     return;
   }
   liveActivityAbortController?.abort();
   liveActivityAbortController = new AbortController();
   try {
-    if (isEverythingLiveMode()) {
+    if (isQueuedLiveMode()) {
       if (!everythingQueueEnabled) {
         return;
       }
@@ -4414,7 +4484,7 @@ async function pollLiveActivity() {
     }
   } catch (error) {
     if (error.name !== "AbortError") {
-      liveLastCommunication.textContent = isEverythingLiveMode()
+      liveLastCommunication.textContent = isQueuedLiveMode()
         ? "Queue: unavailable"
         : `Last ${selectedLiveChannel}: unavailable`;
     }
@@ -4423,7 +4493,7 @@ async function pollLiveActivity() {
     if (!panels.live.hidden || shouldPollHiddenEverythingQueue) {
       liveActivityTimer = setTimeout(
         pollLiveActivity,
-        isEverythingLiveMode() ? liveQueuePollMs : liveActivityPollMs,
+        isQueuedLiveMode() ? liveQueuePollMs : liveActivityPollMs,
       );
     }
   }
@@ -4434,7 +4504,7 @@ async function pollEverythingQueue({
   playIfIdle = true,
   seedRecent = false,
 } = {}) {
-  const response = await fetch(liveQueueUrl, {
+  const response = await fetch(liveQueueRequestUrl(), {
     cache: "no-store",
     signal,
   });
@@ -4454,6 +4524,27 @@ async function pollEverythingQueue({
   if (playIfIdle && everythingQueueEnabled && !currentLiveQueueClip && liveAudio.paused) {
     await playNextEverythingQueueClip();
   }
+}
+
+function liveQueueRequestUrl() {
+  const channels = queueChannelsForMode();
+  if (!channels.length) {
+    return liveQueueUrl;
+  }
+  const params = new URLSearchParams({ limit: "24" });
+  for (const channel of channels) {
+    params.append("channels", channel);
+  }
+  return apiUrl(`/api/clips/recent?${params.toString()}`);
+}
+
+function queueChannelsForMode() {
+  if (!isAllButTrafficLiveMode()) {
+    return [];
+  }
+  return liveChannels
+    .filter((channel) => !trafficChannelIds.has(channel.channel))
+    .map((channel) => channel.channel);
 }
 
 function enqueueEverythingClips(clips, { includeBackfill = false } = {}) {
@@ -4554,11 +4645,11 @@ function trimEverythingQueueSeenIds() {
 }
 
 async function playNextEverythingQueueClip() {
-  if (!everythingQueueEnabled || !isEverythingLiveMode()) {
+  if (!everythingQueueEnabled || !isQueuedLiveMode()) {
     return;
   }
   currentLiveQueueClip = liveQueue.shift() || null;
-  renderLiveStatus(everythingChannelOption());
+  renderLiveStatus(findLiveChannel(selectedLiveChannel));
   renderEverythingQueuePanel();
   if (!currentLiveQueueClip) {
     liveStatus.textContent = "Waiting for queued transmission";
@@ -4630,9 +4721,11 @@ function stopEverythingQueue({ clearQueue = false } = {}) {
 }
 
 function renderLiveStatus(status) {
-  if (isEverythingLiveMode()) {
-    liveChannel.textContent = "Everything";
-    liveFrequency.textContent = "Queued active transmissions across monitored channels";
+  if (isQueuedLiveMode()) {
+    liveChannel.textContent = channelLabel(selectedLiveChannel);
+    liveFrequency.textContent = isAllButTrafficLiveMode()
+      ? "Queued active transmissions except Seattle Traffic"
+      : "Queued active transmissions across monitored channels";
     renderLiveTelemetry();
     return;
   }
@@ -4643,7 +4736,7 @@ function renderLiveStatus(status) {
 }
 
 function renderLiveTelemetry() {
-  if (isEverythingLiveMode()) {
+  if (isQueuedLiveMode()) {
     const activeClip = currentLiveQueueClip || liveQueue[0] || null;
     const heardAt = lastCommunicationTime(activeClip);
     liveLastCommunication.textContent = currentLiveQueueClip
@@ -4669,14 +4762,14 @@ function renderEverythingQueuePanel() {
   if (!liveQueuePanel) {
     return;
   }
-  liveQueuePanel.hidden = !isEverythingLiveMode();
+  liveQueuePanel.hidden = !isQueuedLiveMode();
   if (liveQueuePanel.hidden) {
     liveQueuePanel.replaceChildren();
     return;
   }
   const mode = liveQueueItem(
-    everythingQueueEnabled ? "Everything mode on" : "Everything mode ready",
-    hasEverythingQueueCatchUp() ? everythingCatchUpLabel : "All channels feed one playback queue",
+    everythingQueueEnabled ? `${channelLabel(selectedLiveChannel)} mode on` : `${channelLabel(selectedLiveChannel)} mode ready`,
+    hasEverythingQueueCatchUp() ? everythingCatchUpLabel : liveQueueModeDescription(),
   );
   const nowPlaying = currentLiveQueueClip
     ? liveQueueItem("Now playing", channelLabel(currentLiveQueueClip.channel))
@@ -4687,6 +4780,12 @@ function renderEverythingQueuePanel() {
 
 function hasEverythingQueueCatchUp() {
   return Boolean(currentLiveQueueClip?.catch_up || liveQueue.some((clip) => clip.catch_up));
+}
+
+function liveQueueModeDescription() {
+  return isAllButTrafficLiveMode()
+    ? "Seattle Traffic is filtered out of this playback queue"
+    : "All channels feed one playback queue";
 }
 
 function liveQueueItem(label, value) {
@@ -4847,7 +4946,7 @@ function drawWaveform() {
 }
 
 function queuedLivePlaybackStatus() {
-  if (!isEverythingLiveMode() || liveAudio.paused || !currentLiveQueueClip) {
+  if (!isQueuedLiveMode() || liveAudio.paused || !currentLiveQueueClip) {
     return "";
   }
   return currentLiveQueueClip.catch_up ? "Catching up on recent transmission" : "Playing queued transmission";
@@ -5065,6 +5164,9 @@ function titleForClip(clip) {
 function channelLabel(channel) {
   if (String(channel || "").toLowerCase() === everythingLiveChannel) {
     return "Everything";
+  }
+  if (String(channel || "").toLowerCase() === allButTrafficLiveChannel) {
+    return "All but Traffic";
   }
   const channelText = `VHF ${channel || "?"}`;
   const label = currentChannelLabels[channel] || "";

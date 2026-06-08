@@ -154,7 +154,18 @@
                     <span id="live-frequency">Checking receiver status</span>
                   </span>
                 </div>
-                <div id="live-channel-picker" class="live-channel-picker" role="group" aria-label="Live channel"></div>
+                <div class="live-channel-selector">
+                  <div
+                    id="live-primary-channel-picker"
+                    class="live-primary-channel-picker"
+                    role="group"
+                    aria-label="Primary live channel mode"
+                  ></div>
+                  <details class="live-advanced-channel-selector">
+                    <summary>More channel controls</summary>
+                    <div id="live-channel-picker" class="live-channel-picker" role="group" aria-label="Specific live channel"></div>
+                  </details>
+                </div>
                 <div id="live-queue" class="live-queue" aria-live="polite" hidden></div>
               </div>
             </div>
