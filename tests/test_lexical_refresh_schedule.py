@@ -21,6 +21,8 @@ def test_lexical_refresh_script_regenerates_exports_and_deploys_dev() -> None:
     assert "rm -rf \"${output_dir}/analysis\"" in script
     assert "talkingboats-analyze-transcripts" in script
     assert "--clip-store-backend \"${clip_store_backend}\"" in script
+    assert "--public-audio-manifest-path \"${output_dir}/public_manifest.json\"" in script
+    assert "--public-manifest-path" not in script
     assert "--output-dir \"${output_dir}\"" in script
     assert "talkingboats-export-public" in script
     assert "--clip-db-path" not in script

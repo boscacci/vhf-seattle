@@ -76,11 +76,12 @@ export TALKINGBOATS_CLIP_STORE_BACKEND="${clip_store_backend}"
   --output-dir "${output_dir}" \
   --limit "${export_limit}"
 
-echo "Refreshing lexical analysis from playable public clips into ${output_dir}"
+echo "Refreshing lexical analysis from transcript store into ${output_dir}"
 rm -rf "${output_dir}/analysis"
 "${conda_bin}" run --no-capture-output -n "${conda_env}" \
   talkingboats-analyze-transcripts \
-  --public-manifest-path "${output_dir}/public_manifest.json" \
+  --clip-store-backend "${clip_store_backend}" \
+  --public-audio-manifest-path "${output_dir}/public_manifest.json" \
   --output-dir "${output_dir}" \
   --page-size "${page_size}"
 

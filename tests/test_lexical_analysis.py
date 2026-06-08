@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import sys
@@ -172,6 +173,70 @@ def test_generate_lexical_analysis_can_use_cloud_clip_store(tmp_path: Path) -> N
     assert payload["channels"] == {"14": 1}
     assert ("seattle traffic", 1) in _term_pairs(payload["terms"]["bigrams"])
     assert store.calls == [{"limit": 500, "excluded_channels": ("WX",), "offset": 0}]
+
+
+def test_generate_lexical_analysis_from_store_counts_all_transcripts_and_marks_public_audio(
+    tmp_path: Path,
+) -> None:
+    public_clip_key = "raw/channel=14/date=2026-05-25/playable.mp3"
+    store = FakeAnalysisClipStore(
+        [
+            TranscriptClip(
+                key=public_clip_key,
+                channel="14",
+                started_at="2026-05-25T22:10:00Z",
+                ended_at="2026-05-25T22:10:08Z",
+                duration_seconds=8.0,
+                content_type="audio/mpeg",
+                transcript="Seattle Traffic, Tug Osprey northbound.",
+            ),
+            TranscriptClip(
+                key="raw/channel=13/date=2026-05-25/archive-only.mp3",
+                channel="13",
+                started_at="2026-05-25T22:20:00Z",
+                ended_at="2026-05-25T22:20:08Z",
+                duration_seconds=8.0,
+                content_type="audio/mpeg",
+                transcript="Cape San Juan archive only transcript.",
+            ),
+        ]
+    )
+    public_manifest_path = tmp_path / "public_manifest.json"
+    public_manifest_path.write_text(
+        json.dumps(
+            {
+                "clips": [
+                    {
+                        "id": f"clip-{hashlib.sha256(public_clip_key.encode()).hexdigest()[:16]}",
+                        "channel": "14",
+                        "started_at": "2026-05-25T22:10:00Z",
+                        "audio_public_filename": "20260525T221000Z-vhf-14-playable.mp3",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = generate_lexical_analysis_from_store(
+        clip_store=store,
+        output_dir=tmp_path / "site",
+        public_manifest_path=public_manifest_path,
+        generated_at=datetime(2026, 5, 26, 1, 2, 3, tzinfo=UTC),
+    )
+
+    assert payload["source_clip_count"] == 2
+    assert payload["channels"] == {"13": 1, "14": 1}
+    assert ("archive only", 1) in _term_pairs(payload["terms"]["bigrams"])
+    examples_by_name = {
+        entity["name"]: entity["examples"][0]
+        for entity in payload["entities"]
+        if entity["examples"]
+    }
+    assert examples_by_name["Tug Osprey"]["audio_public_filename"] == (
+        "20260525T221000Z-vhf-14-playable.mp3"
+    )
+    assert "audio_public_filename" not in examples_by_name["Cape San Juan"]
 
 
 def test_generate_lexical_analysis_uses_only_public_playable_manifest_clips(

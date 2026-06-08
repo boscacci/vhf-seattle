@@ -59,16 +59,18 @@ def test_full_public_deploy_supports_external_tofu_state_dir() -> None:
     assert 'cd "${tofu_dir}"' in script
 
 
-def test_lexical_refresh_analyzes_public_playable_manifest_after_export() -> None:
+def test_lexical_refresh_analyzes_transcript_store_after_public_export() -> None:
     script = Path("scripts/refresh_lexical_analysis.sh").read_text(encoding="utf-8")
 
     export_index = script.index("talkingboats-export-public")
     analysis_index = script.index("talkingboats-analyze-transcripts")
 
     assert export_index < analysis_index
-    assert "--public-manifest-path" in script
+    assert "--clip-store-backend \"${clip_store_backend}\"" in script
+    assert "--public-audio-manifest-path" in script
     assert '"${output_dir}/public_manifest.json"' in script
-    assert "Refreshing lexical analysis from playable public clips" in script
+    assert "--public-manifest-path" not in script
+    assert "Refreshing lexical analysis from transcript store" in script
 
 
 def test_ais_cloud_deploy_stores_raw_token_in_secrets_manager_not_tofu_state() -> None:

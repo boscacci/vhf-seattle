@@ -10,7 +10,7 @@ import sqlite3
 import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -458,6 +458,7 @@ def generate_lexical_analysis(
     page_size: int = 500,
     limit: int | None = None,
     generated_at: datetime | None = None,
+    public_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     if page_size <= 0:
         raise ValueError("page_size must be positive")
@@ -467,11 +468,18 @@ def generate_lexical_analysis(
         raise FileNotFoundError(db_path)
 
     clips = list(load_transcribed_clips(db_path, page_size=page_size, limit=limit))
+    public_audio_filenames = _public_audio_filenames_from_manifest(public_manifest_path)
+    public_audio_keys = (
+        _public_audio_keys_for_clips(clips, public_audio_filenames)
+        if public_manifest_path is not None
+        else None
+    )
     return generate_lexical_analysis_from_clips(
-        clips=clips,
+        clips=_with_public_audio_filenames(clips, public_audio_filenames),
         output_dir=output_dir,
         generated_at=generated_at,
         db_path=db_path,
+        public_audio_keys=public_audio_keys,
     )
 
 
@@ -482,15 +490,23 @@ def generate_lexical_analysis_from_store(
     page_size: int = 500,
     limit: int | None = None,
     generated_at: datetime | None = None,
+    public_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     if limit is not None and limit <= 0:
         raise ValueError("limit must be positive")
     clips = list(load_transcribed_clips_from_store(clip_store, page_size=page_size, limit=limit))
+    public_audio_filenames = _public_audio_filenames_from_manifest(public_manifest_path)
+    public_audio_keys = (
+        _public_audio_keys_for_clips(clips, public_audio_filenames)
+        if public_manifest_path is not None
+        else None
+    )
     return generate_lexical_analysis_from_clips(
-        clips=clips,
+        clips=_with_public_audio_filenames(clips, public_audio_filenames),
         output_dir=output_dir,
         generated_at=generated_at,
         db_path=None,
+        public_audio_keys=public_audio_keys,
     )
 
 
@@ -518,9 +534,14 @@ def generate_lexical_analysis_from_clips(
     output_dir: Path,
     generated_at: datetime | None,
     db_path: Path | None,
+    public_audio_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     generated_at_text = _format_utc(generated_at or datetime.now(UTC))
-    payload = _build_payload(clips, generated_at=generated_at_text)
+    payload = _build_payload(
+        clips,
+        generated_at=generated_at_text,
+        public_audio_keys=public_audio_keys,
+    )
 
     analysis_dir = output_dir / "analysis"
     topic_payload = _build_topics(
@@ -528,6 +549,7 @@ def generate_lexical_analysis_from_clips(
         html_output_path=analysis_dir / "topic_clusters.html",
         search_index_output_path=analysis_dir / "search_index.json",
         generated_at=generated_at_text,
+        public_audio_keys=public_audio_keys,
     )
     payload["topics"] = topic_payload
     assert_public_safe(payload)
@@ -637,6 +659,68 @@ def load_transcribed_clips_from_public_manifest(
             audio_public_filename=audio_public_filename,
         )
         emitted += 1
+
+
+def _public_audio_filenames_from_manifest(
+    public_manifest_path: Path | None,
+) -> dict[str, str]:
+    if public_manifest_path is None:
+        return {}
+    payload = json.loads(public_manifest_path.read_text(encoding="utf-8"))
+    clips = payload.get("clips", [])
+    if not isinstance(clips, list):
+        return {}
+    public_audio_filenames: dict[str, str] = {}
+    for clip in clips:
+        if not isinstance(clip, dict):
+            continue
+        audio_public_filename = clip.get("audio_public_filename")
+        if not audio_public_filename:
+            continue
+        channel = str(clip.get("channel") or "?")
+        if channel.upper() in PUBLIC_EXCLUDED_CHANNELS:
+            continue
+        public_audio_key = str(clip.get("id") or audio_public_filename)
+        public_audio_filenames[public_audio_key] = str(audio_public_filename)
+    return public_audio_filenames
+
+
+def _with_public_audio_filenames(
+    clips: list[TranscriptClip],
+    public_audio_filenames: dict[str, str],
+) -> list[TranscriptClip]:
+    if not public_audio_filenames:
+        return clips
+    return [
+        replace(clip, audio_public_filename=audio_public_filename)
+        if (audio_public_filename := _public_audio_filename_for_clip(clip, public_audio_filenames))
+        else clip
+        for clip in clips
+    ]
+
+
+def _public_audio_keys_for_clips(
+    clips: list[TranscriptClip],
+    public_audio_filenames: dict[str, str],
+) -> set[str]:
+    return {
+        clip.key
+        for clip in clips
+        if _public_audio_filename_for_clip(clip, public_audio_filenames) is not None
+    }
+
+
+def _public_audio_filename_for_clip(
+    clip: TranscriptClip,
+    public_audio_filenames: dict[str, str],
+) -> str | None:
+    return public_audio_filenames.get(clip.key) or public_audio_filenames.get(
+        _public_clip_id(clip.key)
+    )
+
+
+def _public_clip_id(key: str) -> str:
+    return f"clip-{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}"
 
 
 def load_transcribed_clips(
@@ -813,7 +897,12 @@ def missing_lexical_analysis() -> dict[str, Any]:
     }
 
 
-def _build_payload(clips: list[TranscriptClip], *, generated_at: str) -> dict[str, Any]:
+def _build_payload(
+    clips: list[TranscriptClip],
+    *,
+    generated_at: str,
+    public_audio_keys: set[str] | None = None,
+) -> dict[str, Any]:
     channel_counts: Counter[str] = Counter()
     hour_counts: Counter[str] = Counter()
     day_counts: Counter[str] = Counter()
@@ -873,7 +962,11 @@ def _build_payload(clips: list[TranscriptClip], *, generated_at: str) -> dict[st
         },
         "entities": _extract_entities(
             clips,
-            public_audio_keys=_public_audio_keys(clips, limit=PUBLIC_AUDIO_EXAMPLE_LIMIT),
+            public_audio_keys=(
+                public_audio_keys
+                if public_audio_keys is not None
+                else _public_audio_keys(clips, limit=PUBLIC_AUDIO_EXAMPLE_LIMIT)
+            ),
         ),
         "topics": {
             "status": "pending",
@@ -893,6 +986,7 @@ def _build_topics(
     search_index_output_path: Path | None = None,
     generated_at: str | None = None,
     min_topic_documents: int = 40,
+    public_audio_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     topic_clips = [clip for clip in clips if clip.transcript.strip()]
     documents = [clip.transcript for clip in topic_clips]
@@ -1048,17 +1142,21 @@ def _build_topics(
             "status": "ok",
             "reason": None,
             "plot_url": TOPIC_PLOT_PATH,
-        "items": _topic_items(
-            topic_model,
-            topics,
-            documents,
-            clips=topic_clips,
-            public_audio_keys=_public_audio_keys(
-                topic_clips,
-                limit=PUBLIC_AUDIO_EXAMPLE_LIMIT,
+            "items": _topic_items(
+                topic_model,
+                topics,
+                documents,
+                clips=topic_clips,
+                public_audio_keys=(
+                    public_audio_keys
+                    if public_audio_keys is not None
+                    else _public_audio_keys(
+                        topic_clips,
+                        limit=PUBLIC_AUDIO_EXAMPLE_LIMIT,
+                    )
+                ),
+                max_items=MAX_BERTOPIC_TOPICS,
             ),
-            max_items=MAX_BERTOPIC_TOPICS,
-        ),
         }
     except Exception as exc:  # noqa: BLE001 - keep analysis useful without model artifacts.
         _write_placeholder_topic_html(
@@ -1844,7 +1942,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         type=Path,
         help="Analyze only clips present in a public manifest with playable audio.",
     )
+    parser.add_argument(
+        "--public-audio-manifest-path",
+        type=Path,
+        help=(
+            "Use a public manifest only to mark which transcript-store examples have "
+            "playable exported audio."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.public_manifest_path is not None and args.public_audio_manifest_path is not None:
+        parser.error(
+            "--public-manifest-path and --public-audio-manifest-path are mutually exclusive"
+        )
 
     if args.public_manifest_path is not None:
         payload = generate_lexical_analysis_from_public_manifest(
@@ -1860,6 +1971,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             output_dir=args.output_dir,
             page_size=args.page_size,
             limit=args.limit,
+            public_manifest_path=args.public_audio_manifest_path,
         )
     else:
         if args.db_path is None:
@@ -1871,6 +1983,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             output_dir=args.output_dir,
             page_size=args.page_size,
             limit=args.limit,
+            public_manifest_path=args.public_audio_manifest_path,
         )
     print(
         json.dumps(
