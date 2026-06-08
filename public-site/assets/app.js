@@ -102,6 +102,7 @@ const languageDashboardEnabled = [
 const performanceDashboardEnabled = privateAppHost;
 const aisDashboardEnabled = true;
 const featureClipWriteEnabled = privateAppHost;
+const analysisTranscriptReviewEnabled = privateAppHost;
 const operatorReviewEnabled =
   window.location.pathname.startsWith("/operator") && privateAppHost;
 const tabRouteSegments = {
@@ -2727,14 +2728,14 @@ function renderLanguageDashboard(payload) {
     termSection("N-grams", terms.bigrams || []),
   );
 
-  const entityPanel = languagePanel("Suspected vessels and entities");
-  entityPanel.append(entityList(payload.entities || []));
-
-  const topicPanel = languagePanel("Transcript topics");
+  const topicPanel = languagePanel(
+    "BERTopic transcript clusters",
+    "3D BERTopic cluster map and representative topic cards from the analyzed transcript corpus.",
+  );
   const topicFrame = document.createElement("iframe");
   topicFrame.className = "topic-frame";
   topicFrame.loading = "lazy";
-  topicFrame.title = "BERTopic 3D visual clustering";
+  topicFrame.title = "BERTopic 3D cluster map";
   topicFrame.allowFullscreen = true;
   topicFrame.setAttribute("allow", "fullscreen");
   topicFrame.src = topics.plot_url || topicClusterFallbackUrl;
@@ -2746,13 +2747,14 @@ function renderLanguageDashboard(payload) {
   topicFrameShell.append(topicFrame);
   topicPanel.append(topicFrameShell, topicList(nonOutlierTopics(topics.items || [])));
 
-  const educationPanel = languagePanel("Maritime radio references");
-  educationPanel.append(
-    educationGuideList(payload.education_guide || []),
-    referenceIndex(payload.education || []),
-  );
+  const entityPanel = languagePanel("Suspected vessels and entities");
+  entityPanel.append(entityList(payload.entities || []));
 
-  lexicalAnalysis.replaceChildren(cards, wordsPanel, entityPanel, educationPanel, topicPanel, channelPanel);
+  const educationPanel = languagePanel("Maritime radio references");
+  educationPanel.append(educationGuideList(payload.education_guide || []));
+  const referencePanel = referenceIndex(payload.education || []);
+
+  lexicalAnalysis.replaceChildren(cards, channelPanel, topicPanel, wordsPanel, entityPanel, educationPanel, referencePanel);
 }
 
 function hideUnavailableTopicFrame(topicFrame, topicFrameShell) {
@@ -3563,7 +3565,7 @@ function analysisReviewClip(example) {
 }
 
 function renderAnalysisExampleCorrection(example, transcriptElement, article) {
-  if (operatorReviewEnabled && canReviewClip(example)) {
+  if (analysisTranscriptReviewEnabled && canReviewClip(example)) {
     const details = renderTranscriptCorrectionForm(example, transcriptElement, article);
     details.classList.add("analysis-correction");
     const summary = details.querySelector("summary");
@@ -3674,6 +3676,11 @@ function renderTopicExamples(topic) {
   const quote = document.createElement("blockquote");
   quote.textContent = example.text || example.transcript_public || "";
   wrapper.append(label, quote);
+  const reviewExample = analysisReviewClip(example);
+  const correction = renderAnalysisExampleCorrection(reviewExample, quote, wrapper);
+  if (correction) {
+    wrapper.append(correction);
+  }
   return wrapper;
 }
 
@@ -3851,11 +3858,9 @@ function guideBodyRow(labelText, bodyText) {
 }
 
 function referenceIndex(resources) {
-  const wrapper = document.createElement("div");
-  wrapper.className = "reference-index";
-  const title = document.createElement("h4");
-  title.textContent = "Reference index";
-  wrapper.append(title, educationList(resources));
+  const wrapper = languagePanel("Reference index");
+  wrapper.classList.add("reference-index");
+  wrapper.append(educationList(resources));
   return wrapper;
 }
 

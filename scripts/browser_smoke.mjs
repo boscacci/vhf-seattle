@@ -196,7 +196,7 @@ try {
       const topicFrame = document.querySelector(".topic-frame");
       const topicFrameShell = document.querySelector(".topic-frame-shell");
       const topicPanel = [...document.querySelectorAll(".language-panel")].find((panel) =>
-        panel.querySelector("h3")?.textContent?.includes("Transcript topics"),
+        panel.querySelector("h3")?.textContent?.includes("BERTopic transcript clusters"),
       );
       if (!(topicFrame instanceof HTMLIFrameElement)) {
         throw new Error("topic iframe did not render");
@@ -238,6 +238,9 @@ try {
         activeChannelMetric: activeCard?.querySelector("strong")?.textContent,
         audioCount: document.querySelectorAll("#lexical-analysis audio").length,
         correctionCount: document.querySelectorAll("#lexical-analysis .analysis-correction").length,
+        panelHeadings: [...document.querySelectorAll("#lexical-analysis .language-panel h3")].map(
+          (heading) => heading.textContent || "",
+        ),
         topicFrame: {
           allow: topicFrame.getAttribute("allow"),
           allowFullscreen: topicFrame.allowFullscreen,
@@ -251,6 +254,7 @@ try {
         transcriptTopics: {
           title: topicPanel.querySelector("h3")?.textContent,
           topicCards: topicPanel.querySelectorAll(".topic-card").length,
+          correctionCount: topicPanel.querySelectorAll(".analysis-correction").length,
           hasRemovedSummary: Boolean(topicPanel.querySelector(".mobile-nlp-panel, .nlp-summary-grid")),
           bodyText: topicPanel.textContent || "",
         },
@@ -263,8 +267,8 @@ try {
     if (!String(result.metadata.src).includes("/api/clips/audio?channel=14&started_at=")) {
       throw new Error(`analysis audio did not use same-origin clip API: ${result.metadata.src}`);
     }
-    if (result.correctionCount !== 0) {
-      throw new Error(`plain analysis route should stay read-only: ${JSON.stringify(result)}`);
+    if (result.correctionCount < 2 || result.transcriptTopics.correctionCount < 1) {
+      throw new Error(`analysis route should expose correction controls for ASR tuning: ${JSON.stringify(result)}`);
     }
     if (!Number.isFinite(result.metadata.duration) || result.metadata.duration <= 0) {
       throw new Error(`analysis audio metadata was not playable: ${result.metadata.duration}`);
@@ -284,11 +288,48 @@ try {
     if (result.transcriptTopics.topicCards < 1) {
       throw new Error(`transcript topics did not render topic cards: ${JSON.stringify(result.transcriptTopics)}`);
     }
+    if (
+      result.panelHeadings.join("|") !==
+      "Analyzed transcript clips by VHF channel|BERTopic transcript clusters|Radio words|Suspected vessels and entities|Maritime radio references|Reference index"
+    ) {
+      throw new Error(`analysis panels rendered in the wrong order: ${JSON.stringify(result.panelHeadings)}`);
+    }
+    if (!result.transcriptTopics.title.includes("BERTopic") || !result.transcriptTopics.bodyText.includes("3D BERTopic")) {
+      throw new Error(`BERTopic cluster label was not clear: ${JSON.stringify(result.transcriptTopics)}`);
+    }
     if (result.transcriptTopics.bodyText.includes("Descriptive NLP summary")) {
       throw new Error("removed descriptive NLP copy is still present");
     }
     if (!["pan-x pan-y pinch-zoom", "manipulation"].includes(result.topicFrame.touchAction)) {
       throw new Error(`topic iframe blocks pinch zoom: ${result.topicFrame.touchAction}`);
+    }
+    await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction summary").click();
+    await page
+      .locator("#lexical-analysis .entity-card:first-child .analysis-correction textarea")
+      .fill("Direct analysis page correction for ASR tuning.");
+    await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction button[type='submit']").click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#lexical-analysis .entity-card:first-child blockquote")
+        ?.textContent?.includes("Direct analysis page correction"),
+    );
+    const directAnalysisCorrection = await page.evaluate(() => ({
+      summary:
+        document
+          .querySelector("#lexical-analysis .entity-card:first-child .analysis-correction summary")
+          ?.textContent?.trim() || "",
+      status:
+        document
+          .querySelector("#lexical-analysis .entity-card:first-child .analysis-correction .transcript-correction-status")
+          ?.textContent?.trim() || "",
+      quote: document.querySelector("#lexical-analysis .entity-card:first-child blockquote")?.textContent || "",
+    }));
+    if (
+      directAnalysisCorrection.summary !== "Edit correction" ||
+      !directAnalysisCorrection.status.includes("Saved") ||
+      !directAnalysisCorrection.quote.includes("Direct analysis page correction")
+    ) {
+      throw new Error(`direct analysis correction did not save: ${JSON.stringify(directAnalysisCorrection)}`);
     }
     topicClusterReturnsNotFound = true;
     const desktopContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -749,19 +790,26 @@ try {
       throw new Error(`operator feature action did not update the clip card: ${JSON.stringify(operatorFeatureState)}`);
     }
     await page.getByRole("button", { name: "Analysis" }).click();
-    await page.locator("#lexical-analysis .analysis-correction").first().waitFor({ state: "visible", timeout: 10000 });
-    await page.locator("#lexical-analysis .analysis-correction summary").first().click();
     await page
-      .locator("#lexical-analysis .analysis-correction textarea")
-      .first()
+      .locator("#lexical-analysis .entity-card:first-child .analysis-correction")
+      .waitFor({ state: "visible", timeout: 10000 });
+    await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction summary").click();
+    await page
+      .locator("#lexical-analysis .entity-card:first-child .analysis-correction textarea")
       .fill("Seattle Traffic corrected showcase example.");
-    await page.locator("#lexical-analysis .analysis-correction button[type='submit']").first().click();
+    await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction button[type='submit']").click();
     await page.waitForFunction(() =>
       document.querySelector("#lexical-analysis .entity-card:first-child blockquote")?.textContent?.includes("corrected showcase"),
     );
     const operatorAnalysisCorrection = await page.evaluate(() => ({
-      summary: document.querySelector("#lexical-analysis .analysis-correction summary")?.textContent?.trim() || "",
-      status: document.querySelector("#lexical-analysis .analysis-correction .transcript-correction-status")?.textContent?.trim() || "",
+      summary:
+        document
+          .querySelector("#lexical-analysis .entity-card:first-child .analysis-correction summary")
+          ?.textContent?.trim() || "",
+      status:
+        document
+          .querySelector("#lexical-analysis .entity-card:first-child .analysis-correction .transcript-correction-status")
+          ?.textContent?.trim() || "",
       quote: document.querySelector("#lexical-analysis .entity-card:first-child blockquote")?.textContent || "",
     }));
     if (
@@ -1020,6 +1068,7 @@ try {
             afterFlip: clipControlsAfterFlip,
           },
           aboutState,
+          directAnalysisCorrection,
           speechTraining,
           searchDefaultState,
           performanceHover,
@@ -1254,7 +1303,22 @@ function lexicalPayload() {
     topics: {
       status: "ok",
       plot_url: "/analysis/topic_clusters.html",
-      items: [{ id: 0, label: "Seattle Traffic / pilots", count: 2, top_words: ["Seattle Traffic"] }],
+      items: [
+        {
+          id: 0,
+          label: "Seattle Traffic / pilots",
+          count: 2,
+          top_words: ["Seattle Traffic"],
+          examples: [
+            {
+              channel: "14",
+              started_at: "2026-05-31T19:59:00Z",
+              duration_seconds: 0.25,
+              text: "Seattle Traffic topic smoke example.",
+            },
+          ],
+        },
+      ],
     },
     education_guide: [],
     education: [],

@@ -353,8 +353,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "No AIS vessel positions received yet" not in app_js
     assert "Vessel positions in the public manifest" not in app_js
     assert (
-        "lexicalAnalysis.replaceChildren(cards, wordsPanel, entityPanel, "
-        "educationPanel, topicPanel, channelPanel);"
+        "lexicalAnalysis.replaceChildren(cards, channelPanel, topicPanel, "
+        "wordsPanel, entityPanel, educationPanel, referencePanel);"
     ) in app_js
     assert "lexicalAnalysis.replaceChildren(cards, channelPanel, wordsPanel" not in app_js
     assert "lexicalAnalysis.replaceChildren(cards, channelPanel, mapPanel" not in app_js
@@ -486,7 +486,8 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert 'const topicPanel = languagePanel("Transcript topics");' in app_js
+    assert '"BERTopic transcript clusters"' in app_js
+    assert "3D BERTopic cluster map" in app_js
     assert "Descriptive counts from the transcript analysis" not in app_js
     assert "Topic intelligence" not in app_js
     assert "Signal fingerprint" not in app_js
@@ -504,7 +505,7 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
         )
     ]
     assert "renderExamplePlayer" not in topic_examples_source
-    assert "renderAnalysisExampleCorrection" not in topic_examples_source
+    assert "renderAnalysisExampleCorrection(reviewExample, quote, wrapper)" in topic_examples_source
     assert ".topic-frame-shell[hidden]" in styles_css
     assert "mobileNlpSummary" not in app_js
     assert "nlpSummaryRows" not in app_js
@@ -528,7 +529,7 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     assert ".topic-frame-shell {\n    display: none;" in styles_css
 
 
-def test_public_site_analysis_references_sit_above_transcript_topics() -> None:
+def test_public_site_analysis_layout_prioritizes_chart_bertopic_and_bottom_references() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     order = app_js[
@@ -537,8 +538,13 @@ def test_public_site_analysis_references_sit_above_transcript_topics() -> None:
         )
     ]
 
-    assert "entityPanel, educationPanel, topicPanel" in order
-    assert order.index("educationPanel") < order.index("topicPanel")
+    assert (
+        "cards, channelPanel, topicPanel, wordsPanel, entityPanel, educationPanel, referencePanel"
+        in order
+    )
+    assert order.index("channelPanel") < order.index("topicPanel")
+    assert order.index("topicPanel") < order.index("entityPanel")
+    assert order.index("referencePanel") > order.index("educationPanel")
 
 
 def test_public_site_analysis_examples_use_same_origin_clip_audio() -> None:
@@ -550,7 +556,8 @@ def test_public_site_analysis_examples_use_same_origin_clip_audio() -> None:
     assert "const audioUrl = analysisAudioUrlForClip(example);" in app_js
     assert 'const clipAudioUrl = apiUrl("/api/clips/audio");' in app_js
     assert "renderAnalysisExampleCorrection" in app_js
-    assert "operatorReviewEnabled && canReviewClip(example)" in app_js
+    assert "analysisTranscriptReviewEnabled && canReviewClip(example)" in app_js
+    assert "const analysisTranscriptReviewEnabled = privateAppHost;" in app_js
     assert 'summary.textContent = "Review transcript";' in app_js
     assert "renderTranscriptCorrectionForm(example, transcriptElement, article)" in app_js
     assert ".analysis-correction" in styles_css
@@ -578,7 +585,7 @@ def test_public_site_analysis_audio_examples_are_limited_to_entities() -> None:
     assert "renderExamplePlayer(playableExample || {})" in entity_source
     assert "renderAnalysisExampleCorrection(reviewExample, quote, item)" in entity_source
     assert "renderExamplePlayer" not in topic_source
-    assert "renderAnalysisExampleCorrection" not in topic_source
+    assert "renderAnalysisExampleCorrection(reviewExample, quote, wrapper)" in topic_source
     assert "analysisAudioUrlForClip" not in topic_picker_source
     assert "return examples[0] || null;" in topic_picker_source
 
