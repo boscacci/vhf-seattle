@@ -304,6 +304,10 @@ async def recent_clips(
         if selected_channels
         else sum(channel_counts.values())
     )
+    if featured:
+        playable_channel_counts = dict(channel_counts)
+        playable_clip_count = sum(playable_channel_counts.values())
+        filtered_playable_clip_count = filtered_clip_count
     if (channel or channels) and not selected_channels:
         return {
             "clips": [],

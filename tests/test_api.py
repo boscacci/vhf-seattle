@@ -360,6 +360,77 @@ def test_operator_can_star_clip_for_hall_of_fame_filter(tmp_path) -> None:
     assert storage.featured_tags == [(starred_key, True)]
 
 
+def test_featured_recent_clips_report_live_featured_playable_counts(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    public_site_dir = tmp_path / "public-site"
+    public_site_dir.mkdir()
+    (public_site_dir / "public_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-06-04T15:19:15Z",
+                "stats": {"clip_count": 2, "channel_counts": {"14": 2}},
+                "clips": [
+                    {
+                        "id": f"published-featured-{index}",
+                        "channel": "14",
+                        "started_at": f"2026-06-04T15:0{index}:00Z",
+                        "audio_public_filename": f"published-featured-{index}.mp3",
+                        "transcript_public": f"Published featured {index}",
+                        "featured": True,
+                    }
+                    for index in range(2)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _client(clip_db_path=db_path, public_site_dir=public_site_dir)
+    store = UploadedClipStore(db_path)
+    for index in range(6):
+        channel = "14" if index % 2 == 0 else "68"
+        started_at = datetime(2026, 6, 4, 16, index, tzinfo=UTC)
+        key = f"raw/channel={channel}/date=2026-06-04/featured-{index}.mp3"
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel=channel).model_copy(
+                update={
+                    "started_at": started_at,
+                    "ended_at": started_at + timedelta(seconds=4),
+                    "idempotency_key": f"radio-event-featured-count-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"Live featured {index}",
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                )
+            ],
+        )
+        store.set_clip_featured(
+            channel=channel,
+            started_at=started_at.isoformat().replace("+00:00", "Z"),
+            featured=True,
+            featured_by="operator-ui",
+        )
+
+    response = client.get("/api/clips/recent?limit=6&featured=true")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["clips"]) == 6
+    assert body["clip_count"] == 6
+    assert body["filtered_clip_count"] == 6
+    assert body["playable_clip_count"] == 6
+    assert body["filtered_playable_clip_count"] == 6
+    assert body["playable_channel_counts"] == {"14": 3, "68": 3}
+
+
 def test_operator_can_remove_clip_from_hall_of_fame(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     storage = FakeStorage()
