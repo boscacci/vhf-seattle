@@ -1,0 +1,9 @@
+services:
+  vhf-dev-proxy:
+    container_name: vhf-dev-tailnet-proxy
+    image: nginx:1.27-alpine
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - /home/rob/vhf-dev-letsencrypt:/etc/letsencrypt:ro

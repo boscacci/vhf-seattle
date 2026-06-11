@@ -54,16 +54,19 @@ because OpenTofu intentionally keeps those compatibility points.
 
 Dev and prod buckets, distributions, certificates, and server IAM policies carry
 explicit `Environment` tags. Public buckets stay private. Prod is readable only
-through CloudFront Origin Access Control; dev is served from the OptiPlex
+through CloudFront Origin Access Control; dev is served from the Ubuntu micro-computer
 tailnet deployment.
 
-Route53 points `vhf-dev.robertboscacci.com` at the OptiPlex Tailscale address,
-not at CloudFront. The tailnet reverse proxy injects
-`X-TalkingBoats-Tailnet-Dev: 1` before write-capable operator requests reach the
-dev live proxy. The public Funnel path uses a separate read-only live proxy
-without tailnet dev routes, so spoofed viewer headers cannot reach write
-routes. Do not reintroduce browser bearer-token auth for the transcript feedback
-loop.
+Route53 points `vhf-dev.robertboscacci.com` at the Ubuntu micro-computer Tailscale address,
+not at CloudFront. The Ubuntu micro-computer runs the `deploy/optiplex/vhf-dev-proxy`
+front-door container on the tailnet `80/443` addresses. It terminates the
+DNS-validated `vhf-dev.robertboscacci.com` certificate, redirects HTTP to HTTPS,
+and injects `X-TalkingBoats-Tailnet-Dev: 1` before write-capable operator
+requests reach the dev live proxy on `172.20.0.1:8095`. Pi-hole may serve its
+admin UI on alternate ports, but it must not bind the Ubuntu micro-computer tailnet `80/443`
+front door. The public Funnel path uses a separate read-only live proxy without
+tailnet dev routes, so spoofed viewer headers cannot reach write routes. Do not
+reintroduce browser bearer-token auth for the transcript feedback loop.
 
 ## Operator Checklist
 

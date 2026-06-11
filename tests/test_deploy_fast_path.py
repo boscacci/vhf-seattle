@@ -145,7 +145,7 @@ def test_paused_native_mobile_auth_scripts_are_removed() -> None:
     assert "client_secret" not in main_tf
 
 
-def test_docker_orchestration_files_cover_optiplex_services_without_secrets() -> None:
+def test_docker_orchestration_files_cover_home_processor_services_without_secrets() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     compose = Path("compose.yaml").read_text(encoding="utf-8")
     env_example = Path("config/optiplex.env.example").read_text(encoding="utf-8")
@@ -172,3 +172,34 @@ def test_docker_orchestration_files_cover_optiplex_services_without_secrets() ->
     assert "config/optiplex.env" in gitignore
     assert "config/optiplex.env" in dockerignore
     assert "Docker Compose" in docs
+
+
+def test_vhf_dev_tailnet_proxy_config_documents_custom_tls_front_door() -> None:
+    compose = Path("deploy/optiplex/vhf-dev-proxy/compose.yaml").read_text(
+        encoding="utf-8"
+    )
+    nginx = Path("deploy/optiplex/vhf-dev-proxy/nginx.conf").read_text(
+        encoding="utf-8"
+    )
+    service = Path(
+        "deploy/optiplex/vhf-dev-proxy/vhf-dev-cert-renew.service"
+    ).read_text(encoding="utf-8")
+    docs = Path("docs/deployment-hygiene.md").read_text(encoding="utf-8")
+
+    assert "vhf-dev-tailnet-proxy" in compose
+    assert "network_mode: host" in compose
+    assert "/home/rob/vhf-dev-letsencrypt:/etc/letsencrypt:ro" in compose
+    assert "listen 100.124.5.39:443 ssl;" in nginx
+    assert "listen [fd7a:115c:a1e0::2601:597]:443 ssl;" in nginx
+    assert "server_name vhf-dev.robertboscacci.com;" in nginx
+    assert (
+        "ssl_certificate /etc/letsencrypt/live/vhf-dev.robertboscacci.com/fullchain.pem;"
+        in nginx
+    )
+    assert "proxy_set_header X-TalkingBoats-Tailnet-Dev 1;" in nginx
+    assert "proxy_pass http://172.20.0.1:8095;" in nginx
+    assert "certbot/dns-route53 renew" in service
+    assert "docker kill -s HUP vhf-dev-tailnet-proxy" in service
+    assert "Pi-hole" in docs
+    assert "admin UI on alternate ports" in docs
+    assert "must not bind the Ubuntu micro-computer tailnet `80/443`" in docs

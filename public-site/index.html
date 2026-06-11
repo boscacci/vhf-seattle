@@ -227,7 +227,7 @@
           <section class="about-intro" aria-label="Project overview">
             <p>
               This site is the public face of a home-lab marine VHF monitor for Elliott Bay. A Raspberry Pi radio edge
-              listens to nearby voice channels and AIS vessel reports, an OptiPlex processes activity
+              listens to nearby voice channels and AIS vessel reports, an Ubuntu micro-computer processes activity
               clips and transcripts, and AWS serves the public app, live audio, searchable clips, Hall of Fame
               audio, vessel positions, and channel analysis.
             </p>
@@ -244,14 +244,24 @@
             <section class="about-card">
               <h3>Radio Edge</h3>
               <p>
-                SDR receivers monitor marine VHF traffic and AIS around Elliott Bay, with VHF 14 as the
+                An RTL-SDR monitors marine VHF voice traffic around Elliott Bay, with VHF 14 as the
                 default Seattle Traffic feed.
+              </p>
+            </section>
+            <section class="about-card">
+              <h3>AIS Receiver</h3>
+              <p>
+                AIS reception now runs through a dAISy-catcher receiver built by
+                <a href="https://github.com/astuder" target="_blank" rel="noopener">Adrian Studer</a>
+                and
+                <a href="https://github.com/jvde-github" target="_blank" rel="noopener">Jasper</a>,
+                who generously mailed one over for this project.
               </p>
             </section>
             <section class="about-card">
               <h3>Processing</h3>
               <p>
-                The OptiPlex private API handles uploads, transcription, transcript corrections, public
+                The Ubuntu micro-computer private API handles uploads, transcription, transcript corrections, public
                 exports, and Whisper review loops for maritime radio audio.
               </p>
             </section>
@@ -268,6 +278,6 @@
 
     </main>
 
-    <script src="/assets/app.js?v=20260604-analysis-live" type="module"></script>
+    <script src="/assets/app.js?v=20260611-daisy-ack" type="module"></script>
   </body>
 </html>

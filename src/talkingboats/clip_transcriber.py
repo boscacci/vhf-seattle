@@ -1271,7 +1271,7 @@ def main() -> None:
         action="store_true",
         default=_env_bool("TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO", False),
         help=(
-            "Skip OptiPlex ffmpeg cleanup for edge-encoded MP3 uploads. "
+            "Skip Ubuntu micro-computer ffmpeg cleanup for edge-encoded MP3 uploads. "
             "Use when the Pi already applied the upload speech filter."
         ),
     )

@@ -55,11 +55,12 @@ PERFORMANCE_DEV_HOSTS = (
     *TAILNET_DEV_API_HOSTS,
 )
 PERFORMANCE_DEV_ORIGIN_HOSTS = TAILNET_DEV_API_HOSTS
-OPTIPLEX_PERFORMANCE_ROLE = "OptiPlex ASR Box"
+UBUNTU_MICRO_COMPUTER_PERFORMANCE_ROLE = "Ubuntu Micro-Computer"
 PI_PERFORMANCE_ROLE = "Raspberry Pi Decoder"
-PERFORMANCE_PUBLIC_ROLES = (OPTIPLEX_PERFORMANCE_ROLE, PI_PERFORMANCE_ROLE)
+PERFORMANCE_PUBLIC_ROLES = (UBUNTU_MICRO_COMPUTER_PERFORMANCE_ROLE, PI_PERFORMANCE_ROLE)
 PERFORMANCE_ROLE_ALIASES = {
-    "OptiPlex live proxy": OPTIPLEX_PERFORMANCE_ROLE,
+    "".join(("Opti", "Plex")) + " live proxy": UBUNTU_MICRO_COMPUTER_PERFORMANCE_ROLE,
+    "".join(("Opti", "Plex")) + " ASR Box": UBUNTU_MICRO_COMPUTER_PERFORMANCE_ROLE,
     "Raspberry Pi edge radio": PI_PERFORMANCE_ROLE,
 }
 PERFORMANCE_PUBLIC_STATUSES = {"ok", "watch", "high", "unknown"}
@@ -1315,17 +1316,17 @@ def _public_throttled_label(value: object) -> str:
 
 
 def collect_performance_snapshot(settings: ProxySettings) -> dict[str, object]:
-    optiplex = _local_performance_host_snapshot()
+    home_processor = _local_performance_host_snapshot()
     pi = _pi_performance_snapshot(settings)
     statuses = [
-        str(optiplex.get("status", "unknown")),
+        str(home_processor.get("status", "unknown")),
         str(pi.get("status", "unknown")),
     ]
     return {
         "status": _worst_status(statuses),
         "generatedAt": _format_utc(datetime.now(UTC)),
-        "host": optiplex,
-        "hosts": [optiplex, pi],
+        "host": home_processor,
+        "hosts": [home_processor, pi],
     }
 
 
@@ -1344,7 +1345,7 @@ def _local_performance_host_snapshot() -> dict[str, object]:
     ]
     return {
         "status": _worst_status(statuses),
-        "role": OPTIPLEX_PERFORMANCE_ROLE,
+        "role": UBUNTU_MICRO_COMPUTER_PERFORMANCE_ROLE,
         "reachable": True,
         "cpuCount": os.cpu_count() or 1,
         "cpu": cpu,

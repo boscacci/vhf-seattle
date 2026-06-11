@@ -45,7 +45,7 @@ The public site includes:
 - a dev/operator path for transcript correction and telemetry.
 
 Production browsers read only public surfaces. They do not connect directly to
-the Raspberry Pi, OptiPlex private API, LAN Icecast URLs, Tailscale/Funnel
+the Raspberry Pi, Ubuntu micro-computer private API, LAN Icecast URLs, Tailscale/Funnel
 origins, raw S3 objects, DynamoDB, receiver controls, or write-capable routes.
 
 ## Runtime Layers
@@ -53,13 +53,13 @@ origins, raw S3 objects, DynamoDB, receiver controls, or write-capable routes.
 | Layer | Runs On | Owns |
 | --- | --- | --- |
 | Radio edge | Raspberry Pi + RTL-SDR | VHF voice capture, AIS decode, HLS segment generation, activity detection, clip spooling, bounded local buffers |
-| Home processing | OptiPlex Ubuntu server | Private API, presigned raw-audio uploads, transcription, transcript corrections, public exports, telemetry |
+| Home processing | Ubuntu micro-computer | Private API, presigned raw-audio uploads, transcription, transcript corrections, public exports, telemetry |
 | AWS public edge | S3, CloudFront, DynamoDB, API Gateway/Lambda | Private static origins, public read-only delivery, durable clip state, AIS ingest, TLS, DNS |
 
 The normal path is:
 
 ```text
-antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> AWS public edge -> browser
+antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> Ubuntu micro-computer -> AWS public edge -> browser
 ```
 
 ## Architecture
@@ -75,10 +75,10 @@ antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> AWS public edge
 Current boundary decisions:
 
 - Production CloudFront uses private S3 origins; it is not a production website
-  origin back to the OptiPlex.
+  origin back to the Ubuntu micro-computer.
 - The Pi publishes outbound only, using scoped cloud resources.
-- The OptiPlex stays private/dev infrastructure for CPU-heavy and stateful work.
-- Dev/operator paths can reach the OptiPlex private API over the tailnet.
+- The Ubuntu micro-computer stays private/dev infrastructure for CPU-heavy and stateful work.
+- Dev/operator paths can reach the Ubuntu micro-computer private API over the tailnet.
 - SQLite is retained only for explicit legacy backfills, local fixtures, and
   separate realtime telemetry.
 
@@ -89,7 +89,11 @@ Radio capture:
 - RTLSDR-Airband monitors a 12-channel marine VHF profile: 05A, 06, 09, 13, 14,
   16, 22A, 67, 68, 69, 71, and 72.
 - VHF 14 is the default live feed for Seattle Traffic / Puget Sound VTS.
-- A second RTL-SDR runs AIS-catcher around 162 MHz.
+- AIS-catcher runs on the Pi with either the dedicated AIS RTL-SDR or the
+  dAISy-catcher serial receiver around 162 MHz.
+- Major shout-out to [Adrian Studer](https://github.com/astuder) and
+  [Jasper](https://github.com/jvde-github) for building the dAISy-catcher and
+  mailing one over for this project.
 
 Live audio:
 
@@ -113,11 +117,11 @@ AIS:
 Clip processing:
 
 - The Pi creates activity clips and sidecar metadata.
-- The Pi asks the OptiPlex private API for short-lived presigned upload URLs.
+- The Pi asks the Ubuntu micro-computer private API for short-lived presigned upload URLs.
 - Raw audio stays in private S3.
 - DynamoDB stores clip events, transcripts, corrections, and serving read
   models.
-- The OptiPlex runs `faster-whisper`, review/correction workflows, lexical
+- The Ubuntu micro-computer runs `faster-whisper`, review/correction workflows, lexical
   analysis, topic clustering, and public exports.
 
 Default edge audio/transcription settings:
@@ -163,7 +167,7 @@ promotion, and transcriber restart behavior.
 
 ## Local Setup
 
-Use the existing `dell` conda environment on the OptiPlex:
+Use the existing `dell` conda environment on the Ubuntu micro-computer:
 
 ```bash
 conda run -n dell python -m pip install -e ".[dev]"
@@ -193,8 +197,8 @@ Private operator UI:
 http://localhost:8034/operator/
 ```
 
-If you are on a MacBook or another client machine instead of the OptiPlex, use
-SSH to the OptiPlex for service-state work, Pi systemd work, export jobs,
+If you are on a MacBook or another client machine instead of the Ubuntu micro-computer, use
+SSH to the Ubuntu micro-computer for service-state work, Pi systemd work, export jobs,
 transcription workers, and OpenTofu operations. Direct static-site syncs from a
 client machine are acceptable only for emergency static UI fixes where existing
 manifests and clip objects are preserved.
@@ -241,6 +245,6 @@ scripts/deploy_public_site.sh prod outputs/public-site
 - VHF voice receiver: RTL-SDR near the antenna.
 - AIS receiver: second RTL-SDR around 162 MHz.
 - Edge computer: Raspberry Pi beside the radio hardware.
-- Home server: small OptiPlex-class Ubuntu machine on the LAN.
+- Home server: Ubuntu micro-computer on the LAN.
 - Public edge: AWS S3, CloudFront, DynamoDB, API Gateway/Lambda, ACM, and
   Route 53.

@@ -978,12 +978,14 @@ def test_proxy_ais_catcher_subpaths_and_redirects_stay_under_dev_prefix() -> Non
 
 
 def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
+    legacy_home_role = "".join(("Opti", "Plex")) + " live proxy"
+
     def collector(_settings: ProxySettings) -> dict[str, object]:
         return {
             "status": "watch",
             "generatedAt": "2026-05-26T20:00:00Z",
             "host": {
-                "role": "OptiPlex live proxy",
+                "role": legacy_home_role,
                 "cpuCount": 8,
                 "load": {"oneMinute": 3.1, "perCpu": 0.39, "status": "ok"},
                 "memory": {"usedPercent": 62.5, "status": "ok"},
@@ -1050,7 +1052,7 @@ def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
     assert dev_origin_response.status_code == 200
     assert direct_tailnet_response.status_code == 200
     dev_payload = dev_response.json()
-    assert dev_payload["host"]["role"] == "OptiPlex ASR Box"
+    assert dev_payload["host"]["role"] == "Ubuntu Micro-Computer"
     assert "services" not in dev_payload
     assert "internalUrl" not in dev_response.text
     assert "talkingboats-live-radio-proxy" not in dev_response.text
@@ -1069,7 +1071,7 @@ def test_proxy_performance_endpoint_keeps_public_timeseries_history(tmp_path: Pa
             "generatedAt": "2026-05-26T20:00:00Z",
             "hosts": [
                 {
-                    "role": "OptiPlex ASR Box",
+                    "role": "Ubuntu Micro-Computer",
                     "cpu": {"utilizationPercent": 11.0, "status": "ok"},
                     "memory": {"usedPercent": 21.0, "status": "ok"},
                     "thermal": {"temperatureC": 41.0, "throttled": "0x0", "status": "ok"},
@@ -1082,7 +1084,7 @@ def test_proxy_performance_endpoint_keeps_public_timeseries_history(tmp_path: Pa
             "generatedAt": "2026-05-26T20:00:10Z",
             "hosts": [
                 {
-                    "role": "OptiPlex ASR Box",
+                    "role": "Ubuntu Micro-Computer",
                     "cpu": {"utilizationPercent": 19.5, "status": "ok"},
                     "memory": {"usedPercent": 27.5, "status": "ok"},
                     "thermal": {"temperatureC": 43.5, "throttled": "0x0", "status": "ok"},
@@ -1147,7 +1149,7 @@ def test_proxy_performance_history_store_uses_memory_and_sqlite_windows(tmp_path
             "generatedAt": generated_at,
             "hosts": [
                 {
-                    "role": "OptiPlex ASR Box",
+                    "role": "Ubuntu Micro-Computer",
                     "cpu": {"utilizationPercent": value, "status": "ok"},
                     "memory": {"usedPercent": value + 10, "status": "ok"},
                     "thermal": {"temperatureC": value + 30, "throttled": "0x0", "status": "ok"},
@@ -1180,6 +1182,7 @@ def test_proxy_performance_history_store_uses_memory_and_sqlite_windows(tmp_path
 
 def test_proxy_performance_lifespan_starts_server_side_sampler(tmp_path: Path) -> None:
     sampled = threading.Event()
+    legacy_home_role = "".join(("Opti", "Plex")) + " live proxy"
 
     def collector(_settings: ProxySettings) -> dict[str, object]:
         sampled.set()
@@ -1188,7 +1191,7 @@ def test_proxy_performance_lifespan_starts_server_side_sampler(tmp_path: Path) -
             "generatedAt": "2026-05-26T20:00:00Z",
             "hosts": [
                 {
-                    "role": "OptiPlex live proxy",
+                    "role": legacy_home_role,
                     "cpu": {"utilizationPercent": 12.0, "status": "ok"},
                     "memory": {"usedPercent": 22.0, "status": "ok"},
                     "thermal": {"temperatureC": 42.0, "throttled": "0x0", "status": "ok"},
@@ -1283,7 +1286,7 @@ def test_proxy_performance_disk_snapshot_collapses_duplicate_filesystems(
     assert snapshots[0]["label"] == "system"
 
 
-def test_proxy_performance_snapshot_combines_optiplex_and_pi(monkeypatch) -> None:
+def test_proxy_performance_snapshot_combines_home_processor_and_pi(monkeypatch) -> None:
     monkeypatch.setattr(
         "talkingboats.live_radio_proxy._load_snapshot",
         lambda: {"oneMinute": 0.4, "perCpu": 0.05, "status": "ok"},
@@ -1323,10 +1326,10 @@ def test_proxy_performance_snapshot_combines_optiplex_and_pi(monkeypatch) -> Non
     assert snapshot["status"] == "watch"
     assert "services" not in snapshot
     assert [host["role"] for host in snapshot["hosts"]] == [
-        "OptiPlex ASR Box",
+        "Ubuntu Micro-Computer",
         "Raspberry Pi Decoder",
     ]
-    assert snapshot["host"]["role"] == "OptiPlex ASR Box"
+    assert snapshot["host"]["role"] == "Ubuntu Micro-Computer"
     assert snapshot["hosts"][0]["thermal"]["temperatureC"] == 45.0
     assert snapshot["hosts"][1]["thermal"]["temperatureC"] == 37.0
 

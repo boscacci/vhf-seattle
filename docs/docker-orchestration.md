@@ -1,8 +1,8 @@
 # Docker Orchestration
 
-This repo can run the OptiPlex-side services in Docker Compose once the current
-dev path is stable. The Raspberry Pi SDR capture stays on the Pi for now because
-it owns USB devices, Icecast, and local radio service units.
+This repo can run the Ubuntu micro-computer-side services in Docker Compose once
+the current dev path is stable. The Raspberry Pi SDR capture stays on the Pi for
+now because it owns USB devices, Icecast, and local radio service units.
 
 ## Why This Helps
 
@@ -13,8 +13,9 @@ from the same dependency set.
 
 ## Setup
 
-Install Docker Engine with the Docker Compose v2 plugin on the OptiPlex. The
-commands below expect `docker compose`, not the legacy `docker-compose` binary.
+Install Docker Engine with the Docker Compose v2 plugin on the Ubuntu
+micro-computer. The commands below expect `docker compose`, not the legacy
+`docker-compose` binary.
 
 Create the ignored runtime env file from the checked-in example:
 

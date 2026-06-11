@@ -167,6 +167,12 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_VOICE_SDR_SERIAL=%q\n' ""
     printf 'TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=%q\n' "-35"
     printf 'TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=%q\n' "20"
+    printf 'TALKINGBOATS_AIS_INPUT=%q\n' "auto"
+    printf 'TALKINGBOATS_AIS_SERIAL_PORT=%q\n' ""
+    printf 'TALKINGBOATS_AIS_SERIAL_BAUD=%q\n' "115200"
+    printf 'TALKINGBOATS_AIS_SERIAL_INIT_SEQ=%q\n' "co2,v"
+    printf 'TALKINGBOATS_AIS_SERIAL_AUTO_INCLUDE_GPIO=%q\n' "false"
+    printf 'TALKINGBOATS_AIS_SERIAL_AUTO_PORTS=%q\n' ""
     printf 'TALKINGBOATS_AIS_SDR_SERIAL=%q\n' ""
     printf 'TALKINGBOATS_AIS_DEVICE_INDEX=%q\n' "1"
     printf 'TALKINGBOATS_AIS_WEB_PORT=%q\n' "8100"
@@ -261,6 +267,12 @@ append_env_if_missing TALKINGBOATS_VOICE_DEVICE_INDEX "0"
 append_env_if_missing TALKINGBOATS_VOICE_SDR_SERIAL ""
 append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_THRESHOLD "-35"
 append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD "20"
+append_env_if_missing TALKINGBOATS_AIS_INPUT "auto"
+append_env_if_missing TALKINGBOATS_AIS_SERIAL_PORT ""
+append_env_if_missing TALKINGBOATS_AIS_SERIAL_BAUD "115200"
+append_env_if_missing TALKINGBOATS_AIS_SERIAL_INIT_SEQ "co2,v"
+append_env_if_missing TALKINGBOATS_AIS_SERIAL_AUTO_INCLUDE_GPIO "false"
+append_env_if_missing TALKINGBOATS_AIS_SERIAL_AUTO_PORTS ""
 append_env_if_missing TALKINGBOATS_AIS_SDR_SERIAL ""
 append_env_if_missing TALKINGBOATS_AIS_DEVICE_INDEX "1"
 append_env_if_missing TALKINGBOATS_AIS_WEB_PORT "8100"
@@ -538,13 +550,17 @@ if [[ "${TALKINGBOATS_CLOUD_HLS_ENABLED:-false}" == "true" && -n "${TALKINGBOATS
 else
   systemctl disable --now talkingboats-live-hls-relay.service 2>/dev/null || true
 fi
-if [[ -n "${TALKINGBOATS_AIS_SDR_SERIAL:-}" || -n "${TALKINGBOATS_AIS_DEVICE_INDEX:-}" ]]; then
+ais_input_mode="${TALKINGBOATS_AIS_INPUT:-auto}"
+case "${ais_input_mode,,}" in
+  off|disabled|none)
+    systemctl disable --now talkingboats-ais-catcher.service 2>/dev/null || true
+    echo "AIS services installed but disabled; set TALKINGBOATS_AIS_INPUT=auto, serial, or sdr and rerun."
+    ;;
+  *)
   systemctl enable talkingboats-ais-catcher.service
   systemctl restart talkingboats-ais-catcher.service
-else
-  systemctl disable --now talkingboats-ais-catcher.service 2>/dev/null || true
-  echo "AIS services installed but disabled; set TALKINGBOATS_AIS_SDR_SERIAL or TALKINGBOATS_AIS_DEVICE_INDEX and rerun."
-fi
+    ;;
+esac
 if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" && -n "${TALKINGBOATS_AIS_INGEST_TOKEN:-}" ]]; then
   systemctl enable talkingboats-ais-forwarder.service
   systemctl restart talkingboats-ais-forwarder.service

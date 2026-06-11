@@ -4,7 +4,7 @@
 
 `vhf.robertboscacci.com` is public read-only. It serves static app assets and
 published clip audio from a private S3 bucket through CloudFront Origin Access
-Control, then routes read-only live API paths to the OptiPlex proxy through
+Control, then routes read-only live API paths to the Ubuntu micro-computer proxy through
 Tailscale Funnel.
 
 Public artifacts must not contain:
@@ -22,7 +22,7 @@ The trusted compute boundary is intentionally local-first:
 - **Raspberry Pi:** trusted edge capture node on the private LAN. It may see raw
   RF audio and short local buffers, but it should not hold long-lived AWS
   credentials or expose public controls.
-- **OptiPlex:** trusted home processing node. It owns the private API,
+- **Ubuntu micro-computer:** trusted home processing node. It owns the private API,
   transcription workers, retry loops, export jobs, realtime performance
   telemetry, and the read-only proxy used by CloudFront.
 - **AWS:** durable storage and public edge. S3 receives raw objects only through
@@ -33,7 +33,7 @@ The trusted compute boundary is intentionally local-first:
   metadata, current status, and live audio, but it cannot retune the receiver,
   request arbitrary LAN URLs, presign uploads, or access private transcripts.
 
-Doing useful work on the Pi and OptiPlex is the point of the system. Security
+Doing useful work on the Pi and Ubuntu micro-computer is the point of the system. Security
 comes from narrow boundaries, short-lived upload URLs, sanitization, and
 read-only public routes, not from pushing all computation into a cloud service.
 
@@ -49,8 +49,8 @@ object keys or depending on stale presigned links.
 
 The performance telemetry endpoint is dev-only and gated by configured dev
 hostnames or the tailnet dev reverse proxy path. Its public-safe response is a
-whitelist of coarse CPU, memory, disk, and thermal health for the OptiPlex proxy
-and Raspberry Pi receiver. It must not expose LAN addresses, tailnet hostnames,
+whitelist of coarse CPU, memory, disk, and thermal health for the Ubuntu
+micro-computer proxy and Raspberry Pi receiver. It must not expose LAN addresses, tailnet hostnames,
 service names, process lists, environment variables, internal URLs, tokens, or
 arbitrary collector fields.
 
@@ -81,10 +81,11 @@ uses a separate read-only proxy process with tailnet dev routes disabled, so
 viewer-supplied marker headers are ignored there. Do not require an operator to
 manually paste tokens into the browser.
 
-The Pi-to-OptiPlex LAN path is private infrastructure. If the Pi cannot reach
-the OptiPlex, it should keep bounded local buffers and retry instead of failing
-open to public endpoints. If the OptiPlex cannot reach AWS, it should preserve
-local state and retry uploads/exports when connectivity returns.
+The private LAN path from the Pi to the Ubuntu micro-computer is private
+infrastructure. If the Pi cannot reach the Ubuntu micro-computer, it should keep
+bounded local buffers and retry instead of failing open to public endpoints. If
+the Ubuntu micro-computer cannot reach AWS, it should preserve local state and
+retry uploads/exports when connectivity returns.
 
 ## Retention
 

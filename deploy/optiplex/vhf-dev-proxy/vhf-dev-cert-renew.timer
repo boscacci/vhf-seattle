@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily vhf-dev.robertboscacci.com certificate renewal check
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

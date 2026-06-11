@@ -225,6 +225,11 @@ def test_pi_installer_adds_serial_pinned_voice_and_ais_catcher_service() -> None
     assert "TALKINGBOATS_VOICE_DEVICE_INDEX" in installer
     assert "TALKINGBOATS_AIS_SDR_SERIAL" in installer
     assert "TALKINGBOATS_AIS_DEVICE_INDEX" in installer
+    assert "TALKINGBOATS_AIS_INPUT" in installer
+    assert "TALKINGBOATS_AIS_SERIAL_PORT" in installer
+    assert "TALKINGBOATS_AIS_SERIAL_BAUD" in installer
+    assert "TALKINGBOATS_AIS_SERIAL_INIT_SEQ" in installer
+    assert "TALKINGBOATS_AIS_SERIAL_AUTO_INCLUDE_GPIO" in installer
     assert "TALKINGBOATS_AIS_WEB_PORT" in installer
     assert "TALKINGBOATS_AIS_COMMUNITY_FEED" in installer
     assert "TALKINGBOATS_AIS_SHARING_KEY" in installer
@@ -244,6 +249,15 @@ def test_pi_installer_adds_serial_pinned_voice_and_ais_catcher_service() -> None
     assert "talkingboats-ais-catcher" in ais_catcher_unit
     assert not Path("deploy/systemd/talkingboats-ais-uploader.service.example").exists()
     assert not Path("deploy/pi/live-radio/talkingboats-ais-uploader").exists()
+    assert "TALKINGBOATS_AIS_INPUT" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_SERIAL_PORT" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_SERIAL_BAUD:-115200" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_SERIAL_INIT_SEQ:-co2,v" in ais_catcher_wrapper
+    assert "/dev/serial/by-id/*Raspberry_Pi_Pico*" in ais_catcher_wrapper
+    assert 'device_args=(-e "${serial_baud}" "${serial_port}")' in ais_catcher_wrapper
+    assert 'device_args+=(-ge init_seq "${serial_init_seq}")' in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_INPUT=serial" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_SERIAL_AUTO_INCLUDE_GPIO" in ais_catcher_wrapper
     assert "TALKINGBOATS_AIS_SDR_SERIAL" in ais_catcher_wrapper
     assert "TALKINGBOATS_AIS_DEVICE_INDEX:-1" in ais_catcher_wrapper
     assert '"-d:${TALKINGBOATS_AIS_DEVICE_INDEX:-1}"' in ais_catcher_wrapper
@@ -267,9 +281,9 @@ def test_pi_installer_adds_serial_pinned_voice_and_ais_catcher_service() -> None
         in ais_catcher_wrapper
     )
     assert '"${ais_friends_args[@]}"' in ais_catcher_wrapper
+    assert "sharing_args=(-X off)" in ais_catcher_wrapper
     assert "sharing_args=(-X)" in ais_catcher_wrapper
     assert 'sharing_args=(-X "${TALKINGBOATS_AIS_SHARING_KEY}")' in ais_catcher_wrapper
-    assert "-X off" not in ais_catcher_wrapper
     assert "MSGFORMAT JSON_FULL" not in ais_catcher_wrapper
     assert "CPUQuota=35%" in ais_catcher_unit
     assert "talkingboats.ais_uploader" not in pyproject

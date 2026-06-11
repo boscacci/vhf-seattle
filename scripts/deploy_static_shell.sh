@@ -10,8 +10,8 @@ bucket and invalidates the shell paths. It does not remove remote-only files,
 so generated clips, analysis artifacts, and manifests already in the bucket are
 preserved.
 
-Dev shell deploys also sync the OptiPlex tailnet deploy copy by default, because
-`vhf-dev.robertboscacci.com` is served from that tailnet host. Set
+Dev shell deploys also sync the Ubuntu micro-computer tailnet deploy copy by
+default, because `vhf-dev.robertboscacci.com` is served from that tailnet host. Set
 `TALKINGBOATS_SKIP_TAILNET_DEV_SYNC=1` to skip that extra sync.
 
 Dev shell deploys also allow archive/no-git deploy copies. Prod shell deploys

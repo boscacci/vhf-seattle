@@ -892,7 +892,7 @@ try {
       aboutState.linkHref !== "https://robertboscacci.com/projects/elliott-bay-vhf/" ||
       aboutState.linkText !== "Read the full project write-up" ||
       !aboutState.bodyText.includes("Raspberry Pi radio edge") ||
-      !aboutState.bodyText.includes("OptiPlex") ||
+      !aboutState.bodyText.includes("Ubuntu micro-computer") ||
       !aboutState.bodyText.includes("Whisper")
     ) {
       throw new Error(`about tab did not expose the project write-up: ${JSON.stringify(aboutState)}`);
@@ -1082,7 +1082,7 @@ try {
       if (!performanceHover.tooltip.includes("%") || !performanceHover.hoverLine || !performanceHover.hoverDot) {
         throw new Error(`performance hover tooltip did not render: ${JSON.stringify(performanceHover)}`);
       }
-      if (!performanceHover.hostTitles.includes("OptiPlex ASR Box")) {
+      if (!performanceHover.hostTitles.includes("Ubuntu Micro-Computer")) {
         throw new Error(`performance host labels were not updated: ${JSON.stringify(performanceHover)}`);
       }
     } finally {
@@ -1286,7 +1286,7 @@ function performancePayload() {
     generatedAt,
     hosts: [
       {
-        role: "OptiPlex ASR Box",
+        role: "Ubuntu Micro-Computer",
         cpuCount: 8,
         cpuUtilizationPercent: 10,
         memoryUsedPercent: 44,

@@ -6,8 +6,8 @@ only from the tailnet. The tab reads `/api/live/performance`, which the live
 radio proxy serves only for configured dev hostnames or the tailnet dev reverse
 proxy path.
 
-The payload is public-safe by design. It includes OptiPlex live-proxy telemetry,
-and Raspberry Pi edge-radio telemetry, but it does not include LAN addresses,
+The payload is public-safe by design. It includes Ubuntu micro-computer
+live-proxy telemetry and Raspberry Pi edge-radio telemetry, but it does not include LAN addresses,
 tailnet hostnames, service names, process lists, environment variables, private
 stream URLs, command lines, logs, tokens, cookies, or local filesystem paths.
 The browser refreshes the Performance tab every 10 seconds while it is open, and
@@ -20,9 +20,10 @@ hours.
 
 Each host snapshot includes CPU utilization, 1-minute load average, system
 memory, filesystem capacity, and thermals. The Pi snapshot includes the
-Raspberry Pi throttling flag when `vcgencmd` is available; the OptiPlex snapshot
-reports thermal data when Linux exposes it through `/sys/class/thermal`. Disk
-reads collapse duplicate mounts on the same filesystem.
+Raspberry Pi throttling flag when `vcgencmd` is available; the Ubuntu
+micro-computer snapshot reports thermal data when Linux exposes it through
+`/sys/class/thermal`. Disk reads collapse duplicate mounts on the same
+filesystem.
 
 The default SQLite file is `data/performance_telemetry.sqlite3` under the proxy
 checkout. Override it with `TALKINGBOATS_PROXY_PERFORMANCE_HISTORY_DB_PATH` if a
@@ -53,9 +54,9 @@ transcription run, lexical refresh, or live audio task is expected to be busy.
 `High` means the system is close enough to a resource limit that new long-running
 work should wait until the cause is clear.
 
-## OptiPlex Checks
+## Ubuntu Micro-Computer Checks
 
-For a live read from the OptiPlex:
+For a live read from the Ubuntu micro-computer (`optiplex` SSH alias):
 
 ```bash
 ssh rob@optiplex 'uptime; df -h / /home /opt 2>/dev/null || df -h /; free -h'
@@ -85,7 +86,7 @@ consumers.
 
 ## Raspberry Pi Checks
 
-The dev tab reads Pi telemetry by SSHing from the OptiPlex to
+The dev tab reads Pi telemetry by SSHing from the Ubuntu micro-computer to
 `TALKINGBOATS_PROXY_RETUNE_SSH_TARGET` every dashboard refresh. If the SSH read
 fails, the Pi card degrades to `Unknown` instead of blocking the rest of the
 dashboard. Direct read-only checks are still useful when the receiver side feels
@@ -112,7 +113,7 @@ crosses its configured guardrail. The default edge load guard is
   stream and capture services prioritized.
 - Thermals `High`: stop or quota non-live batch work first, especially the
   lexical refresh/export path. The example user service caps that refresh at
-  `CPUQuota=150%` so it cannot consume the whole OptiPlex while live services
+  `CPUQuota=150%` so it cannot consume the whole Ubuntu micro-computer while live services
   are running.
 - Memory `Watch`: check transcriber model processes first.
 - Memory `High`: stop optional analysis/backfill tasks before restarting live

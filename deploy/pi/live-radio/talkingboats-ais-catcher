@@ -1,8 +1,102 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+is_truthy() {
+  case "${1,,}" in
+    true|1|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+select_auto_serial_port() {
+  local include_gpio="${TALKINGBOATS_AIS_SERIAL_AUTO_INCLUDE_GPIO:-false}"
+  local -a patterns
+  local -a matches
+  local pattern
+  local candidate
+
+  if [[ -n "${TALKINGBOATS_AIS_SERIAL_AUTO_PORTS:-}" ]]; then
+    # shellcheck disable=SC2206
+    patterns=(${TALKINGBOATS_AIS_SERIAL_AUTO_PORTS})
+  else
+    patterns=(
+      /dev/serial/by-id/*dAISy*
+      /dev/serial/by-id/*Daisy*
+      /dev/serial/by-id/*Wegmatt*
+      /dev/serial/by-id/*CDC*
+      /dev/serial/by-id/*RP2350*
+      /dev/serial/by-id/*Raspberry_Pi_Pico*
+      /dev/ttyACM0
+      /dev/ttyACM1
+    )
+  fi
+
+  shopt -s nullglob
+  for pattern in "${patterns[@]}"; do
+    matches=($pattern)
+    for candidate in "${matches[@]}"; do
+      if [[ -e "${candidate}" ]]; then
+        printf '%s\n' "${candidate}"
+        return 0
+      fi
+    done
+  done
+
+  if is_truthy "${include_gpio}"; then
+    for candidate in /dev/serial0 /dev/ttyAMA0; do
+      if [[ -e "${candidate}" ]]; then
+        printf '%s\n' "${candidate}"
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
 device_args=()
-if [[ -n "${TALKINGBOATS_AIS_SDR_SERIAL:-}" ]]; then
+input_mode="${TALKINGBOATS_AIS_INPUT:-auto}"
+input_mode="${input_mode,,}"
+serial_port="${TALKINGBOATS_AIS_SERIAL_PORT:-}"
+
+if [[ "${input_mode}" == "auto" && -z "${serial_port}" ]]; then
+  serial_port="$(select_auto_serial_port || true)"
+fi
+
+case "${input_mode}" in
+  auto)
+    ;;
+  serial)
+    if [[ -z "${serial_port}" ]]; then
+      echo "TALKINGBOATS_AIS_SERIAL_PORT is required when TALKINGBOATS_AIS_INPUT=serial" >&2
+      exit 64
+    fi
+    ;;
+  sdr|rtl|rtlsdr)
+    serial_port=""
+    ;;
+  *)
+    echo "Unsupported TALKINGBOATS_AIS_INPUT: ${TALKINGBOATS_AIS_INPUT}" >&2
+    exit 64
+    ;;
+esac
+
+if [[ -n "${serial_port}" ]]; then
+  serial_baud="${TALKINGBOATS_AIS_SERIAL_BAUD:-115200}"
+  if [[ ! "${serial_baud}" =~ ^[0-9]+$ ]]; then
+    echo "TALKINGBOATS_AIS_SERIAL_BAUD must be numeric" >&2
+    exit 64
+  fi
+  device_args=(-e "${serial_baud}" "${serial_port}")
+  serial_init_seq="${TALKINGBOATS_AIS_SERIAL_INIT_SEQ:-co2,v}"
+  if [[ -n "${serial_init_seq}" ]]; then
+    device_args+=(-ge init_seq "${serial_init_seq}")
+  fi
+elif [[ -n "${TALKINGBOATS_AIS_SDR_SERIAL:-}" ]]; then
   device_args=(-d "${TALKINGBOATS_AIS_SDR_SERIAL}")
 else
   device_args=("-d:${TALKINGBOATS_AIS_DEVICE_INDEX:-1}")
@@ -11,6 +105,7 @@ fi
 sharing_args=()
 case "${TALKINGBOATS_AIS_COMMUNITY_FEED:-anonymous}" in
   off|false|0|no)
+    sharing_args=(-X off)
     ;;
   key)
     if [[ -z "${TALKINGBOATS_AIS_SHARING_KEY:-}" ]]; then

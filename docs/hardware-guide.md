@@ -4,16 +4,16 @@
 
 Keep the RF path short and move data over the LAN. The antenna and RTL-SDR sit
 near the best window; the Raspberry Pi is the small edge computer beside them.
-The OptiPlex stays where it belongs as the home server with more CPU, disk, and
-stable services.
+The Ubuntu micro-computer stays where it belongs as the home processing node
+with more CPU, disk, and stable services.
 
 ```mermaid
 flowchart LR
   antenna["Window VHF antenna"]
-  sdr["RTL-SDR pair<br/>voice net + AIS"]
+  sdr["RTL-SDR + AIS receiver<br/>voice net + dAISy/RTL AIS"]
   pi["Raspberry Pi edge node<br/>RTLSDR-Airband, AIS-catcher, Icecast, activity clips"]
   lan["Private LAN / Wi-Fi"]
-  optiplex["OptiPlex home server<br/>API, transcription, export, telemetry"]
+  homebox["Ubuntu micro-computer<br/>API, transcription, export, telemetry"]
   ddb["DynamoDB<br/>clip metadata, transcripts, corrections"]
   s3raw["Private S3 raw audio<br/>unstarred raw/ expires, starred retained"]
   s3site["Private S3 public-site origin"]
@@ -23,43 +23,45 @@ flowchart LR
   antenna -->|RF at 156-162 MHz| sdr
   sdr -->|USB samples| pi
   pi -->|clip requests, status, live MP3| lan
-  lan --> optiplex
-  optiplex -->|durable read models| ddb
-  optiplex -->|presigned raw uploads| s3raw
-  optiplex -->|sanitized exports| s3site
+  lan --> homebox
+  homebox -->|durable read models| ddb
+  homebox -->|presigned raw uploads| s3raw
+  homebox -->|sanitized exports| s3site
   s3site --> public
-  public -->|read-only live API origin| optiplex
-  dev -->|tailnet-only operator/dev UI| optiplex
+  public -->|read-only live API origin| homebox
+  dev -->|tailnet-only operator/dev UI| homebox
 ```
 
-This layout is intentional. The Pi is not a weak substitute for the OptiPlex; it
-is the right place for low-latency radio plumbing because it is physically close
-to the antenna and SDR. The OptiPlex is the right place for local CPU-heavy work
-and service supervision: transcription, retry loops, publishing, realtime
-telemetry, and the public proxy. AWS is the durable/public edge for clip
-metadata, transcripts, raw audio, static assets, and public read-only delivery.
+This layout is intentional. The Pi is not a weak substitute for the Ubuntu
+micro-computer; it is the right place for low-latency radio plumbing because it
+is physically close to the antenna and SDR. The Ubuntu micro-computer is the
+right place for local CPU-heavy work and service supervision: transcription,
+retry loops, publishing, realtime telemetry, and the public proxy. AWS is the
+durable/public edge for clip metadata, transcripts, raw audio, static assets,
+and public read-only delivery.
 
 ## Signal And Data Path
 
 The normal path is:
 
 ```text
-antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> AWS public edge
+antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> Ubuntu micro-computer -> AWS public edge
 ```
 
-- **RF and USB:** the antenna feeds the RTL-SDR receivers, and the SDRs feed
-  samples to the Raspberry Pi over USB. Keep this physically simple: short
-  antenna jumpers, stable power, and enough ventilation.
+- **RF and USB/serial:** the antennas feed the voice RTL-SDR and either the
+  dAISy-catcher serial AIS receiver or the fallback AIS RTL-SDR. Keep this
+  physically simple: short antenna jumpers, stable power, and enough
+  ventilation.
 - **Pi edge work:** the Pi runs RTLSDR-Airband for the lower-block voice net,
   AIS-catcher for live AIS, speech-band cleanup, squelch/gating, Icecast MP3
   output, rolling WAV buffers, and activity clip detection. It can keep short
   retry/debug buffers locally under `/opt/talkingboats/spool`.
-- **LAN handoff:** the Pi reaches the OptiPlex over private Wi-Fi/LAN. The
-  current Pi is reached from the OptiPlex at `192.168.1.114`; mDNS names can be
-  stale, so verify the live address before changing receiver or telemetry
-  settings. The Pi asks the private API for presigned upload URLs instead of
-  holding cloud credentials.
-- **OptiPlex processing:** the OptiPlex records clip metadata through the
+- **LAN handoff:** the Pi reaches the Ubuntu micro-computer over private Wi-Fi/LAN.
+  The current Pi is reached from the Ubuntu micro-computer at `192.168.1.114`;
+  mDNS names can be stale, so verify the live address before changing receiver
+  or telemetry settings. The Pi asks the private API for presigned upload URLs
+  instead of holding cloud credentials.
+- **Ubuntu micro-computer processing:** the Ubuntu micro-computer records clip metadata through the
   DynamoDB-backed store, retries pending uploads, transcribes clips, generates
   static exports, and exposes the read-only proxy that CloudFront can call.
 - **Cloud public edge:** DynamoDB stores durable clip metadata, transcripts, and
@@ -67,18 +69,18 @@ antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> OptiPlex -> AWS public edge
   Unstarred raw audio expires after 90 days; starred clips are retained.
   CloudFront and Route53 provide the public `vhf` domain with only read-only
   app, clip, status, and live-audio paths. Route53 points `vhf-dev` to the
-  OptiPlex tailnet address for private dev/operator access.
+  Ubuntu micro-computer tailnet address for private dev/operator access.
 
 If a laptop is used for repo edits, remember that it is usually a control plane,
-not the runtime host. The OptiPlex is where the long-running workers, service
-environment, and local realtime telemetry normally live.
+not the runtime host. The Ubuntu micro-computer is where the long-running
+workers, service environment, and local realtime telemetry normally live.
 
 ## First Parts List
 
 - One RTL-SDR-class receiver with TCXO and SMA connector.
 - One window-friendly VHF antenna to start.
 - One Raspberry Pi close to the window to own the SDR and local Icecast stream.
-- One OptiPlex or similar always-on LAN server for transcription and publishing.
+- One Ubuntu micro-computer or similar always-on LAN server for transcription and publishing.
 - Quality Pi power supply. For Pi 3-class hardware, use a 5.1V / 2.5A micro-USB
   supply.
 - Optional powered USB hub if the Pi reports undervoltage with two SDRs attached.
@@ -147,12 +149,17 @@ Better marine antenna if placement is easy:
 - Voice dongle: center at `156.675 MHz`, sample at `2.56 MS/s`, and demodulate
   the balanced 12-channel profile: `05A`, `06`, `09`, `13`, `14`, `16`, `22A`,
   `67`, `68`, `69`, `71`, and `72`.
-- AIS dongle: AIS-catcher handles AIS 1 / AIS 2 near `162 MHz`, serves its live
-  map on the Pi, and optionally feeds AIS-catcher's community map. The dev web
-  app embeds that AIS-catcher viewer through the live proxy. Use a unique
-  RTL-SDR serial when available; otherwise set the voice and AIS device indexes
-  for the observed Pi order. The Pi wrapper sets the web viewer station identity
-  to `Elliott Bay VHF`, links it to `https://robertboscacci.com`, and shares an
+- AIS receiver: AIS-catcher handles AIS 1 / AIS 2 near `162 MHz`, serves its
+  live map on the Pi, and optionally feeds AIS-catcher's community map. Prefer
+  the dAISy-catcher serial receiver with `TALKINGBOATS_AIS_INPUT=auto` or
+  `serial`; the wrapper falls back to the AIS RTL-SDR when no serial receiver is
+  present. Use `TALKINGBOATS_AIS_SERIAL_PORT=/dev/serial0` only after the Pi
+  serial console is disabled and GPIO serial is enabled for HAT mode. Because
+  antenna jumpers can be ambiguous, verify the active antenna by comparing live
+  AIS message rate and nearby-vessel freshness after each cable move rather than
+  trusting labels. The dev web app embeds the AIS-catcher viewer through the live
+  proxy. The Pi wrapper sets the web viewer station identity to
+  `Elliott Bay VHF`, links it to `https://robertboscacci.com`, and shares an
   approximate Elliott Bay location with the local viewer by default.
 - VHF 68, `156.425 MHz`: Fun Channel for pleasure-craft working traffic.
 - VHF 14, `156.700 MHz`: Super Business Channel for Seattle Traffic / Puget Sound
@@ -164,11 +171,11 @@ Use the hardware for what it is good at:
 
 - **Raspberry Pi:** edge capture, stream continuity, activity gating, short
   rolling buffers, and safe retry queues. Keep memory and CPU bounded.
-- **OptiPlex:** Whisper/faster-whisper, S3 interaction, publishing, lexical
+- **Ubuntu micro-computer:** Whisper/faster-whisper, S3 interaction, publishing, lexical
   analysis, realtime telemetry, and public proxying. This is where the `dell`
   conda environment and long-running services normally live.
 - **MacBook or other laptop:** development, emergency AWS/static-site operations,
-  and browser checks. Do not assume it has the OptiPlex runtime state.
+  and browser checks. Do not assume it has the Ubuntu micro-computer runtime state.
 - **AWS:** DynamoDB clip/transcript/correction durability, private object
   storage, CloudFront, DNS, TLS, and public read-only delivery.
 

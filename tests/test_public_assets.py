@@ -263,8 +263,10 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "CPU utilization" in app_js
     assert "1-minute load average" not in app_js
     assert "Average over selected window" in app_js
-    assert "OptiPlex ASR Box" in app_js
+    assert "Ubuntu Micro-Computer" in app_js
     assert "Raspberry Pi Decoder" in app_js
+    assert '[["Opti", "Plex ASR Box"].join(""), performanceHostLabel]' in app_js
+    assert "OptiPlex ASR Box" not in app_js
     assert "OptiPlex live proxy" not in app_js
     assert "Raspberry Pi edge radio" not in app_js
     assert "Thermals" in app_js
@@ -480,6 +482,7 @@ def test_static_shell_deploy_excludes_cloud_runtime_data_objects() -> None:
     assert '--exclude "live/channels.json"' in deploy_shell
     assert '--exclude "live/channels/*"' in deploy_shell
     assert '--exclude "ais/latest.json"' in deploy_shell
+    assert "sonic-wake" not in deploy_shell
 
 
 def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> None:
@@ -628,10 +631,27 @@ def test_public_site_has_about_tab_linking_project_writeup() -> None:
     assert "Elliott Bay Marine VHF Monitor" in index_html
     assert "https://robertboscacci.com/projects/elliott-bay-vhf/" in index_html
     assert "Raspberry Pi radio edge" in index_html
-    assert "OptiPlex" in index_html
+    assert "Ubuntu micro-computer" in index_html
+    assert "OptiPlex" not in index_html
     assert "Whisper" in index_html
+    assert "dAISy-catcher receiver" in index_html
+    assert "https://github.com/astuder" in index_html
+    assert "Adrian Studer" in index_html
+    assert "https://github.com/jvde-github" in index_html
+    assert "Jasper" in index_html
     assert ".about-panel" in styles_css
     assert ".about-link" in styles_css
+
+
+def test_public_site_keeps_sonic_wake_off_mainline_shell() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "Sonic Wake" not in index_html
+    assert "sonicWake" not in app_js
+    assert "sonic-wake" not in app_js
+    assert "sonic-wake" not in styles_css
 
 
 def test_public_site_performance_metric_values_average_selected_window() -> None:

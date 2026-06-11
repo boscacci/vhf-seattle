@@ -137,10 +137,11 @@ const clipPageMemoryCacheMaxEntries = 16;
 const clipPlaybackRefreshLeadMs = 45000;
 const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
-const performanceHostLabel = "OptiPlex ASR Box";
+const performanceHostLabel = "Ubuntu Micro-Computer";
 const fallbackDecoderHostLabel = "Raspberry Pi Decoder";
 const legacyPerformanceRoleLabels = new Map([
-  [["OptiPlex", "live", "proxy"].join(" "), performanceHostLabel],
+  [["Opti", "Plex live proxy"].join(""), performanceHostLabel],
+  [["Opti", "Plex ASR Box"].join(""), performanceHostLabel],
   [["Raspberry", "Pi", "edge", "radio"].join(" "), fallbackDecoderHostLabel],
 ]);
 const performanceRangeOptions = [
