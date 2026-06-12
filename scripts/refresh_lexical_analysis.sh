@@ -7,7 +7,7 @@ cd "${repo_root}"
 export PATH="/home/rob/.local/bin:/snap/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 
 output_dir="${TALKINGBOATS_LEXICAL_OUTPUT_DIR:-outputs/public-site}"
-deploy_env="${TALKINGBOATS_LEXICAL_DEPLOY_ENV:-dev}"
+deploy_envs="${TALKINGBOATS_LEXICAL_DEPLOY_ENVS:-${TALKINGBOATS_LEXICAL_DEPLOY_ENV:-dev prod}}"
 clip_store_backend="${TALKINGBOATS_CLIP_STORE_BACKEND:-dynamodb}"
 conda_env="${TALKINGBOATS_LEXICAL_CONDA_ENV:-dell}"
 conda_bin="${TALKINGBOATS_CONDA_BIN:-/home/rob/miniforge3/condabin/conda}"
@@ -27,7 +27,8 @@ rebuilds the public static export, and deploys it to dev by default.
 
 Environment overrides:
   TALKINGBOATS_LEXICAL_OUTPUT_DIR       Static export directory
-  TALKINGBOATS_LEXICAL_DEPLOY_ENV       dev or prod; defaults to dev
+  TALKINGBOATS_LEXICAL_DEPLOY_ENVS      Space-separated deploy targets; defaults to "dev prod"
+  TALKINGBOATS_LEXICAL_DEPLOY_ENV       Legacy single deploy target override
   TALKINGBOATS_CLIP_STORE_BACKEND       Clip store backend; defaults to dynamodb
   TALKINGBOATS_LEXICAL_CONDA_ENV        Conda env; defaults to dell
   TALKINGBOATS_CONDA_BIN                Conda binary path
@@ -49,8 +50,16 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
-if [[ "${deploy_env}" != "dev" && "${deploy_env}" != "prod" ]]; then
-  echo "TALKINGBOATS_LEXICAL_DEPLOY_ENV must be dev or prod, got: ${deploy_env}" >&2
+valid_deploy_env_count=0
+for deploy_env in ${deploy_envs}; do
+  if [[ "${deploy_env}" != "dev" && "${deploy_env}" != "prod" ]]; then
+    echo "Deploy targets must be dev or prod, got: ${deploy_env}" >&2
+    exit 2
+  fi
+  valid_deploy_env_count=$((valid_deploy_env_count + 1))
+done
+if [[ "${valid_deploy_env_count}" -eq 0 ]]; then
+  echo "At least one deploy target is required." >&2
   exit 2
 fi
 
@@ -85,6 +94,15 @@ rm -rf "${output_dir}/analysis"
   --output-dir "${output_dir}" \
   --page-size "${page_size}"
 
-echo "Deploying refreshed analysis to ${deploy_env}"
-scripts/deploy_public_site.sh "${deploy_env}" "${output_dir}"
+echo "Deploying refreshed export to ${deploy_envs}"
+for deploy_env in ${deploy_envs}; do
+  case "${deploy_env}" in
+    dev)
+      scripts/deploy_public_site.sh "dev" "${output_dir}"
+      ;;
+    prod)
+      scripts/deploy_generated_public_assets.sh "prod" "${output_dir}"
+      ;;
+  esac
+done
 echo "Refresh complete"

@@ -3,11 +3,13 @@ from pathlib import Path
 from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 
 
-def test_lexical_refresh_script_regenerates_exports_and_deploys_dev() -> None:
+def test_lexical_refresh_script_regenerates_exports_and_promotes_generated_prod_assets() -> None:
     script = Path("scripts/refresh_lexical_analysis.sh").read_text(encoding="utf-8")
 
     assert "TALKINGBOATS_LEXICAL_OUTPUT_DIR" in script
     assert "TALKINGBOATS_LEXICAL_DEPLOY_ENV" in script
+    assert "TALKINGBOATS_LEXICAL_DEPLOY_ENVS" in script
+    assert 'deploy_envs="${TALKINGBOATS_LEXICAL_DEPLOY_ENVS:-${TALKINGBOATS_LEXICAL_DEPLOY_ENV:-dev prod}}"' in script
     assert 'clip_store_backend="${TALKINGBOATS_CLIP_STORE_BACKEND:-dynamodb}"' in script
     assert 'raw_bucket="${TALKINGBOATS_RAW_BUCKET:-}"' in script
     assert 'tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"' in script
@@ -29,7 +31,9 @@ def test_lexical_refresh_script_regenerates_exports_and_deploys_dev() -> None:
     assert "live-transcripts.sqlite3" not in script
     assert 'if [[ -z "${raw_bucket}" ]]; then' in script
     assert 'cd "${tofu_dir}"' in script
-    assert "scripts/deploy_public_site.sh \"${deploy_env}\" \"${output_dir}\"" in script
+    assert "for deploy_env in ${deploy_envs}; do" in script
+    assert "scripts/deploy_public_site.sh \"dev\" \"${output_dir}\"" in script
+    assert "scripts/deploy_generated_public_assets.sh \"prod\" \"${output_dir}\"" in script
     assert "Refresh complete" in script
 
 

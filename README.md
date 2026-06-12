@@ -231,6 +231,11 @@ scripts/deploy_public_site.sh dev outputs/public-site
 scripts/deploy_public_site.sh prod outputs/public-site
 ```
 
+The scheduled lexical refresh rebuilds generated public artifacts, full-deploys
+the dev export, and promotes only `public_manifest.json`, `clips/`, and
+`analysis/` to prod so the public clips stay current without bypassing the
+main-branch guard for shell changes.
+
 ## Useful Docs
 
 - [Security model](docs/security-model.md)

@@ -59,6 +59,25 @@ def test_full_public_deploy_supports_external_tofu_state_dir() -> None:
     assert 'cd "${tofu_dir}"' in script
 
 
+def test_generated_public_assets_deploy_promotes_manifest_clips_and_analysis_only() -> None:
+    script = Path("scripts/deploy_generated_public_assets.sh").read_text(encoding="utf-8")
+
+    assert 'tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"' in script
+    assert 'cd "${tofu_dir}"' in script
+    assert 'aws s3 cp "${site_dir}/public_manifest.json"' in script
+    assert 'aws s3 sync "${site_dir}/clips"' in script
+    assert 'aws s3 sync "${site_dir}/analysis"' in script
+    assert '--include "*.mp3"' in script
+    assert '--include "lexical.json"' in script
+    assert '--include "search_index.json"' in script
+    assert '--include "topic_clusters.html"' in script
+    assert '"/public_manifest.json"' in script
+    assert '"/clips/*"' in script
+    assert '"/analysis/*"' in script
+    assert "upload_shell_entrypoint" not in script
+    assert "index.html" not in script
+
+
 def test_lexical_refresh_analyzes_transcript_store_after_public_export() -> None:
     script = Path("scripts/refresh_lexical_analysis.sh").read_text(encoding="utf-8")
 

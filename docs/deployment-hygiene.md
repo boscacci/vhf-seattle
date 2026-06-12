@@ -36,6 +36,13 @@ from `dev`, `main`, `codex/*`, or `feature/*`, and allows prod deploys only from
 `main` with a clean worktree. For a deliberate emergency, set
 `TALKINGBOATS_ALLOW_CROSS_ENV_DEPLOY=1` and record why in the operator notes.
 
+Generated public artifacts have a narrower path. The lexical refresh job
+rebuilds `outputs/public-site`, deploys the full generated export to dev, then
+uses `scripts/deploy_generated_public_assets.sh prod outputs/public-site` to
+promote only `public_manifest.json`, `clips/`, and `analysis/` to prod. This
+keeps public clip/audio/analysis data current from the always-on processing host
+without allowing an archive deploy copy to change the production app shell.
+
 ## Resource Policy
 
 OpenTofu owns durable AWS resources in `infra/opentofu`.
@@ -84,3 +91,11 @@ Before prod deploy:
 - Run the relevant tests again from `main`.
 - Deploy with `scripts/deploy_public_site.sh prod outputs/public-site`.
 - Smoke `https://vhf.robertboscacci.com`.
+
+Before generated artifact promotion:
+
+- Confirm `outputs/public-site/public_manifest.json` has the expected
+  `generated_at` and newest clip timestamp.
+- Deploy with `scripts/deploy_generated_public_assets.sh prod outputs/public-site`.
+- Smoke `https://vhf.robertboscacci.com/public_manifest.json` and a recent
+  non-traffic clip page.
