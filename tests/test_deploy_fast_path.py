@@ -208,8 +208,13 @@ def test_vhf_dev_tailnet_proxy_config_documents_custom_tls_front_door() -> None:
     assert "vhf-dev-tailnet-proxy" in compose
     assert "network_mode: host" in compose
     assert "/home/rob/vhf-dev-letsencrypt:/etc/letsencrypt:ro" in compose
-    assert "listen 100.124.5.39:443 ssl;" in nginx
-    assert "listen [fd7a:115c:a1e0::2601:597]:443 ssl;" in nginx
+    assert "stream {" in nginx
+    assert "ssl_preread_server_name" in nginx
+    assert "gotify.robertboscacci.com 127.0.0.1:8444;" in nginx
+    assert "laundry.robertboscacci.com 127.0.0.1:8444;" in nginx
+    assert "listen 100.124.5.39:443;" in nginx
+    assert "listen [fd7a:115c:a1e0::2601:597]:443;" in nginx
+    assert "listen 127.0.0.1:9443 ssl;" in nginx
     assert "server_name vhf-dev.robertboscacci.com;" in nginx
     assert (
         "ssl_certificate /etc/letsencrypt/live/vhf-dev.robertboscacci.com/fullchain.pem;"

@@ -11,8 +11,8 @@ Environment=TALKINGBOATS_PROXY_PRIVATE_API_URL=http://192.168.1.247:8034
 Environment=TALKINGBOATS_PROXY_TAILNET_DEV_ROUTES_ENABLED=false
 Environment=TALKINGBOATS_PROXY_PERFORMANCE_BACKGROUND_ENABLED=false
 ExecStart=/home/rob/miniforge3/condabin/conda run -n dell talkingboats-live-radio-proxy --host 127.0.0.1 --port 8096
-Restart=on-failure
-RestartSec=5
+Restart=always
+RestartSec=10
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
