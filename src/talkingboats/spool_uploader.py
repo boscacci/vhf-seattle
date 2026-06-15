@@ -101,7 +101,7 @@ class ClipPreparationError(Exception):
 
 
 def infer_spool_channel(path: Path) -> Channel:
-    for part in reversed(path.parts):
+    for part in (path.name, path.parent.name):
         if channel := _normalize_spool_channel(part):
             return channel
         for token in re.split(r"[^A-Za-z0-9]+", part):

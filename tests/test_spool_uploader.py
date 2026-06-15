@@ -99,6 +99,29 @@ def test_spool_uploader_skips_unknown_channel_files_and_keeps_discovering(tmp_pa
     assert clips[0].channel == "14"
 
 
+def test_spool_uploader_does_not_infer_channel_from_unrelated_ancestors(tmp_path) -> None:
+    spool_root = tmp_path / "pytest-10" / "spool"
+    unknown_dir = spool_root / "unknown"
+    known_dir = spool_root / "14"
+    unknown_dir.mkdir(parents=True)
+    known_dir.mkdir()
+    unknown = unknown_dir / "vhf-99_20260605_123221.mp3"
+    known = known_dir / "vhf-14_20260605_123222.mp3"
+    unknown.write_bytes(b"unknown audio")
+    known.write_bytes(b"known audio")
+    old_timestamp = datetime(2026, 6, 5, 12, 33, tzinfo=UTC).timestamp()
+
+    clips = discover_completed_audio_files(
+        spool_root=spool_root,
+        now=datetime(2026, 6, 5, 12, 34, tzinfo=UTC),
+        min_age_seconds=10,
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+    )
+
+    assert [clip.audio_path for clip in clips] == [known]
+    assert clips[0].channel == "14"
+
+
 def test_spool_uploader_optimizes_clip_before_upload(tmp_path) -> None:
     channel_dir = tmp_path / "14"
     channel_dir.mkdir()

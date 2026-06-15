@@ -103,6 +103,8 @@ def render_rtlsdr_airband_config(
 ) -> str:
     if profile.mode != "multichannel" or profile.center_frequency_hz is None:
         raise ValueError("only multichannel profiles can be rendered as RTLSDR-Airband config")
+    if squelch_threshold is not None and squelch_snr_threshold is not None:
+        raise ValueError("squelch_threshold and squelch_snr_threshold are mutually exclusive")
     cleaned_output_root = output_root.rstrip("/")
     selected_icecast_outputs = tuple(icecast_outputs)
     if icecast_output is not None:

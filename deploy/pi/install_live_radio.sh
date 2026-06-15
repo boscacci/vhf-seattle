@@ -166,7 +166,7 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_VOICE_DEVICE_INDEX=%q\n' "0"
     printf 'TALKINGBOATS_VOICE_SDR_SERIAL=%q\n' ""
     printf 'TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=%q\n' "-35"
-    printf 'TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=%q\n' "20"
+    printf 'TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=%q\n' ""
     printf 'TALKINGBOATS_AIS_INPUT=%q\n' "auto"
     printf 'TALKINGBOATS_AIS_SERIAL_PORT=%q\n' ""
     printf 'TALKINGBOATS_AIS_SERIAL_BAUD=%q\n' "115200"
@@ -266,7 +266,7 @@ append_env_if_missing TALKINGBOATS_MULTICHANNEL_SPOOL_DIR "${airband_spool_root}
 append_env_if_missing TALKINGBOATS_VOICE_DEVICE_INDEX "0"
 append_env_if_missing TALKINGBOATS_VOICE_SDR_SERIAL ""
 append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_THRESHOLD "-35"
-append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD "20"
+append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD ""
 append_env_if_missing TALKINGBOATS_AIS_INPUT "auto"
 append_env_if_missing TALKINGBOATS_AIS_SERIAL_PORT ""
 append_env_if_missing TALKINGBOATS_AIS_SERIAL_BAUD "115200"
@@ -303,6 +303,7 @@ replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600" "5000"
 replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS "1.2" "2.0"
 replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS "2.5" "0.4"
 replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_MAX_CLIP_SECONDS "45" "30"
+replace_env_if_value TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD "20" ""
 replace_env_if_value TALKINGBOATS_AIS_STATION_NAME "Elliott Bay VHF" "Elliott Bay VHF"
 chmod 0600 "${env_file}"
 
@@ -314,6 +315,11 @@ set +a
 : "${TALKINGBOATS_ICECAST_SOURCE_PASSWORD:?missing source password}"
 : "${TALKINGBOATS_ICECAST_RELAY_PASSWORD:?missing relay password}"
 : "${TALKINGBOATS_ICECAST_ADMIN_PASSWORD:?missing admin password}"
+
+if [[ -n "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD:-}" && -n "${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD:-}" ]]; then
+  echo "Set only one of TALKINGBOATS_VOICE_SQUELCH_THRESHOLD or TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD." >&2
+  exit 2
+fi
 
 if [[ -x "${TALKINGBOATS_AIRBAND_BINARY:-/usr/local/bin/rtl_airband}" ]]; then
   replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "debug" "voice_net_balanced"

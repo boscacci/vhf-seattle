@@ -186,7 +186,15 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
         '"${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD}")'
         in installer
     )
-    assert 'elif [[ -n "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD:-}" ]]' not in installer
+    assert 'printf \'TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=%q\\n\' "-35"' in installer
+    assert 'printf \'TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=%q\\n\' ""' in installer
+    assert 'append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_THRESHOLD "-35"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD ""' in installer
+    assert (
+        'replace_env_if_value TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD "20" ""'
+        in installer
+    )
+    assert "Set only one of TALKINGBOATS_VOICE_SQUELCH_THRESHOLD or" in installer
     assert '--icecast-output "13:/talkingboats-13.mp3:Talking Boats Bridge-to-bridge"' in installer
     assert (
         '--icecast-output "14:${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}:'

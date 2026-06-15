@@ -56,7 +56,6 @@ def test_voice_net_airband_config_pins_device_serial_sample_rate_and_squelch() -
         output_root="/opt/talkingboats/spool/airband",
         device_serial="VOICE123",
         squelch_threshold=-35.0,
-        squelch_snr_threshold=20.0,
     )
 
     assert 'serial = "VOICE123";' in config
@@ -65,7 +64,7 @@ def test_voice_net_airband_config_pins_device_serial_sample_rate_and_squelch() -
     assert "centerfreq = 156675000;" in config
     assert config.count('type = "file";') == 19
     assert config.count("squelch_threshold = -35;") == 19
-    assert config.count("squelch_snr_threshold = 20;") == 19
+    assert "squelch_snr_threshold" not in config
     assert "freq = 156250000;" in config
     assert "freq = 156275000;" in config
     assert "freq = 156800000;" in config
@@ -73,6 +72,20 @@ def test_voice_net_airband_config_pins_device_serial_sample_rate_and_squelch() -
     assert "freq = 156925000;" in config
     assert 'label = "vhf-05a";' in config
     assert 'label = "vhf-65a";' in config
+
+
+def test_airband_config_rejects_conflicting_squelch_modes() -> None:
+    try:
+        render_rtlsdr_airband_config(
+            CAPTURE_PROFILES["voice_net_balanced"],
+            output_root="/opt/talkingboats/spool/airband",
+            squelch_threshold=-35.0,
+            squelch_snr_threshold=20.0,
+        )
+    except ValueError as exc:
+        assert "squelch_threshold and squelch_snr_threshold are mutually exclusive" in str(exc)
+    else:
+        raise AssertionError("conflicting Airband squelch modes should fail")
 
 
 def test_elliott_bay_airband_config_writes_channel_mp3_spool_outputs() -> None:
