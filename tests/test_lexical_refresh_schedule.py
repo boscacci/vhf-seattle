@@ -9,7 +9,10 @@ def test_lexical_refresh_script_regenerates_exports_and_promotes_generated_prod_
     assert "TALKINGBOATS_LEXICAL_OUTPUT_DIR" in script
     assert "TALKINGBOATS_LEXICAL_DEPLOY_ENV" in script
     assert "TALKINGBOATS_LEXICAL_DEPLOY_ENVS" in script
-    assert 'deploy_envs="${TALKINGBOATS_LEXICAL_DEPLOY_ENVS:-${TALKINGBOATS_LEXICAL_DEPLOY_ENV:-dev prod}}"' in script
+    assert (
+        'deploy_envs="${TALKINGBOATS_LEXICAL_DEPLOY_ENVS:-'
+        '${TALKINGBOATS_LEXICAL_DEPLOY_ENV:-dev prod}}"' in script
+    )
     assert 'clip_store_backend="${TALKINGBOATS_CLIP_STORE_BACKEND:-dynamodb}"' in script
     assert 'raw_bucket="${TALKINGBOATS_RAW_BUCKET:-}"' in script
     assert 'tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"' in script
