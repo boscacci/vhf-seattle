@@ -9,6 +9,7 @@ from talkingboats.clip_transcriber import (
     ClipNotAvailable,
     UploadedClipStore,
     _transcriber_start_log_fields,
+    is_displayable_transcript,
     process_pending_uploads_once,
 )
 from talkingboats.schemas import ClipPresignRequest
@@ -248,6 +249,30 @@ def test_uploaded_clip_transcriber_marks_ellipsis_only_segments_empty(tmp_path) 
     assert store.segments_for_clip(clip.key) == []
 
 
+def test_uploaded_clip_transcriber_marks_repeated_plosive_hallucinations_empty(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=10/date=2026-06-13/20260613T233031Z-static.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request(channel="10"))
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=WritingClipReader(expected_channel="10"),
+        model=RepeatedPlosiveHallucinationSpeechModel(),
+        limit=10,
+        audio_filter=None,
+    )
+
+    clip = store.get_clip(key)
+    assert summary.empty == 1
+    assert clip is not None
+    assert clip.status == "empty"
+    assert clip.transcript == ""
+    assert store.segments_for_clip(clip.key) == []
+
+
 def test_uploaded_clip_transcriber_retries_interrupted_processing_rows(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)
@@ -367,6 +392,47 @@ def test_recent_transcribed_clips_hide_legacy_ellipsis_only_rows(tmp_path) -> No
     assert [clip.key for clip in clips] == [good_key]
     assert store.transcribed_channel_counts() == {"14": 1}
     assert store.transcribed_clip_count(channel="14") == 1
+
+
+def test_recent_transcribed_clips_hide_legacy_repeated_noise_rows(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    good_key = "raw/channel=10/date=2026-06-13/20260613T232949Z-good.mp3"
+    noise_key = "raw/channel=10/date=2026-06-13/20260613T233031Z-noise.mp3"
+    store.record_presigned_upload(key=good_key, request=_clip_request(channel="10"))
+    store.record_presigned_upload(
+        key=noise_key,
+        request=_clip_request(channel="10", started_at="2026-06-13T23:30:31Z"),
+    )
+    store.mark_transcribed(
+        good_key,
+        [
+            _segment(
+                "Do you have a channel there, Cap?",
+                "2026-06-13T21:00:00Z",
+                "2026-06-13T21:00:03Z",
+            )
+        ],
+    )
+    _seed_legacy_transcribed_clip(
+        db_path,
+        noise_key,
+        transcript="Tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk.",
+    )
+
+    clips = store.recent_transcribed(limit=10, channel="10")
+
+    assert [clip.key for clip in clips] == [good_key]
+    assert store.transcribed_channel_counts() == {"10": 1}
+    assert store.transcribed_clip_count(channel="10") == 1
+
+
+def test_transcript_displayability_keeps_short_real_radio_phrases() -> None:
+    assert is_displayable_transcript("PAN-PAN, PAN-PAN, all stations.")
+    assert is_displayable_transcript("6-7, so yeah, whenever crew's back.")
+    assert not is_displayable_transcript("P-P-P-P-P-P-P-P-P-P-P-P-P-")
+    assert not is_displayable_transcript("Tuk, tuk, tuk, tuk, tuk, tuk.")
+    assert not is_displayable_transcript("0 0 0 0 0 0 0 0 0")
 
 
 def test_transcript_corrections_override_recent_text_and_export_training_pairs(tmp_path) -> None:
@@ -628,6 +694,21 @@ class EllipsisOnlySpeechModel:
                     start=0.0,
                     end=30.0,
                     text=" ... ... ... ",
+                    avg_logprob=-0.2,
+                )
+            ],
+            None,
+        )
+
+
+class RepeatedPlosiveHallucinationSpeechModel:
+    def transcribe(self, path: str, **kwargs):
+        return (
+            [
+                SimpleNamespace(
+                    start=0.0,
+                    end=4.0,
+                    text=" Tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk. ",
                     avg_logprob=-0.2,
                 )
             ],

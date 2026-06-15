@@ -58,6 +58,7 @@ talkingboats-analyze-transcripts = "talkingboats.lexical_analysis:main"
 talkingboats-train-asr-feedback = "talkingboats.asr_feedback:main"
 talkingboats-backfill-durable-events = "talkingboats.durable_backfill:main"
 talkingboats-tag-raw-retention = "talkingboats.retention:main"
+talkingboats-clean-noise-transcripts = "talkingboats.transcript_cleanup:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

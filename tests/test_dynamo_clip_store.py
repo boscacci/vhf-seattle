@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from talkingboats.durable_backfill import backfill_clip_read_model
 from talkingboats.dynamo_clip_store import DynamoClipStoreConfig, DynamoUploadedClipStore
 from talkingboats.schemas import ClipPresignRequest
+from talkingboats.transcript_cleanup import cleanup_noise_transcripts
 
 
 def test_dynamo_clip_store_serves_recent_counts_pending_and_corrections() -> None:
@@ -167,6 +168,49 @@ def test_dynamo_clip_store_hides_legacy_ellipsis_only_rows() -> None:
     assert [clip.key for clip in store.recent_transcribed(limit=5)] == [good_key]
     assert store.transcribed_channel_counts() == {"14": 1}
     assert store.transcribed_clip_count(channel="14") == 1
+
+
+def test_dynamo_clip_store_cleanup_marks_legacy_noise_transcripts_empty() -> None:
+    table = FakeDynamoTable()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        event_store=CapturingEventStore(),
+        table=table,
+    )
+    good_key = "raw/channel=10/date=2026-06-13/good.mp3"
+    noise_key = "raw/channel=10/date=2026-06-13/noise.mp3"
+    store.record_presigned_upload(key=good_key, request=_request(channel="10"))
+    store.record_presigned_upload(key=noise_key, request=_request(channel="10"))
+    store.mark_transcribed(
+        good_key,
+        [
+            SimpleNamespace(
+                text="Do you have a channel there, Cap?",
+                started_at="2026-06-13T23:29:49Z",
+                ended_at="2026-06-13T23:29:53Z",
+                relative_start_seconds=0.0,
+                relative_end_seconds=4.0,
+            )
+        ],
+    )
+    _seed_legacy_dynamo_transcribed_clip(
+        table,
+        noise_key,
+        transcript="Tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk.",
+    )
+
+    dry_run = cleanup_noise_transcripts(store, dry_run=True, page_size=2)
+    applied = cleanup_noise_transcripts(store, dry_run=False, page_size=2)
+
+    assert dry_run.scanned == 2
+    assert dry_run.candidates == 1
+    assert dry_run.cleaned == 0
+    assert applied.scanned == 2
+    assert applied.candidates == 1
+    assert applied.cleaned == 1
+    assert store.get_clip(noise_key).status == "empty"
+    assert [clip.key for clip in store.recent_transcribed(limit=5)] == [good_key]
+    assert store.transcribed_channel_counts() == {"10": 1}
 
 
 def test_dynamo_clip_store_streams_recent_transcribed_with_cursor_pages() -> None:

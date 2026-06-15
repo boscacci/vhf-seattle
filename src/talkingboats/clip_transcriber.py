@@ -425,6 +425,82 @@ class UploadedClipStore:
             )
         return clips
 
+    def iter_transcribed_raw(
+        self,
+        *,
+        page_size: int,
+        excluded_channels: tuple[str, ...] = (),
+    ) -> Iterable[RecentTranscribedClip]:
+        if page_size <= 0:
+            raise ValueError("page_size must be positive")
+        filters = [
+            "uploaded_clips.status = 'transcribed'",
+            "uploaded_clips.transcript IS NOT NULL",
+            "trim(uploaded_clips.transcript) != ''",
+        ]
+        params: list[object] = []
+        if excluded_channels:
+            placeholders = ", ".join("?" for _ in excluded_channels)
+            filters.append(f"uploaded_clips.channel NOT IN ({placeholders})")
+            params.extend(excluded_channels)
+        where_clause = "\n                    AND ".join(filters)
+        offset = 0
+        while True:
+            with sqlite3.connect(self.path) as connection:
+                rows = connection.execute(
+                    f"""
+                    SELECT
+                        uploaded_clips.key,
+                        uploaded_clips.channel,
+                        uploaded_clips.started_at,
+                        uploaded_clips.ended_at,
+                        uploaded_clips.duration_seconds,
+                        uploaded_clips.content_type,
+                        COALESCE(
+                            uploaded_clip_transcript_corrections.corrected_transcript,
+                            uploaded_clips.transcript
+                        ) AS displayed_transcript,
+                        uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL,
+                        uploaded_clip_features.featured_at
+                    FROM uploaded_clips
+                    LEFT JOIN uploaded_clip_transcript_corrections
+                        ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
+                    LEFT JOIN uploaded_clip_features
+                        ON uploaded_clip_features.clip_key = uploaded_clips.key
+                    WHERE {where_clause}
+                    ORDER BY uploaded_clips.started_at DESC, uploaded_clips.id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (*params, page_size, offset),
+                ).fetchall()
+            if not rows:
+                break
+            for (
+                key,
+                channel,
+                started_at,
+                ended_at,
+                duration_seconds,
+                content_type,
+                transcript,
+                transcript_reviewed,
+                featured_at,
+            ) in rows:
+                yield RecentTranscribedClip(
+                    key=key,
+                    channel=channel,
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_seconds=duration_seconds,
+                    content_type=content_type,
+                    transcript=transcript,
+                    segments=self.segments_for_clip(key),
+                    transcript_reviewed=bool(transcript_reviewed),
+                    featured=featured_at is not None,
+                    featured_at=featured_at,
+                )
+            offset += len(rows)
+
     def transcribed_clip_for_public_playback(
         self,
         *,
@@ -1481,7 +1557,24 @@ def _is_likely_static_hallucination(text: str) -> bool:
         "well be right back",
     }:
         return True
-    return normalized.startswith("subtitles by ") or normalized.startswith("subs by ")
+    return (
+        normalized.startswith("subtitles by ")
+        or normalized.startswith("subs by ")
+        or _is_repeated_short_token_hallucination(normalized)
+    )
+
+
+def _is_repeated_short_token_hallucination(normalized_text: str) -> bool:
+    tokens = re.findall(r"[a-z0-9]+", normalized_text)
+    if len(tokens) < 6:
+        return False
+    if any(len(token) > 3 for token in tokens):
+        return False
+    counts: dict[str, int] = {}
+    for token in tokens:
+        counts[token] = counts.get(token, 0) + 1
+    most_common_count = max(counts.values())
+    return most_common_count / len(tokens) >= 0.75
 
 
 def _suffix_for_content_type(content_type: str) -> str:

@@ -285,6 +285,24 @@ class DynamoUploadedClipStore:
                 continue
             yield _recent_from_item(item)
 
+    def iter_transcribed_raw(
+        self,
+        *,
+        page_size: int,
+        excluded_channels: tuple[str, ...] = (),
+    ) -> Iterable[RecentTranscribedClip]:
+        if page_size <= 0:
+            raise ValueError("page_size must be positive")
+        excluded = {excluded.upper() for excluded in excluded_channels}
+        for item in self._iter_query_items(
+            TRANSCRIBED_PK,
+            scan_forward=False,
+            page_size=page_size,
+        ):
+            if str(item.get("channel") or "").upper() in excluded:
+                continue
+            yield _recent_from_item(item)
+
     def transcribed_clip_for_public_playback(
         self,
         *,
