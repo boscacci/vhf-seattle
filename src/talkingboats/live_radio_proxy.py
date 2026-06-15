@@ -379,7 +379,7 @@ class ProxySettings:
     retune_ssh_target: str = "192.168.1.114"
     pi_env_path: str = "/etc/talkingboats/live-radio.env"
     ffmpeg_path: str = "ffmpeg"
-    restart_transcriber_service: bool = True
+    restart_transcriber_service: bool = False
     enable_debug_endpoints: bool = False
     tailnet_dev_routes_enabled: bool = False
     performance_background_enabled: bool = True
@@ -438,7 +438,10 @@ class ProxySettings:
                 cls.retune_ssh_target,
             ),
             ffmpeg_path=os.environ.get("TALKINGBOATS_PROXY_FFMPEG_PATH", cls.ffmpeg_path),
-            restart_transcriber_service=_env_bool("TALKINGBOATS_PROXY_RESTART_TRANSCRIBER", True),
+            restart_transcriber_service=_env_bool(
+                "TALKINGBOATS_PROXY_RESTART_TRANSCRIBER",
+                cls.restart_transcriber_service,
+            ),
             enable_debug_endpoints=_env_bool("TALKINGBOATS_PROXY_ENABLE_DEBUG_ENDPOINTS", False),
             tailnet_dev_routes_enabled=_env_bool(
                 "TALKINGBOATS_PROXY_TAILNET_DEV_ROUTES_ENABLED",
@@ -788,7 +791,7 @@ def create_app(
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(settings.cors_origins),
-            allow_methods=["GET", "POST"],
+            allow_methods=["GET", "POST", "DELETE"],
             allow_headers=["*"],
         )
 
@@ -819,6 +822,27 @@ def create_app(
                 settings,
                 client_factory,
                 forward_content_type=True,
+            )
+
+        @app.delete("/api/clips/corrections")
+        async def remove_clip_correction(request: Request) -> Response:
+            _require_tailnet_operator(request)
+            return await _proxy_private_api(
+                request,
+                "/api/clips/corrections",
+                settings,
+                client_factory,
+                forward_content_type=True,
+            )
+
+        @app.get("/api/clips/corrections")
+        async def clip_corrections(request: Request) -> Response:
+            _require_tailnet_operator(request)
+            return await _proxy_private_api(
+                request,
+                "/api/clips/corrections",
+                settings,
+                client_factory,
             )
 
         @app.post("/api/clips/features")
@@ -971,6 +995,8 @@ def create_app(
     @app.get("/clips/", include_in_schema=False)
     @app.get("/hall-of-fame", include_in_schema=False)
     @app.get("/hall-of-fame/", include_in_schema=False)
+    @app.get("/reviewed", include_in_schema=False)
+    @app.get("/reviewed/", include_in_schema=False)
     @app.get("/search", include_in_schema=False)
     @app.get("/search/", include_in_schema=False)
     @app.get("/live", include_in_schema=False)

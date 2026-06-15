@@ -64,8 +64,8 @@ class EdgeCaptureConfig:
     threshold_rms: int = 8_000
     min_clip_seconds: float = 1.0
     max_clip_seconds: float = 45.0
-    pre_roll_seconds: float = 0.0
-    post_roll_seconds: float = 0.3
+    pre_roll_seconds: float = 0.5
+    post_roll_seconds: float = 0.7
     live_squelch_lookahead_seconds: float = 1.0
 
     def __post_init__(self) -> None:
@@ -764,8 +764,8 @@ def main() -> None:
     parser.add_argument("--threshold-rms", type=int, default=8_000)
     parser.add_argument("--min-clip-seconds", type=float, default=1.0)
     parser.add_argument("--max-clip-seconds", type=float, default=45.0)
-    parser.add_argument("--pre-roll-seconds", type=float, default=0.0)
-    parser.add_argument("--post-roll-seconds", type=float, default=0.3)
+    parser.add_argument("--pre-roll-seconds", type=float, default=0.5)
+    parser.add_argument("--post-roll-seconds", type=float, default=0.7)
     parser.add_argument("--live-squelch-lookahead-seconds", type=float, default=1.0)
     parser.add_argument("--chunk-size", type=int, default=24_000)
     parser.add_argument("--tee-stdout", action="store_true")

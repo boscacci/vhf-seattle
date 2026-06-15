@@ -50,6 +50,8 @@ from talkingboats.schemas import (
     LiveChannelsResponse,
     PlaybackUrlRequest,
     PlaybackUrlResponse,
+    TranscriptCorrectionDeleteRequest,
+    TranscriptCorrectionDeleteResponse,
     TranscriptCorrectionRequest,
     TranscriptCorrectionResponse,
 )
@@ -135,6 +137,7 @@ def _published_playable_clip_summary(
     public_site_dir: FilePath,
     *,
     featured_only: bool = False,
+    reviewed_only: bool = False,
 ) -> dict[str, object]:
     manifest_path = public_site_dir / "public_manifest.json"
     try:
@@ -150,6 +153,8 @@ def _published_playable_clip_summary(
         if not isinstance(clip, Mapping):
             continue
         if featured_only and not clip.get("featured"):
+            continue
+        if reviewed_only and not clip.get("transcript_reviewed"):
             continue
         if not clip.get("audio_public_filename"):
             continue
@@ -189,7 +194,10 @@ async def presign_clip_upload(
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
     event_store: Annotated[DurableEventStore, Depends(get_durable_event_store)],
-    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+    clip_store: Annotated[
+        UploadedClipStore | DynamoUploadedClipStore | None,
+        Depends(get_clip_store),
+    ],
 ) -> ClipPresignResponse:
     try:
         key, upload_url = storage.presign_raw_upload(request)
@@ -250,16 +258,21 @@ async def ingest_clip_stats(
 async def recent_clips(
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
-    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+    clip_store: Annotated[
+        UploadedClipStore | DynamoUploadedClipStore | None,
+        Depends(get_clip_store),
+    ],
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
     offset: Annotated[int, Query(ge=0)] = 0,
     channel: Annotated[str | None, Query(min_length=1, max_length=8)] = None,
     channels: Annotated[list[str] | None, Query()] = None,
     featured: bool = False,
+    reviewed: bool = False,
 ) -> dict[str, object]:
     playable_summary = _published_playable_clip_summary(
         settings.public_site_dir,
         featured_only=featured,
+        reviewed_only=reviewed,
     )
     playable_channel_counts = dict(playable_summary["playable_channel_counts"])
     playable_clip_count = int(playable_summary["playable_clip_count"])
@@ -284,18 +297,21 @@ async def recent_clips(
             "limit": limit,
             "offset": offset,
             "featured": featured,
+            "reviewed": reviewed,
             "channel_counts": {},
             "channel_labels": public_monitored_channel_labels(),
         }
     all_channel_counts = clip_store.transcribed_channel_counts(
         excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
     )
+    filtered_collection = featured or reviewed
     channel_counts = (
         clip_store.transcribed_channel_counts(
             excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
-            featured_only=True,
+            featured_only=featured,
+            reviewed_only=reviewed,
         )
-        if featured
+        if filtered_collection
         else all_channel_counts
     )
     clip_count = sum(all_channel_counts.values())
@@ -304,7 +320,7 @@ async def recent_clips(
         if selected_channels
         else sum(channel_counts.values())
     )
-    if featured:
+    if filtered_collection:
         playable_channel_counts = dict(channel_counts)
         playable_clip_count = sum(playable_channel_counts.values())
         filtered_playable_clip_count = filtered_clip_count
@@ -320,6 +336,7 @@ async def recent_clips(
             "limit": limit,
             "offset": offset,
             "featured": featured,
+            "reviewed": reviewed,
             "channel_counts": channel_counts,
             "channel_labels": public_monitored_channel_labels(channel_counts),
         }
@@ -332,6 +349,7 @@ async def recent_clips(
         channel=channel if not channels else None,
         channels=selected_channels,
         featured_only=featured,
+        reviewed_only=reviewed,
     )
     return {
         "clips": clips,
@@ -346,6 +364,7 @@ async def recent_clips(
         "limit": limit,
         "offset": offset,
         "featured": featured,
+        "reviewed": reviewed,
         "channel_counts": channel_counts,
         "channel_labels": public_monitored_channel_labels(channel_counts),
     }
@@ -355,12 +374,13 @@ def _recent_playable_clip_page(
     *,
     settings: Settings,
     storage: S3AudioStorage,
-    clip_store: UploadedClipStore,
+    clip_store: UploadedClipStore | DynamoUploadedClipStore,
     limit: int,
     offset: int,
     channel: str | None,
     channels: list[str],
     featured_only: bool = False,
+    reviewed_only: bool = False,
 ) -> tuple[list[dict[str, object]], str | None]:
     clips: list[dict[str, object]] = []
     latest_playable_started_at: str | None = None
@@ -375,6 +395,7 @@ def _recent_playable_clip_page(
             channels=channels,
             excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
             featured_only=featured_only,
+            reviewed_only=reviewed_only,
         )
         if not candidates:
             break
@@ -405,6 +426,11 @@ def _recent_playable_clip_page(
                     "content_type": clip.content_type,
                     "transcript": clip.transcript,
                     "transcript_reviewed": clip.transcript_reviewed,
+                    "include_in_training": clip.include_in_training,
+                    "training_quality": clip.training_quality,
+                    "training_split": clip.training_split,
+                    "training_flags": list(clip.training_flags),
+                    "training_reason": clip.training_reason,
                     "featured": clip.featured,
                     "featured_at": clip.featured_at,
                     "segments": clip.segments,
@@ -427,7 +453,10 @@ def _recent_playable_clip_page(
 async def public_clip_playback_url(
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
-    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+    clip_store: Annotated[
+        UploadedClipStore | DynamoUploadedClipStore | None,
+        Depends(get_clip_store),
+    ],
     channel: Annotated[str, Query(min_length=1, max_length=8)],
     started_at: Annotated[str, Query(min_length=1, max_length=64)],
 ) -> dict[str, object]:
@@ -456,7 +485,10 @@ async def public_clip_playback_url(
 )
 async def public_clip_audio(
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
-    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+    clip_store: Annotated[
+        UploadedClipStore | DynamoUploadedClipStore | None,
+        Depends(get_clip_store),
+    ],
     channel: Annotated[str, Query(min_length=1, max_length=8)],
     started_at: Annotated[str, Query(min_length=1, max_length=64)],
 ) -> StreamingResponse:
@@ -485,7 +517,10 @@ async def public_clip_audio(
 )
 async def correct_clip_transcript(
     request: TranscriptCorrectionRequest,
-    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
+    clip_store: Annotated[
+        UploadedClipStore | DynamoUploadedClipStore | None,
+        Depends(get_clip_store),
+    ],
 ) -> TranscriptCorrectionResponse:
     if clip_store is None:
         raise HTTPException(
@@ -499,6 +534,11 @@ async def correct_clip_transcript(
             corrected_transcript=request.transcript,
             reviewer=request.reviewer,
             note=request.note,
+            include_in_training=request.include_in_training,
+            training_quality=request.training_quality,
+            training_split=request.training_split,
+            training_flags=request.training_flags,
+            training_reason=request.training_reason,
             excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
         )
     except LookupError as exc:
@@ -512,7 +552,80 @@ async def correct_clip_transcript(
         original_transcript=correction.original_transcript,
         corrected_transcript=correction.corrected_transcript,
         transcript_reviewed=True,
+        include_in_training=correction.include_in_training,
+        training_quality=correction.training_quality,
+        training_split=correction.training_split,
+        training_flags=list(correction.training_flags),
+        training_reason=correction.training_reason,
     )
+
+
+@app.delete(
+    "/api/clips/corrections",
+    response_model=TranscriptCorrectionDeleteResponse,
+)
+async def remove_clip_transcript_correction(
+    request: TranscriptCorrectionDeleteRequest,
+    clip_store: Annotated[
+        UploadedClipStore | DynamoUploadedClipStore | None,
+        Depends(get_clip_store),
+    ],
+) -> TranscriptCorrectionDeleteResponse:
+    if clip_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="clip store unavailable",
+        )
+    try:
+        correction = clip_store.remove_transcript_correction(
+            channel=request.channel,
+            started_at=request.started_at,
+            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return TranscriptCorrectionDeleteResponse(
+        status="uncorrected",
+        channel=correction.channel,
+        started_at=correction.started_at,
+        original_transcript=correction.original_transcript,
+        corrected_transcript=correction.corrected_transcript,
+        transcript=correction.original_transcript,
+        transcript_reviewed=False,
+        include_in_training=False,
+    )
+
+
+@app.get(
+    "/api/clips/corrections",
+)
+async def list_clip_transcript_corrections(
+    clip_store: Annotated[
+        UploadedClipStore | DynamoUploadedClipStore | None,
+        Depends(get_clip_store),
+    ],
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, object]:
+    if clip_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="clip store unavailable",
+        )
+    corrections = clip_store.transcript_corrections(limit=limit, offset=offset)
+    training_corrections = clip_store.transcript_corrections_for_training()
+    return {
+        "status": "ok",
+        "correction_count": clip_store.transcript_correction_count(),
+        "training_example_count": len(training_corrections),
+        "returned_count": len(corrections),
+        "limit": limit,
+        "offset": offset,
+        "training_export_url": "/api/clips/corrections/export",
+        "corrections": [_public_training_record(correction) for correction in corrections],
+    }
 
 
 @app.post(
@@ -597,6 +710,7 @@ async def asr_feedback_status(
         )
     corrections = clip_store.transcript_corrections_for_training()
     correction_count = len(corrections)
+    reviewed_correction_count = clip_store.transcript_correction_count()
     min_corrections = _env_positive_int(
         "TALKINGBOATS_ASR_FEEDBACK_MIN_CORRECTIONS",
         DEFAULT_MIN_CORRECTIONS,
@@ -607,14 +721,16 @@ async def asr_feedback_status(
     new_corrections_since_last_train = has_new_training_corrections(output_dir, corrections)
     return {
         "status": "ok",
-        "reviewed_correction_count": correction_count,
+        "reviewed_correction_count": reviewed_correction_count,
+        "training_example_count": correction_count,
         "min_corrections": min_corrections,
         "new_corrections_since_last_train": new_corrections_since_last_train,
         "ready_for_training": (
             correction_count >= min_corrections and new_corrections_since_last_train
         ),
         "base_model": os.getenv("TALKINGBOATS_ASR_FEEDBACK_BASE_MODEL", DEFAULT_BASE_MODEL),
-        "nightly_schedule": "03:00 America/Los_Angeles",
+        "nightly_schedule": "manual only",
+        "corrections_url": "/api/clips/corrections",
         "export_url": "/api/clips/corrections/export",
         "training_status": _read_public_asr_feedback_status(),
     }
@@ -652,6 +768,11 @@ def _public_training_record(correction: dict[str, object]) -> dict[str, object]:
         "text": correction["corrected_transcript"],
         "reviewer": correction["reviewer"],
         "note": correction["note"],
+        "include_in_training": correction.get("include_in_training", True),
+        "training_quality": correction.get("training_quality", "unknown"),
+        "training_split": correction.get("training_split", "auto"),
+        "training_flags": correction.get("training_flags", []),
+        "training_reason": correction.get("training_reason"),
     }
 
 
@@ -675,6 +796,8 @@ def _read_public_asr_feedback_status() -> dict[str, object] | None:
         "min_corrections",
         "last_trained_at",
         "generated_at",
+        "promotion",
+        "eval",
     }
     return {key: value for key, value in payload.items() if key in allowed_keys}
 

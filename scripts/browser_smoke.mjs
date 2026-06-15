@@ -14,6 +14,7 @@ let holdFeatureClipResponses = false;
 let releaseFeatureClipResponses = [];
 let topicClusterReturnsNotFound = false;
 const featuredClipIndexes = new Set([1, 7, 13, 49, 91]);
+const reviewedClipIndexes = new Set([0, 2, 5, 8, 21, 34]);
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -56,6 +57,12 @@ const server = createServer(async (request, response) => {
       }
       return sendJson(response, await transcriptCorrectionPayload(request));
     }
+    if (url.pathname === "/api/clips/corrections" && request.method === "DELETE") {
+      if (request.headers["x-talkingboats-tailnet-dev"] !== "1") {
+        return sendJson(response, { detail: "tailnet operator access required" }, 403);
+      }
+      return sendJson(response, await transcriptCorrectionDeletePayload(request));
+    }
     if (url.pathname === "/api/clips/search") {
       return sendJson(response, searchPayload(url));
     }
@@ -73,7 +80,7 @@ const server = createServer(async (request, response) => {
     }
     if (url.pathname === "/analysis/topic_clusters.html") {
       if (topicClusterReturnsNotFound) {
-        return sendJson(response, { detail: "Not Found" }, 404);
+        return sendJson(response, { detail: "asset not found" }, 404);
       }
       return sendHtml(response, "<html><body>topic clusters</body></html>");
     }
@@ -343,7 +350,7 @@ try {
     }
     await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction summary").click();
     await page
-      .locator("#lexical-analysis .entity-card:first-child .analysis-correction textarea")
+      .locator("#lexical-analysis .entity-card:first-child .analysis-correction .transcript-correction-label textarea")
       .fill("Direct analysis page correction for ASR tuning.");
     await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction button[type='submit']").click();
     await page.waitForFunction(() =>
@@ -364,7 +371,7 @@ try {
     }));
     if (
       directAnalysisCorrection.summary !== "Edit correction" ||
-      !directAnalysisCorrection.status.includes("Saved") ||
+      !directAnalysisCorrection.status.includes("Saved for manual fine tuning") ||
       !directAnalysisCorrection.quote.includes("Direct analysis page correction")
     ) {
       throw new Error(`direct analysis correction did not save: ${JSON.stringify(directAnalysisCorrection)}`);
@@ -457,6 +464,26 @@ try {
       !hallOfFameState.firstTranscript.includes("Smoke clip 2")
     ) {
       throw new Error(`hall of fame filter did not show only featured clips: ${JSON.stringify(hallOfFameState)}`);
+    }
+    await page.locator("#clip-display-controls").getByRole("button", { name: "Reviewed", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1 reviewed"));
+    const reviewedClipState = await page.evaluate(() => ({
+      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
+      renderedClips: document.querySelectorAll("#clips .clip-card").length,
+      status: document.querySelector("#clip-status")?.textContent || "",
+      reviewedPills: document.querySelectorAll("#clips .reviewed-pill").length,
+      activeShowMode: document
+        .querySelector("#clip-display-controls .clip-control-group:first-child button[aria-pressed='true']")
+        ?.textContent?.trim(),
+    }));
+    if (
+      reviewedClipState.activeShowMode !== "Reviewed" ||
+      reviewedClipState.renderedClips !== reviewedClipIndexes.size ||
+      reviewedClipState.reviewedPills !== reviewedClipIndexes.size ||
+      !reviewedClipState.status.includes("reviewed") ||
+      !reviewedClipState.firstTranscript.includes("Smoke clip 1 reviewed")
+    ) {
+      throw new Error(`reviewed filter did not show only reviewed clips: ${JSON.stringify(reviewedClipState)}`);
     }
     await page.locator("#clip-display-controls").getByRole("button", { name: "Recent", exact: true }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
@@ -833,7 +860,7 @@ try {
       .waitFor({ state: "visible", timeout: 10000 });
     await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction summary").click();
     await page
-      .locator("#lexical-analysis .entity-card:first-child .analysis-correction textarea")
+      .locator("#lexical-analysis .entity-card:first-child .analysis-correction .transcript-correction-label textarea")
       .fill("Seattle Traffic corrected showcase example.");
     await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction button[type='submit']").click();
     await page.waitForFunction(() =>
@@ -852,7 +879,7 @@ try {
     }));
     if (
       operatorAnalysisCorrection.summary !== "Edit correction" ||
-      !operatorAnalysisCorrection.status.includes("Saved") ||
+      !operatorAnalysisCorrection.status.includes("Saved for manual fine tuning") ||
       !operatorAnalysisCorrection.quote.includes("corrected showcase")
     ) {
       throw new Error(`operator analysis correction did not save: ${JSON.stringify(operatorAnalysisCorrection)}`);
@@ -866,7 +893,8 @@ try {
       ),
       bodyText: document.querySelector(".speech-training-panel")?.textContent || "",
     }));
-    if (!speechTraining.cards.some((card) => card.includes("Reviewed corrections") && card.includes("3 / 20"))) {
+    const trainingExamplesCard = speechTraining.cards.find((card) => card.includes("Training examples")) || "";
+    if (!trainingExamplesCard.includes("3") || trainingExamplesCard.includes("3 / 20")) {
       throw new Error(`performance speech training correction card missing: ${JSON.stringify(speechTraining)}`);
     }
     if (!speechTraining.cards.some((card) => card.includes("Last ASR run") && card.includes("skipped"))) {
@@ -893,7 +921,9 @@ try {
       aboutState.linkText !== "Read the full project write-up" ||
       !aboutState.bodyText.includes("Raspberry Pi radio edge") ||
       !aboutState.bodyText.includes("Ubuntu micro-computer") ||
-      !aboutState.bodyText.includes("Whisper")
+      !aboutState.bodyText.includes("Whisper") ||
+      !aboutState.bodyText.includes("whisper-large-v3-turbo") ||
+      !aboutState.bodyText.includes("CTranslate2/faster-whisper")
     ) {
       throw new Error(`about tab did not expose the project write-up: ${JSON.stringify(aboutState)}`);
     }
@@ -1134,9 +1164,16 @@ function recentClipPayload(url) {
   const selectedChannels = url.searchParams.getAll("channels").map((channel) => channel.toUpperCase());
   const total = 144;
   const featuredOnly = url.searchParams.get("featured") === "true";
-  const indexes = featuredOnly
-    ? [...featuredClipIndexes].sort((left, right) => left - right)
-    : Array.from({ length: total }, (_value, index) => index);
+  const reviewedOnly = url.searchParams.get("reviewed") === "true";
+  const indexes = Array.from({ length: total }, (_value, index) => index).filter((index) => {
+    if (featuredOnly && !featuredClipIndexes.has(index)) {
+      return false;
+    }
+    if (reviewedOnly && !reviewedClipIndexes.has(index)) {
+      return false;
+    }
+    return true;
+  });
   const filteredTotal = indexes.length;
   const payloadChannels = selectedChannels.length ? selectedChannels : ["14"];
   return {
@@ -1146,6 +1183,7 @@ function recentClipPayload(url) {
     clip_count: total,
     filtered_clip_count: filteredTotal,
     featured: featuredOnly,
+    reviewed: reviewedOnly,
     channel_counts: Object.fromEntries(payloadChannels.map((channel) => [channel, filteredTotal])),
     channel_labels: Object.fromEntries(
       payloadChannels.map((channel) => [channel, channel === "14" ? "Vessel Traffic Service" : "Non-traffic"]),
@@ -1157,6 +1195,8 @@ function recentClipPayload(url) {
 
 function recentClip(index, channel = "14") {
   const startedAt = new Date(Date.parse("2026-05-31T20:00:00Z") - index * 60000).toISOString();
+  const reviewed = reviewedClipIndexes.has(index);
+  const displayTranscript = reviewed ? `Smoke clip ${index + 1} reviewed` : `Smoke clip ${index + 1}`;
   return {
     id: `clip-${index + 1}`,
     channel,
@@ -1164,8 +1204,14 @@ function recentClip(index, channel = "14") {
     started_at: startedAt,
     ended_at: new Date(Date.parse(startedAt) + 15000).toISOString(),
     duration_seconds: 15,
-    transcript: `Smoke clip ${index + 1}`,
-    transcript_public: `Smoke clip ${index + 1}`,
+    transcript: displayTranscript,
+    transcript_public: displayTranscript,
+    transcript_reviewed: reviewed,
+    include_in_training: reviewed,
+    training_quality: reviewed ? "good" : "unknown",
+    training_split: "auto",
+    training_flags: [],
+    training_reason: reviewed ? "smoke reviewed example" : null,
     featured: featuredClipIndexes.has(index),
     featured_at: featuredClipIndexes.has(index) ? "2026-06-01T12:00:00Z" : null,
     playback_url: "",
@@ -1201,12 +1247,54 @@ async function clipFeaturePayload(request) {
 async function transcriptCorrectionPayload(request) {
   const rawBody = await readRequestBody(request);
   const payload = JSON.parse(rawBody || "{}");
+  const clipIndex = clipIndexForStartedAt(String(payload.started_at || ""));
+  if (payload.include_in_training !== true || payload.training_quality !== "good") {
+    return {
+      status: "invalid_training_metadata",
+      expected: { include_in_training: true, training_quality: "good" },
+      received: {
+        include_in_training: payload.include_in_training,
+        training_quality: payload.training_quality,
+      },
+    };
+  }
+  if (clipIndex >= 0) {
+    reviewedClipIndexes.add(clipIndex);
+  }
   return {
     status: "ok",
     channel: payload.channel || "14",
     started_at: payload.started_at || "",
+    original_transcript:
+      clipIndex >= 0 ? `Smoke clip ${clipIndex + 1}` : payload.transcript || "",
     corrected_transcript: payload.transcript || "",
     reviewed_by: payload.reviewer || "operator-ui",
+    transcript_reviewed: true,
+    include_in_training: true,
+    training_quality: "good",
+    training_split: payload.training_split || "auto",
+    training_flags: Array.isArray(payload.training_flags) ? payload.training_flags : [],
+    training_reason: payload.training_reason || null,
+  };
+}
+
+async function transcriptCorrectionDeletePayload(request) {
+  const rawBody = await readRequestBody(request);
+  const payload = JSON.parse(rawBody || "{}");
+  const clipIndex = clipIndexForStartedAt(String(payload.started_at || ""));
+  if (clipIndex >= 0) {
+    reviewedClipIndexes.delete(clipIndex);
+  }
+  const transcript = clipIndex >= 0 ? `Smoke clip ${clipIndex + 1}` : "";
+  return {
+    status: "uncorrected",
+    channel: payload.channel || "14",
+    started_at: payload.started_at || "",
+    original_transcript: transcript,
+    corrected_transcript: payload.transcript || "",
+    transcript,
+    transcript_reviewed: false,
+    include_in_training: false,
   };
 }
 
@@ -1261,8 +1349,8 @@ function asrFeedbackStatusPayload() {
     reviewed_correction_count: 3,
     min_corrections: 20,
     ready_for_training: false,
-    base_model: "openai/whisper-small.en",
-    nightly_schedule: "03:00 America/Los_Angeles",
+    base_model: "openai/whisper-large-v3-turbo",
+    nightly_schedule: "manual only",
     export_url: "/api/clips/corrections/export",
     training_status: {
       status: "skipped",
@@ -1377,6 +1465,8 @@ async function sendStatic(response, pathname) {
     relativePath === "/" ||
     relativePath === "/clips/" ||
     relativePath === "/clips" ||
+    relativePath === "/reviewed/" ||
+    relativePath === "/reviewed" ||
     relativePath === "/search/" ||
     relativePath === "/search" ||
     relativePath === "/operator/" ||

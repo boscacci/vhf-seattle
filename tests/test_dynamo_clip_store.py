@@ -52,9 +52,43 @@ def test_dynamo_clip_store_serves_recent_counts_pending_and_corrections() -> Non
     assert correction.original_transcript == "PON PON all stations"
     assert store.recent_transcribed(limit=5)[0].transcript == "PAN-PAN, all stations."
     assert store.recent_transcribed(limit=5)[0].transcript_reviewed is True
+    corrections = store.transcript_corrections(limit=5)
+    assert len(corrections) == 1
+    assert corrections[0]["corrected_transcript"] == "PAN-PAN, all stations."
+    assert corrections[0]["include_in_training"] is True
+    assert corrections[0]["training_quality"] == "good"
     assert store.transcript_corrections_for_training()[0]["corrected_transcript"] == (
         "PAN-PAN, all stations."
     )
+
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-06-01T12:00:00Z",
+        corrected_transcript="PAN-PAN, all stations.",
+        include_in_training=False,
+    )
+    assert store.transcript_corrections_for_training() == []
+
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-06-01T12:00:00Z",
+        corrected_transcript="PAN-PAN, all stations.",
+        reviewer="rob",
+        note="urgency",
+        include_in_training=True,
+        training_quality="excellent",
+        training_split="train",
+        training_flags=[],
+        training_reason="clear urgency proword",
+    )
+    assert store.transcript_corrections(limit=5)[0]["include_in_training"] is True
+    training = store.transcript_corrections_for_training()[0]
+    assert training["corrected_transcript"] == "PAN-PAN, all stations."
+    assert training["include_in_training"] is True
+    assert training["training_quality"] == "excellent"
+    assert training["training_split"] == "train"
+    assert training["training_flags"] == []
+    assert training["training_reason"] == "clear urgency proword"
 
     feature = store.set_clip_featured(
         channel="14",
@@ -78,6 +112,52 @@ def test_dynamo_clip_store_serves_recent_counts_pending_and_corrections() -> Non
 
     assert store.recent_transcribed(limit=5)[0].featured is False
     assert store.recent_transcribed(limit=5, featured_only=True) == []
+
+
+def test_dynamo_clip_store_removes_transcript_correction_from_training() -> None:
+    table = FakeDynamoTable()
+    event_store = CapturingEventStore()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        event_store=event_store,
+        table=table,
+    )
+    key = "raw/channel=14/date=2026-06-01/example.mp3"
+    store.record_presigned_upload(key=key, request=_request(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            SimpleNamespace(
+                text="PON PON all stations",
+                started_at="2026-06-01T12:00:00Z",
+                ended_at="2026-06-01T12:00:03Z",
+                relative_start_seconds=0.0,
+                relative_end_seconds=3.0,
+            )
+        ],
+    )
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-06-01T12:00:00Z",
+        corrected_transcript="PAN-PAN, all stations.",
+        reviewer="rob",
+    )
+
+    removed = store.remove_transcript_correction(
+        channel="14",
+        started_at="2026-06-01T12:00:00Z",
+    )
+
+    assert removed.key == key
+    assert removed.original_transcript == "PON PON all stations"
+    assert removed.corrected_transcript == "PAN-PAN, all stations."
+    assert store.transcript_corrections(limit=5) == []
+    assert store.transcript_corrections_for_training() == []
+    assert store.recent_transcribed(limit=5, reviewed_only=True) == []
+    recent = store.recent_transcribed(limit=5)[0]
+    assert recent.transcript == "PON PON all stations"
+    assert recent.transcript_reviewed is False
+    assert event_store.events[-1]["event_type"] == "clip.transcript_correction_removed"
 
 
 def test_backfill_clip_read_model_replays_sqlite_into_dynamo(tmp_path: Path) -> None:
@@ -213,6 +293,48 @@ def test_dynamo_clip_store_cleanup_marks_legacy_noise_transcripts_empty() -> Non
     assert store.transcribed_channel_counts() == {"10": 1}
 
 
+def test_dynamo_clip_store_cleanup_does_not_skip_rows_after_mutating_pages() -> None:
+    table = FakeDynamoTable(page_size=2)
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        event_store=CapturingEventStore(),
+        table=table,
+    )
+    good_key = "raw/channel=10/date=2026-06-13/good.mp3"
+    noise_keys = [
+        f"raw/channel=10/date=2026-06-13/noise-{index}.mp3"
+        for index in range(3)
+    ]
+    for key in [good_key, *noise_keys]:
+        store.record_presigned_upload(key=key, request=_request(channel="10"))
+    store.mark_transcribed(
+        good_key,
+        [
+            SimpleNamespace(
+                text="Do you have a channel there, Cap?",
+                started_at="2026-06-13T23:29:49Z",
+                ended_at="2026-06-13T23:29:53Z",
+                relative_start_seconds=0.0,
+                relative_end_seconds=4.0,
+            )
+        ],
+    )
+    for key in noise_keys:
+        _seed_legacy_dynamo_transcribed_clip(
+            table,
+            key,
+            transcript="Tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk.",
+        )
+
+    summary = cleanup_noise_transcripts(store, dry_run=False, page_size=2)
+
+    assert summary.scanned == 4
+    assert summary.candidates == 3
+    assert summary.cleaned == 3
+    assert [store.get_clip(key).status for key in noise_keys] == ["empty", "empty", "empty"]
+    assert [clip.key for clip in store.recent_transcribed(limit=10)] == [good_key]
+
+
 def test_dynamo_clip_store_streams_recent_transcribed_with_cursor_pages() -> None:
     table = FakeDynamoTable(page_size=2)
     store = DynamoUploadedClipStore(
@@ -287,7 +409,8 @@ def test_dynamo_clip_store_counts_channels_with_projected_cached_global_query() 
     ]
     assert len(count_queries) == 2
     assert all(
-        call["ProjectionExpression"] == "#channel, display_transcript, transcript"
+        call["ProjectionExpression"]
+        == "#channel, display_transcript, transcript, transcript_reviewed"
         for call in count_queries
     )
     assert all(

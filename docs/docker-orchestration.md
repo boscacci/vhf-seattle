@@ -8,8 +8,8 @@ now because it owns USB devices, Icecast, and local radio service units.
 
 The current deployment depends on whichever conda environment is active on the
 host. Compose pins the Python runtime, system packages such as `ffmpeg`, and
-Python extras in one image so the API, proxy, transcribers, and analysis job run
-from the same dependency set.
+Python extras in one image so the API, proxy, uploaded-clip transcriber, and
+analysis job run from the same dependency set.
 
 ## Setup
 
@@ -32,10 +32,10 @@ Build and start the always-on services:
 docker compose up -d --build private-api live-proxy
 ```
 
-Start transcription services when the model/runtime is ready:
+Start the processed-clip transcription queue when the model/runtime is ready:
 
 ```bash
-docker compose --profile transcribe up -d uploaded-clip-transcriber live-transcriber
+docker compose --profile transcribe up -d uploaded-clip-transcriber
 ```
 
 Run the analysis/export job on demand:

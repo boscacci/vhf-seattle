@@ -91,6 +91,7 @@ const everythingInitialQueueLimit = 3;
 const everythingCatchUpLabel = "Catching up on latest 3 transmissions";
 const trafficChannelIds = new Set(["14"]);
 const hallOfFameRouteSegment = "hall-of-fame";
+const reviewedRouteSegment = "reviewed";
 const languageDashboardEnabled = [
   "vhf.robertboscacci.com",
   "vhf-dev.robertboscacci.com",
@@ -118,6 +119,7 @@ const tabRouteSegments = {
 const tabRouteAliases = {
   clips: "clips",
   "hall-of-fame": "clips",
+  reviewed: "clips",
   search: "search",
   live: "live",
   ais: "map",
@@ -203,6 +205,27 @@ const defaultChannelLabels = {
   "78A": "Non-commercial",
 };
 const monitoredAnalysisChannels = ["05A", "06", "09", "10", "13", "14", "16", "22A", "65A", "66A", "67", "68", "69", "71", "72", "73", "74", "77", "78A"];
+const trainingQualityOptions = [
+  ["unknown", "Unknown"],
+  ["excellent", "Excellent"],
+  ["good", "Good"],
+  ["usable", "Usable"],
+  ["poor", "Poor"],
+];
+const trainingSplitOptions = [
+  ["auto", "Auto"],
+  ["train", "Train"],
+  ["validation", "Validation"],
+  ["test", "Test"],
+  ["holdout", "Holdout"],
+];
+const trainingFlagOptions = [
+  ["static_or_no_speech", "Static / no speech"],
+  ["overlap", "Overlapping speakers"],
+  ["truncated_start", "Truncated start"],
+  ["low_snr", "Low SNR"],
+  ["clipped_audio", "Clipped audio"],
+];
 
 function apiUrl(path) {
   return privateApiBaseUrl ? `${privateApiBaseUrl}${path}` : path;
@@ -327,7 +350,7 @@ let selectedClipOffset = 0;
 let selectedClipPageSize = defaultClipPageSize;
 let clipSortDirection = "newest";
 const initialRouteState = routeStateFromLocation();
-let clipFeaturedFilter = initialRouteState.clipFeaturedFilter;
+let clipCollectionFilter = initialRouteState.clipCollectionFilter;
 let currentClipPayload = null;
 let currentPageClips = [];
 let currentFilteredTotal = 0;
@@ -706,7 +729,7 @@ async function loadAndRender({ useCachedPayload = true } = {}) {
 }
 
 function shouldLoadPublishedManifestFirst() {
-  return publicAppHost && clipFeaturedFilter === "recent" && selectedChannels.size === 0;
+  return publicAppHost && clipCollectionFilter === "recent" && selectedChannels.size === 0;
 }
 
 async function refreshLiveClipPayloadInBackground(requestUrl, requestId) {
@@ -1269,7 +1292,7 @@ function mergeLiveClipStats(payload) {
     }
   }
   if (activeTab === "clips" && clipOffset() === 0 && selectedChannels.size === 0) {
-    if (clipFeaturedFilter !== "recent") {
+    if (clipCollectionFilter !== "recent") {
       renderStats(currentClipPayload || payload, currentPageClips.length ? currentPageClips : payload.clips || []);
       return;
     }
@@ -1285,8 +1308,12 @@ function mergeLiveClipStats(payload) {
 
 function clipRequestUrl(offset = clipOffset()) {
   const params = [`limit=${selectedClipPageSize}`, `offset=${Math.max(0, Math.floor(Number(offset) || 0))}`];
-  if (clipFeaturedFilter === "featured") {
+  const clipReviewedFilter = clipCollectionFilter === "reviewed";
+  if (clipCollectionFilter === "featured") {
     params.push("featured=true");
+  }
+  if (clipReviewedFilter) {
+    params.push("reviewed=true");
   }
   const channels = selectedChannelValues();
   params.push(...channels.map((channel) => `channels=${encodeURIComponent(channel)}`));
@@ -1463,6 +1490,11 @@ function normalizeLivePayload(payload) {
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript || "",
       transcript_reviewed: Boolean(clip.transcript_reviewed),
+      include_in_training: Boolean(clip.include_in_training),
+      training_quality: clip.training_quality || "unknown",
+      training_split: clip.training_split || "auto",
+      training_flags: Array.isArray(clip.training_flags) ? clip.training_flags : [],
+      training_reason: clip.training_reason || "",
       featured: Boolean(clip.featured),
       featured_at: clip.featured_at || "",
       playback_url: clip.playback_url || "",
@@ -1492,6 +1524,11 @@ function normalizePublishedManifest(payload) {
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript_public || clip.transcript || "",
       transcript_reviewed: Boolean(clip.transcript_reviewed),
+      include_in_training: Boolean(clip.include_in_training),
+      training_quality: clip.training_quality || "unknown",
+      training_split: clip.training_split || "auto",
+      training_flags: Array.isArray(clip.training_flags) ? clip.training_flags : [],
+      training_reason: clip.training_reason || "",
       featured: Boolean(clip.featured),
       featured_at: clip.featured_at || "",
       audio_public_filename: clip.audio_public_filename || "",
@@ -1592,7 +1629,7 @@ function formatStatValue(label, value) {
 function renderChannelFilter(payload) {
   const wasOpen = channelFilter.querySelector(".channel-filter-menu")?.open;
   const channelCountClips =
-    clipFeaturedFilter === "featured" && payload.source !== "live"
+    clipCollectionFilter === "featured" && payload.source !== "live"
       ? (payload.clips || []).filter((clip) => clip.featured)
       : payload.clips || [];
   const channelCounts =
@@ -1681,19 +1718,42 @@ function renderClipHeading() {
   if (!clipsTitle) {
     return;
   }
-  clipsTitle.textContent = clipFeaturedFilter === "featured" ? "Hall of Fame" : "Recent Clips";
+  clipsTitle.textContent = clipCollectionTitle();
+}
+
+function clipCollectionTitle() {
+  if (clipCollectionFilter === "featured") {
+    return "Hall of Fame";
+  }
+  if (clipCollectionFilter === "reviewed") {
+    return "Reviewed Clips";
+  }
+  return "Recent Clips";
 }
 
 function renderClipDisplayControlSet() {
   const featuredControl = segmentedControl("Show clips", [
     {
       label: "Recent",
-      active: clipFeaturedFilter === "recent",
+      active: clipCollectionFilter === "recent",
       onClick: () => {
-        if (clipFeaturedFilter === "recent") {
+        if (clipCollectionFilter === "recent") {
           return;
         }
-        clipFeaturedFilter = "recent";
+        clipCollectionFilter = "recent";
+        resetClipPagination();
+        updateTabRoute("clips");
+        loadAndRender();
+      },
+    },
+    {
+      label: "Reviewed",
+      active: clipCollectionFilter === "reviewed",
+      onClick: () => {
+        if (clipCollectionFilter === "reviewed") {
+          return;
+        }
+        clipCollectionFilter = "reviewed";
         resetClipPagination();
         updateTabRoute("clips");
         loadAndRender();
@@ -1701,12 +1761,12 @@ function renderClipDisplayControlSet() {
     },
     {
       label: "Hall of fame",
-      active: clipFeaturedFilter === "featured",
+      active: clipCollectionFilter === "featured",
       onClick: () => {
-        if (clipFeaturedFilter === "featured") {
+        if (clipCollectionFilter === "featured") {
           return;
         }
-        clipFeaturedFilter = "featured";
+        clipCollectionFilter = "featured";
         resetClipPagination();
         updateTabRoute("clips");
         loadAndRender();
@@ -1869,8 +1929,12 @@ function formatChannelFilterSummary(channelCounts) {
 }
 
 function filterClipsByChannel(clips) {
-  const visibleClips =
-    clipFeaturedFilter === "featured" ? clips.filter((clip) => clip.featured) : clips;
+  let visibleClips = clips;
+  if (clipCollectionFilter === "featured") {
+    visibleClips = visibleClips.filter((clip) => clip.featured);
+  } else if (clipCollectionFilter === "reviewed") {
+    visibleClips = visibleClips.filter((clip) => clip.transcript_reviewed);
+  }
   if (!selectedChannels.size) {
     return visibleClips;
   }
@@ -1898,14 +1962,22 @@ function renderClips(clips) {
   if (!clips.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent =
-      clipFeaturedFilter === "featured"
-        ? selectedChannels.size === 0
+    if (clipCollectionFilter === "featured") {
+      empty.textContent =
+        selectedChannels.size === 0
           ? "No Hall of Fame clips yet."
-          : "No Hall of Fame clips for the selected channels."
-        : selectedChannels.size === 0
-        ? "No playable clips are available yet."
-        : "No playable clips are available for the selected channels.";
+          : "No Hall of Fame clips for the selected channels.";
+    } else if (clipCollectionFilter === "reviewed") {
+      empty.textContent =
+        selectedChannels.size === 0
+          ? "No reviewed clips yet."
+          : "No reviewed clips for the selected channels.";
+    } else {
+      empty.textContent =
+        selectedChannels.size === 0
+          ? "No playable clips are available yet."
+          : "No playable clips are available for the selected channels.";
+    }
     clipList.replaceChildren(empty);
     return;
   }
@@ -2119,9 +2191,7 @@ function renderClipCard(clip) {
     meta.append(renderPill(`${Math.round(Number(clip.duration_seconds))}s`));
   }
   if (clip.transcript_reviewed) {
-    const reviewed = renderPill("Reviewed");
-    reviewed.classList.add("reviewed-pill");
-    meta.append(reviewed);
+    meta.append(renderReviewedPill());
     article.classList.add("is-reviewed");
   }
   if (clip.featured) {
@@ -2163,6 +2233,11 @@ function clipRenderSignature(clip) {
     clip.duration_seconds || "",
     clip.transcript_public || "",
     clip.transcript_reviewed ? "reviewed" : "unreviewed",
+    clip.include_in_training === false ? "excluded-training" : "included-training",
+    clip.training_quality || "",
+    clip.training_split || "",
+    Array.isArray(clip.training_flags) ? clip.training_flags.join(",") : "",
+    clip.training_reason || "",
     clip.featured ? "featured" : "standard",
     clip.featured_at || "",
     clip.playback_url ? "has-live-audio" : clip.audio_public_filename ? "has-static-audio" : "no-audio",
@@ -2198,15 +2273,22 @@ function renderTranscriptCorrectionForm(clip, transcriptElement, article) {
   textarea.spellcheck = true;
   label.append(textarea);
 
+  const trainingMetadata = renderTranscriptTrainingMetadata(clip);
+
   const actions = document.createElement("div");
   actions.className = "transcript-correction-actions";
   const save = document.createElement("button");
   save.type = "submit";
   save.textContent = "Save correction";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "remove-correction-button";
+  remove.textContent = "Remove correction";
+  remove.hidden = !clip.transcript_reviewed;
   const status = document.createElement("span");
   status.className = "transcript-correction-status";
   status.setAttribute("role", "status");
-  actions.append(save, status);
+  actions.append(save, remove, status);
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2216,16 +2298,127 @@ function renderTranscriptCorrectionForm(clip, transcriptElement, article) {
       transcriptElement,
       article,
       summary,
+      trainingMetadata,
+      remove,
     });
   });
 
-  form.append(label, actions);
+  remove.addEventListener("click", async () => {
+    await deleteTranscriptCorrection(clip, {
+      status,
+      save,
+      remove,
+      textarea,
+      transcriptElement,
+      article,
+      summary,
+      trainingMetadata,
+    });
+  });
+
+  form.append(label, trainingMetadata.fieldset, actions);
   details.append(summary, form);
   return details;
 }
 
+function renderTranscriptTrainingMetadata(clip) {
+  const fieldset = document.createElement("fieldset");
+  fieldset.className = "training-metadata";
+
+  const legend = document.createElement("legend");
+  legend.textContent = "Training example";
+
+  const includeLabel = document.createElement("label");
+  includeLabel.className = "training-metadata-toggle";
+  const include = document.createElement("input");
+  include.type = "checkbox";
+  include.name = "include_in_training";
+  include.checked = !clip.transcript_reviewed || clip.include_in_training !== false;
+  includeLabel.append(include, document.createTextNode("Include in training"));
+
+  const grid = document.createElement("div");
+  grid.className = "training-metadata-grid";
+
+  const quality = renderSelectControl({
+    name: "training_quality",
+    label: "Quality",
+    options: trainingQualityOptions,
+    value: clip.transcript_reviewed ? clip.training_quality || "good" : "good",
+  });
+  const split = renderSelectControl({
+    name: "training_split",
+    label: "Split",
+    options: trainingSplitOptions,
+    value: clip.training_split || "auto",
+  });
+  grid.append(quality.label, split.label);
+
+  const flags = document.createElement("div");
+  flags.className = "training-flags";
+  const selectedFlags = new Set(Array.isArray(clip.training_flags) ? clip.training_flags : []);
+  for (const [value, labelText] of trainingFlagOptions) {
+    const flagLabel = document.createElement("label");
+    const flag = document.createElement("input");
+    flag.type = "checkbox";
+    flag.name = "training_flags";
+    flag.value = value;
+    flag.checked = selectedFlags.has(value);
+    flagLabel.append(flag, document.createTextNode(labelText));
+    flags.append(flagLabel);
+  }
+
+  const reasonLabel = document.createElement("label");
+  reasonLabel.className = "training-reason";
+  reasonLabel.textContent = "Reason";
+  const reason = document.createElement("textarea");
+  reason.name = "training_reason";
+  reason.rows = 2;
+  reason.maxLength = 1000;
+  reason.value = clip.training_reason || "";
+  reasonLabel.append(reason);
+
+  fieldset.append(legend, includeLabel, grid, flags, reasonLabel);
+  return {
+    fieldset,
+    include,
+    quality: quality.select,
+    split: split.select,
+    flags,
+    reason,
+  };
+}
+
+function renderSelectControl({ name, label, options, value }) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "training-select";
+  wrapper.textContent = label;
+  const select = document.createElement("select");
+  select.name = name;
+  for (const [optionValue, optionLabel] of options) {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = optionLabel;
+    option.selected = optionValue === value;
+    select.append(option);
+  }
+  wrapper.append(select);
+  return { label: wrapper, select };
+}
+
+function readTranscriptTrainingMetadata(trainingMetadata) {
+  return {
+    include_in_training: trainingMetadata.include.checked,
+    training_quality: trainingMetadata.quality.value,
+    training_split: trainingMetadata.split.value,
+    training_flags: Array.from(
+      trainingMetadata.flags.querySelectorAll("input[name='training_flags']:checked"),
+    ).map((input) => input.value),
+    training_reason: trainingMetadata.reason.value.trim() || null,
+  };
+}
+
 async function saveTranscriptCorrection(clip, transcript, controls) {
-  const { status, save, transcriptElement, article, summary } = controls;
+  const { status, save, remove, transcriptElement, article, summary, trainingMetadata } = controls;
   const corrected = transcript.trim();
   if (!corrected) {
     status.textContent = "Transcript cannot be empty.";
@@ -2234,7 +2427,8 @@ async function saveTranscriptCorrection(clip, transcript, controls) {
   save.disabled = true;
   status.textContent = "Saving...";
   try {
-    const response = await postTranscriptCorrection(clip, corrected);
+    const metadata = readTranscriptTrainingMetadata(trainingMetadata);
+    const response = await postTranscriptCorrection(clip, corrected, metadata);
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
         status.textContent = "Open the operator page over Tailscale to save corrections.";
@@ -2245,10 +2439,20 @@ async function saveTranscriptCorrection(clip, transcript, controls) {
     const body = await response.json();
     clip.transcript_public = body.corrected_transcript || corrected;
     clip.transcript_reviewed = true;
+    clip.include_in_training = Boolean(body.include_in_training);
+    clip.training_quality = body.training_quality || "unknown";
+    clip.training_split = body.training_split || "auto";
+    clip.training_flags = Array.isArray(body.training_flags) ? body.training_flags : [];
+    clip.training_reason = body.training_reason || "";
     transcriptElement.textContent = clip.transcript_public;
-    article.classList.add("is-reviewed");
+    updateReviewedClipCard(article, true);
     summary.textContent = "Edit correction";
-    status.textContent = "Saved for nightly training.";
+    if (remove) {
+      remove.hidden = false;
+    }
+    status.textContent = clip.include_in_training
+      ? "Saved for manual fine tuning."
+      : "Correction saved.";
   } catch (error) {
     console.error(error);
     status.textContent = "Correction was not saved.";
@@ -2257,7 +2461,7 @@ async function saveTranscriptCorrection(clip, transcript, controls) {
   }
 }
 
-function postTranscriptCorrection(clip, transcript) {
+function postTranscriptCorrection(clip, transcript, metadata) {
   return fetch(clipCorrectionsUrl, {
     method: "POST",
     credentials: "include",
@@ -2267,8 +2471,106 @@ function postTranscriptCorrection(clip, transcript) {
       started_at: clip.started_at,
       transcript,
       reviewer: "operator-ui",
+      include_in_training: metadata.include_in_training,
+      training_quality: metadata.training_quality,
+      training_split: metadata.training_split,
+      training_flags: metadata.training_flags,
+      training_reason: metadata.training_reason,
     }),
   });
+}
+
+async function deleteTranscriptCorrection(clip, controls) {
+  const { status, save, remove, textarea, transcriptElement, article, summary, trainingMetadata } = controls;
+  if (!clip.transcript_reviewed) {
+    status.textContent = "No correction to remove.";
+    return;
+  }
+  if (!window.confirm("Remove this corrected transcript and exclude it from training?")) {
+    return;
+  }
+  save.disabled = true;
+  remove.disabled = true;
+  status.textContent = "Removing...";
+  try {
+    const response = await fetch(clipCorrectionsUrl, {
+      method: "DELETE",
+      credentials: "include",
+      headers: operatorWriteHeaders(),
+      body: JSON.stringify({
+        channel: clip.channel,
+        started_at: clip.started_at,
+      }),
+    });
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        status.textContent = "Open the operator page over Tailscale to remove corrections.";
+        return;
+      }
+      throw new Error(`correction delete HTTP ${response.status}`);
+    }
+    const body = await response.json();
+    clip.transcript_public = body.transcript || body.original_transcript || "";
+    clip.transcript_reviewed = false;
+    clip.include_in_training = false;
+    clip.training_quality = "unknown";
+    clip.training_split = "auto";
+    clip.training_flags = [];
+    clip.training_reason = "";
+    transcriptElement.textContent = clip.transcript_public;
+    textarea.value = clip.transcript_public;
+    resetTranscriptTrainingMetadata(trainingMetadata);
+    updateReviewedClipCard(article, false);
+    summary.textContent = "Fix transcript";
+    remove.hidden = true;
+    status.textContent = "Correction removed.";
+    if (clipCollectionFilter === "reviewed") {
+      loadAndRender({ useCachedPayload: false });
+    }
+  } catch (error) {
+    console.error(error);
+    status.textContent = "Correction was not removed.";
+  } finally {
+    save.disabled = false;
+    remove.disabled = false;
+  }
+}
+
+function resetTranscriptTrainingMetadata(trainingMetadata) {
+  trainingMetadata.include.checked = true;
+  trainingMetadata.quality.value = "good";
+  trainingMetadata.split.value = "auto";
+  for (const flag of trainingMetadata.flags.querySelectorAll("input[name='training_flags']")) {
+    flag.checked = false;
+  }
+  trainingMetadata.reason.value = "";
+}
+
+function renderReviewedPill() {
+  const reviewed = renderPill("Reviewed");
+  reviewed.classList.add("reviewed-pill");
+  return reviewed;
+}
+
+function updateReviewedClipCard(article, reviewed) {
+  article.classList.toggle("is-reviewed", reviewed);
+  const meta = article.querySelector(".clip-meta");
+  const existingPill = meta?.querySelector(".reviewed-pill");
+  if (reviewed && !existingPill) {
+    const featureAction = meta?.querySelector(".feature-clip-button");
+    const featuredPill = meta?.querySelector(".featured-pill");
+    const pill = renderReviewedPill();
+    if (featuredPill) {
+      meta.insertBefore(pill, featuredPill);
+    } else if (featureAction) {
+      meta.insertBefore(pill, featureAction);
+    } else {
+      meta?.append(pill);
+    }
+  }
+  if (!reviewed && existingPill) {
+    existingPill.remove();
+  }
 }
 
 function renderFeaturedPill() {
@@ -2315,7 +2617,7 @@ async function saveClipFeature(clip, featured, controls) {
     }
     const body = await response.json();
     applyClipFeatureState(clip, article, button, Boolean(body.featured));
-    if (clipFeaturedFilter === "featured" && !clip.featured) {
+    if (clipCollectionFilter === "featured" && !clip.featured) {
       loadAndRender();
     }
   } catch (error) {
@@ -2565,20 +2867,28 @@ function routeStateFromLocation() {
   const pathSegments = url.pathname.split("/").filter(Boolean);
   const pathSegment = pathSegments[pathSegments.length - 1] || "";
   const routeName = tabParam || hashSegment || pathSegment || "clips";
-  const hallOfFameRoute =
-    String(routeName).toLowerCase() === hallOfFameRouteSegment ||
-    url.searchParams.get("featured") === "true";
   return {
     tab: normalizeTabName(routeName),
-    clipFeaturedFilter: hallOfFameRoute ? "featured" : "recent",
+    clipCollectionFilter: collectionFilterFromRoute(routeName, url),
   };
+}
+
+function collectionFilterFromRoute(routeName, url) {
+  const normalizedRouteName = String(routeName).toLowerCase();
+  if (normalizedRouteName === reviewedRouteSegment || url.searchParams.get("reviewed") === "true") {
+    return "reviewed";
+  }
+  if (normalizedRouteName === hallOfFameRouteSegment || url.searchParams.get("featured") === "true") {
+    return "featured";
+  }
+  return "recent";
 }
 
 function applyRouteStateFromLocation() {
   const routeState = routeStateFromLocation();
   const nextTab = enabledTabName(routeState.tab);
-  const filterChanged = clipFeaturedFilter !== routeState.clipFeaturedFilter;
-  clipFeaturedFilter = routeState.clipFeaturedFilter;
+  const filterChanged = clipCollectionFilter !== routeState.clipCollectionFilter;
+  clipCollectionFilter = routeState.clipCollectionFilter;
   if (filterChanged) {
     resetClipPagination();
   }
@@ -2590,10 +2900,13 @@ function applyRouteStateFromLocation() {
 
 function tabRouteUrl(name) {
   const url = new URL(window.location.href);
-  const routeSegment =
-    name === "clips" && clipFeaturedFilter === "featured"
-      ? hallOfFameRouteSegment
-      : tabRouteSegments[name] || tabRouteSegments.clips;
+  let routeSegment = tabRouteSegments[name] || tabRouteSegments.clips;
+  if (name === "clips" && clipCollectionFilter === "featured") {
+    routeSegment = hallOfFameRouteSegment;
+  }
+  if (name === "clips" && clipCollectionFilter === "reviewed") {
+    routeSegment = reviewedRouteSegment;
+  }
   url.pathname = `/${routeSegment}/`;
   url.search = "";
   url.hash = "";
@@ -2800,7 +3113,8 @@ function hideUnavailableTopicFrame(topicFrame, topicFrameShell) {
   const notFoundPayload =
     bodyText === "Not Found" ||
     bodyText === '{"detail":"Not Found"}' ||
-    /^\{\s*"detail"\s*:\s*"Not Found"\s*\}$/.test(bodyText);
+    bodyText === '{"detail":"asset not found"}' ||
+    /^\{\s*"detail"\s*:\s*"(?:Not Found|asset not found)"\s*\}$/.test(bodyText);
   if (!notFoundPayload) {
     return;
   }
@@ -2809,7 +3123,7 @@ function hideUnavailableTopicFrame(topicFrame, topicFrameShell) {
 }
 
 function compactModelName(value) {
-  const text = String(value || "openai/whisper-small.en");
+  const text = String(value || "openai/whisper-large-v3-turbo");
   return text.split("/").pop() || text;
 }
 
@@ -2880,7 +3194,7 @@ function asrFeedbackAccessUnavailable(reason = "") {
     reason: String(reason || "tailnet operator access required"),
     training_status: {
       status: "restricted",
-      reason: "Open the tailnet/private app to inspect reviewed ASR corrections",
+      reason: "Open the tailnet/private app to inspect ASR training examples",
     },
   };
 }
@@ -2945,10 +3259,10 @@ function renderSpeechTrainingPanel(payload) {
     const isRestricted = payload?.status === "restricted";
     cards.append(
       performanceCard(
-        "Reviewed corrections",
+        "Training examples",
         isRestricted ? "Tailnet only" : "Unavailable",
         isRestricted
-          ? "Open the tailnet/private app to inspect reviewed ASR corrections"
+          ? "Open the tailnet/private app to inspect ASR training examples"
           : "ASR feedback status did not load",
         isRestricted ? "watch" : "unknown",
       ),
@@ -2963,7 +3277,7 @@ function renderSpeechTrainingPanel(payload) {
     return panel;
   }
 
-  const correctionCount = Number(payload.reviewed_correction_count || 0);
+  const correctionCount = Number(payload.training_example_count ?? payload.reviewed_correction_count ?? 0);
   const minCorrections = Number(payload.min_corrections || 20);
   const hasEnoughCorrections = correctionCount >= minCorrections;
   const hasNewCorrections = payload.new_corrections_since_last_train !== false;
@@ -2972,8 +3286,8 @@ function renderSpeechTrainingPanel(payload) {
   const trainingStatus = payload.training_status || null;
   cards.append(
     performanceCard(
-      "Reviewed corrections",
-      `${correctionCount} / ${minCorrections}`,
+      "Training examples",
+      correctionCount.toLocaleString(),
       trainingReadinessCaption({ ready, hasEnoughCorrections, hasNewCorrections, needed }),
       ready ? "ok" : "watch",
     ),
@@ -2991,12 +3305,12 @@ function renderSpeechTrainingPanel(payload) {
 
 function trainingReadinessCaption({ ready, hasEnoughCorrections, hasNewCorrections, needed }) {
   if (ready) {
-    return "Ready for nightly training";
+    return "Ready for manual fine tuning";
   }
   if (hasEnoughCorrections && !hasNewCorrections) {
     return "No new labels since last trained run";
   }
-  return `${needed} more reviewed ${needed === 1 ? "clip" : "clips"} needed`;
+  return `${needed} more curated ${needed === 1 ? "clip" : "clips"} needed`;
 }
 
 function trainingStatusCaption(status) {
@@ -5234,10 +5548,15 @@ function selectedChannelStatusScope() {
 
 function statusText(payload, clips, filteredTotal) {
   if (!filteredTotal) {
-    if (clipFeaturedFilter === "featured") {
+    if (clipCollectionFilter === "featured") {
       return selectedChannels.size === 0
         ? "No Hall of Fame clips yet"
         : "No Hall of Fame clips for the selected channels yet";
+    }
+    if (clipCollectionFilter === "reviewed") {
+      return selectedChannels.size === 0
+        ? "No reviewed clips yet"
+        : "No reviewed clips for the selected channels yet";
     }
     return selectedChannels.size === 0 ? "No clips yet" : "No clips for the selected channels yet";
   }
@@ -5245,7 +5564,12 @@ function statusText(payload, clips, filteredTotal) {
   const pageText =
     clips.length === filteredTotal ? `${clips.length}` : `${clips.length} of ${filteredTotal}`;
   const clipNoun = filteredTotal === 1 ? "playable clip" : "playable clips";
-  const collectionText = clipFeaturedFilter === "featured" ? "featured " : "";
+  const collectionText =
+    clipCollectionFilter === "featured"
+      ? "featured "
+      : clipCollectionFilter === "reviewed"
+      ? "reviewed "
+      : "";
   if (payload.source === "live") {
     return `${pageText} ${collectionText}${clipNoun}${scopeText} from the live DB`;
   }
@@ -5257,7 +5581,7 @@ function filteredClipCount(payload, clips) {
   if (payload.stats?.filtered_playable_clip_count !== undefined) {
     return Number(payload.stats.filtered_playable_clip_count);
   }
-  if (clipFeaturedFilter === "featured" && payload.source !== "live") {
+  if ((clipCollectionFilter === "featured" || clipCollectionFilter === "reviewed") && payload.source !== "live") {
     return clips.length;
   }
   if (selectedChannels.size) {

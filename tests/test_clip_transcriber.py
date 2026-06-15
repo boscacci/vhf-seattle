@@ -13,6 +13,7 @@ from talkingboats.clip_transcriber import (
     process_pending_uploads_once,
 )
 from talkingboats.schemas import ClipPresignRequest
+from talkingboats.transcript_cleanup import cleanup_noise_transcripts
 
 
 def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
@@ -44,7 +45,11 @@ def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
             "ended_at": "2026-05-24T21:00:03Z",
         }
     ]
-    assert FakeSpeechModel.last_kwargs["vad_filter"] is False
+    assert FakeSpeechModel.last_kwargs["vad_filter"] is True
+    assert FakeSpeechModel.last_kwargs["vad_parameters"] == {
+        "min_silence_duration_ms": 500,
+        "speech_pad_ms": 400,
+    }
     assert FakeSpeechModel.last_kwargs["beam_size"] == 5
     assert [event["event_type"] for event in event_store.events] == [
         "clip.processing",
@@ -435,6 +440,47 @@ def test_transcript_displayability_keeps_short_real_radio_phrases() -> None:
     assert not is_displayable_transcript("0 0 0 0 0 0 0 0 0")
 
 
+def test_cleanup_noise_transcripts_does_not_skip_rows_after_mutating_sqlite_page(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    good_key = "raw/channel=10/date=2026-06-13/20260613T232949Z-good.mp3"
+    noise_keys = [
+        f"raw/channel=10/date=2026-06-13/20260613T2330{index}1Z-noise.mp3"
+        for index in range(3)
+    ]
+    for index, key in enumerate([good_key, *noise_keys]):
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_request(channel="10", started_at=f"2026-06-13T23:30:0{index}Z"),
+        )
+    store.mark_transcribed(
+        good_key,
+        [
+            _segment(
+                "Do you have a channel there, Cap?",
+                "2026-06-13T23:30:00Z",
+                "2026-06-13T23:30:03Z",
+            )
+        ],
+    )
+    for key in noise_keys:
+        _seed_legacy_transcribed_clip(
+            db_path,
+            key,
+            transcript="Tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk, tuk.",
+        )
+
+    summary = cleanup_noise_transcripts(store, dry_run=False, page_size=2)
+
+    assert summary.scanned == 4
+    assert summary.candidates == 3
+    assert summary.cleaned == 3
+    assert [store.get_clip(key).status for key in noise_keys] == ["empty", "empty", "empty"]
+    assert [clip.key for clip in store.recent_transcribed(limit=10)] == [good_key]
+
+
 def test_transcript_corrections_override_recent_text_and_export_training_pairs(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)
@@ -462,6 +508,25 @@ def test_transcript_corrections_override_recent_text_and_export_training_pairs(t
     clips = store.recent_transcribed(limit=10, channel="14")
     assert clips[0].transcript == "PAN-PAN, all stations."
     assert clips[0].transcript_reviewed is True
+    assert store.transcript_corrections(limit=10) == [
+        {
+            "key": key,
+            "channel": "14",
+            "started_at": "2026-05-24T21:30:00Z",
+            "ended_at": "2026-05-24T21:30:05Z",
+            "duration_seconds": 5.0,
+            "content_type": "audio/mpeg",
+            "original_transcript": "PON PON all stations",
+            "corrected_transcript": "PAN-PAN, all stations.",
+            "reviewer": "rob",
+            "note": "marine urgency proword",
+            "include_in_training": True,
+            "training_quality": "good",
+            "training_split": "auto",
+            "training_flags": [],
+            "training_reason": None,
+        }
+    ]
 
     updated = store.correct_transcript(
         channel="14",
@@ -470,6 +535,31 @@ def test_transcript_corrections_override_recent_text_and_export_training_pairs(t
     )
     assert updated.original_transcript == "PON PON all stations"
     assert updated.corrected_transcript == "PAN-PAN, PAN-PAN, all stations."
+    assert store.transcript_corrections_for_training()[0]["corrected_transcript"] == (
+        "PAN-PAN, PAN-PAN, all stations."
+    )
+    assert store.transcript_corrections(limit=10)[0]["include_in_training"] is True
+
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-05-24T21:30:00Z",
+        corrected_transcript="PAN-PAN, PAN-PAN, all stations.",
+        include_in_training=False,
+    )
+    assert store.transcript_corrections_for_training() == []
+    assert store.transcript_corrections(limit=10)[0]["include_in_training"] is False
+
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-05-24T21:30:00Z",
+        corrected_transcript="PAN-PAN, PAN-PAN, all stations.",
+        include_in_training=True,
+        training_quality="good",
+        training_split="validation",
+        training_flags=["low_snr"],
+        training_reason="clear domain phrase despite noise",
+    )
+    assert store.transcript_corrections(limit=10)[0]["include_in_training"] is True
     exported = store.transcript_corrections_for_training()
     assert exported == [
         {
@@ -483,8 +573,80 @@ def test_transcript_corrections_override_recent_text_and_export_training_pairs(t
             "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
             "reviewer": "rob",
             "note": None,
+            "include_in_training": True,
+            "training_quality": "good",
+            "training_split": "validation",
+            "training_flags": ["low_snr"],
+            "training_reason": "clear domain phrase despite noise",
         }
     ]
+
+
+def test_transcript_correction_can_be_removed_from_training_and_recent_reviewed_filter(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    event_store = CapturingEventStore()
+    store = UploadedClipStore(db_path, event_store=event_store)
+    key = "raw/channel=14/date=2026-05-24/20260524T213000Z-pan-pan.mp3"
+    store.record_presigned_upload(
+        key=key,
+        request=_clip_request(channel="14", started_at="2026-05-24T21:30:00Z"),
+    )
+    store.mark_transcribed(
+        key,
+        [_segment("PON PON all stations", "2026-05-24T21:30:00Z", "2026-05-24T21:30:03Z")],
+    )
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-05-24T21:30:00Z",
+        corrected_transcript="PAN-PAN, all stations.",
+        reviewer="rob",
+    )
+
+    removed = store.remove_transcript_correction(
+        channel="14",
+        started_at="2026-05-24T21:30:00Z",
+    )
+
+    assert removed.key == key
+    assert removed.original_transcript == "PON PON all stations"
+    assert removed.corrected_transcript == "PAN-PAN, all stations."
+    assert store.transcript_corrections(limit=10) == []
+    assert store.transcript_corrections_for_training() == []
+    assert store.recent_transcribed(limit=10, reviewed_only=True) == []
+    recent = store.recent_transcribed(limit=10, channel="14")
+    assert recent[0].transcript == "PON PON all stations"
+    assert recent[0].transcript_reviewed is False
+    assert event_store.events[-1]["event_type"] == "clip.transcript_correction_removed"
+
+
+def test_transcript_training_examples_reject_blocking_quality_flags(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-24/20260524T213000Z-static.mp3"
+    store.record_presigned_upload(
+        key=key,
+        request=_clip_request(channel="14", started_at="2026-05-24T21:30:00Z"),
+    )
+    store.mark_transcribed(
+        key,
+        [_segment("Static burst", "2026-05-24T21:30:00Z", "2026-05-24T21:30:03Z")],
+    )
+
+    try:
+        store.correct_transcript(
+            channel="14",
+            started_at="2026-05-24T21:30:00Z",
+            corrected_transcript="Static burst",
+            include_in_training=True,
+            training_quality="good",
+            training_flags=["static_or_no_speech"],
+        )
+    except ValueError as exc:
+        assert "cannot include blocking training flags" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_featured_clips_can_be_starred_filtered_and_unstarred(tmp_path) -> None:

@@ -20,16 +20,18 @@ def test_asr_feedback_nightly_script_uses_lock_and_restarts_transcriber() -> Non
     assert "--base-model" in script
     assert "--quantization" in script
     assert "--restart-service" in script
+    assert 'train_batch_size="${TALKINGBOATS_ASR_FEEDBACK_TRAIN_BATCH_SIZE:-1}"' in script
+    assert (
+        'gradient_accumulation_steps="${TALKINGBOATS_ASR_FEEDBACK_GRADIENT_ACCUMULATION_STEPS:-8}"'
+        in script
+    )
     assert "talkingboats-uploaded-clip-transcriber.service" in script
     assert "live-transcripts.sqlite3" not in script
     assert "--db-path" not in script
 
 
-def test_asr_feedback_systemd_timer_runs_nightly() -> None:
+def test_asr_feedback_training_service_is_manual_only() -> None:
     service = Path("deploy/systemd/talkingboats-asr-feedback-train.service.example").read_text(
-        encoding="utf-8"
-    )
-    timer = Path("deploy/systemd/talkingboats-asr-feedback-train.timer.example").read_text(
         encoding="utf-8"
     )
 
@@ -39,10 +41,7 @@ def test_asr_feedback_systemd_timer_runs_nightly() -> None:
         "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env" in service
     )
     assert "Nice=15" in service
-    assert "OnCalendar=*-*-* 03:00:00 America/Los_Angeles" in timer
-    assert "03:20:00" not in timer
-    assert "Persistent=true" in timer
-    assert "Unit=talkingboats-asr-feedback-train.service" in timer
+    assert not Path("deploy/systemd/talkingboats-asr-feedback-train.timer.example").exists()
 
 
 def test_uploaded_clip_transcriber_can_load_promoted_feedback_model() -> None:
@@ -60,15 +59,11 @@ def test_uploaded_clip_transcriber_can_load_promoted_feedback_model() -> None:
     assert "IOSchedulingPriority=6" in service
 
 
-def test_live_transcriber_service_has_stream_url_and_cpu_cap() -> None:
-    service = Path("deploy/systemd/talkingboats-live-transcriber.service.example").read_text(
-        encoding="utf-8"
-    )
+def test_live_captions_use_processed_clip_queue_not_streaming_transcriber_service() -> None:
+    compose = Path("compose.yaml").read_text(encoding="utf-8")
+    docs = Path("docs/docker-orchestration.md").read_text(encoding="utf-8")
 
-    assert "--stream-url http://192.168.1.114:8000/talkingboats-live.mp3" in service
-    assert "TALKINGBOATS_TRANSCRIPT_STORE_BACKEND=dynamodb" in service
-    assert "--sqlite-path" not in service
-    assert "StartLimitIntervalSec=300" in service
-    assert "Nice=10" in service
-    assert "CPUWeight=25" in service
-    assert "CPUQuota=125%" in service
+    assert not Path("deploy/systemd/talkingboats-live-transcriber.service.example").exists()
+    assert "live-transcriber" not in compose
+    assert "talkingboats-live-transcriber" not in docs
+    assert "uploaded-clip-transcriber" in compose

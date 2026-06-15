@@ -83,11 +83,12 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'const clipCorrectionsUrl = apiUrl("/api/clips/corrections");' in app_js
     assert 'const clipFeaturesUrl = apiUrl("/api/clips/features");' in app_js
     assert 'const hallOfFameRouteSegment = "hall-of-fame";' in app_js
+    assert 'const reviewedRouteSegment = "reviewed";' in app_js
     assert "function routeStateFromLocation()" in app_js
-    assert 'clipFeaturedFilter: hallOfFameRoute ? "featured" : "recent",' in app_js
+    assert "clipCollectionFilter:" in app_js
+    assert 'return "reviewed";' in app_js
     assert (
-        'clipsTitle.textContent = clipFeaturedFilter === "featured" ? '
-        '"Hall of Fame" : "Recent Clips";'
+        "clipsTitle.textContent = clipCollectionTitle();"
         in app_js
     )
     assert "updateTabRoute(\"clips\"" in app_js
@@ -293,7 +294,9 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "loadAsrFeedbackStatus" in app_js
     assert "speech-training-panel" in app_js
     assert "renderSpeechTrainingPanel" in app_js
-    assert "Reviewed corrections" in app_js
+    assert "Training examples" in app_js
+    assert "correctionCount.toLocaleString()" in app_js
+    assert "`${correctionCount} / ${minCorrections}`" not in app_js
     assert "trainingReadinessCaption" in app_js
     assert "No new labels since last trained run" in app_js
     assert "Last ASR run" in app_js
@@ -407,9 +410,12 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert "let selectedClipOffset = 0;" in app_js
     assert 'let clipSortDirection = "newest";' in app_js
     assert "const initialRouteState = routeStateFromLocation();" in app_js
-    assert "let clipFeaturedFilter = initialRouteState.clipFeaturedFilter;" in app_js
+    assert "let clipCollectionFilter = initialRouteState.clipCollectionFilter;" in app_js
     assert "limit=${selectedClipPageSize}" in app_js
     assert "featured=true" in app_js
+    assert "reviewed=true" in app_js
+    assert 'clipReviewedFilter = clipCollectionFilter === "reviewed";' in app_js
+    assert 'params.push("reviewed=true");' in app_js
     assert "renderClipDisplayControls()" in app_js
     assert "renderClipDisplayControlSet()" in app_js
     assert "function setClipPageSize(pageSize)" in app_js
@@ -432,6 +438,7 @@ def test_public_site_clip_review_page_size_and_sort_controls() -> None:
     assert "selectedClipPage = 1;" in app_js
     assert '"Show clips"' in app_js
     assert '"Hall of fame"' in app_js
+    assert '"Reviewed"' in app_js
     assert '"Flip page order"' in app_js
     assert 'id="clip-display-controls"' in index_html
     assert "clip-display-controls" in styles_css
@@ -463,7 +470,8 @@ def test_public_site_prod_degrades_to_published_manifest_before_live_api() -> No
     assert "const publicLiveApiTimeoutMs = 2500;" in app_js
     assert "function shouldLoadPublishedManifestFirst()" in app_js
     assert (
-        "return publicAppHost && clipFeaturedFilter === \"recent\" && selectedChannels.size === 0;"
+        "return publicAppHost && clipCollectionFilter === "
+        '"recent" && selectedChannels.size === 0;'
         in app_js
     )
     assert "const payload = await loadPublishedManifest();" in app_js
@@ -500,6 +508,7 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     assert 'topicFrame.setAttribute("allow", "fullscreen")' in app_js
     assert "hideUnavailableTopicFrame(topicFrame, topicFrameShell)" in app_js
     assert 'topicFrame.addEventListener("load"' in app_js
+    assert "asset not found" in app_js
     assert "renderTopicExamples(topic)" in app_js
     assert "function renderTopicExamples(topic) {" in app_js
     topic_examples_source = app_js[
@@ -634,6 +643,8 @@ def test_public_site_has_about_tab_linking_project_writeup() -> None:
     assert "Ubuntu micro-computer" in index_html
     assert "OptiPlex" not in index_html
     assert "Whisper" in index_html
+    assert "whisper-large-v3-turbo" in index_html
+    assert "CTranslate2/faster-whisper" in index_html
     assert "dAISy-catcher receiver" in index_html
     assert "https://github.com/astuder" in index_html
     assert "Adrian Studer" in index_html
@@ -712,6 +723,9 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert "Featured" in app_js
     assert "renderTranscriptCorrectionForm" in app_js
     assert "saveTranscriptCorrection" in app_js
+    assert "deleteTranscriptCorrection" in app_js
+    assert 'method: "DELETE"' in app_js
+    assert "Remove correction" in app_js
     assert (
         'summary.textContent = clip.transcript_reviewed ? "Edit correction" : "Fix transcript";'
         in app_js
@@ -722,8 +736,9 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert 'headers["X-TalkingBoats-Tailnet-Dev"] = "1";' in app_js
     assert 'headers: { "Content-Type": "application/json" }' not in app_js
     assert "X-TalkingBoats-Operator-Token" not in app_js
-    assert "Saved for nightly training." in app_js
+    assert "Saved for manual fine tuning." in app_js
     assert ".transcript-correction" in styles_css
+    assert ".remove-correction-button" in styles_css
     assert ".reviewed-pill" in styles_css
     assert ".featured-pill" in styles_css
     assert ".feature-clip-button" in styles_css
@@ -939,7 +954,25 @@ def test_public_site_performance_explains_restricted_asr_feedback() -> None:
     assert "asrFeedbackAccessUnavailable" in app_js
     assert "asrFeedbackLoadUnavailable" in app_js
     assert "Tailnet only" in app_js
-    assert "Open the tailnet/private app to inspect reviewed ASR corrections" in app_js
+    assert "Open the tailnet/private app to inspect ASR training examples" in app_js
+
+
+def test_public_site_transcript_correction_form_collects_training_metadata() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "training-metadata" in app_js
+    assert "include_in_training" in app_js
+    assert "training_quality" in app_js
+    assert "training_split" in app_js
+    assert "training_flags" in app_js
+    assert "training_reason" in app_js
+    assert (
+        "include.checked = !clip.transcript_reviewed || clip.include_in_training !== false;"
+        in app_js
+    )
+    assert 'value: clip.transcript_reviewed ? clip.training_quality || "good" : "good",' in app_js
+    assert "static_or_no_speech" in app_js
+    assert "truncated_start" in app_js
 
 
 def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:

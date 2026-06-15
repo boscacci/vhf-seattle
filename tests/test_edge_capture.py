@@ -25,6 +25,13 @@ from talkingboats.edge_capture import (
 )
 
 
+def test_edge_capture_defaults_keep_voice_padding_for_asr() -> None:
+    config = EdgeCaptureConfig(channel="14")
+
+    assert config.pre_roll_seconds == 0.5
+    assert config.post_roll_seconds == 0.7
+
+
 def test_detect_activity_trims_static_head_and_tail_like_receiver_squelch() -> None:
     started_at = datetime(2026, 5, 24, 13, 30, tzinfo=UTC)
     config = EdgeCaptureConfig(

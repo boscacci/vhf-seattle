@@ -1,8 +1,12 @@
 .env
 *.env.local
 config/optiplex.env
+.DS_Store
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 .venv/
 node_modules/
 __pycache__/
@@ -13,3 +17,38 @@ __pycache__/
 *.tfstate.*
 outputs/
 data/
+
+# Local databases and record dumps belong in DynamoDB/S3, not Git.
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.duckdb
+*.parquet
+*.jsonl
+*.ndjson
+*.csv
+*.tsv
+
+# Captured/generated media belongs in S3 or ignored generated outputs.
+*.aac
+*.flac
+*.m4a
+*.mp3
+*.mp4
+*.ogg
+*.wav
+
+# ASR/model training artifacts are local/S3 artifacts, not source.
+*.bin
+*.ckpt
+*.onnx
+*.pickle
+*.pkl
+*.pt
+*.pth
+*.safetensors
+checkpoints/
+model-ct2/
+model-hf/

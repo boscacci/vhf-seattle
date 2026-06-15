@@ -959,6 +959,76 @@ blockquote {
   line-height: 1.45;
 }
 
+.training-metadata {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-strong), transparent 18%);
+}
+
+.training-metadata legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.training-metadata-toggle,
+.training-flags label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.training-metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-select,
+.training-reason {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.training-select select,
+.training-reason textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  font: inherit;
+}
+
+.training-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.training-reason textarea {
+  min-height: 64px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
 .transcript-correction-actions {
   display: flex;
   flex-wrap: wrap;
@@ -971,6 +1041,12 @@ blockquote {
   padding: 8px 12px;
   color: #06110f;
   background: var(--teal);
+}
+
+.transcript-correction-actions .remove-correction-button {
+  color: #ffd9d9;
+  background: rgba(122, 33, 33, 0.34);
+  border: 1px solid rgba(255, 136, 136, 0.58);
 }
 
 .transcript-correction-actions button:disabled {

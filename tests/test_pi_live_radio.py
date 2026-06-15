@@ -95,8 +95,8 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "icecast://source:" not in wrapper
     assert "-f s16le" in wrapper
     assert "TALKINGBOATS_EDGE_MAX_TEMP_C" in wrapper
-    assert "TALKINGBOATS_EDGE_PRE_ROLL_SECONDS:-0" in wrapper
-    assert "TALKINGBOATS_EDGE_POST_ROLL_SECONDS:-0.3" in wrapper
+    assert "TALKINGBOATS_EDGE_PRE_ROLL_SECONDS:-0.5" in wrapper
+    assert "TALKINGBOATS_EDGE_POST_ROLL_SECONDS:-0.7" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_ENABLED" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED" in wrapper
     assert "TALKINGBOATS_EDGE_UPLOAD_ENABLED" in wrapper

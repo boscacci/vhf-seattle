@@ -41,7 +41,6 @@ def test_optiplex_vhf_user_services_restart_and_install_under_default_target() -
         "talkingboats-api.service.example",
         "talkingboats-live-radio-proxy.service.example",
         "talkingboats-public-live-radio-proxy.service.example",
-        "talkingboats-live-transcriber.service.example",
         "talkingboats-uploaded-clip-transcriber.service.example",
     ]
 
@@ -57,7 +56,6 @@ def test_optiplex_vhf_user_services_restart_and_install_under_default_target() -
 def test_optiplex_vhf_reboot_timers_are_persistent() -> None:
     for timer_name in [
         "talkingboats-lexical-refresh.timer.example",
-        "talkingboats-asr-feedback-train.timer.example",
     ]:
         timer = (SYSTEMD_DIR / timer_name).read_text(encoding="utf-8")
         assert "Persistent=true" in timer, timer_name

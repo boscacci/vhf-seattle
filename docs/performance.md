@@ -70,7 +70,6 @@ ssh rob@optiplex '
 for service in \
   talkingboats-api \
   talkingboats-live-radio-proxy \
-  talkingboats-live-transcriber \
   talkingboats-uploaded-clip-transcriber \
   talkingboats-lexical-refresh
 do
@@ -81,8 +80,8 @@ done
 ```
 
 The normal steady state should have ample disk, no swap pressure, and load well
-below the CPU count. The transcribers are expected to be the largest memory
-consumers.
+below the CPU count. The uploaded-clip transcriber is expected to be the largest
+memory consumer.
 
 ## Raspberry Pi Checks
 

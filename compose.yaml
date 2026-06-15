@@ -37,13 +37,6 @@ services:
     depends_on:
       - private-api
 
-  live-transcriber:
-    <<: *app
-    profiles: ["transcribe"]
-    command: talkingboats-live-transcriber --host 0.0.0.0 --port 8055 --sqlite-path /data/live-transcripts.sqlite3
-    ports:
-      - "8055:8055"
-
   lexical-refresh:
     <<: *app
     profiles: ["jobs"]

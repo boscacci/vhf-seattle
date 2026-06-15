@@ -2,6 +2,45 @@ import re
 from pathlib import Path
 
 
+REMOTE_STATE_BUCKET = "talkingboats-opentofu-state-062008221187"
+REMOTE_STATE_KEY = "elliott-bay-vhf/opentofu.tfstate"
+REMOTE_STATE_REGION = "us-west-2"
+
+
+def test_opentofu_uses_s3_remote_state_with_native_locking() -> None:
+    versions_tf = Path("infra/opentofu/versions.tf").read_text(encoding="utf-8")
+
+    backend = _backend_block(versions_tf)
+    assert 'backend "s3"' in backend
+    assert f'bucket       = "{REMOTE_STATE_BUCKET}"' in backend
+    assert f'key          = "{REMOTE_STATE_KEY}"' in backend
+    assert f'region       = "{REMOTE_STATE_REGION}"' in backend
+    assert "encrypt      = true" in backend
+    assert "use_lockfile = true" in backend
+    assert "dynamodb_table" not in backend
+
+
+def test_opentofu_remote_state_bootstrap_and_migration_are_documented() -> None:
+    readme = Path("infra/opentofu/README.md").read_text(encoding="utf-8")
+
+    assert "## Remote State" in readme
+    assert REMOTE_STATE_BUCKET in readme
+    assert REMOTE_STATE_KEY in readme
+    assert REMOTE_STATE_REGION in readme
+    assert "tofu init -migrate-state -force-copy" in readme
+    assert "use_lockfile = true" in readme
+    assert "Versioning is enabled" in readme
+    assert "Do not commit `terraform.tfstate" in readme
+
+
+def test_local_opentofu_state_files_are_ignored() -> None:
+    gitignore = Path(".gitignore").read_text(encoding="utf-8")
+
+    assert ".terraform/" in gitignore
+    assert "*.tfstate" in gitignore
+    assert "*.tfstate.*" in gitignore
+
+
 def test_opentofu_keeps_public_and_raw_buckets_private() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
 
@@ -328,3 +367,9 @@ def _variable_block(variables_tf: str, variable_name: str) -> str:
     next_variable = variables_tf.find('\nvariable "', start + 1)
     end = next_variable if next_variable != -1 else len(variables_tf)
     return variables_tf[start:end]
+
+
+def _backend_block(versions_tf: str) -> str:
+    start = versions_tf.index('backend "s3"')
+    end = versions_tf.index("\n\n  required_providers", start)
+    return versions_tf[start:end]

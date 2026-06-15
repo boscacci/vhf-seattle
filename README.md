@@ -152,14 +152,21 @@ Retention and export:
   >
 </p>
 
-Transcript corrections can become supervised training examples:
+Transcript corrections become supervised training examples by default:
 
-- The operator UI saves original/corrected transcript pairs to DynamoDB.
-- The nightly ASR feedback job checks for enough reviewed corrections and skips
+- The operator UI saves original/corrected transcript pairs to DynamoDB, marks
+  them for training by default with `good` quality metadata, and still allows a
+  deliberate opt-out for odd clips.
+- On dev, the tailnet-gated `/api/clips/corrections` endpoint lists reviewed
+  corrections with playback-safe `audio_url` values; `/api/clips/corrections/export`
+  remains limited to training-eligible examples.
+- Manual ASR feedback training checks for enough reviewed corrections and skips
   unchanged datasets by fingerprint.
-- Raw private S3 audio is paired with corrected text into training JSONL.
+- Raw private S3 audio is archived locally and paired with corrected text into
+  training JSONL so later retries do not depend on short-lived raw-object access.
 - The configured Whisper checkpoint is fine-tuned, converted to CTranslate2,
-  promoted through `latest-ct2`, and picked up by the uploaded-clip transcriber.
+  evaluated against the local baseline, and promoted through `latest-ct2` only
+  when the candidate model improves transcription accuracy.
 
 Default guardrails are defined in `src/talkingboats/asr_feedback.py`, including
 the minimum reviewed correction count, base model, fingerprinting, model

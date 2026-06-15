@@ -179,7 +179,7 @@ def test_docker_orchestration_files_cover_home_processor_services_without_secret
     assert "private-api" in compose
     assert "uploaded-clip-transcriber" in compose
     assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" in compose
-    assert "live-transcriber" in compose
+    assert "live-transcriber" not in compose
     assert "lexical-refresh" in compose
     assert "profiles" in compose
     assert "TALKINGBOATS_INGEST_TOKEN=" in env_example

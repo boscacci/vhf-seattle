@@ -254,6 +254,11 @@ def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
             "transcript": "PAN-PAN, PAN-PAN, all stations.",
             "reviewer": "rob",
             "note": "USCG urgency marker",
+            "include_in_training": True,
+            "training_quality": "good",
+            "training_split": "validation",
+            "training_flags": ["low_snr"],
+            "training_reason": "domain phrase with readable audio",
         },
     )
     recent = client.get("/api/clips/recent?limit=1&channel=14")
@@ -266,6 +271,11 @@ def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
         "original_transcript": "PON PON all stations",
         "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
         "transcript_reviewed": True,
+        "include_in_training": True,
+        "training_quality": "good",
+        "training_split": "validation",
+        "training_flags": ["low_snr"],
+        "training_reason": "domain phrase with readable audio",
     }
     body = recent.json()
     assert body["clips"][0]["transcript"] == "PAN-PAN, PAN-PAN, all stations."
@@ -288,7 +298,120 @@ def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
         "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
         "reviewer": "rob",
         "note": "USCG urgency marker",
+        "include_in_training": True,
+        "training_quality": "good",
+        "training_split": "validation",
+        "training_flags": ["low_snr"],
+        "training_reason": "domain phrase with readable audio",
     }
+
+
+def test_recent_clips_can_filter_to_manually_reviewed_transcripts(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    reviewed_key = "raw/channel=14/date=2026-05-20/reviewed.mp3"
+    plain_key = "raw/channel=68/date=2026-05-20/plain.mp3"
+    store.record_presigned_upload(key=reviewed_key, request=_clip_presign(channel="14"))
+    store.record_presigned_upload(
+        key=plain_key,
+        request=_clip_presign(channel="68").model_copy(
+            update={
+                "started_at": datetime(2026, 5, 20, 19, 13, tzinfo=UTC),
+                "ended_at": datetime(2026, 5, 20, 19, 13, 5, tzinfo=UTC),
+                "idempotency_key": "radio-event-68-plain",
+            }
+        ),
+    )
+    store.mark_transcribed(
+        reviewed_key,
+        [
+            _segment(
+                text="PON PON all stations",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+    store.mark_transcribed(
+        plain_key,
+        [
+            _segment(
+                text="Routine call",
+                started_at="2026-05-20T19:13:00Z",
+                ended_at="2026-05-20T19:13:04Z",
+            )
+        ],
+    )
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-05-20T19:12:00Z",
+        corrected_transcript="PAN-PAN, all stations.",
+        reviewer="operator-ui",
+    )
+
+    response = client.get("/api/clips/recent?limit=5&reviewed=true")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reviewed"] is True
+    assert body["featured"] is False
+    assert body["filtered_clip_count"] == 1
+    assert [clip["transcript"] for clip in body["clips"]] == ["PAN-PAN, all stations."]
+    assert body["clips"][0]["transcript_reviewed"] is True
+    assert reviewed_key not in response.text
+    assert plain_key not in response.text
+
+
+def test_operator_can_remove_transcript_correction_from_training_program(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    event_store = CapturingEventStore()
+    client = _client(clip_db_path=db_path, event_store=event_store)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/pan-pan.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="PON PON all stations",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+    store.correct_transcript(
+        channel="14",
+        started_at="2026-05-20T19:12:00Z",
+        corrected_transcript="PAN-PAN, PAN-PAN, all stations.",
+        reviewer="operator-ui",
+        include_in_training=True,
+        training_quality="good",
+    )
+
+    response = client.delete(
+        "/api/clips/corrections",
+        json={"channel": "14", "started_at": "2026-05-20T19:12:00Z"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "uncorrected",
+        "channel": "14",
+        "started_at": "2026-05-20T19:12:00Z",
+        "original_transcript": "PON PON all stations",
+        "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
+        "transcript": "PON PON all stations",
+        "transcript_reviewed": False,
+        "include_in_training": False,
+    }
+    assert client.get("/api/clips/corrections/export").text == ""
+    assert client.get("/api/clips/recent?limit=5&reviewed=true").json()["clips"] == []
+    recent = client.get("/api/clips/recent?limit=1&channel=14").json()["clips"][0]
+    assert recent["transcript"] == "PON PON all stations"
+    assert recent["transcript_reviewed"] is False
+    assert event_store.events[-1]["event_type"] == "clip.transcript_correction_removed"
+    assert key not in response.text
 
 
 def test_operator_can_star_clip_for_hall_of_fame_filter(tmp_path) -> None:
@@ -530,6 +653,11 @@ def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) 
         corrected_transcript="PAN-PAN, all stations.",
         reviewer="rob",
         note="urgency signal",
+        include_in_training=True,
+        training_quality="good",
+        training_split="train",
+        training_flags=[],
+        training_reason="clear urgency proword",
     )
 
     response = client.get("/api/clips/corrections/export")
@@ -548,9 +676,105 @@ def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) 
             "text": "PAN-PAN, all stations.",
             "reviewer": "rob",
             "note": "urgency signal",
+            "include_in_training": True,
+            "training_quality": "good",
+            "training_split": "train",
+            "training_flags": [],
+            "training_reason": "clear urgency proword",
         }
     ]
     assert key not in response.text
+
+
+def test_operator_correction_defaults_to_training_example(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/default-training.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="PON PON all stations",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    response = client.post(
+        "/api/clips/corrections",
+        json={
+            "channel": "14",
+            "started_at": "2026-05-20T19:12:00Z",
+            "transcript": "PAN-PAN, all stations.",
+            "reviewer": "operator-ui",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["include_in_training"] is True
+    assert body["training_quality"] == "good"
+    assert len(client.get("/api/clips/corrections/export").text.splitlines()) == 1
+
+
+def test_operator_can_list_all_reviewed_corrections_separately_from_training_export(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    for index, include_in_training in [(0, False), (1, True)]:
+        started_at = datetime(2026, 5, 20, 19, 12 + index, tzinfo=UTC)
+        started_text = started_at.isoformat().replace("+00:00", "Z")
+        key = f"raw/channel=14/date=2026-05-20/pan-pan-{index}.mp3"
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel="14").model_copy(
+                update={
+                    "started_at": started_at,
+                    "ended_at": started_at + timedelta(seconds=5),
+                    "idempotency_key": f"radio-event-review-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"PON PON all stations {index}",
+                    started_at=started_text,
+                    ended_at=(started_at + timedelta(seconds=4))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                )
+            ],
+        )
+        store.correct_transcript(
+            channel="14",
+            started_at=started_text,
+            corrected_transcript=f"PAN-PAN, all stations {index}.",
+            reviewer="rob",
+            include_in_training=include_in_training,
+            training_quality="good" if include_in_training else None,
+        )
+
+    response = client.get("/api/clips/corrections?limit=10")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["correction_count"] == 2
+    assert body["training_example_count"] == 1
+    assert [record["include_in_training"] for record in body["corrections"]] == [True, False]
+    assert body["corrections"][0]["audio_url"] == (
+        "/api/clips/audio?channel=14&started_at=2026-05-20T19%3A13%3A00Z"
+    )
+    assert "pan-pan" not in response.text
+
+    training_response = client.get("/api/clips/corrections/export")
+    assert len(training_response.text.splitlines()) == 1
 
 
 def test_operator_can_read_asr_feedback_status(tmp_path: Path, monkeypatch) -> None:
@@ -574,6 +798,8 @@ def test_operator_can_read_asr_feedback_status(tmp_path: Path, monkeypatch) -> N
         started_at="2026-05-20T19:12:00Z",
         corrected_transcript="PAN-PAN, all stations.",
         reviewer="rob",
+        include_in_training=True,
+        training_quality="good",
     )
     output_dir = tmp_path / "asr-feedback"
     output_dir.mkdir()
@@ -598,15 +824,67 @@ def test_operator_can_read_asr_feedback_status(tmp_path: Path, monkeypatch) -> N
     assert response.status_code == 200
     body = response.json()
     assert body["reviewed_correction_count"] == 1
+    assert body["training_example_count"] == 1
     assert body["min_corrections"] == 2
     assert body["ready_for_training"] is False
-    assert body["nightly_schedule"] == "03:00 America/Los_Angeles"
+    assert body["nightly_schedule"] == "manual only"
     assert body["training_status"] == {
         "status": "trained",
         "correction_count": 20,
         "generated_at": "2026-06-01T10:00:00Z",
     }
     assert "private" not in json.dumps(body)
+
+
+def test_asr_feedback_status_reports_reviewed_and_training_counts_separately(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    for index, include_in_training in [(0, False), (1, True)]:
+        started_at = datetime(2026, 5, 20, 19, 12 + index, tzinfo=UTC)
+        started_text = started_at.isoformat().replace("+00:00", "Z")
+        key = f"raw/channel=14/date=2026-05-20/status-{index}.mp3"
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel="14").model_copy(
+                update={
+                    "started_at": started_at,
+                    "ended_at": started_at + timedelta(seconds=5),
+                    "idempotency_key": f"radio-event-status-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"PON PON all stations {index}",
+                    started_at=started_text,
+                    ended_at=(started_at + timedelta(seconds=4))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                )
+            ],
+        )
+        store.correct_transcript(
+            channel="14",
+            started_at=started_text,
+            corrected_transcript=f"PAN-PAN, all stations {index}.",
+            include_in_training=include_in_training,
+            training_quality="good" if include_in_training else None,
+        )
+    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(tmp_path / "missing"))
+
+    response = client.get("/api/asr-feedback/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reviewed_correction_count"] == 2
+    assert body["training_example_count"] == 1
+    assert body["corrections_url"] == "/api/clips/corrections"
 
 
 def test_asr_feedback_status_is_not_ready_when_labels_match_latest_training(
@@ -645,6 +923,8 @@ def test_asr_feedback_status_is_not_ready_when_labels_match_latest_training(
             started_at=started_at.isoformat().replace("+00:00", "Z"),
             corrected_transcript=f"PAN-PAN, all stations {index}.",
             reviewer="rob",
+            include_in_training=True,
+            training_quality="good",
         )
 
     class FakeReader:
@@ -1111,6 +1391,7 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
         "limit": 5,
         "offset": 0,
         "featured": False,
+        "reviewed": False,
         "channel_counts": {"14": 1},
         "channel_labels": {
                 "05A": "VTS / Port Ops",
@@ -1343,6 +1624,9 @@ class AsgiTestClient:
 
     def post(self, path: str, **kwargs) -> httpx.Response:
         return _run(self._request("POST", path, **kwargs))
+
+    def delete(self, path: str, **kwargs) -> httpx.Response:
+        return _run(self._request("DELETE", path, **kwargs))
 
     async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         transport = httpx.ASGITransport(app=self.app)
