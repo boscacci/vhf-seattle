@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 
-
 REMOTE_STATE_BUCKET = "talkingboats-opentofu-state-062008221187"
 REMOTE_STATE_KEY = "elliott-bay-vhf/opentofu.tfstate"
 REMOTE_STATE_REGION = "us-west-2"
