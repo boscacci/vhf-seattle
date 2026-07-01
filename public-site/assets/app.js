@@ -1,7 +1,8 @@
 const defaultClipPageSize = 6;
 const clipPageSizeOptions = [6, 12, 24];
 const devAppHost = window.location.hostname === "vhf-dev.robertboscacci.com";
-const publicAppHost = window.location.hostname === "vhf.robertboscacci.com";
+const publicAppHosts = new Set(["vhf.robertboscacci.com", "seattleboatradio.com"]);
+const publicAppHost = publicAppHosts.has(window.location.hostname);
 const localAppHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
 const tailnetHostSuffix = ".tailbea63b.ts.net";
 const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
@@ -94,6 +95,7 @@ const hallOfFameRouteSegment = "hall-of-fame";
 const reviewedRouteSegment = "reviewed";
 const languageDashboardEnabled = [
   "vhf.robertboscacci.com",
+  "seattleboatradio.com",
   "vhf-dev.robertboscacci.com",
   "localhost",
   "127.0.0.1",

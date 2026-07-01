@@ -152,6 +152,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert ".fine-tuning-status-list" not in styles_css
     assert "languageDashboardEnabled" in app_js
     assert '"vhf.robertboscacci.com"' in app_js
+    assert '"seattleboatradio.com"' in app_js
     assert "/api/analysis/lexical" in app_js
     assert 'const clipSearchUrl = apiUrl("/api/clips/search");' in app_js
     assert "renderSearchSuggestions" in app_js
@@ -466,7 +467,12 @@ def test_public_site_channel_selector_closes_on_outside_interaction() -> None:
 def test_public_site_prod_degrades_to_published_manifest_before_live_api() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
-    assert 'const publicAppHost = window.location.hostname === "vhf.robertboscacci.com";' in app_js
+    assert (
+        'const publicAppHosts = new Set(["vhf.robertboscacci.com", '
+        '"seattleboatradio.com"]);'
+        in app_js
+    )
+    assert "const publicAppHost = publicAppHosts.has(window.location.hostname);" in app_js
     assert "const publicLiveApiTimeoutMs = 2500;" in app_js
     assert "function shouldLoadPublishedManifestFirst()" in app_js
     assert (
