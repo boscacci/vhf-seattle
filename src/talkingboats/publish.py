@@ -218,8 +218,9 @@ def export_recent_clip_site(
                 publishable_clips.append(source_clip)
                 used_audio_filenames.add(destination.name)
                 continue
-            with tempfile.NamedTemporaryFile(suffix=Path(source_clip.key).suffix) as handle:
-                raw_clip_path = Path(handle.name)
+            with tempfile.TemporaryDirectory(prefix="talkingboats-public-clip-") as tempdir:
+                suffix = Path(source_clip.key).suffix or ".clip"
+                raw_clip_path = Path(tempdir) / f"source{suffix}"
                 try:
                     clip_reader.download(source_clip.key, raw_clip_path)
                 except ClipNotAvailable as exc:
