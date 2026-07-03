@@ -131,6 +131,69 @@ const tabRouteAliases = {
   performance: "performance",
   about: "about",
 };
+const siteCanonicalOrigin = "https://seattleboatradio.com";
+const defaultSiteDescription =
+  "Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis.";
+const routeMetadata = {
+  clips: {
+    title: "Recent Elliott Bay VHF Clips",
+    description:
+      "Recent public Elliott Bay marine VHF receiver clips with transcripts, channel labels, and playback.",
+    url: `${siteCanonicalOrigin}/clips/`,
+  },
+  "hall-of-fame": {
+    title: "Elliott Bay VHF Hall of Fame",
+    description:
+      "Featured public Elliott Bay marine VHF radio clips selected from the receiver archive.",
+    url: `${siteCanonicalOrigin}/hall-of-fame/`,
+  },
+  reviewed: {
+    title: "Reviewed Elliott Bay VHF Clips",
+    description:
+      "Human-reviewed public Elliott Bay marine VHF clip transcripts and audio from the receiver archive.",
+    url: `${siteCanonicalOrigin}/reviewed/`,
+  },
+  search: {
+    title: "Elliott Bay VHF Transcript Search",
+    description:
+      "Semantic search across public Elliott Bay marine VHF transcript meaning, channels, and recent receiver clips.",
+    url: `${siteCanonicalOrigin}/search/`,
+  },
+  live: {
+    title: "Live Elliott Bay VHF Audio",
+    description:
+      "Live Elliott Bay marine VHF receiver audio with current channel state and recent transmission queue.",
+    url: `${siteCanonicalOrigin}/live/`,
+  },
+  map: {
+    title: "Elliott Bay AIS Vessel Map",
+    description:
+      "Local AIS-catcher vessel map for nearby Elliott Bay marine traffic heard by the receiver.",
+    url: `${siteCanonicalOrigin}/ais/`,
+  },
+  language: {
+    title: "Elliott Bay VHF Channel Analysis",
+    description:
+      "Public Elliott Bay marine VHF lexical analysis, channel activity, timing rhythms, and topic clusters.",
+    url: `${siteCanonicalOrigin}/analysis/`,
+  },
+  about: {
+    title: "About Elliott Bay VHF",
+    description:
+      "Project notes for the Elliott Bay marine VHF monitor, radio edge, AIS receiver, processing path, and public app.",
+    url: `${siteCanonicalOrigin}/about/`,
+  },
+  performance: {
+    title: "Elliott Bay VHF Performance",
+    description: "Dev-only receiver and processing performance telemetry for Elliott Bay VHF.",
+    url: `${siteCanonicalOrigin}/performance/`,
+  },
+  "asr-review": {
+    title: "Elliott Bay VHF ASR Review Queue",
+    description: "Private operator review queue for Elliott Bay VHF ASR correction and training metadata.",
+    url: `${siteCanonicalOrigin}/operator/`,
+  },
+};
 const liveStatusPollMs = 2000;
 const liveActivityPollMs = 15000;
 const liveQueuePollMs = 5000;
@@ -2927,6 +2990,61 @@ function updateTabRoute(name, { replaceRoute = false } = {}) {
   window.history[method]({ tab: name }, "", nextUrl);
 }
 
+function routeMetadataForTab(name) {
+  const normalized = normalizeTabName(name);
+  if (normalized === "clips" && clipCollectionFilter === "featured") {
+    return routeMetadata[hallOfFameRouteSegment];
+  }
+  if (normalized === "clips" && clipCollectionFilter === "reviewed") {
+    return routeMetadata[reviewedRouteSegment];
+  }
+  return routeMetadata[normalized] || routeMetadata.clips;
+}
+
+function updateDocumentMetadata(name) {
+  const metadata = routeMetadataForTab(name);
+  const title = metadata.title === "Elliott Bay VHF" ? metadata.title : `${metadata.title} | Elliott Bay VHF`;
+  const description = metadata.description || defaultSiteDescription;
+  document.title = title;
+  setNamedMeta("description", description);
+  setNamedMeta("twitter:title", title);
+  setNamedMeta("twitter:description", description);
+  setPropertyMeta("og:title", title);
+  setPropertyMeta("og:description", description);
+  setPropertyMeta("og:url", metadata.url);
+  setCanonicalUrl(metadata.url);
+}
+
+function setNamedMeta(name, content) {
+  let meta = document.querySelector(`meta[name="${name}"]`);
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.setAttribute("name", name);
+    document.head.append(meta);
+  }
+  meta.setAttribute("content", content);
+}
+
+function setPropertyMeta(property, content) {
+  let meta = document.querySelector(`meta[property="${property}"]`);
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.setAttribute("property", property);
+    document.head.append(meta);
+  }
+  meta.setAttribute("content", content);
+}
+
+function setCanonicalUrl(url) {
+  let canonical = document.querySelector('link[rel="canonical"]');
+  if (!canonical) {
+    canonical = document.createElement("link");
+    canonical.setAttribute("rel", "canonical");
+    document.head.append(canonical);
+  }
+  canonical.setAttribute("href", url);
+}
+
 function enabledTabName(name) {
   if (name === "language" && !languageDashboardEnabled) {
     return "clips";
@@ -2945,12 +3063,14 @@ function activateTab(name, { updateRoute = true, replaceRoute = false } = {}) {
   activeTab = name;
   tabs.forEach((tab) => {
     tab.classList.toggle("is-active", tab.dataset.tab === name);
+    tab.setAttribute("aria-selected", String(tab.dataset.tab === name));
   });
   Object.entries(panels).forEach(([panelName, panel]) => {
     const active = panelName === name;
     panel.classList.toggle("is-active", active);
     panel.hidden = !active;
   });
+  updateDocumentMetadata(name);
   refreshButton.hidden = !["clips", "map", "performance"].includes(name);
   if (name === "live") {
     if (liveAudio.paused || !liveAudio.src) {

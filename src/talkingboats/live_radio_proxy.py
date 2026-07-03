@@ -38,6 +38,9 @@ SHELL_ASSET_TYPES = {
     "index.html": "text/html",
     "assets/app.js": "application/javascript",
     "assets/styles.css": "text/css",
+    "robots.txt": "text/plain",
+    "llms.txt": "text/plain",
+    "sitemap.xml": "application/xml",
     "public_manifest.json": "application/json",
 }
 PERFORMANCE_DISK_PATHS = (
@@ -1023,6 +1026,18 @@ def create_app(
     @app.get("/assets/styles.css", include_in_schema=False)
     async def clip_console_styles() -> Response:
         return _shell_asset_response("assets/styles.css")
+
+    @app.get("/robots.txt", include_in_schema=False)
+    async def clip_console_robots() -> Response:
+        return _shell_asset_response("robots.txt")
+
+    @app.get("/llms.txt", include_in_schema=False)
+    async def clip_console_llms() -> Response:
+        return _shell_asset_response("llms.txt")
+
+    @app.get("/sitemap.xml", include_in_schema=False)
+    async def clip_console_sitemap() -> Response:
+        return _shell_asset_response("sitemap.xml")
 
     @app.get("/public_manifest.json", include_in_schema=False)
     async def clip_console_manifest() -> Response:

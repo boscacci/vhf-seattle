@@ -4,8 +4,79 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Elliott Bay VHF</title>
+    <meta name="description" content="Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis." />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="application-name" content="Elliott Bay VHF" />
+    <meta name="theme-color" content="#07110f" />
+    <link rel="canonical" href="https://seattleboatradio.com/" />
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml" />
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="AI crawler context" />
+    <meta property="og:site_name" content="Elliott Bay VHF" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Elliott Bay VHF" />
+    <meta
+      property="og:description"
+      content="Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis."
+    />
+    <meta property="og:url" content="https://seattleboatradio.com/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Elliott Bay VHF" />
+    <meta
+      name="twitter:description"
+      content="Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis."
+    />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/assets/styles.css" />
+    <script id="site-structured-data" type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://seattleboatradio.com/#website",
+            "name": "Elliott Bay VHF",
+            "url": "https://seattleboatradio.com/",
+            "description": "Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis.",
+            "inLanguage": "en-US",
+            "isAccessibleForFree": true,
+            "keywords": [
+              "Elliott Bay",
+              "Seattle marine VHF",
+              "AIS vessel map",
+              "marine radio transcripts",
+              "Seattle Traffic VHF 14"
+            ],
+            "sameAs": [
+              "https://robertboscacci.com/projects/elliott-bay-vhf/"
+            ]
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://seattleboatradio.com/#app",
+            "name": "Elliott Bay VHF",
+            "url": "https://seattleboatradio.com/",
+            "applicationCategory": "MultimediaApplication",
+            "operatingSystem": "Web",
+            "description": "Browser app for live Elliott Bay marine VHF monitoring, public clip review, transcript search, AIS map viewing, and channel analysis.",
+            "isAccessibleForFree": true
+          },
+          {
+            "@type": "Dataset",
+            "@id": "https://seattleboatradio.com/#vhf-dataset",
+            "name": "Elliott Bay marine VHF public clips and analysis",
+            "url": "https://seattleboatradio.com/clips/",
+            "description": "Public receiver clips, transcripts, channel counts, AIS context, and lexical analysis from an Elliott Bay marine VHF monitor.",
+            "isAccessibleForFree": true,
+            "keywords": [
+              "VHF audio clips",
+              "marine radio transcripts",
+              "AIS vessel traffic",
+              "Elliott Bay"
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <main class="shell">
@@ -18,35 +89,106 @@
         <dl class="stats" id="stats"></dl>
       </header>
 
-      <nav class="tabs" aria-label="Radio views">
-        <button class="tab is-active" id="tab-clips" type="button" data-tab="clips">
+      <nav class="tabs" aria-label="Radio views" role="tablist">
+        <button
+          class="tab is-active"
+          id="tab-clips"
+          type="button"
+          data-tab="clips"
+          role="tab"
+          aria-selected="true"
+          aria-controls="panel-clips"
+        >
           Clip Review
         </button>
-        <button class="tab" id="tab-live" type="button" data-tab="live">
+        <button
+          class="tab"
+          id="tab-live"
+          type="button"
+          data-tab="live"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-live"
+        >
           Live Monitor
         </button>
-        <button class="tab" id="tab-search" type="button" data-tab="search">
+        <button
+          class="tab"
+          id="tab-search"
+          type="button"
+          data-tab="search"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-search"
+        >
           Search
         </button>
-        <button class="tab" id="tab-map" type="button" data-tab="map" hidden>
+        <button
+          class="tab"
+          id="tab-map"
+          type="button"
+          data-tab="map"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-map"
+          hidden
+        >
           Map
         </button>
-        <button class="tab" id="tab-language" type="button" data-tab="language" hidden>
+        <button
+          class="tab"
+          id="tab-language"
+          type="button"
+          data-tab="language"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-language"
+          hidden
+        >
           Analysis
         </button>
-        <button class="tab" id="tab-performance" type="button" data-tab="performance" hidden>
+        <button
+          class="tab"
+          id="tab-performance"
+          type="button"
+          data-tab="performance"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-performance"
+          hidden
+        >
           Performance
         </button>
-        <button class="tab" id="tab-about" type="button" data-tab="about">
+        <button
+          class="tab"
+          id="tab-about"
+          type="button"
+          data-tab="about"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-about"
+        >
           About
         </button>
         <button id="refresh-clips" class="refresh" type="button">Refresh</button>
+      </nav>
+      <nav class="site-links" aria-label="Public pages">
+        <a href="/">Overview</a>
+        <a href="/clips/">Recent clips</a>
+        <a href="/hall-of-fame/">Hall of Fame</a>
+        <a href="/reviewed/">Reviewed clips</a>
+        <a href="/search/">Transcript search</a>
+        <a href="/live/">Live audio</a>
+        <a href="/ais/">Vessel map</a>
+        <a href="/analysis/">Analysis</a>
+        <a href="/about/">About</a>
       </nav>
 
       <section
         class="tab-panel is-active"
         id="panel-clips"
         aria-labelledby="tab-clips"
+        role="tabpanel"
       >
         <div class="section-heading">
           <div>
@@ -69,7 +211,7 @@
         <nav id="clip-pagination" class="clip-pagination" aria-label="Clip pages"></nav>
       </section>
 
-      <section class="tab-panel" id="panel-search" aria-labelledby="tab-search" hidden>
+      <section class="tab-panel" id="panel-search" aria-labelledby="tab-search" role="tabpanel" hidden>
         <div class="section-heading">
           <div>
             <p class="eyebrow">Semantic retrieval</p>
@@ -104,7 +246,7 @@
         <div id="clip-search-results" class="clip-search-results"></div>
       </section>
 
-      <section class="tab-panel" id="panel-live" aria-labelledby="tab-live" hidden>
+      <section class="tab-panel" id="panel-live" aria-labelledby="tab-live" role="tabpanel" hidden>
         <div class="live-grid">
           <article class="live-card">
             <div class="section-heading live-heading">
@@ -174,7 +316,7 @@
         </div>
       </section>
 
-      <section class="tab-panel" id="panel-map" aria-labelledby="tab-map" hidden>
+      <section class="tab-panel" id="panel-map" aria-labelledby="tab-map" role="tabpanel" hidden>
         <div class="section-heading">
           <div>
             <p class="eyebrow">Vessel traffic</p>
@@ -193,7 +335,7 @@
         </p>
       </section>
 
-      <section class="tab-panel" id="panel-language" aria-labelledby="tab-language" hidden>
+      <section class="tab-panel" id="panel-language" aria-labelledby="tab-language" role="tabpanel" hidden>
         <div class="section-heading">
           <div>
             <p class="eyebrow">Lexical analysis</p>
@@ -204,7 +346,7 @@
         <div id="lexical-analysis" class="language-dashboard"></div>
       </section>
 
-      <section class="tab-panel" id="panel-performance" aria-labelledby="tab-performance" hidden>
+      <section class="tab-panel" id="panel-performance" aria-labelledby="tab-performance" role="tabpanel" hidden>
         <div class="section-heading">
           <div>
             <p class="eyebrow">Dev operations</p>
@@ -215,7 +357,7 @@
         <div id="performance-dashboard" class="performance-dashboard"></div>
       </section>
 
-      <section class="tab-panel" id="panel-about" aria-labelledby="tab-about" hidden>
+      <section class="tab-panel" id="panel-about" aria-labelledby="tab-about" role="tabpanel" hidden>
         <div class="section-heading">
           <div>
             <p class="eyebrow">Project notes</p>
@@ -279,6 +421,6 @@
 
     </main>
 
-    <script src="/assets/app.js?v=20260611-daisy-ack" type="module"></script>
+    <script src="/assets/app.js?v=20260703-seo" type="module"></script>
   </body>
 </html>

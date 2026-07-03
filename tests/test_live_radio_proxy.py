@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sqlite3
 import subprocess
 import threading
@@ -1378,7 +1379,11 @@ def test_proxy_performance_static_shell_hooks_are_dev_only() -> None:
     assert "optiplex.tailbea63b.ts.net" not in response.text
     assert "const performanceDashboardEnabled = privateAppHost;" in response.text
     assert "renderPerformanceDashboard" in response.text
-    assert 'id="tab-performance" type="button" data-tab="performance" hidden' in index_response.text
+    assert re.search(
+        r'<button[^>]*id="tab-performance"[^>]*type="button"[^>]*data-tab="performance"[^>]*hidden',
+        index_response.text,
+        flags=re.S,
+    )
 
 
 def test_proxy_static_shell_routes_include_search_tab() -> None:
@@ -1387,7 +1392,11 @@ def test_proxy_static_shell_routes_include_search_tab() -> None:
     response = _run(_asgi_get(app, "/search/"))
 
     assert response.status_code == 200
-    assert 'id="tab-search" type="button" data-tab="search"' in response.text
+    assert re.search(
+        r'<button[^>]*id="tab-search"[^>]*type="button"[^>]*data-tab="search"',
+        response.text,
+        flags=re.S,
+    )
     assert "clip-search-form" in response.text
 
 
@@ -1419,6 +1428,22 @@ def test_proxy_static_shell_routes_include_about_project_writeup() -> None:
     assert response.status_code == 200
     assert 'id="tab-about"' in response.text
     assert "https://robertboscacci.com/projects/elliott-bay-vhf/" in response.text
+
+
+def test_proxy_serves_crawler_assets_from_configured_public_site_dir(tmp_path: Path) -> None:
+    app = create_app(ProxySettings(public_site_dir=str(tmp_path / "public-site")))
+
+    robots = _run(_asgi_get(app, "/robots.txt"))
+    llms = _run(_asgi_get(app, "/llms.txt"))
+    sitemap = _run(_asgi_get(app, "/sitemap.xml"))
+
+    assert robots.status_code == 200
+    assert "User-agent: *\nAllow: /" in robots.text.replace("\r\n", "\n")
+    assert robots.headers["content-type"].startswith("text/plain")
+    assert llms.status_code == 200
+    assert llms.text.startswith("# Elliott Bay VHF")
+    assert sitemap.status_code == 200
+    assert sitemap.headers["content-type"].startswith("application/xml")
 
 
 def test_proxy_performance_disk_snapshot_collapses_duplicate_filesystems(
@@ -1493,7 +1518,9 @@ def test_proxy_defaults_to_current_pi_lan_address() -> None:
     assert settings.performance_memory_history_seconds == 6 * 60 * 60
     assert settings.performance_persist_interval_seconds == 60.0
     assert settings.performance_persist_history_seconds == 24 * 60 * 60
-    assert settings.performance_history_db_path.endswith("data/performance_telemetry.sqlite3")
+    assert settings.performance_history_db_path.replace("\\", "/").endswith(
+        "data/performance_telemetry.sqlite3"
+    )
 
 
 def test_proxy_pi_performance_snapshot_reads_public_safe_ssh_json(monkeypatch) -> None:

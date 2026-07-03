@@ -1,3 +1,6 @@
+import json
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -119,7 +122,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "Clip Review" in index_html
     assert "Live Monitor" in index_html
     assert "Search" in index_html
-    assert 'id="tab-search" type="button" data-tab="search"' in index_html
+    assert re.search(
+        r'<button[^>]*id="tab-search"[^>]*type="button"[^>]*data-tab="search"',
+        index_html,
+        flags=re.S,
+    )
     assert "panel-search" in index_html
     assert "clip-search-form" in index_html
     assert "clip-search-suggestions" in index_html
@@ -127,7 +134,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "Map" in index_html
     assert ">AIS<" not in index_html
     assert "Elliott Bay Vessel Map" in index_html
-    assert 'id="tab-map" type="button" data-tab="map"' in index_html
+    assert re.search(
+        r'<button[^>]*id="tab-map"[^>]*type="button"[^>]*data-tab="map"',
+        index_html,
+        flags=re.S,
+    )
     assert "panel-map" in index_html
     assert "ais-catcher-frame" in index_html
     assert "map-status" in index_html
@@ -137,7 +148,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "shared public map" in index_html
     assert "Analysis" in index_html
     assert "Analysis Dashboard" in index_html
-    assert 'id="tab-language" type="button" data-tab="language" hidden' in index_html
+    assert re.search(
+        r'<button[^>]*id="tab-language"[^>]*type="button"[^>]*data-tab="language"[^>]*hidden',
+        index_html,
+        flags=re.S,
+    )
     assert "panel-language" in index_html
     assert "lexical-analysis" in index_html
     assert "Fine Tuning" not in index_html
@@ -784,7 +799,11 @@ def test_public_site_shows_public_ais_tab() -> None:
     assert 'aisCatcherFrame.src = aisCatcherFrameUrl;' in app_js
     assert 'aisCatcherFrame.title = "AIS-catcher live map";' in app_js
     assert "if (privateAppHost) {\n    aisCatcherFrame.src = aisCatcherFrameUrl;" not in app_js
-    assert 'id="tab-map" type="button" data-tab="map" hidden' in index_html
+    assert re.search(
+        r'<button[^>]*id="tab-map"[^>]*type="button"[^>]*data-tab="map"[^>]*hidden',
+        index_html,
+        flags=re.S,
+    )
 
 
 def test_public_site_cache_busts_app_module() -> None:
@@ -792,6 +811,122 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert '<script src="/assets/app.js" type="module"></script>' not in index_html
+
+
+def test_public_site_has_indexable_default_metadata_and_json_ld() -> None:
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+
+    assert (
+        '<meta name="description" content="Live Elliott Bay marine VHF radio audio, '
+        "recent receiver clips, transcript search, AIS vessel map, and channel analysis"
+        in index_html
+    )
+    assert '<meta name="robots" content="index,follow,max-image-preview:large" />' in index_html
+    assert '<link rel="canonical" href="https://seattleboatradio.com/" />' in index_html
+    assert '<link rel="sitemap" type="application/xml" href="/sitemap.xml" />' in index_html
+    assert '<link rel="alternate" type="text/plain" href="/llms.txt" title="AI crawler context" />' in index_html
+    assert '<meta property="og:url" content="https://seattleboatradio.com/" />' in index_html
+    assert '<meta name="twitter:card" content="summary" />' in index_html
+
+    match = re.search(
+        r'<script id="site-structured-data" type="application/ld\+json">\s*(.*?)\s*</script>',
+        index_html,
+        flags=re.S,
+    )
+    assert match is not None
+    graph = json.loads(match.group(1))["@graph"]
+    graph_types = {item["@type"] for item in graph}
+    assert {"WebSite", "WebApplication", "Dataset"}.issubset(graph_types)
+    assert any(item.get("url") == "https://seattleboatradio.com/" for item in graph)
+    assert any("VHF" in item.get("description", "") for item in graph)
+
+
+def test_public_site_exposes_crawlable_internal_links_and_route_metadata() -> None:
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    for href in (
+        "/clips/",
+        "/hall-of-fame/",
+        "/reviewed/",
+        "/search/",
+        "/live/",
+        "/ais/",
+        "/analysis/",
+        "/about/",
+    ):
+        assert f'href="{href}"' in index_html
+
+    assert 'role="tablist"' in index_html
+    assert 'role="tab"' in index_html
+    assert 'role="tabpanel"' in index_html
+    assert 'tab.setAttribute("aria-selected", String(tab.dataset.tab === name));' in app_js
+    assert "const routeMetadata =" in app_js
+    assert "function updateDocumentMetadata(name)" in app_js
+    assert "setCanonicalUrl(metadata.url);" in app_js
+    assert "updateDocumentMetadata(name);" in app_js
+    assert 'reviewed: {' in app_js
+    assert 'url: `${siteCanonicalOrigin}/reviewed/`' in app_js
+
+
+def test_public_site_crawler_files_are_complete_and_conservative() -> None:
+    robots = Path("public-site/robots.txt").read_text(encoding="utf-8")
+    llms = Path("public-site/llms.txt").read_text(encoding="utf-8")
+    sitemap = Path("public-site/sitemap.xml").read_text(encoding="utf-8")
+
+    assert "User-agent: *\nAllow: /" in robots
+    assert "Sitemap: https://seattleboatradio.com/sitemap.xml" in robots
+    for crawler in (
+        "Googlebot",
+        "Bingbot",
+        "GPTBot",
+        "OAI-SearchBot",
+        "ChatGPT-User",
+        "ClaudeBot",
+        "Claude-SearchBot",
+        "Claude-User",
+    ):
+        assert f"User-agent: {crawler}" in robots
+        assert f"User-agent: {crawler}\nAllow: /" in robots
+
+    assert llms.startswith("# Elliott Bay VHF\n")
+    assert "https://seattleboatradio.com/sitemap.xml" in llms
+    assert "https://seattleboatradio.com/analysis/lexical.json" in llms
+    assert "Public pages listed here are intentionally crawlable" in llms
+
+    namespace = {"sitemap": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    root = ET.fromstring(sitemap)
+    urls = [node.text for node in root.findall("sitemap:url/sitemap:loc", namespace)]
+    assert urls == [
+        "https://seattleboatradio.com/",
+        "https://seattleboatradio.com/clips/",
+        "https://seattleboatradio.com/hall-of-fame/",
+        "https://seattleboatradio.com/reviewed/",
+        "https://seattleboatradio.com/search/",
+        "https://seattleboatradio.com/live/",
+        "https://seattleboatradio.com/ais/",
+        "https://seattleboatradio.com/analysis/",
+        "https://seattleboatradio.com/about/",
+    ]
+    assert "performance" not in sitemap
+    assert "operator" not in sitemap
+
+
+def test_public_site_deploys_and_revalidates_crawler_assets() -> None:
+    for path in ("scripts/deploy_static_shell.sh", "scripts/deploy_public_site.sh"):
+        script = Path(path).read_text(encoding="utf-8")
+        assert "upload_crawler_assets" in script
+        assert '--key "${asset_path}"' in script
+        assert "text/plain" in script
+        assert "application/xml" in script
+        assert "--cache-control \"no-store\"" in script
+        assert '"reviewed/index.html"' in script
+        assert '"reviewed/"' in script
+        assert '"reviewed"' in script
+
+    static_shell = Path("scripts/deploy_static_shell.sh").read_text(encoding="utf-8")
+    for invalidation_path in ("/robots.txt", "/sitemap.xml", "/llms.txt", "/reviewed", "/reviewed/*"):
+        assert f'"{invalidation_path}"' in static_shell
 
 
 def test_public_site_tabs_have_linkable_routes() -> None:
@@ -816,7 +951,7 @@ def test_public_site_tabs_have_linkable_routes() -> None:
         "activateTab(initialRouteState.tab, { replaceRoute: true, updateRoute: false })"
         in app_js
     )
-    for route in ("clips", "hall-of-fame", "search", "live", "ais", "map", "analysis", "about"):
+    for route in ("clips", "hall-of-fame", "reviewed", "search", "live", "ais", "map", "analysis", "about"):
         assert f'"{route}/index.html"' in deploy_shell
         assert f'"{route}/index.html"' in deploy_full
         assert f'"{route}/"' in deploy_shell

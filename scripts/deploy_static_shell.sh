@@ -165,6 +165,30 @@ upload_shell_entrypoint() {
   fi
 }
 
+upload_crawler_assets() {
+  local source_dir="$1"
+  local target_bucket="$2"
+  local asset_path
+  local content_type
+  for asset_path in "robots.txt" "llms.txt" "sitemap.xml"; do
+    if [[ ! -f "${source_dir}/${asset_path}" ]]; then
+      echo "Crawler asset is missing: ${source_dir}/${asset_path}" >&2
+      exit 1
+    fi
+    case "${asset_path}" in
+      sitemap.xml) content_type="application/xml" ;;
+      *) content_type="text/plain" ;;
+    esac
+    aws s3api put-object \
+      --bucket "${target_bucket}" \
+      --key "${asset_path}" \
+      --body "${source_dir}/${asset_path}" \
+      --content-type "${content_type}" \
+      --cache-control "no-store" \
+      --output json
+  done
+}
+
 delete_retired_route_indexes() {
   local target_bucket="$1"
   local retired_route_path
@@ -236,6 +260,7 @@ branch="$(current_git_branch)"
 route_index_paths=(
   "clips/index.html"
   "hall-of-fame/index.html"
+  "reviewed/index.html"
   "search/index.html"
   "live/index.html"
   "ais/index.html"
@@ -248,6 +273,8 @@ route_direct_paths=(
   "clips"
   "hall-of-fame/"
   "hall-of-fame"
+  "reviewed/"
+  "reviewed"
   "search/"
   "search"
   "live/"
@@ -298,10 +325,15 @@ invalidate_paths=(
   "/index.html"
   "/assets/*"
   "/favicon.svg"
+  "/robots.txt"
+  "/sitemap.xml"
+  "/llms.txt"
   "/clips"
   "/clips/*"
   "/hall-of-fame"
   "/hall-of-fame/*"
+  "/reviewed"
+  "/reviewed/*"
   "/search"
   "/search/*"
   "/live"
@@ -363,6 +395,7 @@ fqdn="$(deploy_output_raw "${fqdn_output}")"
 echo "Deploying static shell ${site_source} from ${branch} to ${environment}: https://${fqdn}"
 aws s3 sync "${site_source}" "s3://${bucket}/" "${sync_excludes[@]}"
 upload_shell_entrypoint "${site_source}" "${bucket}"
+upload_crawler_assets "${site_source}" "${bucket}"
 sync_tailnet_dev_static_shell "${site_source}"
 upload_route_indexes "${site_source}" "${bucket}"
 delete_retired_route_indexes "${bucket}"

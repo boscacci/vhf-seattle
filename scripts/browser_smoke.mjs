@@ -164,7 +164,7 @@ try {
     ) {
       throw new Error(`dev clip review star action is not visible without transcript editing: ${JSON.stringify(devClipFeatureState)}`);
     }
-    await page.getByRole("button", { name: "Live Monitor" }).click();
+    await page.getByRole("tab", { name: "Live Monitor" }).click();
     const liveSelectorState = await page.evaluate(() => ({
       primaryLabels: [...document.querySelectorAll("#live-primary-channel-picker .live-channel-option")].map((button) =>
         button.textContent?.trim(),
@@ -225,7 +225,7 @@ try {
       throw new Error(`all-but-traffic live mode did not exclude Seattle Traffic: ${JSON.stringify(allButTrafficState)}`);
     }
     await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
-    await page.getByRole("button", { name: "Clip Review" }).click();
+    await page.getByRole("tab", { name: "Clip Review" }).click();
     await page.getByRole("link", { name: "Label clips" }).click();
     await page.waitForURL(`${baseUrl}/operator/`, { timeout: 10000 });
     await page.locator("#clips .transcript-correction").first().waitFor({ state: "visible", timeout: 10000 });
@@ -399,7 +399,7 @@ try {
       await desktopContext.close();
       topicClusterReturnsNotFound = false;
     }
-    await page.getByRole("button", { name: "Clip Review" }).click();
+    await page.getByRole("tab", { name: "Clip Review" }).click();
     await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
     await page.evaluate(() => {
       window.__clipAudioBeforeStatsPoll = document.querySelector("#clips .clip-card audio");
@@ -854,7 +854,7 @@ try {
     ) {
       throw new Error(`operator feature action did not update the clip card: ${JSON.stringify(operatorFeatureState)}`);
     }
-    await page.getByRole("button", { name: "Analysis" }).click();
+    await page.getByRole("tab", { name: "Analysis" }).click();
     await page
       .locator("#lexical-analysis .entity-card:first-child .analysis-correction")
       .waitFor({ state: "visible", timeout: 10000 });
@@ -884,7 +884,7 @@ try {
     ) {
       throw new Error(`operator analysis correction did not save: ${JSON.stringify(operatorAnalysisCorrection)}`);
     }
-    await page.getByRole("button", { name: "Performance" }).click();
+    await page.getByRole("tab", { name: "Performance" }).click();
     await page.locator(".speech-training-panel .performance-card").first().waitFor({ state: "visible", timeout: 10000 });
     const speechTraining = await page.evaluate(() => ({
       title: document.querySelector(".speech-training-panel h3")?.textContent || "",
@@ -903,7 +903,7 @@ try {
     if (speechTraining.bodyText.includes("Export JSONL") || speechTraining.bodyText.includes("Nightly training")) {
       throw new Error(`performance speech training panel kept bulky operator actions: ${JSON.stringify(speechTraining)}`);
     }
-    await page.getByRole("button", { name: "About" }).click();
+    await page.getByRole("tab", { name: "About" }).click();
     await page.locator("#panel-about .about-link").waitFor({ state: "visible", timeout: 10000 });
     const aboutState = await page.evaluate(() => ({
       pathname: window.location.pathname,
@@ -1028,7 +1028,7 @@ try {
       if (clearedSearchState.suggestionsHidden || !clearedSearchState.resultText.includes("Enter a search string")) {
         throw new Error(`clearing search did not restore suggestions: ${JSON.stringify(clearedSearchState)}`);
       }
-      await desktopPerformancePage.getByRole("button", { name: "Performance" }).click();
+      await desktopPerformancePage.getByRole("tab", { name: "Performance" }).click();
       const firstChart = desktopPerformancePage.locator(".performance-chart-svg").first();
       await firstChart.waitFor({ state: "visible", timeout: 10000 });
       defaultRangeState = await desktopPerformancePage.evaluate(() => {
