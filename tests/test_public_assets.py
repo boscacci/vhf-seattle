@@ -10,6 +10,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert "limit=${selectedClipPageSize}" in app_js
+    assert "publicLiveApiTimeoutMs = 8000" in app_js
+    assert "shouldLoadPublishedManifestFirst" not in app_js
+    assert "refreshLiveClipPayloadInBackground" not in app_js
+    assert "useCachedPayload && !publicAppHost" in app_js
+    assert "loadAndRender({ useCachedPayload: false });" in app_js
     assert "recentClipsCacheKeyPrefix" in app_js
     assert "clipPagePrefetchRadius = 2" in app_js
     assert "prefetchNeighborClipPages(payload)" in app_js
@@ -28,6 +33,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "prefetchClipPageAtOffset(baseOffset + pageDelta * pageSize" in app_js
     assert ".clip-placeholder" in styles_css
     assert "channel-filter" in index_html
+    assert index_html.index('<section\n        class="tab-panel is-active"') < index_html.index('<nav class="site-links"')
     assert '<select id="channel-filter"' not in index_html
     assert 'id="channel-filter" class="channel-filter channel-multiselect"' in index_html
     assert "More channel controls" in index_html
@@ -479,7 +485,7 @@ def test_public_site_channel_selector_closes_on_outside_interaction() -> None:
     assert "menu.open = false;" in app_js
 
 
-def test_public_site_prod_degrades_to_published_manifest_before_live_api() -> None:
+def test_public_site_prod_checks_live_api_before_published_manifest_fallback() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert (
@@ -488,17 +494,13 @@ def test_public_site_prod_degrades_to_published_manifest_before_live_api() -> No
         in app_js
     )
     assert "const publicAppHost = publicAppHosts.has(window.location.hostname);" in app_js
-    assert "const publicLiveApiTimeoutMs = 2500;" in app_js
-    assert "function shouldLoadPublishedManifestFirst()" in app_js
-    assert (
-        "return publicAppHost && clipCollectionFilter === "
-        '"recent" && selectedChannels.size === 0;'
-        in app_js
-    )
-    assert "const payload = await loadPublishedManifest();" in app_js
-    assert "refreshLiveClipPayloadInBackground(requestUrl, requestId);" in app_js
-    assert "async function refreshLiveClipPayloadInBackground(requestUrl, requestId)" in app_js
-    assert "fetchJsonWithTimeout(requestUrl, { timeoutMs: publicLiveApiTimeoutMs })" in app_js
+    assert "const privateAppHost = localAppHost || tailnetAppHost || devAppHost;" in app_js
+    assert "const publicLiveApiTimeoutMs = 8000;" in app_js
+    assert "function shouldLoadPublishedManifestFirst()" not in app_js
+    assert "refreshLiveClipPayloadInBackground" not in app_js
+    assert "useCachedPayload && !publicAppHost" in app_js
+    assert "timeoutMs: publicAppHost ? publicLiveApiTimeoutMs : 0" in app_js
+    assert "return loadPublishedManifest();" in app_js
     assert "function fetchJsonWithTimeout(url, { timeoutMs } = {})" in app_js
     assert "new AbortController()" in app_js
     assert "window.setTimeout(() => controller.abort(), timeoutMs)" in app_js

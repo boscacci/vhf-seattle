@@ -8,7 +8,7 @@ const tailnetHostSuffix = ".tailbea63b.ts.net";
 const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
 const privateAppHost = localAppHost || tailnetAppHost || devAppHost;
 const privateApiBaseUrl = "";
-const publicLiveApiTimeoutMs = 2500;
+const publicLiveApiTimeoutMs = 8000;
 const clipPlaybackUrl = apiUrl("/api/clips/playback");
 const clipAudioUrl = apiUrl("/api/clips/audio");
 const clipSearchUrl = apiUrl("/api/clips/search");
@@ -624,7 +624,7 @@ refreshButton.addEventListener("click", () => {
   } else if (activeTab === "map") {
     loadAndRenderMap({ showLoading: false });
   } else {
-    loadAndRender();
+    loadAndRender({ useCachedPayload: false });
   }
 });
 
@@ -754,20 +754,7 @@ liveAudio.addEventListener("ended", () => {
 async function loadAndRender({ useCachedPayload = true } = {}) {
   const requestId = ++clipRequestSequence;
   const requestUrl = clipRequestUrl();
-  if (shouldLoadPublishedManifestFirst()) {
-    if (!currentClipPayload || !currentPageClips.length) {
-      renderClipLoadingState();
-    }
-    const payload = await loadPublishedManifest();
-    if (requestId !== clipRequestSequence) {
-      return;
-    }
-    currentClipPayload = payload;
-    renderSite(payload);
-    refreshLiveClipPayloadInBackground(requestUrl, requestId);
-    return;
-  }
-  const cachedPayload = useCachedPayload
+  const cachedPayload = useCachedPayload && !publicAppHost
     ? prefetchedClipPagePayload(requestUrl) || loadCachedRecentClipPayload(requestUrl)
     : null;
   if (cachedPayload) {
@@ -790,28 +777,6 @@ async function loadAndRender({ useCachedPayload = true } = {}) {
     storeClipPageMemoryPayload(requestUrl, payload);
     storeRecentClipPayload(requestUrl, payload);
     prefetchNeighborClipPages(payload);
-  }
-}
-
-function shouldLoadPublishedManifestFirst() {
-  return publicAppHost && clipCollectionFilter === "recent" && selectedChannels.size === 0;
-}
-
-async function refreshLiveClipPayloadInBackground(requestUrl, requestId) {
-  try {
-    const payload = normalizeLivePayload(
-      await fetchJsonWithTimeout(requestUrl, { timeoutMs: publicLiveApiTimeoutMs }),
-    );
-    if (requestId !== clipRequestSequence) {
-      return;
-    }
-    currentClipPayload = payload;
-    renderSite(payload);
-    storeClipPageMemoryPayload(requestUrl, payload);
-    storeRecentClipPayload(requestUrl, payload);
-    prefetchNeighborClipPages(payload);
-  } catch {
-    // The published manifest remains the public fallback when the home proxy is down.
   }
 }
 
