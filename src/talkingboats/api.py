@@ -179,6 +179,33 @@ def _published_playable_clip_summary(
     }
 
 
+def _received_clip_count(
+    clip_store: UploadedClipStore | DynamoUploadedClipStore | None,
+    *,
+    fallback: int = 0,
+) -> int:
+    if clip_store is None:
+        return fallback
+    try:
+        non_transcribed_count = int(clip_store.non_transcribed_clip_count())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    else:
+        return fallback + non_transcribed_count
+    try:
+        return int(clip_store.received_clip_count())
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+    try:
+        stats = clip_store.stats()
+    except (AttributeError, RuntimeError, TypeError):
+        return fallback
+    counts = stats.get("counts", {})
+    if not isinstance(counts, Mapping):
+        return fallback
+    return sum(int(count or 0) for count in counts.values())
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -289,6 +316,8 @@ async def recent_clips(
         return {
             "clips": [],
             "clip_count": 0,
+            "received_clip_count": 0,
+            "analyzed_clip_count": 0,
             "filtered_clip_count": 0,
             "playable_clip_count": playable_clip_count,
             "filtered_playable_clip_count": filtered_playable_clip_count,
@@ -315,6 +344,8 @@ async def recent_clips(
         else all_channel_counts
     )
     clip_count = sum(all_channel_counts.values())
+    received_clip_count = _received_clip_count(clip_store, fallback=clip_count)
+    analyzed_clip_count = clip_count
     filtered_clip_count = (
         sum(channel_counts.get(selected_channel, 0) for selected_channel in selected_channels)
         if selected_channels
@@ -328,6 +359,8 @@ async def recent_clips(
         return {
             "clips": [],
             "clip_count": clip_count,
+            "received_clip_count": received_clip_count,
+            "analyzed_clip_count": analyzed_clip_count,
             "filtered_clip_count": 0,
             "playable_clip_count": playable_clip_count,
             "filtered_playable_clip_count": 0,
@@ -354,6 +387,8 @@ async def recent_clips(
     return {
         "clips": clips,
         "clip_count": clip_count,
+        "received_clip_count": received_clip_count,
+        "analyzed_clip_count": analyzed_clip_count,
         "filtered_clip_count": filtered_clip_count,
         "playable_clip_count": playable_clip_count,
         "filtered_playable_clip_count": filtered_playable_clip_count,

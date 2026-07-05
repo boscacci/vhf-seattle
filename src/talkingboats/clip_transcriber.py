@@ -1263,6 +1263,11 @@ class UploadedClipStore:
             ).fetchone()
         return int(row[0]) if row else 0
 
+    def received_clip_count(self) -> int:
+        with _connect_upload_db(self.path) as connection:
+            row = connection.execute("SELECT count(*) FROM uploaded_clips").fetchone()
+        return int(row[0]) if row else 0
+
     def stats(self) -> dict[str, Any]:
         with sqlite3.connect(self.path) as connection:
             rows = connection.execute(

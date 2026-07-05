@@ -26,7 +26,7 @@
       content="Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis."
     />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/styles.css" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260705-counts" />
     <script id="site-structured-data" type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -171,6 +171,16 @@
           About
         </button>
         <button id="refresh-clips" class="refresh" type="button">Refresh</button>
+      </nav>
+      <nav class="route-links" aria-label="Public page links" hidden>
+        <a href="/clips/">Recent clips</a>
+        <a href="/hall-of-fame/">Hall of Fame</a>
+        <a href="/reviewed/">Reviewed clips</a>
+        <a href="/search/">Transcript search</a>
+        <a href="/live/">Live audio</a>
+        <a href="/ais/">Vessel map</a>
+        <a href="/analysis/">Analysis</a>
+        <a href="/about/">About</a>
       </nav>
       <section
         class="tab-panel is-active"
@@ -407,20 +417,8 @@
         </div>
       </section>
 
-      <nav class="site-links" aria-label="Public pages">
-        <a href="/">Overview</a>
-        <a href="/clips/">Recent clips</a>
-        <a href="/hall-of-fame/">Hall of Fame</a>
-        <a href="/reviewed/">Reviewed clips</a>
-        <a href="/search/">Transcript search</a>
-        <a href="/live/">Live audio</a>
-        <a href="/ais/">Vessel map</a>
-        <a href="/analysis/">Analysis</a>
-        <a href="/about/">About</a>
-      </nav>
-
     </main>
 
-    <script src="/assets/app.js?v=20260705-live-review" type="module"></script>
+    <script src="/assets/app.js?v=20260705-counts" type="module"></script>
   </body>
 </html>

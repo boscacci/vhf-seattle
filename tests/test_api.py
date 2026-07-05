@@ -1072,6 +1072,8 @@ def test_recent_clips_reports_published_playable_counts_separately(tmp_path) -> 
     assert response.status_code == 200
     body = response.json()
     assert body["clip_count"] == 3
+    assert body["received_clip_count"] == 3
+    assert body["analyzed_clip_count"] == 3
     assert body["playable_clip_count"] == 2
     assert body["filtered_playable_clip_count"] == 2
     assert body["playable_channel_counts"] == {"14": 1, "68": 1}
@@ -1383,6 +1385,8 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
     assert wx_response.json() == {
         "clips": [],
         "clip_count": 1,
+        "received_clip_count": 2,
+        "analyzed_clip_count": 1,
         "filtered_clip_count": 0,
         "playable_clip_count": 0,
         "filtered_playable_clip_count": 0,

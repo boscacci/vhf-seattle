@@ -766,6 +766,15 @@ class DynamoUploadedClipStore:
             reviewed_only=reviewed_only,
         )
 
+    def non_transcribed_clip_count(self) -> int:
+        return sum(
+            self._query_count(_status_pk(status))
+            for status in ("pending", "processing", "waiting_upload", "error")
+        )
+
+    def received_clip_count(self) -> int:
+        return self.non_transcribed_clip_count() + self.transcribed_clip_count()
+
     def stats(self) -> dict[str, Any]:
         states = [item for item in self._scan_items() if item.get("entity_type") == "clip_state"]
         counts: dict[str, int] = {}

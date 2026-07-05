@@ -33,7 +33,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "prefetchClipPageAtOffset(baseOffset + pageDelta * pageSize" in app_js
     assert ".clip-placeholder" in styles_css
     assert "channel-filter" in index_html
-    assert index_html.index('<section\n        class="tab-panel is-active"') < index_html.index('<nav class="site-links"')
+    assert "site-links" not in index_html
+    assert ".site-links" not in styles_css
     assert '<select id="channel-filter"' not in index_html
     assert 'id="channel-filter" class="channel-filter channel-multiselect"' in index_html
     assert "More channel controls" in index_html
@@ -265,8 +266,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert '"Live DB"' not in app_js
     assert '"Published export"' not in app_js
     assert '["Playable clips", clipTotal]' in app_js
+    assert '["Received", totalReceivedClips(payload)]' in app_js
+    assert '["Analyzed", totalAnalyzedClips(payload)]' in app_js
     assert '["Clips", clipTotal]' not in app_js
     assert '["Latest clip", latest]' in app_js
+    assert "receivedAndAnalyzedStatusText(payload)" in app_js
     assert "payload.stats?.playable_channel_counts ||" in app_js
     assert 'const clipNoun = filteredTotal === 1 ? "playable clip" : "playable clips";' in app_js
     assert '"Analyzed transcripts"' in app_js
@@ -276,6 +280,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "return Number(value).toLocaleString();" in app_js
     assert 'description.textContent = formatStatValue(label, value);' in app_js
     assert "minmax(142px, 1.35fr)" in styles_css
+    assert ".stat:nth-child(5)" in styles_css
+    assert ".stat:nth-child(3)" not in styles_css
     assert "renderClipSummaryOnly(currentClipPayload);" in app_js
     assert 'clipList.querySelectorAll(".clip-card[data-clip-id]")' in app_js
     assert "existing?.dataset.clipSignature === signature" in app_js
@@ -721,6 +727,9 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert "playback_url" in app_js
+    assert "audio_url" in app_js
+    assert "clip.audio_url" in app_js
+    assert "clip.playback_url || clip.audio_url" in app_js
     assert "audio_public_filename" in app_js
     assert 'const clipPlaybackUrl = apiUrl("/api/clips/playback");' in app_js
     assert "playback_issued_at_ms: Date.now()" in app_js
@@ -812,6 +821,8 @@ def test_public_site_cache_busts_app_module() -> None:
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
 
     assert '<script src="/assets/app.js?v=' in index_html
+    assert '<script src="/assets/app.js?v=20260705-counts" type="module"></script>' in index_html
+    assert '<link rel="stylesheet" href="/assets/styles.css?v=20260705-counts" />' in index_html
     assert '<script src="/assets/app.js" type="module"></script>' not in index_html
 
 

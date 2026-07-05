@@ -59,6 +59,8 @@ ALLOWED_STATS_FIELDS = {
     "vessel_type_counts",
     "generated_at",
     "clip_count",
+    "received_clip_count",
+    "analyzed_clip_count",
 }
 
 ALLOWED_VESSEL_FIELDS = {
@@ -179,11 +181,8 @@ def export_recent_clip_site(
         if clip_db_path is None:
             raise ValueError("clip_db_path or clip_store is required")
         clip_store = UploadedClipStore(clip_db_path)
-    clips = clip_store.recent_transcribed(
-        limit=limit,
-        excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
-    )
-
+    analyzed_clip_count = _analyzed_clip_count(clip_store)
+    received_clip_count = _received_clip_count(clip_store, fallback=analyzed_clip_count)
     with (
         _preserved_output_subdir(output_dir, "analysis") as preserved_analysis,
         _preserved_output_subdir(output_dir, "clips") as preserved_clips,
@@ -196,53 +195,77 @@ def export_recent_clip_site(
 
         clips_dir = output_dir / "clips"
         clips_dir.mkdir(exist_ok=True)
-        total_clips = len(clips)
         publishable_clips = []
         used_audio_filenames: set[str] = set()
-        for index, source_clip in enumerate(clips, start=1):
-            if progress:
-                progress(index, total_clips)
-            public_clip = _public_clip_from_recent(source_clip)
-            destination = clips_dir / public_clip["audio_public_filename"]
-            if destination.is_file() and destination.stat().st_size > 0:
-                publishable_clips.append(source_clip)
-                used_audio_filenames.add(destination.name)
-                continue
-            if clip_audio_processor is None and clip_audio_quality_gate is None:
-                try:
-                    clip_reader.download(source_clip.key, destination)
-                except ClipNotAvailable as exc:
-                    if skip_progress:
-                        skip_progress(index, total_clips, str(exc))
+        candidate_offset = 0
+        processed_candidates = 0
+        batch_size = max(limit, 50)
+        while len(publishable_clips) < limit:
+            candidates = clip_store.recent_transcribed(
+                limit=batch_size,
+                offset=candidate_offset,
+                excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+            )
+            if not candidates:
+                break
+            for source_clip in candidates:
+                processed_candidates += 1
+                if progress:
+                    progress(processed_candidates, limit)
+                public_clip = _public_clip_from_recent(source_clip)
+                destination = clips_dir / public_clip["audio_public_filename"]
+                if destination.is_file() and destination.stat().st_size > 0:
+                    publishable_clips.append(source_clip)
+                    used_audio_filenames.add(destination.name)
+                    if len(publishable_clips) >= limit:
+                        break
                     continue
-                publishable_clips.append(source_clip)
-                used_audio_filenames.add(destination.name)
-                continue
-            with tempfile.TemporaryDirectory(prefix="talkingboats-public-clip-") as tempdir:
-                suffix = Path(source_clip.key).suffix or ".clip"
-                raw_clip_path = Path(tempdir) / f"source{suffix}"
-                try:
-                    clip_reader.download(source_clip.key, raw_clip_path)
-                except ClipNotAvailable as exc:
-                    if skip_progress:
-                        skip_progress(index, total_clips, str(exc))
+                if clip_audio_processor is None and clip_audio_quality_gate is None:
+                    try:
+                        clip_reader.download(source_clip.key, destination)
+                    except ClipNotAvailable as exc:
+                        if skip_progress:
+                            skip_progress(processed_candidates, limit, str(exc))
+                        continue
+                    publishable_clips.append(source_clip)
+                    used_audio_filenames.add(destination.name)
+                    if len(publishable_clips) >= limit:
+                        break
                     continue
-                try:
-                    if clip_audio_quality_gate is not None:
-                        clip_audio_quality_gate(raw_clip_path)
-                except PublicClipAudioRejected as exc:
-                    if skip_progress:
-                        skip_progress(index, total_clips, str(exc))
-                    continue
-                if clip_audio_processor is None:
-                    shutil.copy2(raw_clip_path, destination)
-                else:
-                    clip_audio_processor(raw_clip_path, destination)
-                publishable_clips.append(source_clip)
-                used_audio_filenames.add(destination.name)
+                with tempfile.TemporaryDirectory(prefix="talkingboats-public-clip-") as tempdir:
+                    suffix = Path(source_clip.key).suffix or ".clip"
+                    raw_clip_path = Path(tempdir) / f"source{suffix}"
+                    try:
+                        clip_reader.download(source_clip.key, raw_clip_path)
+                    except ClipNotAvailable as exc:
+                        if skip_progress:
+                            skip_progress(processed_candidates, limit, str(exc))
+                        continue
+                    try:
+                        if clip_audio_quality_gate is not None:
+                            clip_audio_quality_gate(raw_clip_path)
+                    except PublicClipAudioRejected as exc:
+                        if skip_progress:
+                            skip_progress(processed_candidates, limit, str(exc))
+                        continue
+                    if clip_audio_processor is None:
+                        shutil.copy2(raw_clip_path, destination)
+                    else:
+                        clip_audio_processor(raw_clip_path, destination)
+                    publishable_clips.append(source_clip)
+                    used_audio_filenames.add(destination.name)
+                    if len(publishable_clips) >= limit:
+                        break
+            candidate_offset += len(candidates)
+            if len(candidates) < batch_size:
+                break
         _remove_unused_public_audio(clips_dir, used_audio_filenames)
 
-        public_manifest = _recent_clip_manifest(publishable_clips)
+        public_manifest = _recent_clip_manifest(
+            publishable_clips,
+            received_clip_count=received_clip_count,
+            analyzed_clip_count=analyzed_clip_count,
+        )
         (output_dir / "public_manifest.json").write_text(
             json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -402,7 +425,12 @@ def _copy_approved_audio(
             clip_audio_processor(source, destination)
 
 
-def _recent_clip_manifest(clips: list[RecentTranscribedClip]) -> dict[str, Any]:
+def _recent_clip_manifest(
+    clips: list[RecentTranscribedClip],
+    *,
+    received_clip_count: int | None = None,
+    analyzed_clip_count: int | None = None,
+) -> dict[str, Any]:
     generated_at = _format_utc(datetime.now(UTC))
     channel_counts: dict[str, int] = {}
     public_clips = []
@@ -423,8 +451,36 @@ def _recent_clip_manifest(clips: list[RecentTranscribedClip]) -> dict[str, Any]:
         },
         "clips": public_clips,
     }
+    if received_clip_count is not None:
+        public_manifest["stats"]["received_clip_count"] = received_clip_count
+    if analyzed_clip_count is not None:
+        public_manifest["stats"]["analyzed_clip_count"] = analyzed_clip_count
     assert_public_safe(public_manifest)
     return public_manifest
+
+
+def _analyzed_clip_count(clip_store: Any) -> int | None:
+    try:
+        return int(
+            clip_store.transcribed_clip_count(excluded_channels=PUBLIC_EXCLUDED_CHANNELS)
+        )
+    except (AttributeError, RuntimeError, TypeError):
+        return None
+
+
+def _received_clip_count(clip_store: Any, *, fallback: int | None) -> int | None:
+    try:
+        return int(clip_store.received_clip_count())
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+    try:
+        stats = clip_store.stats()
+    except (AttributeError, RuntimeError, TypeError):
+        return fallback
+    counts = stats.get("counts", {})
+    if not isinstance(counts, Mapping):
+        return fallback
+    return sum(int(count or 0) for count in counts.values())
 
 
 def _public_clip_from_recent(clip: RecentTranscribedClip) -> dict[str, Any]:

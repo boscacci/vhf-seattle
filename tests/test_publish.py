@@ -323,8 +323,54 @@ def test_recent_clip_export_can_use_cloud_clip_store_without_sqlite(tmp_path: Pa
     assert [clip["transcript_public"] for clip in manifest["clips"]] == [
         "Seattle Traffic cloud-backed export."
     ]
-    assert store.calls == [{"limit": 10, "excluded_channels": ("WX",)}]
+    assert store.calls == [{"limit": 50, "offset": 0, "excluded_channels": ("WX",)}]
     assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
+
+
+def test_recent_clip_export_scans_past_skips_to_fill_public_audio_quota(
+    tmp_path: Path,
+) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    clips = [
+        RecentTranscribedClip(
+            key=f"raw/channel=14/date=2026-05-24/cloud-{index}.mp3",
+            channel="14",
+            started_at=f"2026-05-24T22:0{index}:41Z",
+            ended_at=f"2026-05-24T22:0{index}:49Z",
+            duration_seconds=8.1,
+            content_type="audio/mpeg",
+            transcript=f"Seattle Traffic quota clip {index}.",
+            segments=[],
+        )
+        for index in range(3)
+    ]
+    store = FakeRecentClipStore(clips)
+    reader = FakeClipReader(
+        {
+            clips[0].key: b"first available audio",
+            clips[2].key: b"third available audio",
+        }
+    )
+    processor = RecordingAudioProcessor()
+
+    manifest = export_recent_clip_site(
+        clip_store=store,
+        site_source_dir=site_source,
+        output_dir=tmp_path / "output",
+        clip_reader=reader,
+        clip_audio_processor=processor,
+        clip_audio_quality_gate=None,
+        limit=2,
+    )
+
+    assert [clip["transcript_public"] for clip in manifest["clips"]] == [
+        "Seattle Traffic quota clip 0.",
+        "Seattle Traffic quota clip 2.",
+    ]
+    assert reader.downloads == [clips[0].key, clips[1].key, clips[2].key]
+    assert len(processor.calls) == 2
 
 
 def test_recent_clip_export_skips_unpublishable_audio_after_download(tmp_path: Path) -> None:
@@ -455,7 +501,7 @@ def test_recent_clip_export_skips_audio_missing_from_source(tmp_path: Path) -> N
     assert [clip["transcript_public"] for clip in manifest["clips"]] == [
         "Seattle Traffic playable source audio."
     ]
-    assert skipped == [(1, 2, f"{missing_key} is not available in S3 yet")]
+    assert skipped == [(1, 10, f"{missing_key} is not available in S3 yet")]
     assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
 
 
@@ -611,9 +657,17 @@ class FakeRecentClipStore:
         self.clips = clips
         self.calls: list[dict[str, object]] = []
 
-    def recent_transcribed(self, *, limit: int, excluded_channels: tuple[str, ...]):
-        self.calls.append({"limit": limit, "excluded_channels": excluded_channels})
-        return self.clips[:limit]
+    def recent_transcribed(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+        excluded_channels: tuple[str, ...],
+    ):
+        self.calls.append(
+            {"limit": limit, "offset": offset, "excluded_channels": excluded_channels}
+        )
+        return self.clips[offset : offset + limit]
 
 
 class RecordingAudioProcessor:

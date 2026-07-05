@@ -216,6 +216,7 @@ def test_dynamo_clip_store_paginates_counts_and_stats() -> None:
         )
 
     assert store.transcribed_channel_counts() == {"14": 3}
+    assert store.received_clip_count() == 3
     stats = store.stats()
     assert stats["counts"] == {"transcribed": 3}
     assert len(stats["recent"]) == 3
