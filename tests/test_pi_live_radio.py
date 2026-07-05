@@ -1,16 +1,33 @@
 from pathlib import Path
 
 
-def test_pi_deploy_no_longer_installs_a_separate_web_gui() -> None:
+def test_pi_deploy_files_use_lf_line_endings() -> None:
+    deploy_paths = [
+        Path("deploy/pi/install_live_radio.sh"),
+        Path("deploy/pi/live-radio/talkingboats-profile-capture"),
+        Path("deploy/pi/live-radio/talkingboats-pi-boot-recovery"),
+        Path("deploy/systemd/talkingboats-live-radio-web.service.example"),
+    ]
+
+    for path in deploy_paths:
+        assert b"\r\n" not in path.read_bytes(), str(path)
+
+
+def test_pi_deploy_installs_status_web_without_reintroducing_gui_assets() -> None:
     installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
+    status_unit = Path("deploy/systemd/talkingboats-live-radio-web.service.example")
 
     assert not Path("deploy/pi/live-radio/index.html").exists()
     assert not Path("deploy/pi/live-radio/app.js").exists()
     assert not Path("deploy/pi/live-radio/styles.css").exists()
-    assert not Path("deploy/systemd/talkingboats-live-radio-web.service.example").exists()
-    assert "talkingboats-live-radio-web.service" not in installer
-    assert "/opt/talkingboats/live-radio" not in installer
-    assert "config.js" not in installer
+    assert status_unit.exists()
+    assert "talkingboats-live-radio-web.service" in installer
+    assert "systemctl enable talkingboats-live-radio-web.service" in installer
+    assert "systemctl restart talkingboats-live-radio-web.service" in installer
+    assert "/opt/talkingboats/live-radio" in installer
+    assert "deploy/pi/live-radio/config.js" not in installer
+    assert "rm -f" in installer
+    assert "/opt/talkingboats/live-radio/index.html" in installer
 
 
 def test_live_radio_stream_script_requires_generated_source_password() -> None:
@@ -62,6 +79,7 @@ def test_pi_units_do_not_give_up_during_blackout_boot_races() -> None:
         "talkingboats-edge-live-radio-stream.service.example",
         "talkingboats-live-hls-relay.service.example",
         "talkingboats-live-radio-stream.service.example",
+        "talkingboats-live-radio-web.service.example",
         "talkingboats-profile-capture.service.example",
         "talkingboats-spool-uploader.service.example",
     ]
@@ -91,6 +109,7 @@ def test_pi_installer_installs_blackout_boot_recovery_service() -> None:
     assert "systemctl reset-failed" in recovery_script
     assert "systemctl is-enabled" in recovery_script
     assert "icecast2.service" in recovery_script
+    assert "talkingboats-live-radio-web.service" in recovery_script
     assert "talkingboats-spool-uploader.service" in recovery_script
 
 
@@ -180,6 +199,9 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert "162550000" not in wrapper
     assert "156700000" in wrapper
     assert "current-status.json" in wrapper
+    assert "TALKINGBOATS_CAPTURE_STATUS_CHANNEL:-14" in wrapper
+    assert "TALKINGBOATS_CAPTURE_STATUS_FREQUENCY_HZ:-156700000" in wrapper
+    assert "TALKINGBOATS_CAPTURE_STATUS_LABEL:-VTS / Seattle Traffic" in wrapper
     assert "TALKINGBOATS_CAPTURE_LIVE_MOUNT:-/talkingboats-live.mp3" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS:-5000" in wrapper
     assert "TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS:-180" in wrapper
@@ -215,6 +237,12 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     )
     assert "TALKINGBOATS_CAPTURE_DEBUG_WX" not in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_SLOT_COOLDOWN_SECONDS "5"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_STATUS_CHANNEL "14"' in installer
+    assert 'append_env_if_missing TALKINGBOATS_CAPTURE_STATUS_FREQUENCY_HZ "156700000"' in installer
+    assert (
+        'append_env_if_missing TALKINGBOATS_CAPTURE_STATUS_LABEL "VTS / Seattle Traffic"'
+        in installer
+    )
     assert "talkingboats.capture_profiles" in installer
     assert (
         'squelch_args+=(--squelch-threshold "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD}")'

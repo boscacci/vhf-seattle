@@ -1,0 +1,19 @@
+[Unit]
+Description=Talking Boats receiver status web
+After=network-online.target talkingboats-profile-capture.service
+Wants=network-online.target talkingboats-profile-capture.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/talkingboats/live-radio
+ExecStart=/usr/bin/python3 -m http.server 8050 --bind 0.0.0.0
+Restart=always
+RestartSec=5
+User=rob
+Group=rob
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

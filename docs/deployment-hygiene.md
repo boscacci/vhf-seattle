@@ -87,8 +87,16 @@ do not permanently trip systemd's start limiter.
 
 The Pi install deploys `talkingboats-pi-boot-recovery.service`, which resets
 failed state and starts the enabled radio services after `network-online.target`.
-It starts Icecast, AIS capture, profile capture, the spool uploader, and any
-enabled gated relays. Disabled optional relays stay disabled.
+It starts Icecast, the receiver status web service on `:8050`, AIS capture,
+profile capture, the spool uploader, and any enabled gated relays. Disabled
+optional relays stay disabled.
+
+The receiver status service is intentionally small: it serves
+`/opt/talkingboats/live-radio/current-status.json` on
+`http://192.168.1.114:8050/current-status.json` for the OptiPlex live proxy.
+The profile capture wrapper rewrites that JSON when it starts, including after
+a blackout recovery restart, so the live monitor does not fall back to stale
+receiver state from an older debug profile.
 
 The OptiPlex deploy should keep `loginctl enable-linger rob` active and enable
 `talkingboats-optiplex-boot-recovery.service` in the `rob` user manager. That
@@ -122,3 +130,13 @@ Before generated artifact promotion:
 - Deploy with `scripts/deploy_generated_public_assets.sh prod outputs/public-site`.
 - Smoke `https://vhf.robertboscacci.com/public_manifest.json` and a recent
   non-traffic clip page.
+
+After apartment power loss:
+
+- From the OptiPlex, confirm `192.168.1.114` answers SSH.
+- Confirm Icecast at `http://192.168.1.114:8000/status-json.xsl`.
+- Confirm receiver status at
+  `http://192.168.1.114:8050/current-status.json`.
+- Confirm AIS at `http://192.168.1.114:8100/`.
+- Confirm prod `/api/clips/recent?limit=1` has a post-recovery timestamp after
+  the transcriber catches up.

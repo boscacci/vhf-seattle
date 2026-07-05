@@ -39,6 +39,7 @@ install -d -m 0755 \
   "${app_root}/src" \
   "${spool_root}" \
   "${record_root}" \
+  /opt/talkingboats/live-radio \
   "${airband_spool_root}/05A" \
   "${airband_spool_root}/06" \
   "${airband_spool_root}/09" \
@@ -60,6 +61,11 @@ install -d -m 0755 \
   "${airband_spool_root}/78A" \
   /etc/talkingboats \
   /etc/systemd/system
+rm -f \
+  /opt/talkingboats/live-radio/index.html \
+  /opt/talkingboats/live-radio/app.js \
+  /opt/talkingboats/live-radio/styles.css \
+  /opt/talkingboats/live-radio/config.js
 
 rm -rf "${app_root}/src/talkingboats"
 cp -a "${repo_root}/src/talkingboats" "${app_root}/src/talkingboats"
@@ -84,6 +90,9 @@ install -m 0755 \
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-live-radio-stream.service.example" \
   /etc/systemd/system/talkingboats-live-radio-stream.service
+install -m 0644 \
+  "${repo_root}/deploy/systemd/talkingboats-live-radio-web.service.example" \
+  /etc/systemd/system/talkingboats-live-radio-web.service
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-edge-live-radio-stream.service.example" \
   /etc/systemd/system/talkingboats-edge-live-radio-stream.service
@@ -160,6 +169,9 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_CLOUD_HLS_CHANNELS=%q\n' \
       "05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A"
     printf 'TALKINGBOATS_CAPTURE_PROFILE=%q\n' "debug"
+    printf 'TALKINGBOATS_CAPTURE_STATUS_CHANNEL=%q\n' "14"
+    printf 'TALKINGBOATS_CAPTURE_STATUS_FREQUENCY_HZ=%q\n' "156700000"
+    printf 'TALKINGBOATS_CAPTURE_STATUS_LABEL=%q\n' "VTS / Seattle Traffic"
     printf 'TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS=%q\n' "180"
     printf 'TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS=%q\n' "5000"
     printf 'TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS=%q\n' "2.0"
@@ -260,6 +272,9 @@ append_env_if_missing TALKINGBOATS_EDGE_MAX_TEMP_C "72"
 append_env_if_missing TALKINGBOATS_EDGE_RESUME_TEMP_C "66"
 append_env_if_missing TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU "0.85"
 append_env_if_missing TALKINGBOATS_CAPTURE_PROFILE "debug"
+append_env_if_missing TALKINGBOATS_CAPTURE_STATUS_CHANNEL "14"
+append_env_if_missing TALKINGBOATS_CAPTURE_STATUS_FREQUENCY_HZ "156700000"
+append_env_if_missing TALKINGBOATS_CAPTURE_STATUS_LABEL "VTS / Seattle Traffic"
 append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_SECONDS "180"
 append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "5000"
 append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS "2.0"
@@ -552,6 +567,8 @@ fi
 systemctl daemon-reload
 systemctl enable icecast2.service
 systemctl restart icecast2.service
+systemctl enable talkingboats-live-radio-web.service
+systemctl restart talkingboats-live-radio-web.service
 systemctl disable --now talkingboats-live-radio-stream.service 2>/dev/null || true
 systemctl disable --now talkingboats-edge-live-radio-stream.service 2>/dev/null || true
 systemctl enable talkingboats-spool-uploader.service

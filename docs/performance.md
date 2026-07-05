@@ -95,11 +95,17 @@ suspect:
 ssh rob@192.168.1.114 'uptime; df -h / /opt 2>/dev/null || df -h /; free -h'
 ssh rob@192.168.1.114 'vcgencmd measure_temp 2>/dev/null; vcgencmd get_throttled 2>/dev/null'
 ssh rob@192.168.1.114 'systemctl --no-pager --plain --type=service --state=running | grep talkingboats'
+curl -fsS http://192.168.1.114:8050/current-status.json
 ```
 
 The Pi edge capture already pauses heavier clip work when thermal or CPU load
 crosses its configured guardrail. The default edge load guard is
 `TALKINGBOATS_EDGE_MAX_LOAD_PER_CPU=0.85`.
+
+`talkingboats-live-radio-web.service` owns the `:8050` status endpoint. If
+Icecast on `:8000` works but `:8050/current-status.json` refuses connections,
+the receiver is probably capturing but the live monitor cannot read receiver
+state. Restart or re-enable that unit before changing proxy settings.
 
 ## What To Do Under Pressure
 

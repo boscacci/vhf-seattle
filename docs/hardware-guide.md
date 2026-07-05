@@ -60,7 +60,9 @@ antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> Ubuntu micro-computer -> AW
   The current Pi is reached from the Ubuntu micro-computer at `192.168.1.114`;
   mDNS names can be stale, so verify the live address before changing receiver
   or telemetry settings. The Pi asks the private API for presigned upload URLs
-  instead of holding cloud credentials.
+  instead of holding cloud credentials. It also serves receiver status at
+  `http://192.168.1.114:8050/current-status.json`; that endpoint is local-only
+  and is used by the live monitor to identify the active receiver profile.
 - **Ubuntu micro-computer processing:** the Ubuntu micro-computer records clip metadata through the
   DynamoDB-backed store, retries pending uploads, transcribes clips, generates
   static exports, and exposes the read-only proxy that CloudFront can call.
@@ -84,6 +86,17 @@ workers, service environment, and local realtime telemetry normally live.
 - Quality Pi power supply. For Pi 3-class hardware, use a 5.1V / 2.5A micro-USB
   supply.
 - Optional powered USB hub if the Pi reports undervoltage with two SDRs attached.
+
+## Power Recovery
+
+After an apartment outage, the Pi should come back without a login. The durable
+runtime services are `icecast2.service`, `talkingboats-live-radio-web.service`,
+`talkingboats-ais-catcher.service`, `talkingboats-profile-capture.service`, and
+`talkingboats-spool-uploader.service`; `talkingboats-pi-boot-recovery.service`
+starts enabled services again after `network-online.target` and resets any
+failed state from early boot races. If the public latest clip stalls, check the
+Pi first from the Ubuntu micro-computer before chasing CloudFront or browser
+caches.
 
 ## Shopping Checklist
 

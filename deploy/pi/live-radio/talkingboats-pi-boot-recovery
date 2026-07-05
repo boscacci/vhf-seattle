@@ -3,6 +3,7 @@ set -euo pipefail
 
 services=(
   icecast2.service
+  talkingboats-live-radio-web.service
   talkingboats-ais-catcher.service
   talkingboats-profile-capture.service
   talkingboats-spool-uploader.service

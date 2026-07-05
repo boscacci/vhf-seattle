@@ -91,6 +91,9 @@ run_debug_profile() {
 run_elliott_bay_profile() {
   local config_name="${1:-rtl_airband-elliott-bay.conf}"
   local config_path="${airband_config_dir}/${config_name}"
+  local status_channel="${TALKINGBOATS_CAPTURE_STATUS_CHANNEL:-14}"
+  local status_frequency_hz="${TALKINGBOATS_CAPTURE_STATUS_FREQUENCY_HZ:-156700000}"
+  local status_label="${TALKINGBOATS_CAPTURE_STATUS_LABEL:-VTS / Seattle Traffic}"
   if [[ ! -x "${airband_binary}" ]]; then
     echo "RTLSDR-Airband is not installed or executable: ${airband_binary}" >&2
     echo "Run scripts/install_rtlsdr_airband_pi.sh on the Pi, then restart this service." >&2
@@ -101,6 +104,7 @@ run_elliott_bay_profile() {
     exit 2
   fi
   echo "event=capture_profile_airband_start profile=${profile} config=${config_path}" >&2
+  write_slot_status "${status_channel}" "${status_frequency_hz}" "${status_label}"
   exec "${airband_binary}" -F -e -c "${config_path}"
 }
 
