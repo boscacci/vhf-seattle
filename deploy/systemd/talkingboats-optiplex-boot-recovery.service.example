@@ -1,0 +1,16 @@
+[Unit]
+Description=Recover Talking Boats OptiPlex services after boot
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
+ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_optiplex_boot_recovery.sh
+Restart=on-failure
+RestartSec=2min
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=default.target

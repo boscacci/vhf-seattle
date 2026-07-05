@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+services=(
+  icecast2.service
+  talkingboats-ais-catcher.service
+  talkingboats-profile-capture.service
+  talkingboats-spool-uploader.service
+  talkingboats-live-hls-relay.service
+  talkingboats-ais-forwarder.service
+)
+
+log_event() {
+  local event="$1"
+  local service="$2"
+  local status="$3"
+  printf 'event=%s service=%s status=%s\n' "${event}" "${service}" "${status}"
+}
+
+start_enabled_service() {
+  local service="$1"
+
+  if ! systemctl is-enabled "${service}" >/dev/null 2>&1; then
+    log_event "talkingboats_pi_boot_recovery_skipped" "${service}" "not_enabled"
+    return 0
+  fi
+
+  for attempt in 1 2 3; do
+    if systemctl start "${service}"; then
+      log_event "talkingboats_pi_boot_recovery_started" "${service}" "ok"
+      return 0
+    fi
+    log_event "talkingboats_pi_boot_recovery_retry" "${service}" "attempt_${attempt}"
+    sleep 10
+  done
+
+  log_event "talkingboats_pi_boot_recovery_failed" "${service}" "failed"
+  return 1
+}
+
+systemctl reset-failed "${services[@]}" >/dev/null 2>&1 || true
+
+exit_code=0
+for service in "${services[@]}"; do
+  start_enabled_service "${service}" || exit_code=1
+done
+
+exit "${exit_code}"

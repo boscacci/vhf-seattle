@@ -3,6 +3,7 @@ Description=Refresh Elliott Bay VHF lexical analysis every six hours
 
 [Timer]
 OnBootSec=15min
+OnStartupSec=15min
 OnUnitActiveSec=6h
 Persistent=true
 Unit=talkingboats-lexical-refresh.service

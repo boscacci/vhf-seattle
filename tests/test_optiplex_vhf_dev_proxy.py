@@ -10,6 +10,7 @@ def test_vhf_dev_proxy_has_user_systemd_boot_service() -> None:
     assert "Description=Start VHF dev Tailnet proxy" in service
     assert "After=docker.service network-online.target" in service
     assert "Wants=network-online.target" in service
+    assert "StartLimitIntervalSec=0" in service
     assert "WorkingDirectory=/home/rob/vhf-dev-proxy" in service
     assert "/usr/bin/docker info" in service
     assert "ExecStart=/usr/bin/docker compose up -d" in service
@@ -46,6 +47,7 @@ def test_optiplex_vhf_user_services_restart_and_install_under_default_target() -
 
     for service_name in service_names:
         service = (SYSTEMD_DIR / service_name).read_text(encoding="utf-8")
+        assert "StartLimitIntervalSec=0" in service, service_name
         assert "Restart=always" in service, service_name
         assert "RestartSec=" in service, service_name
         assert "[Install]" in service, service_name
@@ -58,5 +60,26 @@ def test_optiplex_vhf_reboot_timers_are_persistent() -> None:
         "talkingboats-lexical-refresh.timer.example",
     ]:
         timer = (SYSTEMD_DIR / timer_name).read_text(encoding="utf-8")
+        assert "OnStartupSec=15min" in timer, timer_name
         assert "Persistent=true" in timer, timer_name
         assert "WantedBy=timers.target" in timer, timer_name
+
+
+def test_optiplex_vhf_boot_recovery_user_service_resets_and_starts_units() -> None:
+    service = (SYSTEMD_DIR / "talkingboats-optiplex-boot-recovery.service.example").read_text(
+        encoding="utf-8"
+    )
+    script = Path("scripts/talkingboats_optiplex_boot_recovery.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "After=network-online.target" in service
+    assert "StartLimitIntervalSec=0" in service
+    assert "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_optiplex_boot_recovery.sh" in service
+    assert "WantedBy=default.target" in service
+    assert "systemctl --user reset-failed" in script
+    assert "systemctl --user start" in script
+    assert "talkingboats-api.service" in script
+    assert "talkingboats-uploaded-clip-transcriber.service" in script
+    assert "talkingboats-lexical-refresh.timer" in script
+    assert "vhf-dev-proxy.service" in script

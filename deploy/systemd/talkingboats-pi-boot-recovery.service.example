@@ -1,0 +1,15 @@
+[Unit]
+Description=Recover Talking Boats Pi services after boot
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/opt/talkingboats/bin/talkingboats-pi-boot-recovery
+Restart=on-failure
+RestartSec=2min
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

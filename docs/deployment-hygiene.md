@@ -78,6 +78,26 @@ front door. The public Funnel path uses a separate read-only live proxy
 without tailnet dev routes, so spoofed viewer headers cannot reach write routes.
 Do not reintroduce browser bearer-token auth for the transcript feedback loop.
 
+## Blackout Recovery
+
+The Pi and Ubuntu micro-computer should recover without an operator login after
+a neighborhood power loss. Critical systemd services set `StartLimitIntervalSec=0`
+so early boot failures from slow network, Docker, Icecast, SDR, or AWS readiness
+do not permanently trip systemd's start limiter.
+
+The Pi install deploys `talkingboats-pi-boot-recovery.service`, which resets
+failed state and starts the enabled radio services after `network-online.target`.
+It starts Icecast, AIS capture, profile capture, the spool uploader, and any
+enabled gated relays. Disabled optional relays stay disabled.
+
+The OptiPlex deploy should keep `loginctl enable-linger rob` active and enable
+`talkingboats-optiplex-boot-recovery.service` in the `rob` user manager. That
+service resets failed state and starts the private API, uploaded-clip
+transcriber, dev and public live proxies, the dev Tailnet proxy, and the refresh
+timers. `talkingboats-lexical-refresh.timer` uses both `OnBootSec=15min` and
+`OnStartupSec=15min` so generated public/search artifacts refresh after either a
+machine reboot or a delayed user-manager start.
+
 ## Operator Checklist
 
 Before dev deploy:

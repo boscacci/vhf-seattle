@@ -247,6 +247,7 @@ def test_spool_uploader_quarantines_failed_preparation_and_continues(tmp_path) -
         ffmpeg_path="ffmpeg",
         runner=fake_run,
         failed_root=failed_root,
+        fallback_to_original_on_prepare_error=False,
     )
 
     assert count == 1
@@ -254,6 +255,88 @@ def test_spool_uploader_quarantines_failed_preparation_and_continues(tmp_path) -
     assert not bad.exists()
     assert (failed_root / "13" / bad.name).read_bytes() == b"bad mp3"
     assert not good.exists()
+
+
+def test_spool_uploader_uploads_original_when_optimization_fails(tmp_path) -> None:
+    channel_dir = tmp_path / "16"
+    channel_dir.mkdir()
+    source = channel_dir / "vhf-16_20260704_194027.mp3"
+    source.write_bytes(b"original airband mp3")
+    old_timestamp = datetime(2026, 7, 4, 19, 41, tzinfo=UTC).timestamp()
+    uploaded = []
+
+    def fake_run(command, *, check):
+        raise subprocess.CalledProcessError(returncode=183, cmd=command)
+
+    def fake_upload(*, api_url, ingest_token, clip):
+        uploaded.append((clip.audio_path, clip.content_type, clip.audio_path.read_bytes()))
+        return UploadResult(
+            bucket="bucket",
+            key=f"raw/channel={clip.channel}/original.mp3",
+            bytes_uploaded=18,
+        )
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=True,
+        now=datetime(2026, 7, 4, 19, 42, tzinfo=UTC),
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        upload_func=fake_upload,
+        audio_filter="highpass=f=250,acompressor=threshold=0.06",
+        ffmpeg_path="ffmpeg",
+        runner=fake_run,
+        failed_root=tmp_path / "failed",
+    )
+
+    assert count == 1
+    assert uploaded == [(source, "audio/mpeg", b"original airband mp3")]
+    assert not source.exists()
+    assert not (tmp_path / "failed").exists()
+
+
+def test_spool_uploader_quarantines_stale_empty_completed_files(tmp_path) -> None:
+    failed_root = tmp_path / "failed"
+    empty_dir = tmp_path / "14"
+    good_dir = tmp_path / "74"
+    empty_dir.mkdir()
+    good_dir.mkdir()
+    empty = empty_dir / "vhf-14_20260704_003602.mp3"
+    good = good_dir / "vhf-74_20260704_194500.mp3"
+    empty.write_bytes(b"")
+    good.write_bytes(b"good mp3")
+    old_timestamp = datetime(2026, 7, 4, 19, 40, tzinfo=UTC).timestamp()
+    uploaded = []
+
+    def fake_upload(*, api_url, ingest_token, clip):
+        uploaded.append(clip.audio_path.name)
+        return UploadResult(
+            bucket="bucket",
+            key=f"raw/channel={clip.channel}/clip.mp3",
+            bytes_uploaded=8,
+        )
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=True,
+        now=datetime(2026, 7, 4, 19, 41, tzinfo=UTC),
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        upload_func=fake_upload,
+        failed_root=failed_root,
+    )
+
+    assert count == 1
+    assert uploaded == [good.name]
+    assert not empty.exists()
+    assert not good.exists()
+    assert (failed_root / "14" / empty.name).read_bytes() == b""
+    sidecar = failed_root / "14" / f"{empty.name}.error.json"
+    assert "stale empty spool file" in sidecar.read_text(encoding="utf-8")
 
 
 def test_spool_uploader_imports_without_pydantic() -> None:

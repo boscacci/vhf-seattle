@@ -1,0 +1,13 @@
+/.gitattributes text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.sh text eol=lf
+deploy/pi/live-radio/* text eol=lf
+deploy/systemd/* text eol=lf
+deploy/optiplex/vhf-dev-proxy/* text eol=lf

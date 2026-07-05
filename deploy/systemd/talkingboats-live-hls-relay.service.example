@@ -3,6 +3,7 @@ Description=Talking Boats cloud HLS relay
 After=network-online.target icecast2.service talkingboats-profile-capture.service
 Wants=network-online.target
 Requires=icecast2.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

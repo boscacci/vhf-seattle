@@ -78,6 +78,9 @@ install -m 0755 \
 install -m 0755 \
   "${repo_root}/deploy/pi/live-radio/talkingboats-live-hls-relay" \
   /opt/talkingboats/bin/talkingboats-live-hls-relay
+install -m 0755 \
+  "${repo_root}/deploy/pi/live-radio/talkingboats-pi-boot-recovery" \
+  /opt/talkingboats/bin/talkingboats-pi-boot-recovery
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-live-radio-stream.service.example" \
   /etc/systemd/system/talkingboats-live-radio-stream.service
@@ -99,6 +102,9 @@ install -m 0644 \
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-live-hls-relay.service.example" \
   /etc/systemd/system/talkingboats-live-hls-relay.service
+install -m 0644 \
+  "${repo_root}/deploy/systemd/talkingboats-pi-boot-recovery.service.example" \
+  /etc/systemd/system/talkingboats-pi-boot-recovery.service
 generate_password() {
   openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_'
 }
@@ -578,6 +584,8 @@ else
 fi
 systemctl enable talkingboats-profile-capture.service
 systemctl restart talkingboats-profile-capture.service
+systemctl enable talkingboats-pi-boot-recovery.service
+systemctl restart talkingboats-pi-boot-recovery.service
 
 echo "Talking Boats capture profile installed."
 echo "The single browser UI is served by CloudFront from the public-site bucket."

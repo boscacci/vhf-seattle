@@ -207,10 +207,18 @@ def process_spool_once(
     runner: Runner = subprocess.run,
     failed_root: Path | None = None,
     max_files: int | None = 100,
+    fallback_to_original_on_prepare_error: bool = True,
 ) -> int:
     uploaded = 0
     now = now or datetime.now(UTC)
     failed_root = failed_root or spool_root.parent / f"{spool_root.name}-failed"
+    quarantine_stale_empty_audio_files(
+        spool_root=spool_root,
+        now=now,
+        min_age_seconds=min_age_seconds,
+        failed_root=failed_root,
+        stat_func=stat_func,
+    )
     clips = discover_completed_audio_files(
         spool_root=spool_root,
         now=now,
@@ -227,6 +235,7 @@ def process_spool_once(
                 mp3_bitrate=mp3_bitrate,
                 ffmpeg_path=ffmpeg_path,
                 runner=runner,
+                fallback_to_original_on_prepare_error=fallback_to_original_on_prepare_error,
             ) as upload_clip:
                 result = upload_func(api_url=api_url, ingest_token=ingest_token, clip=upload_clip)
         except ClipPreparationError as exc:
@@ -258,6 +267,61 @@ def process_spool_once(
     return uploaded
 
 
+def quarantine_stale_empty_audio_files(
+    *,
+    spool_root: Path,
+    now: datetime,
+    min_age_seconds: float,
+    failed_root: Path,
+    stat_func=None,
+) -> int:
+    stat_func = stat_func or (lambda path: path.stat())
+    quarantined = 0
+    if not spool_root.exists():
+        return quarantined
+    for audio_path in sorted(spool_root.rglob("*")):
+        if not audio_path.is_file() or audio_path.suffix.lower() not in CONTENT_TYPES:
+            continue
+        stat = stat_func(audio_path)
+        if stat.st_size > 0:
+            continue
+        modified_at = datetime.fromtimestamp(stat.st_mtime, UTC)
+        if (now - modified_at).total_seconds() < min_age_seconds:
+            continue
+        try:
+            channel = infer_spool_channel(audio_path)
+        except ValueError:
+            continue
+        started_at = _started_at_from_filename(audio_path) or modified_at
+        clip = SpooledAudioClip(
+            channel=channel,
+            audio_path=audio_path,
+            started_at=started_at,
+            content_type=CONTENT_TYPES[audio_path.suffix.lower()],
+            idempotency_key=_idempotency_key(
+                channel=channel,
+                started_at=started_at,
+                path=audio_path,
+            ),
+        )
+        error = ClipPreparationError("stale empty spool file")
+        failed_path = quarantine_spooled_clip(
+            clip=clip,
+            spool_root=spool_root,
+            failed_root=failed_root,
+            error=error,
+        )
+        _log_event(
+            "spool_empty_clip_quarantined",
+            channel=clip.channel,
+            audio_file=clip.audio_path.name,
+            failed_file=str(failed_path),
+            error=str(error),
+        )
+        quarantined += 1
+    return quarantined
+
+
 @contextmanager
 def prepared_spooled_clip_for_upload(
     clip: SpooledAudioClip,
@@ -266,6 +330,7 @@ def prepared_spooled_clip_for_upload(
     mp3_bitrate: str = "64k",
     ffmpeg_path: str = "ffmpeg",
     runner: Runner = subprocess.run,
+    fallback_to_original_on_prepare_error: bool = True,
 ) -> Iterator[SpooledAudioClip]:
     resolved_filter = _optional_audio_filter(audio_filter)
     if resolved_filter is None:
@@ -286,6 +351,15 @@ def prepared_spooled_clip_for_upload(
                 check=True,
             )
         except Exception as exc:  # noqa: BLE001 - daemon quarantines this local input.
+            if fallback_to_original_on_prepare_error and _clip_available_for_fallback(clip.audio_path):
+                _log_event(
+                    "spool_clip_preparation_fallback",
+                    channel=clip.channel,
+                    audio_file=clip.audio_path.name,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                yield clip
+                return
             raise ClipPreparationError(f"{type(exc).__name__}: {exc}") from exc
         yield replace(
             clip,
@@ -329,6 +403,16 @@ def main() -> None:
         type=int,
         default=int(os.getenv("TALKINGBOATS_SPOOL_MAX_FILES_PER_POLL", "100")),
     )
+    parser.add_argument(
+        "--no-preparation-fallback",
+        action="store_false",
+        dest="fallback_to_original_on_prepare_error",
+        default=_env_bool(
+            os.getenv("TALKINGBOATS_EDGE_UPLOAD_FALLBACK_ORIGINAL_ON_PREPARE_ERROR"),
+            default=True,
+        ),
+        help="Quarantine clips instead of uploading originals when optional preparation fails.",
+    )
     parser.add_argument("--delete-after-upload", action="store_true")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
@@ -351,6 +435,7 @@ def main() -> None:
                 ffmpeg_path=args.ffmpeg_path,
                 failed_root=args.failed_root,
                 max_files=args.max_files_per_poll,
+                fallback_to_original_on_prepare_error=args.fallback_to_original_on_prepare_error,
             )
             _log_event("spool_uploader_poll", uploaded=uploaded)
         except Exception as exc:  # noqa: BLE001 - keep daemon retrying.
@@ -397,6 +482,26 @@ def _optional_audio_filter(value: str | None) -> str | None:
     if not stripped or stripped.lower() in {"0", "false", "no", "none", "off", "disabled"}:
         return None
     return stripped
+
+
+def _clip_available_for_fallback(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _env_bool(value: str | None, *, default: bool) -> bool:
+    if value is None:
+        return default
+    stripped = value.strip().lower()
+    if not stripped:
+        return default
+    if stripped in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if stripped in {"0", "false", "no", "off", "disabled"}:
+        return False
+    raise ValueError(f"invalid boolean value: {value}")
 
 
 def quarantine_spooled_clip(

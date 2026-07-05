@@ -3,6 +3,7 @@ Description=Talking Boats edge SDR processor and live radio stream
 After=network-online.target icecast2.service
 Wants=network-online.target
 Requires=icecast2.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

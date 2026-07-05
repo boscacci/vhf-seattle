@@ -55,6 +55,45 @@ def test_live_radio_systemd_units_restart_and_stay_lan_scoped() -> None:
     assert "EnvironmentFile=/etc/talkingboats/live-radio.env" in uploader_unit
 
 
+def test_pi_units_do_not_give_up_during_blackout_boot_races() -> None:
+    unit_names = [
+        "talkingboats-ais-catcher.service.example",
+        "talkingboats-ais-forwarder.service.example",
+        "talkingboats-edge-live-radio-stream.service.example",
+        "talkingboats-live-hls-relay.service.example",
+        "talkingboats-live-radio-stream.service.example",
+        "talkingboats-profile-capture.service.example",
+        "talkingboats-spool-uploader.service.example",
+    ]
+
+    for unit_name in unit_names:
+        unit = Path("deploy/systemd", unit_name).read_text(encoding="utf-8")
+        assert "StartLimitIntervalSec=0" in unit, unit_name
+        assert "Restart=" in unit, unit_name
+
+
+def test_pi_installer_installs_blackout_boot_recovery_service() -> None:
+    installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
+    recovery_unit = Path(
+        "deploy/systemd/talkingboats-pi-boot-recovery.service.example"
+    ).read_text(encoding="utf-8")
+    recovery_script = Path("deploy/pi/live-radio/talkingboats-pi-boot-recovery").read_text(
+        encoding="utf-8"
+    )
+
+    assert "talkingboats-pi-boot-recovery" in installer
+    assert "talkingboats-pi-boot-recovery.service" in installer
+    assert "systemctl enable talkingboats-pi-boot-recovery.service" in installer
+    assert "systemctl restart talkingboats-pi-boot-recovery.service" in installer
+    assert "After=network-online.target" in recovery_unit
+    assert "ExecStart=/opt/talkingboats/bin/talkingboats-pi-boot-recovery" in recovery_unit
+    assert "WantedBy=multi-user.target" in recovery_unit
+    assert "systemctl reset-failed" in recovery_script
+    assert "systemctl is-enabled" in recovery_script
+    assert "icecast2.service" in recovery_script
+    assert "talkingboats-spool-uploader.service" in recovery_script
+
+
 def test_pi_installer_restarts_source_loaded_services_after_code_copy() -> None:
     installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
 
