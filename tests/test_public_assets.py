@@ -845,7 +845,7 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260707-live-catchup-handoff" type="module"></script>'
+        '<script src="/assets/app.js?v=20260707-live-catchup-race" type="module"></script>'
         in index_html
     )
     assert '<link rel="stylesheet" href="/assets/styles.css?v=20260705-counts" />' in index_html
@@ -1195,6 +1195,7 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert "let everythingQueueEnabled = false;" in app_js
     assert "let everythingQueueStartedAtMs = 0;" in app_js
     assert "let everythingQueueSeeded = false;" in app_js
+    assert "let everythingCatchUpHandoffPending = false;" in app_js
     assert "let liveQueueModeGeneration = 0;" in app_js
     assert "isCurrentLiveQueueSession(queueGeneration, queueChannel)" in app_js
     assert "nextLiveQueueClipForCurrentMode()" in app_js
@@ -1235,6 +1236,12 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert "playNextEverythingQueueClip" in app_js
     assert "handleEverythingClipEnded" in app_js
     assert "shouldResumeRealtimeAfterCatchUp(completedClip)" in app_js
+    assert "shouldSuppressRealtimeQueueDuringCatchUp()" in app_js
+    assert "shouldResumeRealtimeInsteadOfPlayingNextClip(currentLiveQueueClip)" in app_js
+    assert (
+        "everythingCatchUpHandoffPending = Boolean(isEverythingLiveMode() && shouldCatchUp);"
+        in app_js
+    )
     assert "resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });" in app_js
     assert "selectedLiveChannel = defaultRealtimeLiveChannelId();" in app_js
     assert 'liveStatus.textContent = "Receiving live stream";' in app_js

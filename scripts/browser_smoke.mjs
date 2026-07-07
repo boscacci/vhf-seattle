@@ -8,6 +8,9 @@ import { chromium } from "playwright";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const publicSiteRoot = join(repoRoot, "public-site");
 const audioStartedAt = "2026-05-31T20:00:00Z";
+let longLiveQueueClipAudio = false;
+let injectLiveQueueRaceClip = false;
+let liveQueueRecentRequests = 0;
 let holdRecentClipResponses = false;
 let releaseRecentClipResponses = [];
 let holdFeatureClipResponses = false;
@@ -31,7 +34,11 @@ const server = createServer(async (request, response) => {
       return sendJson(response, lexicalPayload());
     }
     if (url.pathname === "/api/clips/audio") {
-      return sendBytes(response, wavSilence(), "audio/wav");
+      return sendBytes(
+        response,
+        wavSilence({ durationSeconds: longLiveQueueClipAudio ? 8 : 0.25 }),
+        "audio/wav",
+      );
     }
     if (url.pathname === "/api/live/current.mp3") {
       return sendBytes(response, wavSilence({ durationSeconds: 1 }), "audio/wav");
@@ -214,6 +221,9 @@ try {
       throw new Error(`live channel selector did not render compact controls: ${JSON.stringify(liveSelectorState)}`);
     }
     await page.locator("#live-queue").waitFor({ state: "visible", timeout: 10000 });
+    longLiveQueueClipAudio = true;
+    injectLiveQueueRaceClip = true;
+    liveQueueRecentRequests = 0;
     await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
     await page.waitForFunction(() => {
       const queueText = document.querySelector("#live-queue")?.textContent || "";
@@ -236,6 +246,32 @@ try {
       liveCatchupState.playLabel !== "Pause"
     ) {
       throw new Error(`live monitor did not catch up on recent clips: ${JSON.stringify(liveCatchupState)}`);
+    }
+    await page.waitForTimeout(5500);
+    const liveCatchupRaceState = await page.evaluate(() => ({
+      status: document.querySelector("#live-status")?.textContent || "",
+      queue: document.querySelector("#live-queue")?.textContent || "",
+      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
+      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
+    }));
+    if (
+      liveQueueRecentRequests < 2 ||
+      !liveCatchupRaceState.queue.includes("Catching up on latest 3 transmissions") ||
+      !liveCatchupRaceState.queue.includes("Queued2 transmissions") ||
+      liveCatchupRaceState.src.includes("channel=16")
+    ) {
+      throw new Error(
+        `live monitor admitted a realtime queue clip during catch-up: ${JSON.stringify({
+          liveQueueRecentRequests,
+          liveCatchupRaceState,
+        })}`,
+      );
+    }
+    for (let index = 0; index < 3; index += 1) {
+      await page.evaluate(() => {
+        document.querySelector("#live-audio")?.dispatchEvent(new Event("ended"));
+      });
+      await page.waitForTimeout(500);
     }
     await page.waitForFunction(() => {
       const queueText = document.querySelector("#live-queue")?.textContent || "";
@@ -264,6 +300,8 @@ try {
     ) {
       throw new Error(`live monitor did not resume the live stream after catch-up: ${JSON.stringify(liveResumeState)}`);
     }
+    longLiveQueueClipAudio = false;
+    injectLiveQueueRaceClip = false;
     await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
     await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All but Traffic" }).click();
     await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
@@ -1233,6 +1271,7 @@ try {
           baseUrl,
           lazyClipShell,
           liveCatchupState,
+          liveCatchupRaceState,
           liveResumeState,
           liveSelectorState,
           allButTrafficState,
@@ -1268,6 +1307,10 @@ try {
 }
 
 function recentClipPayload(url) {
+  const liveQueueRequest = isLiveQueueRecentRequest(url);
+  if (liveQueueRequest) {
+    liveQueueRecentRequests += 1;
+  }
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 6), 1), 100);
   const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
   const offset = Math.max(
@@ -1303,10 +1346,20 @@ function recentClipPayload(url) {
   const payloadChannels = (selectedChannels.length ? selectedChannels : defaultChannels).filter(
     (channel) => !excludedChannels.has(channel),
   );
+  const clips = indexes
+    .slice(offset, offset + limit)
+    .map((index) => recentClip(index, payloadChannels[index % payloadChannels.length] || "14"));
+  if (
+    injectLiveQueueRaceClip &&
+    liveQueueRequest &&
+    liveQueueRecentRequests > 1 &&
+    !selectedChannels.length &&
+    !excludedChannels.size
+  ) {
+    clips.unshift(liveQueueRaceClip(liveQueueRecentRequests));
+  }
   return {
-    clips: indexes
-      .slice(offset, offset + limit)
-      .map((index) => recentClip(index, payloadChannels[index % payloadChannels.length] || "14")),
+    clips,
     clip_count: total,
     filtered_clip_count: filteredTotal,
     featured: featuredOnly,
@@ -1318,6 +1371,29 @@ function recentClipPayload(url) {
     limit,
     offset,
     page,
+  };
+}
+
+function isLiveQueueRecentRequest(url) {
+  return (
+    url.searchParams.get("include_playback_url") === "true" &&
+    url.searchParams.get("verify_playback_exists") === "false" &&
+    url.searchParams.get("include_counts") === "false"
+  );
+}
+
+function liveQueueRaceClip(sequence) {
+  const startedAt = new Date(Date.now() + sequence * 1000).toISOString();
+  return {
+    id: `live-race-${sequence}`,
+    channel: "16",
+    channel_label: "Distress, Safety and Calling",
+    started_at: startedAt,
+    ended_at: new Date(Date.parse(startedAt) + 15000).toISOString(),
+    duration_seconds: 15,
+    transcript: `Live race clip ${sequence}`,
+    transcript_public: `Live race clip ${sequence}`,
+    playback_url: "",
   };
 }
 

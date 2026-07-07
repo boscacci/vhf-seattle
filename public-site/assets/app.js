@@ -405,6 +405,7 @@ let currentLiveQueueClip = null;
 let everythingQueueEnabled = false;
 let everythingQueueStartedAtMs = 0;
 let everythingQueueSeeded = false;
+let everythingCatchUpHandoffPending = false;
 let liveQueueModeGeneration = 0;
 let audioContext = null;
 let analyser = null;
@@ -4859,6 +4860,7 @@ async function connectEverythingLive() {
   const queueGeneration = liveQueueModeGeneration;
   const queueChannel = selectedLiveChannel;
   const shouldCatchUp = !everythingQueueSeeded;
+  everythingCatchUpHandoffPending = Boolean(isEverythingLiveMode() && shouldCatchUp);
   if (!everythingQueueStartedAtMs) {
     everythingQueueStartedAtMs = Date.now();
   }
@@ -5124,6 +5126,9 @@ function excludedQueueChannelsForMode() {
 }
 
 function enqueueEverythingClips(clips, { includeBackfill = false } = {}) {
+  if (!includeBackfill && shouldSuppressRealtimeQueueDuringCatchUp()) {
+    return;
+  }
   let normalizedClips = clips
     .map(normalizeEverythingQueueClip)
     .filter(Boolean);
@@ -5143,6 +5148,10 @@ function enqueueEverythingClips(clips, { includeBackfill = false } = {}) {
   }
   liveQueue.sort((left, right) => queueClipTime(left) - queueClipTime(right));
   trimEverythingQueueSeenIds();
+}
+
+function shouldSuppressRealtimeQueueDuringCatchUp() {
+  return Boolean(isEverythingLiveMode() && everythingCatchUpHandoffPending);
 }
 
 function mostRecentEverythingQueueClips(clips, limit) {
@@ -5254,6 +5263,11 @@ async function playNextEverythingQueueClip({
   currentLiveQueueClip = nextLiveQueueClipForCurrentMode();
   renderLiveStatus(findLiveChannel(selectedLiveChannel));
   renderEverythingQueuePanel();
+  if (shouldResumeRealtimeInsteadOfPlayingNextClip(currentLiveQueueClip)) {
+    currentLiveQueueClip = null;
+    await resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });
+    return;
+  }
   if (!currentLiveQueueClip) {
     liveStatus.textContent = "Waiting for queued transmission";
     setLivePlayButton("pause");
@@ -5321,8 +5335,21 @@ function handleEverythingClipEnded() {
   playNextEverythingQueueClip({ queueGeneration, queueChannel });
 }
 
+function shouldResumeRealtimeInsteadOfPlayingNextClip(nextClip) {
+  return Boolean(isEverythingLiveMode() && everythingCatchUpHandoffPending && (!nextClip || !nextClip.catch_up));
+}
+
 function shouldResumeRealtimeAfterCatchUp(completedClip) {
-  return Boolean(isEverythingLiveMode() && completedClip?.catch_up && !liveQueue.some((clip) => clip.catch_up));
+  if (!isEverythingLiveMode() || !everythingCatchUpHandoffPending) {
+    return false;
+  }
+  if (!completedClip) {
+    return true;
+  }
+  if (!completedClip.catch_up) {
+    return true;
+  }
+  return !liveQueue.some((clip) => clip.catch_up);
 }
 
 async function resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel } = {}) {
@@ -5349,6 +5376,7 @@ async function resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel } 
 function stopEverythingQueue({ clearQueue = false } = {}) {
   liveQueueModeGeneration += 1;
   everythingQueueEnabled = false;
+  everythingCatchUpHandoffPending = false;
   currentLiveQueueClip = null;
   if (clearQueue) {
     liveQueue = [];
