@@ -33,6 +33,9 @@ const server = createServer(async (request, response) => {
     if (url.pathname === "/api/clips/audio") {
       return sendBytes(response, wavSilence(), "audio/wav");
     }
+    if (url.pathname === "/api/live/current.mp3") {
+      return sendBytes(response, wavSilence({ durationSeconds: 1 }), "audio/wav");
+    }
     if (url.pathname === "/api/clips/recent") {
       recentClipRequestUrls.push(new URL(url.href));
       if (holdRecentClipResponses) {
@@ -233,6 +236,33 @@ try {
       liveCatchupState.playLabel !== "Pause"
     ) {
       throw new Error(`live monitor did not catch up on recent clips: ${JSON.stringify(liveCatchupState)}`);
+    }
+    await page.waitForFunction(() => {
+      const queueText = document.querySelector("#live-queue")?.textContent || "";
+      const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
+      const playLabel = document.querySelector("#play-live .play-label")?.textContent || "";
+      return (
+        src.includes("/api/live/current.mp3") &&
+        document.querySelector("#live-queue")?.hidden === true &&
+        playLabel === "Pause" &&
+        !queueText.includes("Catching up on latest 3 transmissions")
+      );
+    });
+    const liveResumeState = await page.evaluate(() => ({
+      selectedMode: document.querySelector("#live-channel")?.textContent || "",
+      status: document.querySelector("#live-status")?.textContent || "",
+      queueHidden: document.querySelector("#live-queue")?.hidden ?? false,
+      queue: document.querySelector("#live-queue")?.textContent || "",
+      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
+      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
+    }));
+    if (
+      !liveResumeState.selectedMode.includes("VHF 14") ||
+      !liveResumeState.queueHidden ||
+      !liveResumeState.src.includes("/api/live/current.mp3") ||
+      liveResumeState.playLabel !== "Pause"
+    ) {
+      throw new Error(`live monitor did not resume the live stream after catch-up: ${JSON.stringify(liveResumeState)}`);
     }
     await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
     await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All but Traffic" }).click();
@@ -1203,6 +1233,7 @@ try {
           baseUrl,
           lazyClipShell,
           liveCatchupState,
+          liveResumeState,
           liveSelectorState,
           allButTrafficState,
           ...result,

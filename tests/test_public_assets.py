@@ -845,7 +845,7 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260707-no-top-stats" type="module"></script>'
+        '<script src="/assets/app.js?v=20260707-live-catchup-handoff" type="module"></script>'
         in index_html
     )
     assert '<link rel="stylesheet" href="/assets/styles.css?v=20260705-counts" />' in index_html
@@ -1181,6 +1181,7 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
 
     assert 'id="live-queue" class="live-queue"' in index_html
     assert 'const everythingLiveChannel = "everything";' in app_js
+    assert 'const defaultRealtimeLiveChannel = "14";' in app_js
     assert "let selectedLiveChannel = everythingLiveChannel;" in app_js
     assert "live-header-stack" in index_html
     assert index_html.index('class="live-actions"') < index_html.index('class="tuner-display"')
@@ -1233,6 +1234,10 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     ) in app_js
     assert "playNextEverythingQueueClip" in app_js
     assert "handleEverythingClipEnded" in app_js
+    assert "shouldResumeRealtimeAfterCatchUp(completedClip)" in app_js
+    assert "resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });" in app_js
+    assert "selectedLiveChannel = defaultRealtimeLiveChannelId();" in app_js
+    assert 'liveStatus.textContent = "Receiving live stream";' in app_js
     assert "configureEverythingQueueAudioElement" in app_js
     assert 'liveAudio.crossOrigin = "anonymous"' in app_js
     assert "liveQueue.shift()" in app_js

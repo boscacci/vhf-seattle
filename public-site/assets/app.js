@@ -90,6 +90,7 @@ const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();
 const unknownPlaybackTimeLabel = "—";
 const everythingLiveChannel = "everything";
 const allButTrafficLiveChannel = "all-but-traffic";
+const defaultRealtimeLiveChannel = "14";
 const everythingInitialQueueLimit = 3;
 const everythingCatchUpLabel = "Catching up on latest 3 transmissions";
 const trafficChannelIds = new Set(["14"]);
@@ -2999,6 +3000,13 @@ function findLiveChannel(channel) {
   return { channel, label: defaultChannelLabels[channel] || "", frequencyMhz: "" };
 }
 
+function defaultRealtimeLiveChannelId() {
+  if (liveChannels.some((channel) => channel.channel === defaultRealtimeLiveChannel)) {
+    return defaultRealtimeLiveChannel;
+  }
+  return liveChannels[0]?.channel || defaultRealtimeLiveChannel;
+}
+
 function isEverythingLiveMode() {
   return selectedLiveChannel === everythingLiveChannel;
 }
@@ -5297,13 +5305,45 @@ function configureEverythingQueueAudioElement({ muted = false } = {}) {
 }
 
 function handleEverythingClipEnded() {
+  const completedClip = currentLiveQueueClip;
+  const queueGeneration = liveQueueModeGeneration;
+  const queueChannel = selectedLiveChannel;
   currentLiveQueueClip = null;
   if (!everythingQueueEnabled) {
     setLivePlayButton("play");
     renderEverythingQueuePanel();
     return;
   }
-  playNextEverythingQueueClip();
+  if (shouldResumeRealtimeAfterCatchUp(completedClip)) {
+    resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });
+    return;
+  }
+  playNextEverythingQueueClip({ queueGeneration, queueChannel });
+}
+
+function shouldResumeRealtimeAfterCatchUp(completedClip) {
+  return Boolean(isEverythingLiveMode() && completedClip?.catch_up && !liveQueue.some((clip) => clip.catch_up));
+}
+
+async function resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel } = {}) {
+  if (!isCurrentLiveQueueSession(queueGeneration, queueChannel) || !isEverythingLiveMode()) {
+    return;
+  }
+  stopEverythingQueue({ clearQueue: true });
+  selectedLiveChannel = defaultRealtimeLiveChannelId();
+  lastLiveStatusId = null;
+  renderLiveChannelPicker();
+  renderEverythingQueuePanel();
+  renderLiveStatus(findLiveChannel(selectedLiveChannel));
+  liveStatus.textContent = "Receiving live stream";
+  liveAudio.pause();
+  liveAudio.src = withCacheBust(liveStreamUrl());
+  liveAudio.load();
+  await connectLive();
+  if (!isQueuedLiveMode() && !liveAudio.paused) {
+    setLivePlayButton("pause");
+    liveStatus.textContent = "Receiving live stream";
+  }
 }
 
 function stopEverythingQueue({ clearQueue = false } = {}) {
