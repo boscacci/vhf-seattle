@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -7,10 +8,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from talkingboats.spool_uploader import (
+    SpooledAudioClip,
     UploadResult,
     discover_completed_audio_files,
     infer_spool_channel,
     process_spool_once,
+    upload_spooled_clip,
 )
 
 
@@ -34,6 +37,124 @@ def test_spool_uploader_discovers_stable_channel_files(tmp_path) -> None:
     assert len(clips) == 1
     assert clips[0].channel == "13"
     assert clips[0].audio_path == audio_path
+
+
+def test_spool_uploader_derives_clip_end_from_probed_audio_duration(tmp_path) -> None:
+    channel_dir = tmp_path / "14"
+    channel_dir.mkdir()
+    audio_path = channel_dir / "vhf-14_20260706_042307.mp3"
+    audio_path.write_bytes(b"audio")
+    now = datetime(2026, 7, 6, 4, 24, tzinfo=UTC)
+    old_timestamp = (now - timedelta(seconds=20)).timestamp()
+
+    clips = discover_completed_audio_files(
+        spool_root=tmp_path,
+        now=now,
+        min_age_seconds=10,
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        duration_probe=lambda path: 3.25,
+    )
+
+    assert len(clips) == 1
+    assert clips[0].duration_seconds == 3.25
+    assert clips[0].ended_at == datetime(2026, 7, 6, 4, 23, 10, 250000, tzinfo=UTC)
+
+
+def test_spool_uploader_ignores_bad_sidecar_end_and_uses_duration(tmp_path) -> None:
+    channel_dir = tmp_path / "14"
+    channel_dir.mkdir()
+    audio_path = channel_dir / "vhf-14_20260706_042307.mp3"
+    audio_path.write_bytes(b"audio")
+    audio_path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "started_at": "2026-07-06T04:23:07Z",
+                "ended_at": "2026-07-06T04:23:07Z",
+                "duration_seconds": 3.25,
+            }
+        ),
+        encoding="utf-8",
+    )
+    now = datetime(2026, 7, 6, 4, 24, tzinfo=UTC)
+    old_timestamp = (now - timedelta(seconds=20)).timestamp()
+
+    clips = discover_completed_audio_files(
+        spool_root=tmp_path,
+        now=now,
+        min_age_seconds=10,
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        duration_probe=lambda path: None,
+    )
+
+    assert len(clips) == 1
+    assert clips[0].started_at == datetime(2026, 7, 6, 4, 23, 7, tzinfo=UTC)
+    assert clips[0].duration_seconds == 3.25
+    assert clips[0].ended_at == datetime(2026, 7, 6, 4, 23, 10, 250000, tzinfo=UTC)
+
+
+def test_upload_spooled_clip_posts_duration_metadata(monkeypatch, tmp_path) -> None:
+    audio_path = tmp_path / "vhf-14_20260706_042307.mp3"
+    audio_path.write_bytes(b"audio")
+    started_at = datetime(2026, 7, 6, 4, 23, 7, tzinfo=UTC)
+    ended_at = started_at + timedelta(seconds=3.25)
+    posts = []
+
+    class FakeUrlopenResponse:
+        def __init__(self, body: bytes = b"") -> None:
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc_info):
+            return False
+
+        def read(self) -> bytes:
+            return self.body
+
+    def fake_urlopen(request, timeout):
+        if request.method == "POST":
+            posts.append(json.loads(request.data.decode("utf-8")))
+            return FakeUrlopenResponse(
+                json.dumps(
+                    {
+                        "bucket": "raw-bucket",
+                        "key": "raw/channel=14/date=2026-07-06/fake.mp3",
+                        "upload_url": "https://s3.example.test/upload",
+                        "required_headers": {"Content-Type": "audio/mpeg"},
+                    }
+                ).encode("utf-8")
+            )
+        if request.method == "PUT":
+            return FakeUrlopenResponse()
+        raise AssertionError(f"unexpected request method: {request.method}")
+
+    monkeypatch.setattr("talkingboats.spool_uploader.urllib.request.urlopen", fake_urlopen)
+
+    upload_spooled_clip(
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        clip=SpooledAudioClip(
+            channel="14",
+            audio_path=audio_path,
+            started_at=started_at,
+            content_type="audio/mpeg",
+            idempotency_key="spool-v1:14:2026-07-06T04:23:07Z:test",
+            ended_at=ended_at,
+            duration_seconds=3.25,
+        ),
+    )
+
+    assert posts == [
+        {
+            "channel": "14",
+            "started_at": "2026-07-06T04:23:07Z",
+            "ended_at": "2026-07-06T04:23:10.250000Z",
+            "duration_seconds": 3.25,
+            "content_type": "audio/mpeg",
+            "idempotency_key": "spool-v1:14:2026-07-06T04:23:07Z:test",
+        }
+    ]
 
 
 def test_spool_uploader_ignores_young_files(tmp_path) -> None:
@@ -254,6 +375,46 @@ def test_spool_uploader_quarantines_failed_preparation_and_continues(tmp_path) -
     assert uploaded == ["vhf-14_20260528_004700-edge.mp3"]
     assert not bad.exists()
     assert (failed_root / "13" / bad.name).read_bytes() == b"bad mp3"
+    assert not good.exists()
+
+
+def test_spool_uploader_upload_failure_does_not_block_later_files(tmp_path) -> None:
+    bad_dir = tmp_path / "13"
+    good_dir = tmp_path / "14"
+    bad_dir.mkdir()
+    good_dir.mkdir()
+    bad = bad_dir / "vhf-13_20260528_004617.mp3"
+    good = good_dir / "vhf-14_20260528_004700.mp3"
+    bad.write_bytes(b"bad mp3")
+    good.write_bytes(b"good mp3")
+    old_timestamp = datetime(2026, 5, 28, 0, 48, tzinfo=UTC).timestamp()
+    uploaded = []
+
+    def fake_upload(*, api_url, ingest_token, clip):
+        if clip.audio_path == bad:
+            raise RuntimeError("presign failed")
+        uploaded.append(clip.audio_path.name)
+        return UploadResult(
+            bucket="bucket",
+            key=f"raw/channel={clip.channel}/clip.mp3",
+            bytes_uploaded=8,
+        )
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=True,
+        now=datetime(2026, 5, 28, 0, 49, tzinfo=UTC),
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        upload_func=fake_upload,
+        duration_probe=lambda path: None,
+    )
+
+    assert count == 1
+    assert uploaded == [good.name]
+    assert bad.exists()
     assert not good.exists()
 
 

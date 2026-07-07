@@ -23,7 +23,9 @@ const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353&zoom=1
 const aisCatcherFallbackUrl = "https://aiscatcher.org/";
 const topicClusterFallbackUrl = "/analysis/topic_clusters.html";
 const liveChannelsUrl = apiUrl("/api/live/channels");
-const liveQueueUrl = apiUrl("/api/clips/recent?limit=24");
+const liveQueueUrl = apiUrl(
+  "/api/clips/recent?limit=24&include_playback_url=true&verify_playback_exists=false&include_counts=false",
+);
 const defaultLiveStreamUrl = apiUrl("/api/live/current.mp3");
 const systemMediaControlsStorageKey = "talkingboats.systemMediaControls";
 const recentClipsCacheKeyPrefix = "talkingboats.recentClipsCache.v1";
@@ -402,6 +404,7 @@ let currentLiveQueueClip = null;
 let everythingQueueEnabled = false;
 let everythingQueueStartedAtMs = 0;
 let everythingQueueSeeded = false;
+let liveQueueModeGeneration = 0;
 let audioContext = null;
 let analyser = null;
 let analyserSource = null;
@@ -410,6 +413,7 @@ let waveformAnimationId = null;
 let currentClipPlayback = null;
 let quietSince = null;
 let selectedChannels = new Set();
+let selectedChannelPreset = "all";
 let selectedClipPage = 1;
 let selectedClipOffset = 0;
 let selectedClipPageSize = defaultClipPageSize;
@@ -588,8 +592,8 @@ if (performanceTab) {
 if (mapTab) {
   mapTab.hidden = !aisDashboardEnabled;
 }
-if (panels.map) {
-  panels.map.hidden = !aisDashboardEnabled;
+if (panels.map && !aisDashboardEnabled) {
+  panels.map.hidden = true;
 }
 
 configureLiveAudioElement();
@@ -618,7 +622,7 @@ function closeChannelFilterOnOutsideFocus(event) {
   closeChannelFilterMenu();
 }
 
-refreshButton.addEventListener("click", () => {
+refreshButton?.addEventListener("click", () => {
   if (activeTab === "performance") {
     loadAndRenderPerformance({ showLoading: false });
   } else if (activeTab === "map") {
@@ -647,13 +651,17 @@ channelFilter.addEventListener("click", (event) => {
   if (!action || !channelFilter.contains(action)) {
     return;
   }
+  let includeCounts = true;
   if (action.dataset.preset === "all-but-traffic") {
     selectAllButTrafficChannels(action.dataset.channels || "");
+    selectedChannelPreset = "all-but-traffic";
+    includeCounts = false;
   } else {
     selectedChannels.clear();
+    selectedChannelPreset = "all";
   }
   resetClipPagination();
-  loadAndRender();
+  loadAndRender({ includeCounts });
 });
 
 channelFilter.addEventListener("change", (event) => {
@@ -670,6 +678,7 @@ channelFilter.addEventListener("change", (event) => {
   } else {
     selectedChannels.delete(channel);
   }
+  selectedChannelPreset = selectedChannels.size ? "custom" : "all";
   resetClipPagination();
   loadAndRender();
 });
@@ -751,15 +760,19 @@ liveAudio.addEventListener("ended", () => {
   scheduleLiveReconnect();
 });
 
-async function loadAndRender({ useCachedPayload = true } = {}) {
+async function loadAndRender({
+  useCachedPayload = true,
+  scrollToClipsAfterRender = false,
+  includeCounts = true,
+} = {}) {
   const requestId = ++clipRequestSequence;
-  const requestUrl = clipRequestUrl();
+  const requestUrl = clipRequestUrl(selectedClipPage, { includeCounts });
   const cachedPayload = useCachedPayload && !publicAppHost
     ? prefetchedClipPagePayload(requestUrl) || loadCachedRecentClipPayload(requestUrl)
     : null;
   if (cachedPayload) {
-    currentClipPayload = cachedPayload;
-    renderSite(cachedPayload);
+    currentClipPayload = includeCounts ? cachedPayload : payloadWithRetainedClipStats(cachedPayload, currentClipPayload);
+    renderSite(currentClipPayload);
     clipList.setAttribute("aria-busy", "true");
     clipStatus.textContent = `${clipStatus.textContent} · refreshing`;
   } else if (!currentClipPayload || !currentPageClips.length) {
@@ -767,12 +780,18 @@ async function loadAndRender({ useCachedPayload = true } = {}) {
   } else {
     renderClipPagePendingState();
   }
-  const payload = await loadClipPayload(requestUrl);
+  let payload = await loadClipPayload(requestUrl);
   if (requestId !== clipRequestSequence) {
     return;
   }
+  if (!includeCounts) {
+    payload = payloadWithRetainedClipStats(payload, currentClipPayload);
+  }
   currentClipPayload = payload;
   renderSite(payload);
+  if (scrollToClipsAfterRender) {
+    scrollClipListToTopForPagination();
+  }
   if (payload.source === "live") {
     storeClipPageMemoryPayload(requestUrl, payload);
     storeRecentClipPayload(requestUrl, payload);
@@ -1201,6 +1220,22 @@ function loadCachedRecentClipPayload(requestUrl) {
   }
 }
 
+function payloadWithRetainedClipStats(payload, previousPayload) {
+  if (!previousPayload?.stats) {
+    return payload;
+  }
+  return {
+    ...payload,
+    stats: {
+      ...previousPayload.stats,
+      limit: payload.stats?.limit ?? previousPayload.stats.limit,
+      offset: payload.stats?.offset ?? previousPayload.stats.offset,
+      page: payload.stats?.page ?? previousPayload.stats.page,
+      featured: payload.stats?.featured ?? previousPayload.stats.featured,
+    },
+  };
+}
+
 function normalizeCachedRecentClipPayload(payload) {
   const clips = Array.isArray(payload.clips) ? payload.clips : [];
   if (!clips.length) {
@@ -1337,8 +1372,17 @@ function mergeLiveClipStats(payload) {
   renderStats(currentClipPayload || payload, currentPageClips.length ? currentPageClips : payload.clips || []);
 }
 
-function clipRequestUrl(offset = clipOffset()) {
-  const params = [`limit=${selectedClipPageSize}`, `offset=${Math.max(0, Math.floor(Number(offset) || 0))}`];
+function clipRequestUrl(page = selectedClipPage, { includeCounts = true } = {}) {
+  const pageNumber = Math.max(1, Math.floor(Number(page) || 1));
+  const params = [
+    `limit=${selectedClipPageSize}`,
+    `page=${pageNumber}`,
+    "include_playback_url=true",
+    "verify_playback_exists=false",
+  ];
+  if (!includeCounts) {
+    params.push("include_counts=false");
+  }
   const clipReviewedFilter = clipCollectionFilter === "reviewed";
   if (clipCollectionFilter === "featured") {
     params.push("featured=true");
@@ -1346,8 +1390,16 @@ function clipRequestUrl(offset = clipOffset()) {
   if (clipReviewedFilter) {
     params.push("reviewed=true");
   }
-  const channels = selectedChannelValues();
-  params.push(...channels.map((channel) => `channels=${encodeURIComponent(channel)}`));
+  if (clipSortDirection === "oldest") {
+    params.push("sort=oldest");
+  }
+  const excludedChannels = clipExcludedChannelValues();
+  if (excludedChannels.length) {
+    params.push(...excludedChannels.map((channel) => `exclude_channels=${encodeURIComponent(channel)}`));
+  } else {
+    const channels = selectedChannelValues();
+    params.push(...channels.map((channel) => `channels=${encodeURIComponent(channel)}`));
+  }
   return apiUrl(`/api/clips/recent?${params.join("&")}`);
 }
 
@@ -1378,10 +1430,11 @@ function scheduleClipPagePrefetch(callback) {
 
 async function prefetchClipPageAtOffset(offset, totalClips = currentFilteredTotal) {
   const targetOffset = Math.max(0, Math.floor(Number(offset) || 0));
-  if (targetOffset === clipOffset() || targetOffset >= totalClips) {
+  const targetPage = Math.floor(targetOffset / selectedClipPageSize) + 1;
+  if (targetPage === selectedClipPage || targetOffset >= totalClips) {
     return;
   }
-  const requestUrl = clipRequestUrl(targetOffset);
+  const requestUrl = clipRequestUrl(targetPage, { includeCounts: false });
   if (prefetchedClipPagePayload(requestUrl) || clipPagePrefetches.has(requestUrl)) {
     return;
   }
@@ -1480,7 +1533,16 @@ async function loadPublishedLanguagePayload() {
 function normalizeLivePayload(payload) {
   const clips = Array.isArray(payload.clips) ? payload.clips : [];
   const latestStartedAt = payload.latest_started_at || clips[0]?.started_at || null;
-  const playableChannelCounts = payload.playable_channel_counts || payload.stats?.playable_channel_counts || {};
+  const payloadPage = Math.max(1, Math.floor(Number(payload.page ?? selectedClipPage) || 1));
+  const payloadOffset = Math.max(
+    0,
+    Math.floor(Number(payload.offset ?? (payloadPage - 1) * selectedClipPageSize) || 0),
+  );
+  const rawPlayableChannelCounts = payload.playable_channel_counts || payload.stats?.playable_channel_counts;
+  const playableChannelCounts =
+    rawPlayableChannelCounts && Object.keys(rawPlayableChannelCounts).length
+      ? rawPlayableChannelCounts
+      : payload.channel_counts || payload.stats?.channel_counts || {};
   const analyzedClipCount = Number(
     payload.analyzed_clip_count ??
       payload.stats?.analyzed_clip_count ??
@@ -1517,7 +1579,8 @@ function normalizeLivePayload(payload) {
       latest_playable_started_at:
         payload.latest_playable_started_at || payload.stats?.latest_playable_started_at || latestStartedAt,
       limit: Number(payload.limit ?? selectedClipPageSize),
-      offset: Number(payload.offset ?? clipOffset()),
+      offset: payloadOffset,
+      page: payloadPage,
       channel_counts: payload.channel_counts || countBy(clips, (clip) => clip.channel || "?"),
       playable_channel_counts: playableChannelCounts,
       channel_labels: payload.channel_labels || {},
@@ -1714,7 +1777,7 @@ function renderChannelFilter(payload) {
   allAction.type = "button";
   allAction.className = "channel-filter-action";
   allAction.dataset.preset = "all";
-  allAction.setAttribute("aria-pressed", String(selectedChannels.size === 0));
+  allAction.setAttribute("aria-pressed", String(selectedChannelPreset === "all" && selectedChannels.size === 0));
   const allName = document.createElement("span");
   allName.className = "channel-filter-name";
   allName.textContent = "All channels";
@@ -1731,7 +1794,7 @@ function renderChannelFilter(payload) {
   allButTrafficAction.dataset.channels = nonTrafficChannels.join(",");
   allButTrafficAction.setAttribute(
     "aria-pressed",
-    String(channelSetMatches(selectedChannels, nonTrafficChannels)),
+    String(isAllButTrafficClipFilter(nonTrafficChannels)),
   );
   const allButTrafficName = document.createElement("span");
   allButTrafficName.className = "channel-filter-name";
@@ -1828,7 +1891,7 @@ function renderClipDisplayControlSet() {
         if (!setClipPageSize(pageSize)) {
           return;
         }
-        loadAndRender({ useCachedPayload: false });
+        loadAndRender({ useCachedPayload: false, includeCounts: false });
       },
     })),
   );
@@ -1841,7 +1904,8 @@ function renderClipDisplayControlSet() {
           return;
         }
         clipSortDirection = "newest";
-        renderCurrentClipOrder();
+        resetClipPagination();
+        loadAndRender({ useCachedPayload: false, includeCounts: false });
       },
     },
     {
@@ -1852,7 +1916,8 @@ function renderClipDisplayControlSet() {
           return;
         }
         clipSortDirection = "oldest";
-        renderCurrentClipOrder();
+        resetClipPagination();
+        loadAndRender({ useCachedPayload: false, includeCounts: false });
       },
     },
   ]);
@@ -1866,8 +1931,9 @@ function setClipPageSize(pageSize) {
   }
   const firstVisibleClipOffset = clipOffset();
   selectedClipPageSize = nextPageSize;
-  selectedClipOffset = firstVisibleClipOffset;
-  syncClipPageFromOffset();
+  const firstVisibleClipPage = Math.floor(firstVisibleClipOffset / selectedClipPageSize) + 1;
+  selectedClipPage = firstVisibleClipPage;
+  selectedClipOffset = (firstVisibleClipPage - 1) * selectedClipPageSize;
   return true;
 }
 
@@ -1961,8 +2027,18 @@ function channelSetMatches(selected, channels) {
   return channels.every((channel) => selected.has(channel));
 }
 
+function isAllButTrafficClipFilter(channels = selectedChannelValues()) {
+  return selectedChannelPreset === "all-but-traffic" && (!selectedChannels.size || channelSetMatches(selectedChannels, channels));
+}
+
 function formatChannelFilterSummary(channelCounts) {
   const channels = selectedChannelValues();
+  if (selectedChannelPreset === "all-but-traffic") {
+    const selectedCount = channels.length
+      ? channels.reduce((total, channel) => total + Number(channelCounts?.[channel] || 0), 0)
+      : totalAvailableClipsFromCounts(channelCounts);
+    return `All but traffic · ${channelClipCountText(selectedCount)}`;
+  }
   if (!channels.length) {
     return `All channels · ${channelClipCountText(totalAvailableClipsFromCounts(channelCounts))}`;
   }
@@ -1981,6 +2057,9 @@ function filterClipsByChannel(clips) {
   } else if (clipCollectionFilter === "reviewed") {
     visibleClips = visibleClips.filter((clip) => clip.transcript_reviewed);
   }
+  if (selectedChannelPreset === "all-but-traffic") {
+    return visibleClips.filter((clip) => !trafficChannelIds.has(String(clip.channel || "").toUpperCase()));
+  }
   if (!selectedChannels.size) {
     return visibleClips;
   }
@@ -1993,7 +2072,7 @@ function paginateClips(clips) {
 }
 
 function applyClipSortForCurrentPage(clips) {
-  if (clipSortDirection === "oldest") {
+  if (currentClipPayload?.source !== "live" && clipSortDirection === "oldest") {
     return [...clips].reverse();
   }
   return clips;
@@ -2074,18 +2153,27 @@ function renderClipPagination(totalClips, { pending = false } = {}) {
   const actionButtons = [];
   if (clipOffset() > 0) {
     actionButtons.push(
-      paginationButton("Newest", false, () => goToClipOffset(0), {
-        ariaLabel: "Newest page",
-      }),
+      paginationButton(
+        clipSortDirection === "oldest" ? "Oldest" : "Newest",
+        false,
+        () => goToClipOffset(0),
+        {
+          ariaLabel: clipSortDirection === "oldest" ? "Oldest page" : "Newest page",
+        },
+      ),
       paginationButton("Previous", false, () => goToClipOffset(clipOffset() - selectedClipPageSize)),
     );
   }
   if (clipOffset() + selectedClipPageSize < totalClips) {
     actionButtons.push(
       paginationButton("Next", false, () => goToClipOffset(clipOffset() + selectedClipPageSize)),
-      paginationButton("Oldest", false, () => goToClipPage(totalPages), {
-        ariaLabel: "Oldest page",
-      }),
+      clipSortDirection === "oldest"
+        ? paginationButton("Newest", false, goToNewestClipPage, {
+            ariaLabel: "Newest page",
+          })
+        : paginationButton("Oldest", false, goToOldestClipPage, {
+            ariaLabel: "Oldest page",
+          }),
     );
   }
   actions.append(...actionButtons);
@@ -2171,8 +2259,23 @@ function goToClipPage(pageNumber) {
   selectedClipPage = nextPage;
   selectedClipOffset = nextOffset;
   renderClipPagePendingState();
-  scrollClipListToTopForPagination();
-  loadAndRender({ useCachedPayload: false });
+  loadAndRender({ useCachedPayload: false, scrollToClipsAfterRender: true, includeCounts: false });
+}
+
+function goToOldestClipPage() {
+  clipSortDirection = "oldest";
+  selectedClipOffset = 0;
+  selectedClipPage = 1;
+  renderClipPagePendingState();
+  loadAndRender({ useCachedPayload: false, scrollToClipsAfterRender: true, includeCounts: false });
+}
+
+function goToNewestClipPage() {
+  clipSortDirection = "newest";
+  selectedClipOffset = 0;
+  selectedClipPage = 1;
+  renderClipPagePendingState();
+  loadAndRender({ useCachedPayload: false, scrollToClipsAfterRender: true, includeCounts: false });
 }
 
 function goToClipOffset(offset) {
@@ -2183,8 +2286,7 @@ function goToClipOffset(offset) {
   selectedClipOffset = nextOffset;
   syncClipPageFromOffset();
   renderClipPagePendingState();
-  scrollClipListToTopForPagination();
-  loadAndRender({ useCachedPayload: false });
+  loadAndRender({ useCachedPayload: false, scrollToClipsAfterRender: true, includeCounts: false });
 }
 
 function scrollClipListToTopForPagination() {
@@ -3056,7 +3158,9 @@ function activateTab(name, { updateRoute = true, replaceRoute = false } = {}) {
     panel.hidden = !active;
   });
   updateDocumentMetadata(name);
-  refreshButton.hidden = !["clips", "map", "performance"].includes(name);
+  if (refreshButton) {
+    refreshButton.hidden = !["clips", "map", "performance"].includes(name);
+  }
   if (name === "live") {
     if (liveAudio.paused || !liveAudio.src) {
       prepareLiveAudio();
@@ -4694,6 +4798,8 @@ function toggleLivePlayback() {
     if (everythingQueueEnabled) {
       stopEverythingQueue({ clearQueue: false });
       liveAudio.pause();
+      liveAudio.removeAttribute("src");
+      liveAudio.load();
       setLivePlayButton("play");
       liveStatus.textContent = `${channelLabel(selectedLiveChannel)} queue paused`;
       renderEverythingQueuePanel();
@@ -4739,6 +4845,8 @@ async function connectLive() {
 async function connectEverythingLive() {
   clearTimeout(liveRetryTimer);
   everythingQueueEnabled = true;
+  const queueGeneration = liveQueueModeGeneration;
+  const queueChannel = selectedLiveChannel;
   const shouldCatchUp = !everythingQueueSeeded;
   if (!everythingQueueStartedAtMs) {
     everythingQueueStartedAtMs = Date.now();
@@ -4750,10 +4858,21 @@ async function connectEverythingLive() {
   renderLiveStatus(findLiveChannel(selectedLiveChannel));
   try {
     stopOtherAudio(liveAudio);
-    await pollEverythingQueue({ playIfIdle: false, seedRecent: true });
+    await pollEverythingQueue({
+      playIfIdle: false,
+      seedRecent: true,
+      queueGeneration,
+      queueChannel,
+    });
+    if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
+      return;
+    }
     await startLiveWaveformForPlayback();
+    if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
+      return;
+    }
     if (!currentLiveQueueClip) {
-      await playNextEverythingQueueClip();
+      await playNextEverythingQueueClip({ queueGeneration, queueChannel });
     }
   } catch {
     liveStatus.textContent = "Everything queue waiting";
@@ -4833,7 +4952,11 @@ function lastCommunicationUrl() {
   if (isQueuedLiveMode()) {
     return liveQueueRequestUrl();
   }
-  return apiUrl(`/api/clips/recent?limit=1&channel=${encodeURIComponent(selectedLiveChannel)}`);
+  return apiUrl(
+    `/api/clips/recent?limit=1&channel=${encodeURIComponent(
+      selectedLiveChannel,
+    )}&include_playback_url=false&verify_playback_exists=false&include_counts=false`,
+  );
 }
 
 async function pollLiveStatus() {
@@ -4926,8 +5049,11 @@ async function pollEverythingQueue({
   signal = null,
   playIfIdle = true,
   seedRecent = false,
+  queueGeneration = liveQueueModeGeneration,
+  queueChannel = selectedLiveChannel,
 } = {}) {
-  const response = await fetch(liveQueueRequestUrl(), {
+  const requestUrl = liveQueueRequestUrl();
+  const response = await fetch(requestUrl, {
     cache: "no-store",
     signal,
   });
@@ -4935,6 +5061,9 @@ async function pollEverythingQueue({
     throw new Error(`everything queue HTTP ${response.status}`);
   }
   const payload = await response.json();
+  if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
+    return;
+  }
   const clips = Array.isArray(payload.clips) ? payload.clips : [];
   if (seedRecent && !everythingQueueSeeded) {
     enqueueEverythingClips(clips, { includeBackfill: true });
@@ -4944,30 +5073,43 @@ async function pollEverythingQueue({
   }
   renderLiveTelemetry();
   renderEverythingQueuePanel();
-  if (playIfIdle && everythingQueueEnabled && !currentLiveQueueClip && liveAudio.paused) {
-    await playNextEverythingQueueClip();
+  if (playIfIdle && isCurrentLiveQueueSession(queueGeneration, queueChannel) && !currentLiveQueueClip && liveAudio.paused) {
+    await playNextEverythingQueueClip({ queueGeneration, queueChannel });
   }
 }
 
 function liveQueueRequestUrl() {
   const channels = queueChannelsForMode();
+  const excludedChannels = excludedQueueChannelsForMode();
   if (!channels.length) {
-    return liveQueueUrl;
+    if (!excludedChannels.length) {
+      return liveQueueUrl;
+    }
   }
-  const params = new URLSearchParams({ limit: "24" });
+  const params = new URLSearchParams({
+    limit: "24",
+    include_playback_url: "true",
+    verify_playback_exists: "false",
+    include_counts: "false",
+  });
   for (const channel of channels) {
     params.append("channels", channel);
+  }
+  for (const channel of excludedChannels) {
+    params.append("exclude_channels", channel);
   }
   return apiUrl(`/api/clips/recent?${params.toString()}`);
 }
 
 function queueChannelsForMode() {
+  return [];
+}
+
+function excludedQueueChannelsForMode() {
   if (!isAllButTrafficLiveMode()) {
     return [];
   }
-  return liveChannels
-    .filter((channel) => !trafficChannelIds.has(channel.channel))
-    .map((channel) => channel.channel);
+  return [...trafficChannelIds];
 }
 
 function enqueueEverythingClips(clips, { includeBackfill = false } = {}) {
@@ -5013,7 +5155,7 @@ function normalizeEverythingQueueClip(clip) {
   const playbackUrl = audioUrlForClip(clip || {});
   const audioUrl = clipAudioRequestUrl(clip || {}) || playbackUrl;
   const channel = String(clip?.channel || "").toUpperCase();
-  if (!audioUrl || !channel) {
+  if (!audioUrl || !channel || !isQueueClipAllowedForCurrentMode({ channel })) {
     return null;
   }
   return {
@@ -5067,11 +5209,38 @@ function trimEverythingQueueSeenIds() {
   }
 }
 
-async function playNextEverythingQueueClip() {
-  if (!everythingQueueEnabled || !isQueuedLiveMode()) {
+function isCurrentLiveQueueSession(queueGeneration, queueChannel) {
+  return (
+    liveQueueModeGeneration === queueGeneration &&
+    selectedLiveChannel === queueChannel &&
+    everythingQueueEnabled &&
+    isQueuedLiveMode()
+  );
+}
+
+function isQueueClipAllowedForCurrentMode(clip) {
+  const channel = String(clip?.channel || "").toUpperCase();
+  return Boolean(channel && !excludedQueueChannelsForMode().includes(channel));
+}
+
+function nextLiveQueueClipForCurrentMode() {
+  while (liveQueue.length) {
+    const clip = liveQueue.shift();
+    if (isQueueClipAllowedForCurrentMode(clip)) {
+      return clip;
+    }
+  }
+  return null;
+}
+
+async function playNextEverythingQueueClip({
+  queueGeneration = liveQueueModeGeneration,
+  queueChannel = selectedLiveChannel,
+} = {}) {
+  if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
     return;
   }
-  currentLiveQueueClip = liveQueue.shift() || null;
+  currentLiveQueueClip = nextLiveQueueClipForCurrentMode();
   renderLiveStatus(findLiveChannel(selectedLiveChannel));
   renderEverythingQueuePanel();
   if (!currentLiveQueueClip) {
@@ -5087,7 +5256,7 @@ async function playNextEverythingQueueClip() {
     liveStatus.textContent = "Skipping queued transmission";
     renderEverythingQueuePanel();
     window.setTimeout(() => {
-      playNextEverythingQueueClip();
+      playNextEverythingQueueClip({ queueGeneration, queueChannel });
     }, 250);
     return;
   }
@@ -5106,11 +5275,14 @@ async function playNextEverythingQueueClip() {
   try {
     await liveAudio.play();
   } catch {
+    if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
+      return;
+    }
     currentLiveQueueClip = null;
     liveStatus.textContent = "Skipping queued transmission";
     renderEverythingQueuePanel();
     window.setTimeout(() => {
-      playNextEverythingQueueClip();
+      playNextEverythingQueueClip({ queueGeneration, queueChannel });
     }, 250);
   }
 }
@@ -5132,6 +5304,7 @@ function handleEverythingClipEnded() {
 }
 
 function stopEverythingQueue({ clearQueue = false } = {}) {
+  liveQueueModeGeneration += 1;
   everythingQueueEnabled = false;
   currentLiveQueueClip = null;
   if (clearQueue) {
@@ -5635,6 +5808,13 @@ function selectedChannelValues() {
   return [...selectedChannels].sort(compareChannels);
 }
 
+function clipExcludedChannelValues() {
+  if (selectedChannelPreset !== "all-but-traffic") {
+    return [];
+  }
+  return [...trafficChannelIds].sort(compareChannels);
+}
+
 function frequencyForChannel(channel) {
   return liveChannels.find((liveChannel) => liveChannel.channel === channel)?.frequencyMhz || "";
 }
@@ -5649,6 +5829,9 @@ function selectedChannelStatusScope() {
   const channels = selectedChannelValues();
   if (!channels.length) {
     return "";
+  }
+  if (selectedChannelPreset === "all-but-traffic") {
+    return " excluding Seattle Traffic";
   }
   if (channels.length === 1) {
     return ` for ${channelLabel(channels[0])}`;
@@ -5702,6 +5885,16 @@ function receivedAndAnalyzedStatusText(payload) {
 }
 
 function filteredClipCount(payload, clips) {
+  if (selectedChannelPreset === "all-but-traffic") {
+    const channelCounts = payload.stats?.playable_channel_counts || payload.stats?.channel_counts;
+    if (channelCounts) {
+      return Object.entries(channelCounts).reduce(
+        (total, [channel, count]) => total + (trafficChannelIds.has(String(channel).toUpperCase()) ? 0 : Number(count || 0)),
+        0,
+      );
+    }
+    return clips.filter((clip) => !trafficChannelIds.has(String(clip.channel || "").toUpperCase())).length;
+  }
   if (payload.stats?.filtered_playable_clip_count !== undefined) {
     return Number(payload.stats.filtered_playable_clip_count);
   }

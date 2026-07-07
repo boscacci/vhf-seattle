@@ -65,6 +65,24 @@ def test_opentofu_expires_only_raw_audio_prefix() -> None:
     assert '"talkingboats-featured" = "true"' not in _lifecycle_block(main_tf)
 
 
+def test_opentofu_allows_browser_audio_cors_for_raw_audio_buckets() -> None:
+    main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
+
+    assert 'resource "aws_s3_bucket_cors_configuration" "raw_audio"' in main_tf
+    assert 'resource "aws_s3_bucket_cors_configuration" "dev_raw_audio"' in main_tf
+    prod_cors = _resource_block(main_tf, "aws_s3_bucket_cors_configuration", "raw_audio")
+    dev_cors = _resource_block(main_tf, "aws_s3_bucket_cors_configuration", "dev_raw_audio")
+    for block in (prod_cors, dev_cors):
+        assert 'allowed_methods = ["GET", "HEAD"]' in block
+        assert 'allowed_headers = ["*"]' in block
+        assert 'expose_headers  = ["ETag"]' in block
+        assert "max_age_seconds = 3000" in block
+    assert '"https://seattleboatradio.com"' in prod_cors
+    assert '"https://vhf.robertboscacci.com"' in prod_cors
+    assert '"https://dev.seattleboatradio.com"' in dev_cors
+    assert '"https://vhf-dev.robertboscacci.com"' in dev_cors
+
+
 def test_opentofu_keeps_s3_bucket_versioning_suspended() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
 

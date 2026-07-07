@@ -375,6 +375,7 @@ class ProxySettings:
     receiver_status_url: str = "http://192.168.1.114:8050/current-status.json"
     transcript_url: str = "http://127.0.0.1:8055/api/live-transcript"
     private_api_url: str = "http://192.168.1.247:8034"
+    private_api_read_timeout_seconds: float = 8.0
     ais_catcher_base_url: str = "http://192.168.1.114:8100"
     ais_catcher_dev_hosts: tuple[str, ...] = PERFORMANCE_DEV_HOSTS
     ais_catcher_dev_origin_hosts: tuple[str, ...] = PERFORMANCE_DEV_ORIGIN_HOSTS
@@ -423,6 +424,10 @@ class ProxySettings:
             private_api_url=os.environ.get(
                 "TALKINGBOATS_PROXY_PRIVATE_API_URL",
                 cls.private_api_url,
+            ),
+            private_api_read_timeout_seconds=_env_float(
+                "TALKINGBOATS_PROXY_PRIVATE_API_READ_TIMEOUT_SECONDS",
+                cls.private_api_read_timeout_seconds,
             ),
             ais_catcher_base_url=os.environ.get(
                 "TALKINGBOATS_PROXY_AIS_CATCHER_BASE_URL",
@@ -1893,23 +1898,66 @@ async def _proxy_private_api(
     target_url = f"{settings.private_api_url.rstrip('/')}{path}"
     if request.url.query:
         target_url = f"{target_url}?{request.url.query}"
+    started = time.monotonic()
     async with client_factory() as client:
-        upstream = await client.request(
-            request.method,
-            target_url,
-            content=await request.body(),
-            headers=_private_api_request_headers(request, forward_content_type),
-        )
+        try:
+            upstream = await client.request(
+                request.method,
+                target_url,
+                content=await request.body(),
+                headers=_private_api_request_headers(request, forward_content_type),
+                timeout=settings.private_api_read_timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            _log_proxy_private_api_event(
+                "proxy_private_api_timeout",
+                method=request.method,
+                path=path,
+                elapsed_seconds=time.monotonic() - started,
+                error_type=type(exc).__name__,
+            )
+            return _private_api_unavailable_response()
+        except httpx.HTTPError as exc:
+            _log_proxy_private_api_event(
+                "proxy_private_api_error",
+                method=request.method,
+                path=path,
+                elapsed_seconds=time.monotonic() - started,
+                error_type=type(exc).__name__,
+            )
+            return _private_api_unavailable_response()
+    _log_proxy_private_api_event(
+        "proxy_private_api_response",
+        method=request.method,
+        path=path,
+        elapsed_seconds=time.monotonic() - started,
+        status_code=upstream.status_code,
+    )
     response_headers = {
         name: value
         for name, value in upstream.headers.items()
-        if name.lower() in {"cache-control", "content-type"}
+        if name.lower() in {"cache-control", "content-type", "location"}
     }
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
         headers=response_headers,
     )
+
+
+def _private_api_unavailable_response() -> Response:
+    return Response(
+        content=json.dumps({"detail": "private API unavailable"}),
+        status_code=504,
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _log_proxy_private_api_event(event: str, **fields: object) -> None:
+    if "elapsed_seconds" in fields:
+        fields["elapsed_ms"] = round(float(fields.pop("elapsed_seconds")) * 1000)
+    print(json.dumps({"event": event, **fields}, sort_keys=True), flush=True)
 
 
 def _private_api_request_headers(

@@ -27,6 +27,7 @@ class FakeStorage:
         self.playback_content = playback_content
         self.tag_error = tag_error
         self.opened_playback_keys: list[str] = []
+        self.presigned_playback_keys: list[str] = []
         self.featured_tags: list[tuple[str, bool]] = []
 
     def presign_raw_upload(self, request):
@@ -38,6 +39,7 @@ class FakeStorage:
     def presign_playback(self, key):
         if not key.startswith(("raw/", "hall-of-fame/")):
             raise ValueError("playback key must be in raw/ or hall-of-fame/")
+        self.presigned_playback_keys.append(key)
         return "https://s3.example.test/playback"
 
     def playback_exists(self, key):
@@ -70,6 +72,11 @@ class FakePlaybackBody:
 
     def close(self) -> None:
         self.closed = True
+
+
+class NoPlaybackHeadStorage(FakeStorage):
+    def playback_exists(self, key):
+        raise AssertionError(f"playback_exists should not be called for {key}")
 
 
 class CapturingEventStore:
@@ -226,6 +233,198 @@ def test_recent_clips_are_public_read_only_with_playback_urls(tmp_path) -> None:
     assert body["filtered_clip_count"] == 1
     assert body["channel_labels"]["13"] == "Bridge-to-bridge"
     assert body["channel_labels"]["14"] == "VTS / Seattle Traffic"
+
+
+def test_recent_clips_can_defer_presigned_playback_urls(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    storage = FakeStorage()
+    client = _client(clip_db_path=db_path, storage=storage)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/fake.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Seattle Traffic inbound for Elliott Bay",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    response = client.get("/api/clips/recent?limit=5&include_playback_url=false")
+
+    assert response.status_code == 200
+    clip = response.json()["clips"][0]
+    assert "playback_url" not in clip
+    assert clip["audio_url"] == "/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00Z"
+    assert storage.presigned_playback_keys == []
+
+
+def test_recent_clips_can_skip_playback_head_checks(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    storage = NoPlaybackHeadStorage()
+    client = _client(clip_db_path=db_path, storage=storage)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/fake.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Seattle Traffic inbound for Elliott Bay",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    response = client.get(
+        "/api/clips/recent?limit=5&include_playback_url=true&verify_playback_exists=false"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["clips"][0]["playback_url"] == "https://s3.example.test/playback"
+    assert storage.presigned_playback_keys == [key]
+
+
+def test_recent_clips_can_skip_count_queries_for_live_queue(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    storage = NoPlaybackHeadStorage()
+    client = _client(clip_db_path=db_path, storage=storage)
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=14/date=2026-05-20/fake.mp3"
+    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        key,
+        [
+            _segment(
+                text="Seattle Traffic inbound for Elliott Bay",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    def fail_count_query(self, **kwargs):
+        raise AssertionError("count queries should be skipped")
+
+    monkeypatch.setattr(UploadedClipStore, "transcribed_channel_counts", fail_count_query)
+
+    response = client.get(
+        "/api/clips/recent?limit=5&include_counts=false&"
+        "include_playback_url=false&verify_playback_exists=false"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["clips"][0]["audio_url"] == (
+        "/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00Z"
+    )
+    assert body["clip_count"] == 0
+    assert body["received_clip_count"] == 0
+    assert body["channel_counts"] == {}
+
+
+def test_recent_clips_can_exclude_traffic_channel_for_live_queue(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    storage = NoPlaybackHeadStorage()
+    client = _client(clip_db_path=db_path, storage=storage)
+    store = UploadedClipStore(db_path)
+    traffic_key = "raw/channel=14/date=2026-05-20/traffic.mp3"
+    non_traffic_key = "raw/channel=78A/date=2026-05-20/non-traffic.mp3"
+    store.record_presigned_upload(key=traffic_key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        traffic_key,
+        [
+            _segment(
+                text="Seattle Traffic inbound for Elliott Bay",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+    store.record_presigned_upload(
+        key=non_traffic_key,
+        request=_clip_presign(channel="78A"),
+    )
+    store.mark_transcribed(
+        non_traffic_key,
+        [
+            _segment(
+                text="Non traffic working channel",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+
+    def fail_count_query(self, **kwargs):
+        raise AssertionError("count queries should be skipped")
+
+    monkeypatch.setattr(UploadedClipStore, "transcribed_channel_counts", fail_count_query)
+
+    response = client.get(
+        "/api/clips/recent?limit=5&include_counts=false&exclude_channels=14&"
+        "include_playback_url=false&verify_playback_exists=false"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [clip["channel"] for clip in body["clips"]] == ["78A"]
+    assert body["clips"][0]["audio_url"] == (
+        "/api/clips/audio?channel=78A&started_at=2026-05-20T19%3A12%3A00Z"
+    )
+    assert body["clip_count"] == 0
+
+
+def test_recent_clips_exclude_traffic_counts_without_channel_fanout(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    storage = NoPlaybackHeadStorage()
+    client = _client(clip_db_path=db_path, storage=storage)
+    store = UploadedClipStore(db_path)
+    traffic_key = "raw/channel=14/date=2026-05-20/traffic.mp3"
+    non_traffic_key = "raw/channel=78A/date=2026-05-20/non-traffic.mp3"
+    store.record_presigned_upload(key=traffic_key, request=_clip_presign(channel="14"))
+    store.mark_transcribed(
+        traffic_key,
+        [
+            _segment(
+                text="Seattle Traffic inbound for Elliott Bay",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+    )
+    store.record_presigned_upload(
+        key=non_traffic_key,
+        request=_clip_presign(channel="78A"),
+    )
+    store.mark_transcribed(
+        non_traffic_key,
+        [
+            _segment(
+                text="Non traffic working channel",
+                started_at="2026-05-20T19:13:00Z",
+                ended_at="2026-05-20T19:13:04Z",
+            )
+        ],
+    )
+
+    response = client.get(
+        "/api/clips/recent?limit=5&exclude_channels=14&"
+        "include_playback_url=false&verify_playback_exists=false"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [clip["channel"] for clip in body["clips"]] == ["78A"]
+    assert body["channel_counts"] == {"78A": 1}
+    assert body["clip_count"] == 1
+    assert body["filtered_clip_count"] == 1
+    assert body["playable_clip_count"] == 1
+    assert body["filtered_playable_clip_count"] == 1
 
 
 def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
@@ -1112,9 +1311,11 @@ def test_recent_clips_pages_over_playable_clips(tmp_path) -> None:
 
     page_1 = client.get("/api/clips/recent?limit=3&offset=0&channel=68")
     page_2 = client.get("/api/clips/recent?limit=3&offset=3&channel=68")
+    oldest_page = client.get("/api/clips/recent?limit=3&offset=0&channel=68&sort=oldest")
 
     assert page_1.status_code == 200
     assert page_2.status_code == 200
+    assert oldest_page.status_code == 200
     assert [clip["transcript"] for clip in page_1.json()["clips"]] == [
         "Playable page clip 6",
         "Playable page clip 5",
@@ -1124,6 +1325,11 @@ def test_recent_clips_pages_over_playable_clips(tmp_path) -> None:
         "Playable page clip 3",
         "Playable page clip 2",
         "Playable page clip 0",
+    ]
+    assert [clip["transcript"] for clip in oldest_page.json()["clips"]] == [
+        "Playable page clip 0",
+        "Playable page clip 2",
+        "Playable page clip 3",
     ]
 
 
@@ -1162,7 +1368,7 @@ def test_public_clip_playback_url_can_be_refreshed_without_exposing_key(tmp_path
     assert key not in response.text
 
 
-def test_public_clip_audio_streams_same_origin_playback_without_exposing_key(tmp_path) -> None:
+def test_public_clip_audio_redirects_to_presigned_playback_without_proxying_body(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     storage = FakeStorage(playback_content=b"same-origin-mp3")
     client = _client(clip_db_path=db_path, storage=storage)
@@ -1188,12 +1394,11 @@ def test_public_clip_audio_streams_same_origin_playback_without_exposing_key(tmp
         "/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00%2B00%3A00"
     )
 
-    assert response.status_code == 200
-    assert response.content == b"same-origin-mp3"
-    assert response.headers["content-type"].startswith("audio/mpeg")
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://s3.example.test/playback"
     assert response.headers["cache-control"] == "no-store"
-    assert storage.opened_playback_keys == [key]
-    assert key.encode() not in response.content
+    assert storage.opened_playback_keys == []
+    assert storage.presigned_playback_keys == [key]
 
 
 def test_public_clip_playback_url_rejects_missing_playback_object(tmp_path) -> None:
@@ -1256,7 +1461,7 @@ def test_public_clip_playback_url_rejects_excluded_channels(tmp_path) -> None:
     assert key not in response.text
 
 
-def test_recent_clips_reports_total_counts_and_supports_offsets(tmp_path) -> None:
+def test_recent_clips_reports_total_counts_and_supports_offsets_and_pages(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     client = _client(clip_db_path=db_path)
     store = UploadedClipStore(db_path)
@@ -1284,15 +1489,21 @@ def test_recent_clips_reports_total_counts_and_supports_offsets(tmp_path) -> Non
         )
 
     response = client.get("/api/clips/recent?limit=6&offset=6")
+    page_response = client.get("/api/clips/recent?limit=6&page=2")
 
     assert response.status_code == 200
+    assert page_response.status_code == 200
     body = response.json()
+    page_body = page_response.json()
     assert len(body["clips"]) == 2
     assert [clip["transcript"] for clip in body["clips"]] == ["Clip 1", "Clip 0"]
+    assert [clip["transcript"] for clip in page_body["clips"]] == ["Clip 1", "Clip 0"]
     assert body["clip_count"] == 8
     assert body["filtered_clip_count"] == 8
     assert body["limit"] == 6
     assert body["offset"] == 6
+    assert page_body["offset"] == 6
+    assert page_body["page"] == 2
     assert body["channel_counts"] == {"14": 4, "68": 4}
 
 
@@ -1385,7 +1596,7 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
     assert wx_response.json() == {
         "clips": [],
         "clip_count": 1,
-        "received_clip_count": 2,
+        "received_clip_count": 1,
         "analyzed_clip_count": 1,
         "filtered_clip_count": 0,
         "playable_clip_count": 0,
@@ -1394,6 +1605,7 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
         "latest_playable_started_at": None,
         "limit": 5,
         "offset": 0,
+        "page": 1,
         "featured": False,
         "reviewed": False,
         "channel_counts": {"14": 1},

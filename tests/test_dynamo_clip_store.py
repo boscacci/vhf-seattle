@@ -376,6 +376,147 @@ def test_dynamo_clip_store_streams_recent_transcribed_with_cursor_pages() -> Non
     assert "ExclusiveStartKey" in transcribed_queries[2]
 
 
+def test_dynamo_clip_store_reads_oldest_transcribed_with_forward_query() -> None:
+    table = FakeDynamoTable(page_size=2)
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    expected_keys: list[str] = []
+    for index in range(5):
+        key = f"raw/channel=14/date=2026-06-01/example-{index}.mp3"
+        started_at = datetime(2026, 6, 1, 12, 0, index, tzinfo=UTC)
+        expected_keys.append(key)
+        request = _request(channel="14").model_copy(
+            update={
+                "started_at": started_at,
+                "ended_at": datetime(2026, 6, 1, 12, 0, index + 1, tzinfo=UTC),
+                "idempotency_key": f"edge-upload-oldest-{index}",
+            }
+        )
+        store.record_presigned_upload(key=key, request=request)
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Seattle Traffic {index}",
+                    started_at=f"2026-06-01T12:00:0{index}Z",
+                    ended_at=f"2026-06-01T12:00:0{index + 1}Z",
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+
+    table.query_calls.clear()
+    clips = store.recent_transcribed(limit=3, sort="oldest")
+
+    assert [clip.key for clip in clips] == expected_keys[:3]
+    transcribed_queries = [
+        call
+        for call in table.query_calls
+        if call["ExpressionAttributeValues"][":pk"] == "clips#transcribed"
+    ]
+    assert len(transcribed_queries) == 2
+    assert all(call["ScanIndexForward"] is True for call in transcribed_queries)
+
+
+def test_dynamo_clip_store_serves_numbered_page_from_cached_index_anchor() -> None:
+    table = FakeDynamoTable()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    expected_keys: list[str] = []
+    for index in range(30):
+        key = f"raw/channel=14/date=2026-06-01/example-{index}.mp3"
+        started_at = datetime(2026, 6, 1, 12, 0, index, tzinfo=UTC)
+        expected_keys.insert(0, key)
+        request = _request(channel="14").model_copy(
+            update={
+                "started_at": started_at,
+                "ended_at": datetime(2026, 6, 1, 12, 0, index + 1, tzinfo=UTC),
+                "idempotency_key": f"edge-upload-page-anchor-{index}",
+            }
+        )
+        store.record_presigned_upload(key=key, request=request)
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Seattle Traffic {index}",
+                    started_at=f"2026-06-01T12:00:{index:02d}Z",
+                    ended_at=f"2026-06-01T12:00:{index + 1:02d}Z",
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+
+    store.transcribed_channel_counts()
+    table.query_calls.clear()
+
+    clips = store.recent_transcribed(limit=6, page=5)
+
+    assert [clip.key for clip in clips] == expected_keys[24:30]
+    transcribed_queries = [
+        call
+        for call in table.query_calls
+        if call["ExpressionAttributeValues"][":pk"] == "clips#transcribed"
+    ]
+    assert len(transcribed_queries) == 1
+    assert transcribed_queries[0]["Limit"] == 6
+    assert "ExclusiveStartKey" in transcribed_queries[0]
+    assert transcribed_queries[0]["ExclusiveStartKey"]["sk"].endswith("example-6.mp3")
+
+
+def test_dynamo_clip_store_builds_numbered_page_anchor_with_bounded_query() -> None:
+    table = FakeDynamoTable()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    expected_keys: list[str] = []
+    for index in range(30):
+        key = f"raw/channel=14/date=2026-06-01/example-{index}.mp3"
+        started_at = datetime(2026, 6, 1, 12, 0, index, tzinfo=UTC)
+        expected_keys.insert(0, key)
+        request = _request(channel="14").model_copy(
+            update={
+                "started_at": started_at,
+                "ended_at": datetime(2026, 6, 1, 12, 0, index + 1, tzinfo=UTC),
+                "idempotency_key": f"edge-upload-cold-page-anchor-{index}",
+            }
+        )
+        store.record_presigned_upload(key=key, request=request)
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Seattle Traffic {index}",
+                    started_at=f"2026-06-01T12:00:{index:02d}Z",
+                    ended_at=f"2026-06-01T12:00:{index + 1:02d}Z",
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+
+    table.query_calls.clear()
+
+    clips = store.recent_transcribed(limit=6, page=5)
+
+    assert [clip.key for clip in clips] == expected_keys[24:30]
+    transcribed_queries = [
+        call
+        for call in table.query_calls
+        if call["ExpressionAttributeValues"][":pk"] == "clips#transcribed"
+    ]
+    assert [call["Limit"] for call in transcribed_queries] == [50, 6]
+    assert transcribed_queries[0]["ProjectionExpression"].startswith("pk, sk")
+    assert "ExclusiveStartKey" in transcribed_queries[1]
+
+
 def test_dynamo_clip_store_counts_channels_with_projected_cached_global_query() -> None:
     table = FakeDynamoTable(page_size=2)
     store = DynamoUploadedClipStore(
@@ -411,7 +552,7 @@ def test_dynamo_clip_store_counts_channels_with_projected_cached_global_query() 
     assert len(count_queries) == 2
     assert all(
         call["ProjectionExpression"]
-        == "#channel, display_transcript, transcript, transcript_reviewed"
+        == "pk, sk, #channel, display_transcript, transcript, transcript_reviewed"
         for call in count_queries
     )
     assert all(

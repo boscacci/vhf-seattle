@@ -10,10 +10,11 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import wave
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -83,6 +84,8 @@ class SpooledAudioClip:
     started_at: datetime
     content_type: str
     idempotency_key: str
+    ended_at: datetime | None = None
+    duration_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,7 @@ class UploadResult:
 
 UploadFunc = Callable[..., UploadResult]
 Runner = Callable[..., object]
+DurationProbe = Callable[[Path], float | None]
 
 
 class ClipPreparationError(Exception):
@@ -116,8 +120,10 @@ def discover_completed_audio_files(
     now: datetime,
     min_age_seconds: float,
     stat_func=None,
+    duration_probe: DurationProbe | None = None,
 ) -> list[SpooledAudioClip]:
     stat_func = stat_func or (lambda path: path.stat())
+    duration_probe = duration_probe or probe_audio_duration_seconds
     clips: list[SpooledAudioClip] = []
     if not spool_root.exists():
         return clips
@@ -134,7 +140,24 @@ def discover_completed_audio_files(
             channel = infer_spool_channel(audio_path)
         except ValueError:
             continue
-        started_at = _started_at_from_filename(audio_path) or modified_at
+        metadata = _read_audio_metadata(audio_path)
+        started_at = (
+            _metadata_datetime(metadata, "started_at")
+            or _started_at_from_filename(audio_path)
+            or modified_at
+        )
+        ended_at = _metadata_datetime(metadata, "ended_at")
+        duration_seconds = _metadata_positive_float(metadata.get("duration_seconds"))
+        if ended_at is not None and ended_at <= started_at:
+            ended_at = None
+        if duration_seconds is None:
+            duration_seconds = duration_probe(audio_path)
+        if duration_seconds is None and ended_at is not None:
+            measured_seconds = (ended_at - started_at).total_seconds()
+            if measured_seconds > 0:
+                duration_seconds = round(measured_seconds, 3)
+        if ended_at is None and duration_seconds is not None:
+            ended_at = started_at + timedelta(seconds=duration_seconds)
         clips.append(
             SpooledAudioClip(
                 channel=channel,
@@ -146,6 +169,8 @@ def discover_completed_audio_files(
                     started_at=started_at,
                     path=audio_path,
                 ),
+                ended_at=ended_at,
+                duration_seconds=duration_seconds,
             )
         )
     return sorted(clips, key=lambda clip: clip.started_at, reverse=True)
@@ -163,6 +188,10 @@ def upload_spooled_clip(*, api_url: str, ingest_token: str, clip: SpooledAudioCl
         "content_type": clip.content_type,
         "idempotency_key": clip.idempotency_key,
     }
+    if clip.ended_at is not None:
+        payload["ended_at"] = _format_utc(clip.ended_at)
+    if clip.duration_seconds is not None:
+        payload["duration_seconds"] = clip.duration_seconds
     presign_request = urllib.request.Request(
         f"{api_url}/api/ingest/clips/presign",
         data=json.dumps(payload).encode("utf-8"),
@@ -208,6 +237,7 @@ def process_spool_once(
     failed_root: Path | None = None,
     max_files: int | None = 100,
     fallback_to_original_on_prepare_error: bool = True,
+    duration_probe: DurationProbe | None = None,
 ) -> int:
     uploaded = 0
     now = now or datetime.now(UTC)
@@ -224,6 +254,7 @@ def process_spool_once(
         now=now,
         min_age_seconds=min_age_seconds,
         stat_func=stat_func,
+        duration_probe=duration_probe,
     )
     if max_files is not None:
         clips = clips[: max(0, max_files)]
@@ -251,6 +282,14 @@ def process_spool_once(
                 audio_file=clip.audio_path.name,
                 failed_file=str(failed_path),
                 error=f"{type(exc.__cause__ or exc).__name__}: {exc.__cause__ or exc}",
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001 - one bad upload must not block later clips.
+            _log_event(
+                "spool_clip_upload_failed",
+                channel=clip.channel,
+                audio_file=clip.audio_path.name,
+                error=f"{type(exc).__name__}: {exc}",
             )
             continue
         uploaded += 1
@@ -322,6 +361,85 @@ def quarantine_stale_empty_audio_files(
     return quarantined
 
 
+def probe_audio_duration_seconds(path: Path) -> float | None:
+    if path.suffix.lower() in {".wav", ".wave"}:
+        wav_duration = _try_wav_duration_seconds(path)
+        if wav_duration is not None:
+            return wav_duration
+
+    ffprobe_path = os.getenv("TALKINGBOATS_EDGE_UPLOAD_FFPROBE_PATH", "ffprobe")
+    try:
+        result = subprocess.run(
+            [
+                ffprobe_path,
+                "-hide_banner",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return _parse_probe_duration_seconds(result.stdout)
+
+
+def _read_audio_metadata(path: Path) -> dict[str, object]:
+    for metadata_path in (path.with_suffix(".json"), path.with_name(f"{path.name}.json")):
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def _metadata_datetime(metadata: dict[str, object], field: str) -> datetime | None:
+    value = metadata.get(field)
+    if not isinstance(value, str):
+        return None
+    try:
+        return _parse_utc(value)
+    except ValueError:
+        return None
+
+
+def _metadata_positive_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(parsed, 3) if parsed > 0 else None
+
+
+def _try_wav_duration_seconds(path: Path) -> float | None:
+    try:
+        with wave.open(str(path), "rb") as wav:
+            frame_rate = wav.getframerate()
+            if frame_rate <= 0:
+                return None
+            return round(wav.getnframes() / frame_rate, 3)
+    except (OSError, EOFError, wave.Error):
+        return None
+
+
+def _parse_probe_duration_seconds(stdout: str) -> float | None:
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if not lines or lines[-1].upper() == "N/A":
+        return None
+    return _metadata_positive_float(lines[-1])
+
+
 @contextmanager
 def prepared_spooled_clip_for_upload(
     clip: SpooledAudioClip,
@@ -351,7 +469,9 @@ def prepared_spooled_clip_for_upload(
                 check=True,
             )
         except Exception as exc:  # noqa: BLE001 - daemon quarantines this local input.
-            if fallback_to_original_on_prepare_error and _clip_available_for_fallback(clip.audio_path):
+            if fallback_to_original_on_prepare_error and _clip_available_for_fallback(
+                clip.audio_path
+            ):
                 _log_event(
                     "spool_clip_preparation_fallback",
                     channel=clip.channel,
@@ -504,6 +624,13 @@ def _env_bool(value: str | None, *, default: bool) -> bool:
     raise ValueError(f"invalid boolean value: {value}")
 
 
+def _parse_utc(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("datetime must include a timezone")
+    return parsed.astimezone(UTC)
+
+
 def quarantine_spooled_clip(
     *,
     clip: SpooledAudioClip,
@@ -555,7 +682,7 @@ def _normalize_spool_channel(value: str) -> Channel | None:
 
 
 def _format_utc(value: datetime) -> str:
-    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _log_event(event: str, **fields: object) -> None:

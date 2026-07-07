@@ -434,6 +434,25 @@ def test_proxy_recent_clips_endpoint_is_public_read_only() -> None:
     assert response.json() == {"clips": [{"transcript": "hello"}]}
 
 
+def test_proxy_recent_clips_times_out_private_api_fast() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("stalled private API", request=request)
+
+    app = create_app(
+        ProxySettings(
+            private_api_url="http://private-api.test",
+            private_api_read_timeout_seconds=0.25,
+        ),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(_asgi_get(app, "/api/clips/recent?limit=5"))
+
+    assert response.status_code == 504
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"detail": "private API unavailable"}
+
+
 def test_proxy_clip_playback_refresh_endpoint_is_public_read_only() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert (
@@ -492,13 +511,12 @@ def test_proxy_clip_audio_endpoint_is_public_read_only() -> None:
         assert "cookie" not in request.headers
         assert "x-talkingboats-operator-token" not in request.headers
         return httpx.Response(
-            200,
+            307,
             headers={
-                "Content-Type": "audio/mpeg",
+                "Location": "https://s3.example.test/presigned-playback",
                 "Cache-Control": "no-store",
                 "Set-Cookie": "talkingboats_operator_token=private-token",
             },
-            content=b"same-origin-mp3",
         )
 
     app = create_app(
@@ -520,11 +538,11 @@ def test_proxy_clip_audio_endpoint_is_public_read_only() -> None:
         )
     )
 
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://s3.example.test/presigned-playback"
     assert response.headers["cache-control"] == "no-store"
     assert "set-cookie" not in response.headers
-    assert response.content == b"same-origin-mp3"
+    assert response.content == b""
 
 
 def test_proxy_lexical_analysis_endpoint_is_public_read_only() -> None:

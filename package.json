@@ -5,6 +5,7 @@
     "browser:install:chromium": "playwright install chromium",
     "browser:open:dev": "playwright open --browser=chromium https://vhf-dev.robertboscacci.com/analysis/",
     "smoke:browser": "node scripts/browser_smoke.mjs",
+    "slo:dev": "node scripts/live_slo_probe.mjs",
     "lint:md": "markdownlint-cli2 README.md \"docs/**/*.md\" infra/opentofu/README.md"
   },
   "devDependencies": {

@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import boto3
 from botocore.exceptions import ClientError
@@ -358,11 +358,17 @@ class UploadedClipStore:
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
         reviewed_only: bool = False,
+        sort: Literal["newest", "oldest"] = "newest",
+        page: int | None = None,
     ) -> list[RecentTranscribedClip]:
         if limit <= 0:
             raise ValueError("limit must be positive")
         if offset < 0:
             raise ValueError("offset must be non-negative")
+        if page is not None:
+            if page <= 0:
+                raise ValueError("page must be positive")
+            offset = (page - 1) * limit
         filters = [
             "uploaded_clips.status = 'transcribed'",
             "uploaded_clips.transcript IS NOT NULL",
@@ -385,12 +391,13 @@ class UploadedClipStore:
             filters.append("uploaded_clip_transcript_corrections.clip_key IS NOT NULL")
         params.extend([limit, offset])
         where_clause = "\n                    AND ".join(filters)
+        sort_direction = "ASC" if sort == "oldest" else "DESC"
         order_clause = (
-            "uploaded_clip_features.featured_at DESC, "
-            "uploaded_clips.started_at DESC, "
-            "uploaded_clips.id DESC"
+            f"uploaded_clip_features.featured_at {sort_direction}, "
+            f"uploaded_clips.started_at {sort_direction}, "
+            f"uploaded_clips.id {sort_direction}"
             if featured_only
-            else "uploaded_clips.started_at DESC, uploaded_clips.id DESC"
+            else f"uploaded_clips.started_at {sort_direction}, uploaded_clips.id {sort_direction}"
         )
         with _connect_upload_db(self.path) as connection:
             rows = connection.execute(

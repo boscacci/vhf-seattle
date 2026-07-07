@@ -6,13 +6,13 @@ import os
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urlencode
 
 import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from talkingboats.asr_feedback import (
@@ -291,27 +291,46 @@ async def recent_clips(
     ],
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
     offset: Annotated[int, Query(ge=0)] = 0,
+    page: Annotated[int | None, Query(ge=1)] = None,
     channel: Annotated[str | None, Query(min_length=1, max_length=8)] = None,
     channels: Annotated[list[str] | None, Query()] = None,
     featured: bool = False,
     reviewed: bool = False,
+    include_playback_url: bool = True,
+    verify_playback_exists: bool = True,
+    include_counts: bool = True,
+    exclude_channels: Annotated[list[str] | None, Query()] = None,
+    sort: Annotated[Literal["newest", "oldest"], Query()] = "newest",
 ) -> dict[str, object]:
-    playable_summary = _published_playable_clip_summary(
-        settings.public_site_dir,
-        featured_only=featured,
-        reviewed_only=reviewed,
+    effective_offset = (page - 1) * limit if page is not None else offset
+    effective_page = page if page is not None else (effective_offset // limit) + 1
+    requested_excluded_channels = _requested_public_excluded_channels(exclude_channels)
+    selected_channels = _requested_public_channels(
+        channel=channel,
+        channels=channels,
+        excluded_channels=requested_excluded_channels,
     )
-    playable_channel_counts = dict(playable_summary["playable_channel_counts"])
-    playable_clip_count = int(playable_summary["playable_clip_count"])
-    selected_channels = _requested_public_channels(channel=channel, channels=channels)
-    filtered_playable_clip_count = (
-        sum(
-            playable_channel_counts.get(selected_channel, 0)
-            for selected_channel in selected_channels
+    if include_counts:
+        playable_summary = _published_playable_clip_summary(
+            settings.public_site_dir,
+            featured_only=featured,
+            reviewed_only=reviewed,
         )
-        if selected_channels
-        else playable_clip_count
-    )
+        playable_channel_counts = dict(playable_summary["playable_channel_counts"])
+        playable_clip_count = int(playable_summary["playable_clip_count"])
+        filtered_playable_clip_count = (
+            sum(
+                playable_channel_counts.get(selected_channel, 0)
+                for selected_channel in selected_channels
+            )
+            if selected_channels
+            else playable_clip_count
+        )
+    else:
+        playable_summary = {"latest_playable_started_at": None}
+        playable_channel_counts = {}
+        playable_clip_count = 0
+        filtered_playable_clip_count = 0
     if clip_store is None:
         return {
             "clips": [],
@@ -324,37 +343,49 @@ async def recent_clips(
             "playable_channel_counts": playable_channel_counts,
             "latest_playable_started_at": playable_summary["latest_playable_started_at"],
             "limit": limit,
-            "offset": offset,
+            "offset": effective_offset,
+            "page": effective_page,
             "featured": featured,
             "reviewed": reviewed,
             "channel_counts": {},
             "channel_labels": public_monitored_channel_labels(),
         }
-    all_channel_counts = clip_store.transcribed_channel_counts(
-        excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
-    )
     filtered_collection = featured or reviewed
-    channel_counts = (
-        clip_store.transcribed_channel_counts(
-            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
-            featured_only=featured,
-            reviewed_only=reviewed,
+    if include_counts:
+        all_channel_counts = clip_store.transcribed_channel_counts(
+            excluded_channels=requested_excluded_channels,
         )
-        if filtered_collection
-        else all_channel_counts
-    )
-    clip_count = sum(all_channel_counts.values())
-    received_clip_count = _received_clip_count(clip_store, fallback=clip_count)
-    analyzed_clip_count = clip_count
-    filtered_clip_count = (
-        sum(channel_counts.get(selected_channel, 0) for selected_channel in selected_channels)
-        if selected_channels
-        else sum(channel_counts.values())
-    )
-    if filtered_collection:
-        playable_channel_counts = dict(channel_counts)
-        playable_clip_count = sum(playable_channel_counts.values())
-        filtered_playable_clip_count = filtered_clip_count
+        channel_counts = (
+            clip_store.transcribed_channel_counts(
+                excluded_channels=requested_excluded_channels,
+                featured_only=featured,
+                reviewed_only=reviewed,
+            )
+            if filtered_collection
+            else all_channel_counts
+        )
+        clip_count = sum(all_channel_counts.values())
+        received_clip_count = clip_count
+        analyzed_clip_count = clip_count
+        filtered_clip_count = (
+            sum(channel_counts.get(selected_channel, 0) for selected_channel in selected_channels)
+            if selected_channels
+            else sum(channel_counts.values())
+        )
+        if not selected_channels and requested_excluded_channels != PUBLIC_EXCLUDED_CHANNELS:
+            playable_channel_counts = dict(channel_counts)
+            playable_clip_count = sum(playable_channel_counts.values())
+            filtered_playable_clip_count = filtered_clip_count
+        if filtered_collection:
+            playable_channel_counts = dict(channel_counts)
+            playable_clip_count = sum(playable_channel_counts.values())
+            filtered_playable_clip_count = filtered_clip_count
+    else:
+        channel_counts = {}
+        clip_count = 0
+        received_clip_count = 0
+        analyzed_clip_count = 0
+        filtered_clip_count = 0
     if (channel or channels) and not selected_channels:
         return {
             "clips": [],
@@ -367,7 +398,8 @@ async def recent_clips(
             "playable_channel_counts": playable_channel_counts,
             "latest_playable_started_at": playable_summary["latest_playable_started_at"],
             "limit": limit,
-            "offset": offset,
+            "offset": effective_offset,
+            "page": effective_page,
             "featured": featured,
             "reviewed": reviewed,
             "channel_counts": channel_counts,
@@ -378,11 +410,16 @@ async def recent_clips(
         storage=storage,
         clip_store=clip_store,
         limit=limit,
-        offset=offset,
+        offset=effective_offset,
+        page=page,
         channel=channel if not channels else None,
         channels=selected_channels,
+        excluded_channels=requested_excluded_channels,
         featured_only=featured,
         reviewed_only=reviewed,
+        include_playback_url=include_playback_url,
+        verify_playback_exists=verify_playback_exists,
+        sort=sort,
     )
     return {
         "clips": clips,
@@ -394,12 +431,16 @@ async def recent_clips(
         "filtered_playable_clip_count": filtered_playable_clip_count,
         "playable_channel_counts": playable_channel_counts,
         "latest_playable_started_at": (
-            live_latest_playable_started_at or playable_summary["latest_playable_started_at"]
+            live_latest_playable_started_at
+            if sort == "newest"
+            else playable_summary["latest_playable_started_at"]
         ),
         "limit": limit,
-        "offset": offset,
+        "offset": effective_offset,
+        "page": effective_page,
         "featured": featured,
         "reviewed": reviewed,
+        "sort": sort,
         "channel_counts": channel_counts,
         "channel_labels": public_monitored_channel_labels(channel_counts),
     }
@@ -414,31 +455,42 @@ def _recent_playable_clip_page(
     offset: int,
     channel: str | None,
     channels: list[str],
+    page: int | None = None,
+    excluded_channels: tuple[str, ...] = PUBLIC_EXCLUDED_CHANNELS,
     featured_only: bool = False,
     reviewed_only: bool = False,
+    include_playback_url: bool = True,
+    verify_playback_exists: bool = True,
+    sort: Literal["newest", "oldest"] = "newest",
 ) -> tuple[list[dict[str, object]], str | None]:
     clips: list[dict[str, object]] = []
     latest_playable_started_at: str | None = None
     playable_seen = 0
     candidate_offset = 0
-    batch_size = max(limit, 50)
+    indexed_page = page is not None and not verify_playback_exists
+    batch_size = limit if indexed_page else max(limit, 50)
+    playable_offset = 0 if indexed_page else offset
     while len(clips) < limit:
         candidates = clip_store.recent_transcribed(
             limit=batch_size,
             offset=candidate_offset,
+            page=page if indexed_page and candidate_offset == 0 else None,
             channel=channel,
             channels=channels,
-            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+            excluded_channels=excluded_channels,
             featured_only=featured_only,
             reviewed_only=reviewed_only,
+            sort=sort,
         )
         if not candidates:
             break
         for clip in candidates:
             try:
-                if not storage.playback_exists(clip.key):
+                if verify_playback_exists and not storage.playback_exists(clip.key):
                     continue
-                playback_url = storage.presign_playback(clip.key)
+                playback_url = (
+                    storage.presign_playback(clip.key) if include_playback_url else None
+                )
             except RuntimeError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -448,34 +500,43 @@ def _recent_playable_clip_page(
                 continue
             if latest_playable_started_at is None:
                 latest_playable_started_at = clip.started_at
-            if playable_seen < offset:
+            if playable_seen < playable_offset:
                 playable_seen += 1
                 continue
-            clips.append(
-                {
-                    "channel": clip.channel,
-                    "channel_label": channel_label(clip.channel),
-                    "started_at": clip.started_at,
-                    "ended_at": clip.ended_at,
-                    "duration_seconds": clip.duration_seconds,
-                    "content_type": clip.content_type,
-                    "transcript": clip.transcript,
-                    "transcript_reviewed": clip.transcript_reviewed,
-                    "include_in_training": clip.include_in_training,
-                    "training_quality": clip.training_quality,
-                    "training_split": clip.training_split,
-                    "training_flags": list(clip.training_flags),
-                    "training_reason": clip.training_reason,
-                    "featured": clip.featured,
-                    "featured_at": clip.featured_at,
-                    "segments": clip.segments,
-                    "playback_url": playback_url,
-                    "playback_expires_in_seconds": settings.playback_presign_seconds,
-                }
-            )
+            clip_payload = {
+                "channel": clip.channel,
+                "channel_label": channel_label(clip.channel),
+                "started_at": clip.started_at,
+                "ended_at": clip.ended_at,
+                "duration_seconds": clip.duration_seconds,
+                "content_type": clip.content_type,
+                "transcript": clip.transcript,
+                "transcript_reviewed": clip.transcript_reviewed,
+                "include_in_training": clip.include_in_training,
+                "training_quality": clip.training_quality,
+                "training_split": clip.training_split,
+                "training_flags": list(clip.training_flags),
+                "training_reason": clip.training_reason,
+                "featured": clip.featured,
+                "featured_at": clip.featured_at,
+                "segments": clip.segments,
+            }
+            if playback_url is not None:
+                clip_payload["playback_url"] = playback_url
+                clip_payload["playback_expires_in_seconds"] = (
+                    settings.playback_presign_seconds
+                )
+            else:
+                clip_payload["audio_url"] = _public_clip_audio_url(
+                    channel=clip.channel,
+                    started_at=clip.started_at,
+                )
+            clips.append(clip_payload)
             playable_seen += 1
             if len(clips) >= limit:
                 break
+        if indexed_page:
+            break
         candidate_offset += len(candidates)
         if len(candidates) < batch_size:
             break
@@ -526,12 +587,10 @@ async def public_clip_audio(
     ],
     channel: Annotated[str, Query(min_length=1, max_length=8)],
     started_at: Annotated[str, Query(min_length=1, max_length=64)],
-) -> StreamingResponse:
+) -> RedirectResponse:
     clip = public_playback_clip(clip_store, channel=channel, started_at=started_at)
     try:
-        body = storage.open_playback(clip.key)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
+        playback_url = storage.presign_playback(clip.key)
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -539,9 +598,9 @@ async def public_clip_audio(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
-    return StreamingResponse(
-        iter_playback_body(body),
-        media_type=clip.content_type,
+    return RedirectResponse(
+        playback_url,
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
         headers={"Cache-Control": "no-store"},
     )
 
@@ -789,12 +848,15 @@ def public_playback_clip(
     return clip
 
 
+def _public_clip_audio_url(*, channel: str, started_at: str) -> str:
+    return "/api/clips/audio?" + urlencode({"channel": channel, "started_at": started_at})
+
+
 def _public_training_record(correction: dict[str, object]) -> dict[str, object]:
     channel = str(correction["channel"])
     started_at = str(correction["started_at"])
     return {
-        "audio_url": "/api/clips/audio?"
-        + urlencode({"channel": channel, "started_at": started_at}),
+        "audio_url": _public_clip_audio_url(channel=channel, started_at=started_at),
         "channel": channel,
         "started_at": started_at,
         "duration_seconds": correction["duration_seconds"],
@@ -1001,8 +1063,9 @@ def _requested_public_channels(
     *,
     channel: str | None,
     channels: list[str] | None,
+    excluded_channels: tuple[str, ...] = PUBLIC_EXCLUDED_CHANNELS,
 ) -> list[str]:
-    excluded = {excluded_channel.upper() for excluded_channel in PUBLIC_EXCLUDED_CHANNELS}
+    excluded = {excluded_channel.upper() for excluded_channel in excluded_channels}
     requested: list[str] = []
     for value in [channel, *(channels or [])]:
         if value is None:
@@ -1012,6 +1075,20 @@ def _requested_public_channels(
             if normalized and normalized.upper() not in excluded and normalized not in requested:
                 requested.append(normalized)
     return requested
+
+
+def _requested_public_excluded_channels(channels: list[str] | None) -> tuple[str, ...]:
+    requested: list[str] = []
+    for value in channels or []:
+        for part in value.split(","):
+            normalized = part.strip().upper()
+            if normalized and normalized not in requested:
+                requested.append(normalized)
+    excluded = [*PUBLIC_EXCLUDED_CHANNELS]
+    for requested_channel in requested:
+        if requested_channel not in excluded:
+            excluded.append(requested_channel)
+    return tuple(excluded)
 
 
 def main() -> None:

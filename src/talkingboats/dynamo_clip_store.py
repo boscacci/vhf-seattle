@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import boto3
 
@@ -42,6 +42,11 @@ STATUS_PREFIX = "clip_status#"
 CHANNEL_TRANSCRIBED_PREFIX = "clips#transcribed#channel#"
 CHANNEL_FEATURED_PREFIX = "clips#featured#channel#"
 CHANNEL_COUNT_CACHE_TTL_SECONDS = 30.0
+PAGE_ANCHOR_CACHE_TTL_SECONDS = 30.0
+PAGE_ANCHOR_UI_PAGE_SIZES = (6, 12, 24)
+PAGE_ANCHOR_PROJECTION_EXPRESSION = (
+    "pk, sk, #channel, display_transcript, transcript, transcript_reviewed"
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,10 @@ class DynamoClipStoreConfig:
 class DynamoUploadedClipStore:
     _channel_counts_cache: ClassVar[dict[tuple[object, ...], tuple[float, dict[str, int]]]] = {}
     _channel_counts_cache_lock: ClassVar[threading.Lock] = threading.Lock()
+    _page_anchors_cache: ClassVar[
+        dict[tuple[object, ...], tuple[float, dict[int, dict[str, Any] | None]]]
+    ] = {}
+    _page_anchors_cache_lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(
         self,
@@ -235,12 +244,19 @@ class DynamoUploadedClipStore:
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
         reviewed_only: bool = False,
+        sort: Literal["newest", "oldest"] = "newest",
+        page: int | None = None,
     ) -> list[RecentTranscribedClip]:
         if limit <= 0:
             raise ValueError("limit must be positive")
         if offset < 0:
             raise ValueError("offset must be non-negative")
+        if page is not None:
+            if page <= 0:
+                raise ValueError("page must be positive")
+            offset = (page - 1) * limit
         selected_channels = _unique_channels([channel] if channel else channels)
+        scan_forward = sort == "oldest"
         if selected_channels:
             needed = limit + offset
             index_items: list[dict[str, Any]] = []
@@ -252,7 +268,7 @@ class DynamoUploadedClipStore:
                         if featured_only
                         else _channel_transcribed_pk(selected_channel)
                     ),
-                    scan_forward=False,
+                    scan_forward=scan_forward,
                     page_size=max(needed, 50),
                 ):
                     if not _is_displayable_index_item(item):
@@ -265,7 +281,7 @@ class DynamoUploadedClipStore:
                 index_items.extend(channel_items)
             index_items.sort(
                 key=lambda item: (str(item["started_at"]), str(item["key"])),
-                reverse=True,
+                reverse=not scan_forward,
             )
             index_items = index_items[offset : offset + limit]
         else:
@@ -275,6 +291,8 @@ class DynamoUploadedClipStore:
                 excluded_channels={excluded.upper() for excluded in excluded_channels},
                 featured_only=featured_only,
                 reviewed_only=reviewed_only,
+                sort=sort,
+                page=page,
             )
         return [_recent_from_item(item) for item in index_items]
 
@@ -709,26 +727,50 @@ class DynamoUploadedClipStore:
         excluded_set = set(excluded)
         counts: dict[str, int] = {}
         pk = FEATURED_PK if featured_only else TRANSCRIBED_PK
+        page_anchor_profiles = self._page_anchor_profiles_for_count_scan(excluded)
+        page_anchor_sets = {
+            profile: self._empty_page_anchor_sets()
+            for profile in page_anchor_profiles
+        }
+        page_anchor_seen = {profile: 0 for profile in page_anchor_profiles}
+        previous_key: dict[str, str] | None = None
         for item in self._iter_query_items(
             pk,
             scan_forward=False,
             page_size=500,
-            projection_expression="#channel, display_transcript, transcript, transcript_reviewed",
+            projection_expression=PAGE_ANCHOR_PROJECTION_EXPRESSION,
             expression_attribute_names={"#channel": "channel"},
         ):
             channel = str(item.get("channel") or "?")
-            if channel.upper() in excluded_set:
-                continue
-            if reviewed_only and not bool(item.get("transcript_reviewed")):
-                continue
-            if _is_displayable_index_item(item):
+            channel_upper = channel.upper()
+            row_is_displayable = _is_displayable_index_item(item) and (
+                not reviewed_only or bool(item.get("transcript_reviewed"))
+            )
+            if row_is_displayable and channel_upper not in excluded_set:
                 counts[channel] = counts.get(channel, 0) + 1
+            for profile in page_anchor_profiles:
+                if row_is_displayable and channel_upper not in set(profile):
+                    page_anchor_seen[profile] += 1
+                    self._record_page_anchors(
+                        page_anchor_sets[profile],
+                        displayable_seen=page_anchor_seen[profile],
+                        previous_key=previous_key,
+                    )
+            previous_key = _index_key_from_item(item)
         ordered_counts = {
             channel: counts[channel]
             for channel in sorted(counts, key=_channel_sort_key)
             if counts[channel]
         }
         self._cache_channel_counts(cache_key, ordered_counts)
+        for profile, anchors_by_size in page_anchor_sets.items():
+            self._cache_page_anchor_sets(
+                pk=pk,
+                excluded_channels=profile,
+                reviewed_only=reviewed_only,
+                sort="newest",
+                anchors_by_size=anchors_by_size,
+            )
         return dict(ordered_counts)
 
     def transcribed_clip_count(
@@ -828,6 +870,7 @@ class DynamoUploadedClipStore:
 
     def _put_state(self, item: dict[str, Any], *, old_status: str | None) -> None:
         self._invalidate_channel_counts_cache()
+        self._invalidate_page_anchors_cache()
         key = str(item["key"])
         channel = str(item["channel"])
         started_at = str(item["started_at"])
@@ -916,6 +959,7 @@ class DynamoUploadedClipStore:
         page_size: int,
         projection_expression: str | None = None,
         expression_attribute_names: dict[str, str] | None = None,
+        exclusive_start_key: dict[str, Any] | None = None,
     ) -> Iterable[dict[str, Any]]:
         expression = "pk = :pk"
         values: dict[str, Any] = {":pk": pk}
@@ -932,7 +976,7 @@ class DynamoUploadedClipStore:
             kwargs["ProjectionExpression"] = projection_expression
         if expression_attribute_names is not None:
             kwargs["ExpressionAttributeNames"] = expression_attribute_names
-        start_key: dict[str, Any] | None = None
+        start_key: dict[str, Any] | None = exclusive_start_key
         while True:
             page_kwargs = dict(kwargs)
             if start_key is not None:
@@ -943,6 +987,104 @@ class DynamoUploadedClipStore:
             start_key = response.get("LastEvaluatedKey")
             if not start_key:
                 break
+
+    def _page_anchor_profiles_for_count_scan(
+        self,
+        excluded_channels: tuple[str, ...],
+    ) -> tuple[tuple[str, ...], ...]:
+        profiles = [tuple(sorted({channel.upper() for channel in excluded_channels}))]
+        traffic_excluded = tuple(sorted({*profiles[0], "14"}))
+        if traffic_excluded not in profiles:
+            profiles.append(traffic_excluded)
+        return tuple(profiles)
+
+    def _empty_page_anchor_sets(self) -> dict[int, dict[int, dict[str, str] | None]]:
+        return {page_size: {1: None} for page_size in PAGE_ANCHOR_UI_PAGE_SIZES}
+
+    def _record_page_anchors(
+        self,
+        anchors_by_size: dict[int, dict[int, dict[str, str] | None]],
+        *,
+        displayable_seen: int,
+        previous_key: dict[str, str] | None,
+    ) -> None:
+        if displayable_seen <= 1 or previous_key is None:
+            return
+        for page_size, anchors in anchors_by_size.items():
+            if (displayable_seen - 1) % page_size == 0:
+                page_number = ((displayable_seen - 1) // page_size) + 1
+                anchors[page_number] = dict(previous_key)
+
+    def _page_anchor_cache_key(
+        self,
+        *,
+        pk: str,
+        excluded_channels: tuple[str, ...],
+        reviewed_only: bool,
+        sort: Literal["newest", "oldest"],
+        page_size: int,
+    ) -> tuple[object, ...]:
+        excluded = tuple(sorted({channel.upper() for channel in excluded_channels}))
+        return (
+            *self._cache_scope,
+            "page_anchors",
+            pk,
+            reviewed_only,
+            sort,
+            page_size,
+            excluded,
+        )
+
+    def _cached_page_anchors(
+        self,
+        cache_key: tuple[object, ...],
+    ) -> dict[int, dict[str, Any] | None] | None:
+        now = time.monotonic()
+        with self._page_anchors_cache_lock:
+            cached = self._page_anchors_cache.get(cache_key)
+            if cached is None:
+                return None
+            cached_at, anchors = cached
+            if now - cached_at > PAGE_ANCHOR_CACHE_TTL_SECONDS:
+                self._page_anchors_cache.pop(cache_key, None)
+                return None
+            return {
+                page: dict(anchor) if anchor is not None else None
+                for page, anchor in anchors.items()
+            }
+
+    def _cache_page_anchors(
+        self,
+        cache_key: tuple[object, ...],
+        anchors: dict[int, dict[str, Any] | None],
+    ) -> None:
+        normalized = {
+            page: dict(anchor) if anchor is not None else None
+            for page, anchor in anchors.items()
+        }
+        with self._page_anchors_cache_lock:
+            self._page_anchors_cache[cache_key] = (time.monotonic(), normalized)
+
+    def _cache_page_anchor_sets(
+        self,
+        *,
+        pk: str,
+        excluded_channels: tuple[str, ...],
+        reviewed_only: bool,
+        sort: Literal["newest", "oldest"],
+        anchors_by_size: dict[int, dict[int, dict[str, str] | None]],
+    ) -> None:
+        for page_size, anchors in anchors_by_size.items():
+            self._cache_page_anchors(
+                self._page_anchor_cache_key(
+                    pk=pk,
+                    excluded_channels=excluded_channels,
+                    reviewed_only=reviewed_only,
+                    sort=sort,
+                    page_size=page_size,
+                ),
+                anchors,
+            )
 
     def _cached_channel_counts(self, cache_key: tuple[object, ...]) -> dict[str, int] | None:
         now = time.monotonic()
@@ -965,6 +1107,12 @@ class DynamoUploadedClipStore:
             for key in list(self._channel_counts_cache):
                 if key[: len(self._cache_scope)] == self._cache_scope:
                     self._channel_counts_cache.pop(key, None)
+
+    def _invalidate_page_anchors_cache(self) -> None:
+        with self._page_anchors_cache_lock:
+            for key in list(self._page_anchors_cache):
+                if key[: len(self._cache_scope)] == self._cache_scope:
+                    self._page_anchors_cache.pop(key, None)
 
     def _query_count(self, pk: str) -> int:
         total = 0
@@ -1000,12 +1148,24 @@ class DynamoUploadedClipStore:
         excluded_channels: set[str],
         featured_only: bool = False,
         reviewed_only: bool = False,
+        sort: Literal["newest", "oldest"] = "newest",
+        page: int | None = None,
     ) -> list[dict[str, Any]]:
+        pk = FEATURED_PK if featured_only else TRANSCRIBED_PK
+        if page is not None:
+            return self._query_filtered_transcribed_page(
+                pk=pk,
+                limit=limit,
+                page=page,
+                excluded_channels=excluded_channels,
+                reviewed_only=reviewed_only,
+                sort=sort,
+            )
         needed = limit + offset
         filtered: list[dict[str, Any]] = []
         for row in self._iter_query_items(
-            FEATURED_PK if featured_only else TRANSCRIBED_PK,
-            scan_forward=False,
+            pk,
+            scan_forward=sort == "oldest",
             page_size=max(needed, 50),
         ):
             if str(row.get("channel") or "").upper() in excluded_channels:
@@ -1018,6 +1178,137 @@ class DynamoUploadedClipStore:
             if len(filtered) >= needed:
                 break
         return filtered[offset : offset + limit]
+
+    def _query_filtered_transcribed_page(
+        self,
+        *,
+        pk: str,
+        limit: int,
+        page: int,
+        excluded_channels: set[str],
+        reviewed_only: bool,
+        sort: Literal["newest", "oldest"],
+    ) -> list[dict[str, Any]]:
+        start_key: dict[str, Any] | None = None
+        excluded = tuple(sorted(excluded_channels))
+        if page > 1:
+            anchors = self._page_anchors_for_query(
+                pk=pk,
+                excluded_channels=excluded,
+                reviewed_only=reviewed_only,
+                sort=sort,
+                page_size=limit,
+                page=page,
+            )
+            if page not in anchors:
+                return []
+            start_key = anchors[page]
+        return self._collect_filtered_transcribed_from_index(
+            pk=pk,
+            limit=limit,
+            start_key=start_key,
+            excluded_channels=excluded_channels,
+            reviewed_only=reviewed_only,
+            sort=sort,
+        )
+
+    def _page_anchors_for_query(
+        self,
+        *,
+        pk: str,
+        excluded_channels: tuple[str, ...],
+        reviewed_only: bool,
+        sort: Literal["newest", "oldest"],
+        page_size: int,
+        page: int,
+    ) -> dict[int, dict[str, Any] | None]:
+        cache_key = self._page_anchor_cache_key(
+            pk=pk,
+            excluded_channels=excluded_channels,
+            reviewed_only=reviewed_only,
+            sort=sort,
+            page_size=page_size,
+        )
+        cached = self._cached_page_anchors(cache_key)
+        if cached is not None and page in cached:
+            return cached
+        anchors = self._build_page_anchors(
+            pk=pk,
+            excluded_channels=set(excluded_channels),
+            reviewed_only=reviewed_only,
+            sort=sort,
+            page_size=page_size,
+            through_page=page,
+        )
+        if cached is not None:
+            anchors = {**cached, **anchors}
+        self._cache_page_anchors(cache_key, anchors)
+        return anchors
+
+    def _build_page_anchors(
+        self,
+        *,
+        pk: str,
+        excluded_channels: set[str],
+        reviewed_only: bool,
+        sort: Literal["newest", "oldest"],
+        page_size: int,
+        through_page: int,
+    ) -> dict[int, dict[str, Any] | None]:
+        anchors: dict[int, dict[str, Any] | None] = {1: None}
+        displayable_seen = 0
+        target_displayable_seen = ((through_page - 1) * page_size) + 1
+        previous_key: dict[str, str] | None = None
+        for row in self._iter_query_items(
+            pk,
+            scan_forward=sort == "oldest",
+            page_size=min(max(page_size * through_page, 50), 500),
+            projection_expression=PAGE_ANCHOR_PROJECTION_EXPRESSION,
+            expression_attribute_names={"#channel": "channel"},
+        ):
+            channel = str(row.get("channel") or "").upper()
+            if (
+                channel not in excluded_channels
+                and _is_displayable_index_item(row)
+                and (not reviewed_only or bool(row.get("transcript_reviewed")))
+            ):
+                displayable_seen += 1
+                if displayable_seen > 1 and (displayable_seen - 1) % page_size == 0:
+                    page_number = ((displayable_seen - 1) // page_size) + 1
+                    if previous_key is not None:
+                        anchors[page_number] = dict(previous_key)
+                if displayable_seen >= target_displayable_seen:
+                    break
+            previous_key = _index_key_from_item(row)
+        return anchors
+
+    def _collect_filtered_transcribed_from_index(
+        self,
+        *,
+        pk: str,
+        limit: int,
+        start_key: dict[str, Any] | None,
+        excluded_channels: set[str],
+        reviewed_only: bool,
+        sort: Literal["newest", "oldest"],
+    ) -> list[dict[str, Any]]:
+        filtered: list[dict[str, Any]] = []
+        for row in self._iter_query_items(
+            pk,
+            scan_forward=sort == "oldest",
+            page_size=limit,
+            exclusive_start_key=start_key,
+        ):
+            if str(row.get("channel") or "").upper() in excluded_channels:
+                continue
+            if not _is_displayable_index_item(row):
+                continue
+            if reviewed_only and not bool(row.get("transcript_reviewed")):
+                continue
+            filtered.append(row)
+            if len(filtered) >= limit:
+                break
+        return filtered
 
     def _scan_items(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -1089,6 +1380,14 @@ def _index_item(pk: str, item: dict[str, Any]) -> dict[str, Any]:
         "entity_type": "clip_index",
         **{key: value for key, value in item.items() if key not in {"pk", "sk", "entity_type"}},
     }
+
+
+def _index_key_from_item(item: dict[str, Any]) -> dict[str, str] | None:
+    pk = item.get("pk")
+    sk = item.get("sk")
+    if pk is None or sk is None:
+        return None
+    return {"pk": str(pk), "sk": str(sk)}
 
 
 def _record_from_state(item: dict[str, Any]) -> UploadedClipRecord:

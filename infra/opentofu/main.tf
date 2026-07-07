@@ -112,6 +112,21 @@ resource "aws_s3_bucket_public_access_block" "raw_audio" {
   restrict_public_buckets = true
 }
 
+resource "aws_s3_bucket_cors_configuration" "raw_audio" {
+  bucket = aws_s3_bucket.raw_audio.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "HEAD"]
+    allowed_origins = [
+      "https://seattleboatradio.com",
+      "https://vhf.robertboscacci.com",
+    ]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "public_site" {
   bucket = aws_s3_bucket.public_site.id
 
@@ -876,6 +891,21 @@ resource "aws_s3_bucket_public_access_block" "dev_raw_audio" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_cors_configuration" "dev_raw_audio" {
+  bucket = aws_s3_bucket.dev_raw_audio.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "HEAD"]
+    allowed_origins = [
+      "https://dev.seattleboatradio.com",
+      "https://vhf-dev.robertboscacci.com",
+    ]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "dev_public_site" {
