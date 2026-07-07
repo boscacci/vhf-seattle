@@ -1693,6 +1693,9 @@ function renderCurrentClipOrder() {
 }
 
 function renderStats(payload, clips) {
+  if (!stats) {
+    return;
+  }
   const channelCounts =
     payload.stats?.playable_channel_counts ||
     payload.stats?.channel_counts ||

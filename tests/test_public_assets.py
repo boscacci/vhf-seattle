@@ -34,6 +34,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert ".clip-placeholder" in styles_css
     assert "channel-filter" in index_html
     assert "site-links" not in index_html
+    assert 'id="stats"' not in index_html
+    assert 'class="stats"' not in index_html
     assert ".site-links" not in styles_css
     assert '<select id="channel-filter"' not in index_html
     assert 'id="channel-filter" class="channel-filter channel-multiselect"' in index_html
@@ -270,6 +272,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert '["Analyzed", totalAnalyzedClips(payload)]' in app_js
     assert '["Clips", clipTotal]' not in app_js
     assert '["Latest clip", latest]' in app_js
+    assert "if (!stats) {\n    return;\n  }" in app_js
     assert "receivedAndAnalyzedStatusText(payload)" in app_js
     assert "payload.stats?.playable_channel_counts ||" in app_js
     assert 'const clipNoun = filteredTotal === 1 ? "playable clip" : "playable clips";' in app_js
@@ -842,7 +845,7 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260707-page-indexed" type="module"></script>'
+        '<script src="/assets/app.js?v=20260707-no-top-stats" type="module"></script>'
         in index_html
     )
     assert '<link rel="stylesheet" href="/assets/styles.css?v=20260705-counts" />' in index_html
