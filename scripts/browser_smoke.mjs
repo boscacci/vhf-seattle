@@ -12,6 +12,8 @@ let longLiveQueueClipAudio = false;
 let injectLiveQueueRaceClip = false;
 let returnStaleLiveQueue = false;
 let servedStaleLiveQueue = false;
+let returnMixedAgeLiveQueue = false;
+let servedMixedAgeLiveQueue = false;
 let liveQueueRecentRequests = 0;
 let holdRecentClipResponses = false;
 let releaseRecentClipResponses = [];
@@ -337,6 +339,39 @@ try {
       );
     }
     returnStaleLiveQueue = false;
+    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).waitFor({ state: "visible" });
+    returnMixedAgeLiveQueue = true;
+    await page.locator("#live-primary-channel-picker").getByRole("button", { name: "Everything" }).click();
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).waitFor({ state: "visible" });
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
+    await page.waitForFunction(() => {
+      const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
+      const selectedMode = document.querySelector("#live-channel")?.textContent || "";
+      return (
+        src.includes("/api/clips/audio?") ||
+        (selectedMode.includes("VHF 14") &&
+          src.includes("/api/live/current.mp3") &&
+          document.querySelector("#live-queue")?.hidden === true)
+      );
+    });
+    const mixedAgeFallbackState = await page.evaluate(() => ({
+      queueHidden: document.querySelector("#live-queue")?.hidden ?? false,
+      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
+      status: document.querySelector("#live-status")?.textContent || "",
+      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
+    }));
+    if (
+      !servedMixedAgeLiveQueue ||
+      !mixedAgeFallbackState.queueHidden ||
+      !mixedAgeFallbackState.src.includes("/api/live/current.mp3") ||
+      mixedAgeFallbackState.playLabel !== "Pause"
+    ) {
+      throw new Error(
+        `live monitor did not skip a stale clip in a mixed-age queue: ${JSON.stringify({ servedMixedAgeLiveQueue, mixedAgeFallbackState })}`,
+      );
+    }
+    returnMixedAgeLiveQueue = false;
     await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
     await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All but Traffic" }).click();
     await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
@@ -1381,7 +1416,7 @@ function recentClipPayload(url) {
   const payloadChannels = (selectedChannels.length ? selectedChannels : defaultChannels).filter(
     (channel) => !excludedChannels.has(channel),
   );
-  const clips = indexes
+  let clips = indexes
     .slice(offset, offset + limit)
     .map((index) =>
       recentClip(
@@ -1392,6 +1427,10 @@ function recentClipPayload(url) {
     );
   if (returnStaleLiveQueue && liveQueueRequest) {
     servedStaleLiveQueue = true;
+  }
+  if (returnMixedAgeLiveQueue && liveQueueRequest) {
+    servedMixedAgeLiveQueue = true;
+    clips = [recentClip(0, "14", true), recentClip(0, "14"), recentClip(1, "14")];
   }
   if (
     injectLiveQueueRaceClip &&

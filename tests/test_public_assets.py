@@ -845,11 +845,11 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260716-live-stale-fallback-v2" type="module"></script>'
+        '<script src="/assets/app.js?v=20260716-live-stale-fallback-v3" type="module"></script>'
         in index_html
     )
     assert (
-        '<link rel="stylesheet" href="/assets/styles.css?v=20260716-live-stale-fallback-v2" />'
+        '<link rel="stylesheet" href="/assets/styles.css?v=20260716-live-stale-fallback-v3" />'
         in index_html
     )
     assert '<script src="/assets/app.js" type="module"></script>' not in index_html
@@ -1243,6 +1243,7 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert "shouldResumeRealtimeWithoutCatchUp()" in app_js
     assert "shouldSuppressRealtimeQueueDuringCatchUp()" in app_js
     assert "shouldResumeRealtimeInsteadOfPlayingNextClip(currentLiveQueueClip)" in app_js
+    assert "isStaleEverythingQueueClip(nextClip)" in app_js
     assert re.search(
         r"shouldResumeRealtimeInsteadOfPlayingNextClip\(currentLiveQueueClip\) \|\|\s+"
         r"shouldResumeRealtimeWithoutCatchUp\(\)",

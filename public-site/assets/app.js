@@ -5358,7 +5358,21 @@ function handleEverythingClipEnded() {
 }
 
 function shouldResumeRealtimeInsteadOfPlayingNextClip(nextClip) {
-  return Boolean(isEverythingLiveMode() && everythingCatchUpHandoffPending && (!nextClip || !nextClip.catch_up));
+  if (!isEverythingLiveMode()) {
+    return false;
+  }
+  if (isStaleEverythingQueueClip(nextClip)) {
+    return true;
+  }
+  return Boolean(everythingCatchUpHandoffPending && (!nextClip || !nextClip.catch_up));
+}
+
+function isStaleEverythingQueueClip(clip) {
+  if (!clip) {
+    return false;
+  }
+  const clipTime = new Date(clip.ended_at || clip.started_at || "").getTime();
+  return !Number.isFinite(clipTime) || Date.now() - clipTime > everythingCatchUpMaxAgeMs;
 }
 
 function shouldResumeRealtimeAfterCatchUp(completedClip) {
