@@ -7,9 +7,11 @@ import { chromium } from "playwright";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const publicSiteRoot = join(repoRoot, "public-site");
-const audioStartedAt = "2026-05-31T20:00:00Z";
+const audioStartedAt = new Date(Date.now() - 30_000).toISOString();
 let longLiveQueueClipAudio = false;
 let injectLiveQueueRaceClip = false;
+let returnStaleLiveQueue = false;
+let servedStaleLiveQueue = false;
 let liveQueueRecentRequests = 0;
 let holdRecentClipResponses = false;
 let releaseRecentClipResponses = [];
@@ -302,6 +304,39 @@ try {
     }
     longLiveQueueClipAudio = false;
     injectLiveQueueRaceClip = false;
+    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).waitFor({ state: "visible" });
+    returnStaleLiveQueue = true;
+    await page.locator("#live-primary-channel-picker").getByRole("button", { name: "Everything" }).click();
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).waitFor({ state: "visible" });
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
+    await page.waitForFunction(() => {
+      const selectedMode = document.querySelector("#live-channel")?.textContent || "";
+      const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
+      return (
+        src.includes("/api/clips/audio?") ||
+        (selectedMode.includes("VHF 14") &&
+          src.includes("/api/live/current.mp3") &&
+          document.querySelector("#live-queue")?.hidden === true)
+      );
+    });
+    const staleQueueFallbackState = await page.evaluate(() => ({
+      queueHidden: document.querySelector("#live-queue")?.hidden ?? false,
+      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
+      status: document.querySelector("#live-status")?.textContent || "",
+      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
+    }));
+    if (
+      !servedStaleLiveQueue ||
+      !staleQueueFallbackState.queueHidden ||
+      !staleQueueFallbackState.src.includes("/api/live/current.mp3") ||
+      staleQueueFallbackState.playLabel !== "Pause"
+    ) {
+      throw new Error(
+        `live monitor did not fall back from a stale queue: ${JSON.stringify({ servedStaleLiveQueue, staleQueueFallbackState })}`,
+      );
+    }
+    returnStaleLiveQueue = false;
     await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
     await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All but Traffic" }).click();
     await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
@@ -1348,7 +1383,16 @@ function recentClipPayload(url) {
   );
   const clips = indexes
     .slice(offset, offset + limit)
-    .map((index) => recentClip(index, payloadChannels[index % payloadChannels.length] || "14"));
+    .map((index) =>
+      recentClip(
+        index,
+        payloadChannels[index % payloadChannels.length] || "14",
+        returnStaleLiveQueue && liveQueueRequest,
+      ),
+    );
+  if (returnStaleLiveQueue && liveQueueRequest) {
+    servedStaleLiveQueue = true;
+  }
   if (
     injectLiveQueueRaceClip &&
     liveQueueRequest &&
@@ -1397,8 +1441,9 @@ function liveQueueRaceClip(sequence) {
   };
 }
 
-function recentClip(index, channel = "14") {
-  const startedAt = new Date(Date.parse("2026-05-31T20:00:00Z") - index * 60000).toISOString();
+function recentClip(index, channel = "14", stale = false) {
+  const baseTime = stale ? Date.now() - 6 * 60 * 1000 : Date.parse(audioStartedAt);
+  const startedAt = new Date(baseTime - index * 60000).toISOString();
   const reviewed = reviewedClipIndexes.has(index);
   const displayTranscript = reviewed ? `Smoke clip ${index + 1} reviewed` : `Smoke clip ${index + 1}`;
   return {
@@ -1443,7 +1488,7 @@ async function clipFeaturePayload(request) {
   return {
     status: featured ? "featured" : "unfeatured",
     channel: payload.channel || "14",
-    started_at: new Date(Date.parse("2026-05-31T20:00:00Z") - clipIndex * 60000).toISOString(),
+    started_at: new Date(Date.parse(audioStartedAt) - clipIndex * 60000).toISOString(),
     featured,
   };
 }
@@ -1507,7 +1552,7 @@ function clipIndexForStartedAt(startedAt) {
   if (!Number.isFinite(parsedMs)) {
     return -1;
   }
-  const baseMs = Date.parse("2026-05-31T20:00:00Z");
+  const baseMs = Date.parse(audioStartedAt);
   const index = Math.round((baseMs - parsedMs) / 60000);
   return index >= 0 ? index : -1;
 }

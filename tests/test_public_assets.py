@@ -845,10 +845,13 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260707-live-catchup-race" type="module"></script>'
+        '<script src="/assets/app.js?v=20260716-live-stale-fallback-v1" type="module"></script>'
         in index_html
     )
-    assert '<link rel="stylesheet" href="/assets/styles.css?v=20260705-counts" />' in index_html
+    assert (
+        '<link rel="stylesheet" href="/assets/styles.css?v=20260716-live-stale-fallback-v1" />'
+        in index_html
+    )
     assert '<script src="/assets/app.js" type="module"></script>' not in index_html
 
 
@@ -1190,6 +1193,7 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert '"/api/clips/recent?limit=24&' in app_js
     assert "include_playback_url=true&verify_playback_exists=false&include_counts=false" in app_js
     assert "const everythingInitialQueueLimit = 3;" in app_js
+    assert "const everythingCatchUpMaxAgeMs = 5 * 60 * 1000;" in app_js
     assert "let liveQueue = [];" in app_js
     assert "let currentLiveQueueClip = null;" in app_js
     assert "let everythingQueueEnabled = false;" in app_js
@@ -1236,6 +1240,7 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert "playNextEverythingQueueClip" in app_js
     assert "handleEverythingClipEnded" in app_js
     assert "shouldResumeRealtimeAfterCatchUp(completedClip)" in app_js
+    assert "shouldResumeRealtimeWithoutCatchUp()" in app_js
     assert "shouldSuppressRealtimeQueueDuringCatchUp()" in app_js
     assert "shouldResumeRealtimeInsteadOfPlayingNextClip(currentLiveQueueClip)" in app_js
     assert (

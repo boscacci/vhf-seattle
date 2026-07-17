@@ -93,6 +93,7 @@ const allButTrafficLiveChannel = "all-but-traffic";
 const defaultRealtimeLiveChannel = "14";
 const everythingInitialQueueLimit = 3;
 const everythingCatchUpLabel = "Catching up on latest 3 transmissions";
+const everythingCatchUpMaxAgeMs = 5 * 60 * 1000;
 const trafficChannelIds = new Set(["14"]);
 const hallOfFameRouteSegment = "hall-of-fame";
 const reviewedRouteSegment = "reviewed";
@@ -4880,6 +4881,10 @@ async function connectEverythingLive() {
     if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
       return;
     }
+    if (shouldResumeRealtimeWithoutCatchUp()) {
+      await resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });
+      return;
+    }
     await startLiveWaveformForPlayback();
     if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
       return;
@@ -5152,6 +5157,20 @@ function enqueueEverythingClips(clips, { includeBackfill = false } = {}) {
 
 function shouldSuppressRealtimeQueueDuringCatchUp() {
   return Boolean(isEverythingLiveMode() && everythingCatchUpHandoffPending);
+}
+
+function shouldResumeRealtimeWithoutCatchUp() {
+  if (!isEverythingLiveMode() || !everythingCatchUpHandoffPending) {
+    return false;
+  }
+  const catchUpClips = [currentLiveQueueClip, ...liveQueue].filter(
+    (clip) => Boolean(clip?.catch_up),
+  );
+  if (!catchUpClips.length) {
+    return true;
+  }
+  const newestCatchUpTime = Math.max(...catchUpClips.map(queueClipRelevantTime));
+  return Date.now() - newestCatchUpTime > everythingCatchUpMaxAgeMs;
 }
 
 function mostRecentEverythingQueueClips(clips, limit) {
