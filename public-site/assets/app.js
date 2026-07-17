@@ -5282,7 +5282,10 @@ async function playNextEverythingQueueClip({
   currentLiveQueueClip = nextLiveQueueClipForCurrentMode();
   renderLiveStatus(findLiveChannel(selectedLiveChannel));
   renderEverythingQueuePanel();
-  if (shouldResumeRealtimeInsteadOfPlayingNextClip(currentLiveQueueClip)) {
+  if (
+    shouldResumeRealtimeInsteadOfPlayingNextClip(currentLiveQueueClip) ||
+    shouldResumeRealtimeWithoutCatchUp()
+  ) {
     currentLiveQueueClip = null;
     await resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });
     return;
