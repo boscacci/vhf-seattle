@@ -10,6 +10,7 @@ WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
 EnvironmentFile=/home/rob/.config/talkingboats/api.env
 EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/outputs/asr-feedback/latest_model.env
 Environment=TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true
+ExecStartPre=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell python -m talkingboats.network_readiness --lan-address 192.168.1.247/24 --dns-host dynamodb.us-west-2.amazonaws.com
 ExecStart=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-transcribe-uploaded-clips --poll-seconds 30 --limit 5
 Restart=always
 RestartSec=10

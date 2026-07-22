@@ -106,6 +106,11 @@ timers. `talkingboats-lexical-refresh.timer` uses both `OnBootSec=15min` and
 `OnStartupSec=15min` so generated public/search artifacts refresh after either a
 machine reboot or a delayed user-manager start.
 
+The private API waits for `eth0` to hold `192.168.1.247/24` before binding its
+LAN-only listener. The uploaded-clip transcriber also waits for DNS resolution
+of DynamoDB. These bounded checks prevent a temporary LAN outage at boot from
+creating an API bind-loop or AWS/DNS restart storm.
+
 ## Operator Checklist
 
 Before dev deploy:
