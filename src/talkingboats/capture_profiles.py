@@ -100,11 +100,21 @@ def render_rtlsdr_airband_config(
     device_serial: str | None = None,
     squelch_threshold: float | None = None,
     squelch_snr_threshold: float | None = None,
+    channel_squelch_thresholds: dict[str, float] | None = None,
+    channel_squelch_snr_thresholds: dict[str, float] | None = None,
 ) -> str:
     if profile.mode != "multichannel" or profile.center_frequency_hz is None:
         raise ValueError("only multichannel profiles can be rendered as RTLSDR-Airband config")
     if squelch_threshold is not None and squelch_snr_threshold is not None:
         raise ValueError("squelch_threshold and squelch_snr_threshold are mutually exclusive")
+    threshold_overrides = _normalize_channel_float_overrides(channel_squelch_thresholds)
+    snr_overrides = _normalize_channel_float_overrides(channel_squelch_snr_thresholds)
+    conflicting_channels = sorted(set(threshold_overrides) & set(snr_overrides))
+    if conflicting_channels:
+        raise ValueError(
+            "channel squelch threshold and SNR threshold are mutually exclusive: "
+            + ", ".join(conflicting_channels)
+        )
     cleaned_output_root = output_root.rstrip("/")
     selected_icecast_outputs = tuple(icecast_outputs)
     if icecast_output is not None:
@@ -114,7 +124,14 @@ def render_rtlsdr_airband_config(
       freq = {channel.frequency_hz};
       modulation = "nfm";
       label = "vhf-{channel.channel.lower()}";
-{_render_channel_squelch(squelch_threshold, squelch_snr_threshold)}
+{_render_channel_squelch(
+        threshold_overrides.get(channel.channel, squelch_threshold)
+        if channel.channel not in snr_overrides
+        else None,
+        snr_overrides.get(channel.channel, squelch_snr_threshold)
+        if channel.channel not in threshold_overrides
+        else None,
+    )}
       outputs:
       (
 {_render_channel_outputs(channel, cleaned_output_root, selected_icecast_outputs)}
@@ -196,6 +213,18 @@ def _render_channel_squelch(
     return "\n".join(lines)
 
 
+def _normalize_channel_float_overrides(
+    overrides: dict[str, float] | None,
+) -> dict[str, float]:
+    normalized: dict[str, float] = {}
+    for channel, value in (overrides or {}).items():
+        rendered_channel = str(channel).strip().upper()
+        if not rendered_channel:
+            continue
+        normalized[rendered_channel] = float(value)
+    return normalized
+
+
 def _airband_number(value: float) -> str:
     return str(int(value)) if value.is_integer() else f"{value:.1f}"
 
@@ -216,6 +245,8 @@ def main() -> None:
     parser.add_argument("--device-serial")
     parser.add_argument("--squelch-threshold", type=float)
     parser.add_argument("--squelch-snr-threshold", type=float)
+    parser.add_argument("--channel-squelch-threshold", action="append", default=[])
+    parser.add_argument("--channel-squelch-snr-threshold", action="append", default=[])
     parser.add_argument("--icecast-channel")
     parser.add_argument("--icecast-host", default="127.0.0.1")
     parser.add_argument("--icecast-port", type=int, default=8000)
@@ -271,6 +302,14 @@ def main() -> None:
             device_serial=args.device_serial,
             squelch_threshold=args.squelch_threshold,
             squelch_snr_threshold=args.squelch_snr_threshold,
+            channel_squelch_thresholds=_parse_channel_float_specs(
+                args.channel_squelch_threshold,
+                parser,
+            ),
+            channel_squelch_snr_thresholds=_parse_channel_float_specs(
+                args.channel_squelch_snr_threshold,
+                parser,
+            ),
         )
     )
 
@@ -283,6 +322,25 @@ def _parse_icecast_output_spec(
     if len(parts) != 3 or not all(parts):
         parser.error("--icecast-output must be CHANNEL:MOUNT:NAME")
     return parts[0], parts[1], parts[2]
+
+
+def _parse_channel_float_specs(
+    values: list[str],
+    parser: argparse.ArgumentParser,
+) -> dict[str, float]:
+    parsed: dict[str, float] = {}
+    for value in values:
+        if "=" not in value:
+            parser.error("channel squelch overrides must be CHANNEL=VALUE")
+        channel, raw_number = value.split("=", 1)
+        channel = channel.strip().upper()
+        if not channel:
+            parser.error("channel squelch override channel cannot be empty")
+        try:
+            parsed[channel] = float(raw_number)
+        except ValueError:
+            parser.error("channel squelch override value must be numeric")
+    return parsed
 
 
 if __name__ == "__main__":

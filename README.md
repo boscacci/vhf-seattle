@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <a href="https://vhf.robertboscacci.com">Production site</a> &middot;
-  <a href="https://vhf-dev.robertboscacci.com">Dev site</a> &middot;
+  <a href="https://seattleboatradio.com">Production site</a> &middot;
+  <a href="https://dev.seattleboatradio.com">Dev site</a> &middot;
   <a href="https://robertboscacci.com/projects/elliott-bay-vhf/">Project post</a> &middot;
   <a href="docs/security-model.md">Security model</a> &middot;
   <a href="docs/deployment-hygiene.md">Deployment hygiene</a>
@@ -121,8 +121,18 @@ Clip processing:
 - Raw audio stays in private S3.
 - DynamoDB stores clip events, transcripts, corrections, and serving read
   models.
+- Audio measurements and Whisper segment confidence produce an automatic clip
+  quality assessment. Clearly clipped, static-only, or low-signal clips are
+  quarantined from the default public feed while remaining available in the
+  dev review lane.
 - The Ubuntu micro-computer runs `faster-whisper`, review/correction workflows, lexical
   analysis, topic clustering, and public exports.
+
+Transcript search keeps the generated vector index in the private API process,
+invalidates it when the generated file changes, and warms it after host recovery
+and each lexical refresh. Normal API reads retain their short timeout; search has
+a separate cold-start allowance controlled by
+`TALKINGBOATS_PROXY_CLIP_SEARCH_READ_TIMEOUT_SECONDS`.
 
 Default edge audio/transcription settings:
 

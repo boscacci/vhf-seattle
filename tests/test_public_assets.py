@@ -380,6 +380,12 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "aisCatcherFrame.src = aisCatcherFrameUrl;" in app_js
     assert 'aisCatcherFrame.title = "AIS-catcher live map";' in app_js
     assert 'mapStatus.textContent = "Showing AIS-catcher live map";' in app_js
+    assert 'id="ais-catcher-unavailable"' in index_html
+    assert "probeAisCatcherViewer" in app_js
+    assert "renderAisCatcherUnavailable" in app_js
+    assert 'mapStatus.textContent = "AIS receiver is temporarily unavailable.";' in app_js
+    assert 'aisCatcherFrame.removeAttribute("src");' in app_js
+    assert ".ais-catcher-unavailable" in styles_css
     assert ".tab-panel[hidden]" in styles_css
     assert "/api/ais/tracks" not in app_js
     assert "loadLiveAisSnapshot" not in app_js
@@ -845,11 +851,11 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260716-live-stale-fallback-v3" type="module"></script>'
+        '<script src="/assets/app.js?v=20260723-consolidated-v1" type="module"></script>'
         in index_html
     )
     assert (
-        '<link rel="stylesheet" href="/assets/styles.css?v=20260716-live-stale-fallback-v3" />'
+        '<link rel="stylesheet" href="/assets/styles.css?v=20260723-consolidated-v1" />'
         in index_html
     )
     assert '<script src="/assets/app.js" type="module"></script>' not in index_html
@@ -997,6 +1003,8 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert "routeStateFromLocation()" in app_js
     assert "applyRouteStateFromLocation()" in app_js
     assert "updateTabRoute(name" in app_js
+    assert 'url.searchParams.set("quality", "quarantined")' in app_js
+    assert 'routeMetadata.quarantine' in app_js
     assert 'window.addEventListener("popstate"' in app_js
     assert (
         "activateTab(initialRouteState.tab, { replaceRoute: true, updateRoute: false })"
@@ -1037,6 +1045,30 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert '"fine-tuning/index.html"' in deploy_full
     assert "aws s3api put-object" in deploy_shell
     assert "aws s3api put-object" in deploy_full
+
+
+def test_public_site_user_tab_switch_returns_to_the_tab_landmark() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+
+    assert 'activateTab(tab.dataset.tab, { scrollToTab: true });' in app_js
+    assert "function scrollTabViewToTop()" in app_js
+    assert 'id="tab-view-start"' in index_html
+    assert 'const tabViewStart = document.querySelector("#tab-view-start");' in app_js
+    assert "tabViewStart.offsetTop" in app_js
+    assert (
+        'window.scrollTo({ top: Math.max(0, tabViewStart.offsetTop), behavior: "auto" });'
+        in app_js
+    )
+
+
+def test_public_site_search_failure_copy_explains_recovery() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+
+    assert "Search is warming up" in app_js
+    assert "Search index is rebuilding" in app_js
+    assert "Recent clips are still available" in app_js
+    assert "searchSuggestions.hidden = false" in app_js
 
 
 def test_public_site_stops_other_audio_before_playing_clip_or_live_radio() -> None:
@@ -1168,11 +1200,10 @@ def test_public_site_transcript_correction_form_collects_training_metadata() -> 
     assert "training_split" in app_js
     assert "training_flags" in app_js
     assert "training_reason" in app_js
-    assert (
-        "include.checked = !clip.transcript_reviewed || clip.include_in_training !== false;"
-        in app_js
-    )
-    assert 'value: clip.transcript_reviewed ? clip.training_quality || "good" : "good",' in app_js
+    assert "include.checked = clip.transcript_reviewed" in app_js
+    assert "? clip.include_in_training !== false" in app_js
+    assert ": !isQuarantined;" in app_js
+    assert 'isQuarantined ? "poor" : "good"' in app_js
     assert "static_or_no_speech" in app_js
     assert "truncated_start" in app_js
 
@@ -1450,3 +1481,19 @@ def test_public_site_analysis_channel_chart_can_hide_traffic_outlier() -> None:
     )
     assert ".chart-panel-header" in styles_css
     assert ".analysis-chart-toggle" in styles_css
+
+
+def test_public_site_exposes_quarantined_clip_review_lane() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert "quality=quarantined" in app_js
+    assert '"Quarantined Clips"' in app_js
+    assert 'label: "Quarantine"' in app_js
+    assert 'clip.quality_status === "quarantined"' in app_js
+    assert 'clip.quality_flags.includes(flag.value)' in app_js
+    assert 'isQuarantined ? "poor" : "good"' in app_js
+    assert "renderQualityPill(clip)" in app_js
+    assert "quality_status" in app_js
+    assert ".pill.quality-pill" in styles_css
+    assert ".clip-card.is-quarantined blockquote" in styles_css

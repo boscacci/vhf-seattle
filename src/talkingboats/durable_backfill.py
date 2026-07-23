@@ -220,7 +220,12 @@ def _clip_rows(db_path: Path, *, limit: int | None) -> list[sqlite3.Row]:
             idempotency_key,
             status,
             transcript,
-            error
+            error,
+            COALESCE(quality_status, 'unknown') AS quality_status,
+            quality_score,
+            quality_reason,
+            COALESCE(quality_flags, '[]') AS quality_flags,
+            COALESCE(audio_metrics, '{}') AS audio_metrics
         FROM uploaded_clips
         ORDER BY started_at ASC, id ASC
     """
@@ -351,6 +356,11 @@ def _state_item_from_clip_row(
         "transcript": transcript,
         "display_transcript": transcript,
         "error": row["error"],
+        "quality_status": row["quality_status"],
+        "quality_score": row["quality_score"],
+        "quality_reason": row["quality_reason"],
+        "quality_flags": json.loads(row["quality_flags"] or "[]"),
+        "audio_metrics": json.loads(row["audio_metrics"] or "{}"),
         "transcript_reviewed": False,
         "segments": segments if status == "transcribed" else [],
         "segment_count": len(segments) if status == "transcribed" else 0,

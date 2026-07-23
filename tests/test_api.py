@@ -9,7 +9,7 @@ import httpx
 
 from talkingboats.api import app, get_durable_event_store, get_settings, get_storage
 from talkingboats.asr_feedback import AsrFeedbackConfig, run_nightly_training
-from talkingboats.clip_transcriber import UploadedClipStore
+from talkingboats.clip_transcriber import ClipQualityMetadata, UploadedClipStore
 from talkingboats.config import LiveChannel, Settings
 from talkingboats.durable_events import NullDurableEventStore
 from talkingboats.lexical_analysis import write_cached_lexical_analysis
@@ -233,6 +233,63 @@ def test_recent_clips_are_public_read_only_with_playback_urls(tmp_path) -> None:
     assert body["filtered_clip_count"] == 1
     assert body["channel_labels"]["13"] == "Bridge-to-bridge"
     assert body["channel_labels"]["14"] == "VTS / Seattle Traffic"
+
+
+def test_recent_clips_quarantine_filter_is_explicit(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    good_key = "raw/channel=14/date=2026-05-20/good.mp3"
+    noisy_key = "raw/channel=66A/date=2026-05-20/noisy.mp3"
+    store.record_presigned_upload(key=good_key, request=_clip_presign(channel="14"))
+    store.record_presigned_upload(
+        key=noisy_key,
+        request=_clip_presign(channel="66A").model_copy(
+            update={"started_at": datetime(2026, 5, 20, 19, 15, tzinfo=UTC)}
+        ),
+    )
+    store.mark_transcribed(
+        good_key,
+        [
+            _segment(
+                text="Seattle Traffic inbound for Elliott Bay",
+                started_at="2026-05-20T19:12:00Z",
+                ended_at="2026-05-20T19:12:04Z",
+            )
+        ],
+        quality=ClipQualityMetadata(quality_status="ok", quality_score=91.0),
+    )
+    store.mark_transcribed(
+        noisy_key,
+        [
+            _segment(
+                text="No address is moving",
+                started_at="2026-05-20T19:15:00Z",
+                ended_at="2026-05-20T19:15:04Z",
+            )
+        ],
+        quality=ClipQualityMetadata(
+            quality_status="quarantined",
+            quality_score=21.0,
+            quality_reason="low_snr",
+            quality_flags=("low_snr",),
+            audio_metrics={"speech_contrast_db": 1.2},
+        ),
+    )
+
+    default_body = client.get("/api/clips/recent?limit=5").json()
+    quarantine_body = client.get("/api/clips/recent?limit=5&quality=quarantined").json()
+
+    assert [clip["channel"] for clip in default_body["clips"]] == ["14"]
+    assert default_body["channel_counts"] == {"14": 1}
+    assert default_body["quality"] == "visible"
+    assert [clip["channel"] for clip in quarantine_body["clips"]] == ["66A"]
+    assert quarantine_body["clips"][0]["quality_status"] == "quarantined"
+    assert quarantine_body["clips"][0]["quality_reason"] == "low_snr"
+    assert quarantine_body["clips"][0]["quality_flags"] == ["low_snr"]
+    assert quarantine_body["clips"][0]["audio_metrics"]["speech_contrast_db"] == 1.2
+    assert quarantine_body["channel_counts"] == {"66A": 1}
+    assert quarantine_body["quality"] == "quarantined"
 
 
 def test_recent_clips_can_defer_presigned_playback_urls(tmp_path) -> None:
@@ -1608,6 +1665,7 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
         "page": 1,
         "featured": False,
         "reviewed": False,
+        "quality": "visible",
         "channel_counts": {"14": 1},
         "channel_labels": {
                 "05A": "VTS / Port Ops",

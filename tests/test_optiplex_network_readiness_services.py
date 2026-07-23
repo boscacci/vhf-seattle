@@ -12,9 +12,11 @@ def test_optiplex_audio_services_wait_for_lan_and_dns_before_starting() -> None:
     ).read_text(encoding="utf-8")
 
     readiness_command = (
-        "/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell "
-        "python -m talkingboats.network_readiness --lan-address 192.168.1.247/24"
+        "/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/"
+        "talkingboats_lan_address.sh"
     )
-    assert f"ExecStartPre={readiness_command}" in api_service
-    assert f"ExecStartPre={readiness_command}" in transcriber_service
+    assert f"ExecStartPre=/bin/bash {readiness_command}" in api_service
+    assert f"ExecStartPre=/bin/bash {readiness_command}" in transcriber_service
     assert "--dns-host dynamodb.us-west-2.amazonaws.com" in transcriber_service
+    assert "192.168.1.247" not in api_service
+    assert "192.168.1.247" not in transcriber_service

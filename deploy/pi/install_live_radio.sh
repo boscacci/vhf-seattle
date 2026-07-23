@@ -87,6 +87,9 @@ install -m 0755 \
 install -m 0755 \
   "${repo_root}/deploy/pi/live-radio/talkingboats-pi-boot-recovery" \
   /opt/talkingboats/bin/talkingboats-pi-boot-recovery
+install -m 0755 \
+  "${repo_root}/deploy/pi/live-radio/talkingboats-pi-healthcheck" \
+  /opt/talkingboats/bin/talkingboats-pi-healthcheck
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-live-radio-stream.service.example" \
   /etc/systemd/system/talkingboats-live-radio-stream.service
@@ -114,6 +117,12 @@ install -m 0644 \
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-pi-boot-recovery.service.example" \
   /etc/systemd/system/talkingboats-pi-boot-recovery.service
+install -m 0644 \
+  "${repo_root}/deploy/systemd/talkingboats-pi-healthcheck.service.example" \
+  /etc/systemd/system/talkingboats-pi-healthcheck.service
+install -m 0644 \
+  "${repo_root}/deploy/systemd/talkingboats-pi-healthcheck.timer.example" \
+  /etc/systemd/system/talkingboats-pi-healthcheck.timer
 generate_password() {
   openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_'
 }
@@ -185,6 +194,8 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_VOICE_SDR_SERIAL=%q\n' ""
     printf 'TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=%q\n' "-35"
     printf 'TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=%q\n' ""
+    printf 'TALKINGBOATS_VOICE_CHANNEL_SQUELCH_THRESHOLDS=%q\n' ""
+    printf 'TALKINGBOATS_VOICE_CHANNEL_SQUELCH_SNR_THRESHOLDS=%q\n' ""
     printf 'TALKINGBOATS_AIS_INPUT=%q\n' "auto"
     printf 'TALKINGBOATS_AIS_SERIAL_PORT=%q\n' ""
     printf 'TALKINGBOATS_AIS_SERIAL_BAUD=%q\n' "115200"
@@ -288,6 +299,8 @@ append_env_if_missing TALKINGBOATS_VOICE_DEVICE_INDEX "0"
 append_env_if_missing TALKINGBOATS_VOICE_SDR_SERIAL ""
 append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_THRESHOLD "-35"
 append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD ""
+append_env_if_missing TALKINGBOATS_VOICE_CHANNEL_SQUELCH_THRESHOLDS ""
+append_env_if_missing TALKINGBOATS_VOICE_CHANNEL_SQUELCH_SNR_THRESHOLDS ""
 append_env_if_missing TALKINGBOATS_AIS_INPUT "auto"
 append_env_if_missing TALKINGBOATS_AIS_SERIAL_PORT ""
 append_env_if_missing TALKINGBOATS_AIS_SERIAL_BAUD "115200"
@@ -371,6 +384,18 @@ fi
 if [[ -n "${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD:-}" ]]; then
   squelch_args+=(--squelch-snr-threshold "${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD}")
 fi
+IFS=',' read -r -a channel_squelch_threshold_specs <<< "${TALKINGBOATS_VOICE_CHANNEL_SQUELCH_THRESHOLDS:-}"
+for spec in "${channel_squelch_threshold_specs[@]}"; do
+  if [[ -n "${spec//[[:space:]]/}" ]]; then
+    squelch_args+=(--channel-squelch-threshold "${spec}")
+  fi
+done
+IFS=',' read -r -a channel_squelch_snr_specs <<< "${TALKINGBOATS_VOICE_CHANNEL_SQUELCH_SNR_THRESHOLDS:-}"
+for spec in "${channel_squelch_snr_specs[@]}"; do
+  if [[ -n "${spec//[[:space:]]/}" ]]; then
+    squelch_args+=(--channel-squelch-snr-threshold "${spec}")
+  fi
+done
 
 PYTHONPATH="${app_root}/src" python3 -m talkingboats.capture_profiles \
   --profile voice_net_balanced \
@@ -603,6 +628,9 @@ systemctl enable talkingboats-profile-capture.service
 systemctl restart talkingboats-profile-capture.service
 systemctl enable talkingboats-pi-boot-recovery.service
 systemctl restart talkingboats-pi-boot-recovery.service
+systemctl enable talkingboats-pi-healthcheck.timer
+systemctl restart talkingboats-pi-healthcheck.timer
+systemctl start talkingboats-pi-healthcheck.service
 
 echo "Talking Boats capture profile installed."
 echo "The single browser UI is served by CloudFront from the public-site bucket."

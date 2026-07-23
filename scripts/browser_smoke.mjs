@@ -14,6 +14,7 @@ let returnStaleLiveQueue = false;
 let servedStaleLiveQueue = false;
 let returnMixedAgeLiveQueue = false;
 let servedMixedAgeLiveQueue = false;
+let returnEmptyLiveQueue = false;
 let liveQueueRecentRequests = 0;
 let holdRecentClipResponses = false;
 let releaseRecentClipResponses = [];
@@ -393,6 +394,28 @@ try {
     ) {
       throw new Error(`all-but-traffic live mode did not exclude Seattle Traffic: ${JSON.stringify(allButTrafficState)}`);
     }
+    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
+    returnEmptyLiveQueue = true;
+    await page.locator("#live-primary-channel-picker").getByRole("button", { name: "Everything" }).click();
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
+    await page.waitForFunction(() => {
+      const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
+      return src.includes("/api/live/current.mp3") && document.querySelector("#live-queue")?.hidden === true;
+    });
+    const emptyQueueFallbackState = await page.evaluate(() => ({
+      queueHidden: document.querySelector("#live-queue")?.hidden ?? false,
+      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
+      status: document.querySelector("#live-status")?.textContent || "",
+      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
+    }));
+    if (
+      !emptyQueueFallbackState.queueHidden ||
+      !emptyQueueFallbackState.src.includes("/api/live/current.mp3") ||
+      emptyQueueFallbackState.playLabel !== "Pause"
+    ) {
+      throw new Error(`live monitor did not fall back from an empty queue: ${JSON.stringify(emptyQueueFallbackState)}`);
+    }
+    returnEmptyLiveQueue = false;
     await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
     await page.getByRole("tab", { name: "Clip Review" }).click();
     await page.getByRole("link", { name: "Label clips" }).click();
@@ -1380,6 +1403,18 @@ function recentClipPayload(url) {
   const liveQueueRequest = isLiveQueueRecentRequest(url);
   if (liveQueueRequest) {
     liveQueueRecentRequests += 1;
+    if (returnEmptyLiveQueue) {
+      return {
+        clips: [],
+        clip_count: 0,
+        filtered_clip_count: 0,
+        channel_counts: {},
+        channel_labels: {},
+        limit: 24,
+        offset: 0,
+        page: 1,
+      };
+    }
   }
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 6), 1), 100);
   const page = Math.max(Number(url.searchParams.get("page") || 1), 1);

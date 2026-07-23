@@ -60,6 +60,32 @@ def test_spool_uploader_derives_clip_end_from_probed_audio_duration(tmp_path) ->
     assert clips[0].ended_at == datetime(2026, 7, 6, 4, 23, 10, 250000, tzinfo=UTC)
 
 
+def test_spool_uploader_limits_duration_probes_to_newest_candidates(tmp_path) -> None:
+    channel_dir = tmp_path / "14"
+    channel_dir.mkdir()
+    now = datetime(2026, 7, 6, 4, 30, tzinfo=UTC)
+    audio_paths = [
+        channel_dir / f"vhf-14_20260706_04{minute:02d}00.mp3" for minute in range(20, 30)
+    ]
+    modified_at = {}
+    for index, audio_path in enumerate(audio_paths):
+        audio_path.write_bytes(b"audio")
+        modified_at[audio_path] = (now - timedelta(minutes=10 - index)).timestamp()
+    probed_paths = []
+
+    clips = discover_completed_audio_files(
+        spool_root=tmp_path,
+        now=now,
+        min_age_seconds=10,
+        max_candidates=2,
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=modified_at[path]),
+        duration_probe=lambda path: probed_paths.append(path) or 1.0,
+    )
+
+    assert [clip.audio_path for clip in clips] == audio_paths[-1:-3:-1]
+    assert probed_paths == audio_paths[-1:-3:-1]
+
+
 def test_spool_uploader_ignores_bad_sidecar_end_and_uses_duration(tmp_path) -> None:
     channel_dir = tmp_path / "14"
     channel_dir.mkdir()
@@ -327,6 +353,48 @@ def test_spool_uploader_prioritizes_recent_files_when_limited(tmp_path) -> None:
 
     assert count == 1
     assert uploaded == [new.name]
+
+
+def test_spool_uploader_discards_old_completed_files_beyond_retention_cap(tmp_path) -> None:
+    channel_dir = tmp_path / "14"
+    channel_dir.mkdir()
+    now = datetime(2026, 5, 28, 1, 0, tzinfo=UTC)
+    clips = [
+        channel_dir / f"vhf-14_20260528_00{minute:02d}00.mp3" for minute in range(56, 60)
+    ]
+    old_timestamp = (now - timedelta(seconds=20)).timestamp()
+    for clip in clips:
+        clip.write_bytes(b"audio")
+    uploaded: list[str] = []
+
+    def fake_upload(*, api_url, ingest_token, clip):
+        uploaded.append(clip.audio_path.name)
+        return UploadResult(
+            bucket="bucket",
+            key=f"raw/channel={clip.channel}/clip.mp3",
+            bytes_uploaded=5,
+        )
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=False,
+        now=now,
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        duration_probe=lambda path: None,
+        upload_func=fake_upload,
+        max_files=1,
+        max_retained_files=2,
+    )
+
+    assert count == 1
+    assert uploaded == [clips[-1].name]
+    assert {path.name for path in channel_dir.glob("*.mp3")} == {
+        clips[-2].name,
+        clips[-1].name,
+    }
 
 
 def test_spool_uploader_quarantines_failed_preparation_and_continues(tmp_path) -> None:

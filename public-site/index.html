@@ -26,7 +26,7 @@
       content="Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis."
     />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20260716-live-stale-fallback-v3" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260723-consolidated-v1" />
     <script id="site-structured-data" type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -88,6 +88,7 @@
         </div>
       </header>
 
+      <div id="tab-view-start" aria-hidden="true"></div>
       <nav class="tabs" aria-label="Radio views" role="tablist">
         <button
           class="tab is-active"
@@ -323,6 +324,18 @@
         </div>
         <div class="ais-catcher-shell">
           <iframe id="ais-catcher-frame" class="ais-catcher-frame" loading="lazy" referrerpolicy="same-origin"></iframe>
+          <div id="ais-catcher-unavailable" class="ais-catcher-unavailable" role="status" hidden>
+            <div>
+              <p class="eyebrow">Receiver status</p>
+              <h3>Local AIS receiver temporarily unavailable</h3>
+              <p>
+                This live map returns automatically when the Elliott Bay receiver reconnects.
+              </p>
+              <a id="ais-fallback-link" href="https://aiscatcher.org/" target="_blank" rel="noopener noreferrer">
+                View the AIS-catcher community map
+              </a>
+            </div>
+          </div>
         </div>
         <p class="map-data-note">
           Vessel positions come from our local AIS receiver in Elliott Bay: AIS-catcher decodes 162 MHz
@@ -418,6 +431,6 @@
 
     </main>
 
-    <script src="/assets/app.js?v=20260716-live-stale-fallback-v3" type="module"></script>
+    <script src="/assets/app.js?v=20260723-consolidated-v1" type="module"></script>
   </body>
 </html>

@@ -47,6 +47,11 @@ ALLOWED_CLIP_FIELDS = {
     "transcript_reviewed",
     "featured",
     "featured_at",
+    "quality_status",
+    "quality_score",
+    "quality_reason",
+    "quality_flags",
+    "audio_metrics",
     "audio_public_filename",
     "interestingness_score",
     "tags",
@@ -497,6 +502,11 @@ def _public_clip_from_recent(clip: RecentTranscribedClip) -> dict[str, Any]:
         "transcript_reviewed": clip.transcript_reviewed,
         "featured": clip.featured,
         "featured_at": clip.featured_at,
+        "quality_status": clip.quality_status,
+        "quality_score": clip.quality_score,
+        "quality_reason": clip.quality_reason,
+        "quality_flags": list(clip.quality_flags),
+        "audio_metrics": clip.audio_metrics,
         "audio_public_filename": _public_audio_filename(clip),
     }
 

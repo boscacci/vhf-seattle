@@ -22,6 +22,7 @@ from talkingboats.asr_feedback import (
     has_new_training_corrections,
 )
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
+from talkingboats.clip_quality import QualityFilter, normalize_quality_filter
 from talkingboats.clip_search import (
     SearchIndexUnavailable,
     read_search_index,
@@ -296,12 +297,14 @@ async def recent_clips(
     channels: Annotated[list[str] | None, Query()] = None,
     featured: bool = False,
     reviewed: bool = False,
+    quality: Annotated[QualityFilter, Query()] = "visible",
     include_playback_url: bool = True,
     verify_playback_exists: bool = True,
     include_counts: bool = True,
     exclude_channels: Annotated[list[str] | None, Query()] = None,
     sort: Annotated[Literal["newest", "oldest"], Query()] = "newest",
 ) -> dict[str, object]:
+    quality = normalize_quality_filter(quality)
     effective_offset = (page - 1) * limit if page is not None else offset
     effective_page = page if page is not None else (effective_offset // limit) + 1
     requested_excluded_channels = _requested_public_excluded_channels(exclude_channels)
@@ -347,19 +350,22 @@ async def recent_clips(
             "page": effective_page,
             "featured": featured,
             "reviewed": reviewed,
+            "quality": quality,
             "channel_counts": {},
             "channel_labels": public_monitored_channel_labels(),
         }
-    filtered_collection = featured or reviewed
+    filtered_collection = featured or reviewed or quality != "visible"
     if include_counts:
         all_channel_counts = clip_store.transcribed_channel_counts(
             excluded_channels=requested_excluded_channels,
+            quality=quality,
         )
         channel_counts = (
             clip_store.transcribed_channel_counts(
                 excluded_channels=requested_excluded_channels,
                 featured_only=featured,
                 reviewed_only=reviewed,
+                quality=quality,
             )
             if filtered_collection
             else all_channel_counts
@@ -402,6 +408,7 @@ async def recent_clips(
             "page": effective_page,
             "featured": featured,
             "reviewed": reviewed,
+            "quality": quality,
             "channel_counts": channel_counts,
             "channel_labels": public_monitored_channel_labels(channel_counts),
         }
@@ -417,6 +424,7 @@ async def recent_clips(
         excluded_channels=requested_excluded_channels,
         featured_only=featured,
         reviewed_only=reviewed,
+        quality=quality,
         include_playback_url=include_playback_url,
         verify_playback_exists=verify_playback_exists,
         sort=sort,
@@ -440,6 +448,7 @@ async def recent_clips(
         "page": effective_page,
         "featured": featured,
         "reviewed": reviewed,
+        "quality": quality,
         "sort": sort,
         "channel_counts": channel_counts,
         "channel_labels": public_monitored_channel_labels(channel_counts),
@@ -459,6 +468,7 @@ def _recent_playable_clip_page(
     excluded_channels: tuple[str, ...] = PUBLIC_EXCLUDED_CHANNELS,
     featured_only: bool = False,
     reviewed_only: bool = False,
+    quality: QualityFilter = "visible",
     include_playback_url: bool = True,
     verify_playback_exists: bool = True,
     sort: Literal["newest", "oldest"] = "newest",
@@ -480,6 +490,7 @@ def _recent_playable_clip_page(
             excluded_channels=excluded_channels,
             featured_only=featured_only,
             reviewed_only=reviewed_only,
+            quality=quality,
             sort=sort,
         )
         if not candidates:
@@ -517,6 +528,11 @@ def _recent_playable_clip_page(
                 "training_split": clip.training_split,
                 "training_flags": list(clip.training_flags),
                 "training_reason": clip.training_reason,
+                "quality_status": clip.quality_status,
+                "quality_score": clip.quality_score,
+                "quality_reason": clip.quality_reason,
+                "quality_flags": list(clip.quality_flags),
+                "audio_metrics": clip.audio_metrics,
                 "featured": clip.featured,
                 "featured_at": clip.featured_at,
                 "segments": clip.segments,

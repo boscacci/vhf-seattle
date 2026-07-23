@@ -1,6 +1,11 @@
 from dataclasses import dataclass
 
-from talkingboats.network_readiness import dns_ready, lan_address_ready, wait_for_readiness
+from talkingboats.network_readiness import (
+    dns_ready,
+    lan_address_for_network,
+    lan_address_ready,
+    wait_for_readiness,
+)
 
 
 @dataclass
@@ -49,6 +54,28 @@ def test_lan_address_ready_uses_the_requested_interface_and_address() -> None:
 
     assert lan_address_ready("eth0", "192.168.1.247/24", run_command=run_command)
     assert calls[0][0] == ["ip", "-4", "-o", "addr", "show", "dev", "eth0"]
+
+
+def test_lan_address_for_network_uses_the_current_dhcp_address_on_the_lan() -> None:
+    def run_command(_: list[str], **__: object) -> Completed:
+        return Completed(
+            "2: eth0    inet 192.168.1.207/24 brd 192.168.1.255 scope global eth0\n"
+        )
+
+    assert (
+        lan_address_for_network("eth0", "192.168.1.0/24", run_command=run_command)
+        == "192.168.1.207"
+    )
+
+
+def test_lan_address_for_network_rejects_an_address_outside_the_configured_lan() -> None:
+    def run_command(_: list[str], **__: object) -> Completed:
+        return Completed("2: eth0    inet 10.0.0.17/24 scope global eth0\n")
+
+    assert (
+        lan_address_for_network("eth0", "192.168.1.0/24", run_command=run_command)
+        is None
+    )
 
 
 def test_dns_ready_requires_a_successful_resolver_answer() -> None:

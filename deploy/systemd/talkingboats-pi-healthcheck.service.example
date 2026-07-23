@@ -1,0 +1,10 @@
+[Unit]
+Description=Verify and recover Talking Boats Pi receiver services
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/opt/talkingboats/bin/talkingboats-pi-healthcheck
+TimeoutStartSec=2min

@@ -70,6 +70,7 @@ def test_live_radio_systemd_units_restart_and_stay_lan_scoped() -> None:
     assert "CPUQuota=85%" in profile_unit
     assert "talkingboats.spool_uploader" in uploader_unit
     assert "EnvironmentFile=/etc/talkingboats/live-radio.env" in uploader_unit
+    assert "--max-retained-files 300" in uploader_unit
 
 
 def test_pi_units_do_not_give_up_during_blackout_boot_races() -> None:
@@ -111,6 +112,48 @@ def test_pi_installer_installs_blackout_boot_recovery_service() -> None:
     assert "icecast2.service" in recovery_script
     assert "talkingboats-live-radio-web.service" in recovery_script
     assert "talkingboats-spool-uploader.service" in recovery_script
+
+
+def test_pi_recurring_healthcheck_recovers_local_receiver_dependencies() -> None:
+    installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
+    service = Path("deploy/systemd/talkingboats-pi-healthcheck.service.example").read_text(
+        encoding="utf-8"
+    )
+    timer = Path("deploy/systemd/talkingboats-pi-healthcheck.timer.example").read_text(
+        encoding="utf-8"
+    )
+    script = Path("deploy/pi/live-radio/talkingboats-pi-healthcheck").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ExecStart=/opt/talkingboats/bin/talkingboats-pi-healthcheck" in service
+    assert "TimeoutStartSec=2min" in service
+    assert "OnBootSec=3min" in timer
+    assert "OnUnitActiveSec=2min" in timer
+    assert "Persistent=true" in timer
+    assert "Unit=talkingboats-pi-healthcheck.service" in timer
+    assert "talkingboats-ais-catcher.service" in script
+    assert "talkingboats-profile-capture.service" in script
+    assert "talkingboats-spool-uploader.service" in script
+    assert "127.0.0.1:8100/api/stat.json" in script
+    assert "127.0.0.1:8000/status-json.xsl" in script
+    assert "talkingboats-pi-healthcheck.timer" in installer
+    assert "systemctl enable talkingboats-pi-healthcheck.timer" in installer
+
+
+def test_pi_healthcheck_detects_an_unreachable_private_api_without_a_restart_loop() -> None:
+    service = Path("deploy/systemd/talkingboats-pi-healthcheck.service.example").read_text(
+        encoding="utf-8"
+    )
+    script = Path("deploy/pi/live-radio/talkingboats-pi-healthcheck").read_text(
+        encoding="utf-8"
+    )
+
+    assert "TALKINGBOATS_PRIVATE_API" in script
+    assert "private_api_unreachable" in script
+    assert "/healthz" in script
+    assert "talkingboats-spool-uploader.service" in script
+    assert "Restart=on-failure" not in service
 
 
 def test_pi_installer_restarts_source_loaded_services_after_code_copy() -> None:
@@ -255,8 +298,26 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     )
     assert 'printf \'TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=%q\\n\' "-35"' in installer
     assert 'printf \'TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=%q\\n\' ""' in installer
+    assert (
+        "printf 'TALKINGBOATS_VOICE_CHANNEL_SQUELCH_THRESHOLDS=%q\\n' \"\""
+        in installer
+    )
+    assert (
+        "printf 'TALKINGBOATS_VOICE_CHANNEL_SQUELCH_SNR_THRESHOLDS=%q\\n' \"\""
+        in installer
+    )
     assert 'append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_THRESHOLD "-35"' in installer
     assert 'append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD ""' in installer
+    assert (
+        'append_env_if_missing TALKINGBOATS_VOICE_CHANNEL_SQUELCH_THRESHOLDS ""'
+        in installer
+    )
+    assert (
+        'append_env_if_missing TALKINGBOATS_VOICE_CHANNEL_SQUELCH_SNR_THRESHOLDS ""'
+        in installer
+    )
+    assert 'squelch_args+=(--channel-squelch-threshold "${spec}")' in installer
+    assert 'squelch_args+=(--channel-squelch-snr-threshold "${spec}")' in installer
     assert (
         'replace_env_if_value TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD "20" ""'
         in installer

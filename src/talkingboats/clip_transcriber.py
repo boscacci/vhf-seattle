@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import time
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -23,11 +23,22 @@ from talkingboats.asr_training_metadata import (
     normalize_training_split,
     validate_training_metadata,
 )
+from talkingboats.audio_analysis import AudioAnalysisReport, analyze_audio_file
 from talkingboats.audio_processing import (
     DEFAULT_SPEECH_AUDIO_FILTER,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ,
     prepared_transcription_audio,
+)
+from talkingboats.clip_quality import (
+    AsrQualitySummary,
+    ClipQualityAssessment,
+    QualityFilter,
+    assess_clip_quality,
+    coerce_quality_assessment,
+    normalize_quality_filter,
+    normalize_quality_status,
+    summarize_asr_quality,
 )
 from talkingboats.durable_events import (
     DurableEventStore,
@@ -36,6 +47,8 @@ from talkingboats.durable_events import (
     stable_event_id,
 )
 from talkingboats.schemas import ClipPresignRequest
+
+AudioQualityAnalyzer = Any
 
 _DISPLAYED_TRANSCRIPT_SQL = (
     "COALESCE(uploaded_clip_transcript_corrections.corrected_transcript, "
@@ -89,6 +102,11 @@ class RecentTranscribedClip:
     training_split: str = "auto"
     training_flags: tuple[str, ...] = ()
     training_reason: str | None = None
+    quality_status: str = "unknown"
+    quality_score: float | None = None
+    quality_reason: str | None = None
+    quality_flags: tuple[str, ...] = ()
+    audio_metrics: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -133,10 +151,26 @@ class UploadedClipSegment:
     relative_end_seconds: float
 
 
+@dataclass(frozen=True)
+class ClipQualityMetadata:
+    quality_status: str = "unknown"
+    quality_score: float | None = None
+    quality_reason: str | None = None
+    quality_flags: tuple[str, ...] = ()
+    audio_metrics: dict[str, float] | None = None
+
+
+@dataclass(frozen=True)
+class TranscriptionResult:
+    segments: list[UploadedClipSegment]
+    asr_quality: AsrQualitySummary
+
+
 @dataclass
 class ProcessSummary:
     processed: int = 0
     transcribed: int = 0
+    quarantined: int = 0
     empty: int = 0
     waiting_upload: int = 0
     failed: int = 0
@@ -275,12 +309,19 @@ class UploadedClipStore:
             idempotency_seed="empty",
         )
 
-    def mark_transcribed(self, key: str, segments: Iterable[UploadedClipSegment]) -> None:
+    def mark_transcribed(
+        self,
+        key: str,
+        segments: Iterable[UploadedClipSegment],
+        *,
+        quality: ClipQualityAssessment | ClipQualityMetadata | dict[str, object] | None = None,
+    ) -> None:
         segment_list = list(segments)
         transcript = " ".join(segment.text for segment in segment_list)
         if not is_displayable_transcript(transcript):
             self.mark_empty(key)
             return
+        quality_metadata = coerce_quality_assessment(quality)
         now = _format_utc(datetime.now(UTC))
         with sqlite3.connect(self.path) as connection:
             connection.execute(
@@ -289,11 +330,26 @@ class UploadedClipStore:
                 SET status = 'transcribed',
                     transcript = ?,
                     error = NULL,
+                    quality_status = ?,
+                    quality_score = ?,
+                    quality_reason = ?,
+                    quality_flags = ?,
+                    audio_metrics = ?,
                     processed_at = ?,
                     updated_at = ?
                 WHERE key = ?
                 """,
-                (transcript, now, now, key),
+                (
+                    transcript,
+                    quality_metadata.quality_status,
+                    quality_metadata.quality_score,
+                    quality_metadata.quality_reason,
+                    json.dumps(list(quality_metadata.quality_flags), sort_keys=True),
+                    json.dumps(quality_metadata.audio_metrics or {}, sort_keys=True),
+                    now,
+                    now,
+                    key,
+                ),
             )
             connection.execute("DELETE FROM uploaded_clip_segments WHERE clip_key = ?", (key,))
             connection.executemany(
@@ -328,8 +384,13 @@ class UploadedClipStore:
                 "transcript": transcript,
                 "segments": segment_payload,
                 "segment_count": len(segment_payload),
+                **quality_metadata.as_metadata(),
             },
-            idempotency_seed=stable_event_id(transcript, segment_payload),
+            idempotency_seed=stable_event_id(
+                transcript,
+                segment_payload,
+                quality_metadata.as_metadata(),
+            ),
         )
 
     def segments_for_clip(self, key: str) -> list[dict[str, str]]:
@@ -358,6 +419,7 @@ class UploadedClipStore:
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
         reviewed_only: bool = False,
+        quality: QualityFilter = "visible",
         sort: Literal["newest", "oldest"] = "newest",
         page: int | None = None,
     ) -> list[RecentTranscribedClip]:
@@ -375,6 +437,8 @@ class UploadedClipStore:
             "trim(uploaded_clips.transcript) != ''",
             _DISPLAYABLE_TRANSCRIPT_SQL,
         ]
+        quality = normalize_quality_filter(quality)
+        filters.append(_quality_filter_sql("uploaded_clips.quality_status", quality))
         params: list[object] = []
         selected_channels = _unique_channels([channel] if channel else channels)
         if selected_channels:
@@ -419,7 +483,12 @@ class UploadedClipStore:
                     uploaded_clip_transcript_corrections.training_quality,
                     uploaded_clip_transcript_corrections.training_split,
                     uploaded_clip_transcript_corrections.training_flags,
-                    uploaded_clip_transcript_corrections.training_reason
+                    uploaded_clip_transcript_corrections.training_reason,
+                    uploaded_clips.quality_status,
+                    uploaded_clips.quality_score,
+                    uploaded_clips.quality_reason,
+                    uploaded_clips.quality_flags,
+                    uploaded_clips.audio_metrics
                 FROM uploaded_clips
                 LEFT JOIN uploaded_clip_transcript_corrections
                     ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
@@ -447,6 +516,11 @@ class UploadedClipStore:
             training_split,
             training_flags,
             training_reason,
+            quality_status,
+            quality_score,
+            quality_reason,
+            quality_flags,
+            audio_metrics,
         ) in rows:
             clips.append(
                 RecentTranscribedClip(
@@ -466,6 +540,11 @@ class UploadedClipStore:
                     training_split=normalize_training_split(training_split),
                     training_flags=tuple(_parse_training_flags(training_flags)),
                     training_reason=training_reason,
+                    quality_status=normalize_quality_status(quality_status),
+                    quality_score=_optional_float(quality_score),
+                    quality_reason=quality_reason,
+                    quality_flags=tuple(_parse_quality_flags(quality_flags)),
+                    audio_metrics=_parse_audio_metrics(audio_metrics),
                 )
             )
         return clips
@@ -524,7 +603,12 @@ class UploadedClipStore:
                         uploaded_clip_transcript_corrections.training_quality,
                         uploaded_clip_transcript_corrections.training_split,
                         uploaded_clip_transcript_corrections.training_flags,
-                        uploaded_clip_transcript_corrections.training_reason
+                        uploaded_clip_transcript_corrections.training_reason,
+                        uploaded_clips.quality_status,
+                        uploaded_clips.quality_score,
+                        uploaded_clips.quality_reason,
+                        uploaded_clips.quality_flags,
+                        uploaded_clips.audio_metrics
                     FROM uploaded_clips
                     LEFT JOIN uploaded_clip_transcript_corrections
                         ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
@@ -555,6 +639,11 @@ class UploadedClipStore:
                 training_split,
                 training_flags,
                 training_reason,
+                quality_status,
+                quality_score,
+                quality_reason,
+                quality_flags,
+                audio_metrics,
             ) in rows:
                 yield RecentTranscribedClip(
                     key=key,
@@ -573,6 +662,11 @@ class UploadedClipStore:
                     training_split=normalize_training_split(training_split),
                     training_flags=tuple(_parse_training_flags(training_flags)),
                     training_reason=training_reason,
+                    quality_status=normalize_quality_status(quality_status),
+                    quality_score=_optional_float(quality_score),
+                    quality_reason=quality_reason,
+                    quality_flags=tuple(_parse_quality_flags(quality_flags)),
+                    audio_metrics=_parse_audio_metrics(audio_metrics),
                 )
 
     def transcribed_clip_for_public_playback(
@@ -581,6 +675,7 @@ class UploadedClipStore:
         channel: str,
         started_at: str,
         excluded_channels: tuple[str, ...] = (),
+        quality: QualityFilter = "visible",
     ) -> RecentTranscribedClip | None:
         try:
             normalized_started_at = _format_utc(_parse_utc(started_at))
@@ -596,6 +691,8 @@ class UploadedClipStore:
             "channel = ?",
             "started_at = ?",
         ]
+        quality = normalize_quality_filter(quality)
+        filters.append(_quality_filter_sql("uploaded_clips.quality_status", quality))
         params: list[object] = [channel, normalized_started_at]
         if excluded_channels:
             placeholders = ", ".join("?" for _ in excluded_channels)
@@ -622,7 +719,12 @@ class UploadedClipStore:
                     uploaded_clip_transcript_corrections.training_quality,
                     uploaded_clip_transcript_corrections.training_split,
                     uploaded_clip_transcript_corrections.training_flags,
-                    uploaded_clip_transcript_corrections.training_reason
+                    uploaded_clip_transcript_corrections.training_reason,
+                    uploaded_clips.quality_status,
+                    uploaded_clips.quality_score,
+                    uploaded_clips.quality_reason,
+                    uploaded_clips.quality_flags,
+                    uploaded_clips.audio_metrics
                 FROM uploaded_clips
                 LEFT JOIN uploaded_clip_transcript_corrections
                     ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
@@ -651,6 +753,11 @@ class UploadedClipStore:
             training_split,
             training_flags,
             training_reason,
+            quality_status,
+            quality_score,
+            quality_reason,
+            quality_flags,
+            audio_metrics,
         ) = row
         return RecentTranscribedClip(
             key=key,
@@ -669,6 +776,11 @@ class UploadedClipStore:
             training_split=normalize_training_split(training_split),
             training_flags=tuple(_parse_training_flags(training_flags)),
             training_reason=training_reason,
+            quality_status=normalize_quality_status(quality_status),
+            quality_score=_optional_float(quality_score),
+            quality_reason=quality_reason,
+            quality_flags=tuple(_parse_quality_flags(quality_flags)),
+            audio_metrics=_parse_audio_metrics(audio_metrics),
         )
 
     def set_clip_featured(
@@ -1185,6 +1297,7 @@ class UploadedClipStore:
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
         reviewed_only: bool = False,
+        quality: QualityFilter = "visible",
     ) -> dict[str, int]:
         channel_filter = ""
         params: tuple[object, ...] = ()
@@ -1202,6 +1315,8 @@ class UploadedClipStore:
             if reviewed_only
             else ""
         )
+        quality = normalize_quality_filter(quality)
+        quality_filter = f"AND {_quality_filter_sql('uploaded_clips.quality_status', quality)}"
         with _connect_upload_db(self.path) as connection:
             rows = connection.execute(
                 f"""
@@ -1214,6 +1329,7 @@ class UploadedClipStore:
                     AND uploaded_clips.transcript IS NOT NULL
                     AND trim(uploaded_clips.transcript) != ''
                     AND {_DISPLAYABLE_TRANSCRIPT_SQL}
+                    {quality_filter}
                     {channel_filter}
                     {reviewed_filter}
                 GROUP BY uploaded_clips.channel
@@ -1231,6 +1347,7 @@ class UploadedClipStore:
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
         reviewed_only: bool = False,
+        quality: QualityFilter = "visible",
     ) -> int:
         filters = [
             "uploaded_clips.status = 'transcribed'",
@@ -1238,6 +1355,8 @@ class UploadedClipStore:
             "trim(uploaded_clips.transcript) != ''",
             _DISPLAYABLE_TRANSCRIPT_SQL,
         ]
+        quality = normalize_quality_filter(quality)
+        filters.append(_quality_filter_sql("uploaded_clips.quality_status", quality))
         params: list[object] = []
         selected_channels = _unique_channels([channel] if channel else channels)
         if selected_channels:
@@ -1395,11 +1514,36 @@ class UploadedClipStore:
                     status TEXT NOT NULL,
                     transcript TEXT,
                     error TEXT,
+                    quality_status TEXT NOT NULL DEFAULT 'unknown',
+                    quality_score REAL,
+                    quality_reason TEXT,
+                    quality_flags TEXT NOT NULL DEFAULT '[]',
+                    audio_metrics TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     processed_at TEXT
                 )
                 """
+            )
+            _ensure_column(
+                connection,
+                "uploaded_clips",
+                "quality_status",
+                "TEXT NOT NULL DEFAULT 'unknown'",
+            )
+            _ensure_column(connection, "uploaded_clips", "quality_score", "REAL")
+            _ensure_column(connection, "uploaded_clips", "quality_reason", "TEXT")
+            _ensure_column(
+                connection,
+                "uploaded_clips",
+                "quality_flags",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+            _ensure_column(
+                connection,
+                "uploaded_clips",
+                "audio_metrics",
+                "TEXT NOT NULL DEFAULT '{}'",
             )
             connection.execute(
                 """
@@ -1557,6 +1701,8 @@ def process_pending_uploads_once(
     ffmpeg_path: str | None = None,
     ffmpeg_runner: Any | None = None,
     trust_edge_preprocessed_audio: bool = False,
+    quality_analysis_enabled: bool = True,
+    quality_analyzer: AudioQualityAnalyzer | None = None,
 ) -> ProcessSummary:
     if beam_size <= 0:
         raise ValueError("beam_size must be positive")
@@ -1581,7 +1727,16 @@ def process_pending_uploads_once(
             if ffmpeg_runner is not None:
                 prepare_kwargs["runner"] = ffmpeg_runner
             with prepared_transcription_audio(audio_path, **prepare_kwargs) as prepared_audio_path:
-                segments = transcribe_audio_file(
+                audio_quality = (
+                    _analyze_clip_quality_audio(
+                        prepared_audio_path,
+                        ffmpeg_path=ffmpeg_path,
+                        quality_analyzer=quality_analyzer,
+                    )
+                    if quality_analysis_enabled
+                    else None
+                )
+                transcription = transcribe_audio_file_with_quality(
                     model=model,
                     audio_path=prepared_audio_path,
                     record=record,
@@ -1591,9 +1746,15 @@ def process_pending_uploads_once(
                     beam_size=beam_size,
                     hotwords=hotwords,
                 )
-            if segments:
-                store.mark_transcribed(record.key, segments)
+            if transcription.segments:
+                quality = assess_clip_quality(
+                    audio=audio_quality,
+                    asr=transcription.asr_quality,
+                )
+                store.mark_transcribed(record.key, transcription.segments, quality=quality)
                 summary.transcribed += 1
+                if quality.quality_status == "quarantined":
+                    summary.quarantined += 1
             else:
                 store.mark_empty(record.key)
                 summary.empty += 1
@@ -1619,6 +1780,29 @@ def transcribe_audio_file(
     beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE,
     hotwords: str | None = None,
 ) -> list[UploadedClipSegment]:
+    return transcribe_audio_file_with_quality(
+        model=model,
+        audio_path=audio_path,
+        record=record,
+        vad_filter=vad_filter,
+        vad_parameters=vad_parameters,
+        min_segment_avg_logprob=min_segment_avg_logprob,
+        beam_size=beam_size,
+        hotwords=hotwords,
+    ).segments
+
+
+def transcribe_audio_file_with_quality(
+    *,
+    model: Any,
+    audio_path: Path,
+    record: UploadedClipRecord,
+    vad_filter: bool = DEFAULT_TRANSCRIBE_VAD_FILTER,
+    vad_parameters: dict[str, int] | None = None,
+    min_segment_avg_logprob: float | None = -0.6,
+    beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE,
+    hotwords: str | None = None,
+) -> TranscriptionResult:
     if beam_size <= 0:
         raise ValueError("beam_size must be positive")
     kwargs: dict[str, Any] = {
@@ -1632,9 +1816,11 @@ def transcribe_audio_file(
     if vad_filter and vad_parameters:
         kwargs["vad_parameters"] = vad_parameters
     segments, _ = model.transcribe(str(audio_path), **kwargs)
+    raw_segments = list(segments)
+    asr_quality = summarize_asr_quality(raw_segments)
     clip_started = _parse_utc(record.started_at)
     rendered: list[UploadedClipSegment] = []
-    for segment in segments:
+    for segment in raw_segments:
         text = " ".join(str(getattr(segment, "text", "")).split())
         if not text:
             continue
@@ -1659,8 +1845,8 @@ def transcribe_audio_file(
             )
         )
     if rendered and not is_displayable_transcript(" ".join(segment.text for segment in rendered)):
-        return []
-    return rendered
+        return TranscriptionResult(segments=[], asr_quality=asr_quality)
+    return TranscriptionResult(segments=rendered, asr_quality=asr_quality)
 
 
 def main() -> None:
@@ -1723,6 +1909,17 @@ def main() -> None:
             "Skip Ubuntu micro-computer ffmpeg cleanup for edge-encoded MP3 uploads. "
             "Use when the Pi already applied the upload speech filter."
         ),
+    )
+    parser.add_argument(
+        "--audio-quality-analysis",
+        action="store_true",
+        default=_env_bool("TALKINGBOATS_TRANSCRIBE_AUDIO_QUALITY_ANALYSIS", True),
+        help="Analyze prepared clip audio and quarantine low-quality transcripts. On by default.",
+    )
+    parser.add_argument(
+        "--no-audio-quality-analysis",
+        action="store_true",
+        help="Disable automatic audio quality scoring and quarantine.",
     )
     parser.add_argument(
         "--sample-rate-hz",
@@ -1802,6 +1999,9 @@ def main() -> None:
             beam_size=args.beam_size,
             hotwords=args.hotwords,
             trust_edge_preprocessed_audio=args.trust_edge_preprocessed_audio,
+            quality_analysis_enabled=(
+                args.audio_quality_analysis and not args.no_audio_quality_analysis
+            ),
         )
         _log_event("uploaded_clip_transcriber_poll", **asdict(summary))
         if args.once:
@@ -1871,6 +2071,58 @@ def _parse_training_flags(value: object) -> list[str]:
     return []
 
 
+def _parse_quality_flags(value: object) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return [value]
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed if str(item).strip()]
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item).strip()]
+    return []
+
+
+def _parse_audio_metrics(value: object) -> dict[str, float]:
+    if value in (None, ""):
+        return {}
+    parsed: object = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(parsed, dict):
+        return {}
+    metrics: dict[str, float] = {}
+    for key, item in parsed.items():
+        number = _optional_float(item)
+        if number is not None:
+            metrics[str(key)] = number
+    return metrics
+
+
+def _optional_float(value: object | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _quality_filter_sql(column: str, quality: QualityFilter) -> str:
+    if quality == "all":
+        return "1 = 1"
+    if quality == "quarantined":
+        return f"{column} = 'quarantined'"
+    return f"COALESCE({column}, 'unknown') != 'quarantined'"
+
+
 def _correction_from_sqlite_row(row: tuple[Any, ...]) -> dict[str, object]:
     (
         key,
@@ -1924,6 +2176,25 @@ def _audio_filter_for_record(
     if trust_edge_preprocessed_audio and record.content_type == "audio/mpeg":
         return None
     return audio_filter
+
+
+def _analyze_clip_quality_audio(
+    audio_path: Path,
+    *,
+    ffmpeg_path: str | None,
+    quality_analyzer: AudioQualityAnalyzer | None,
+) -> AudioAnalysisReport | None:
+    try:
+        if quality_analyzer is not None:
+            return quality_analyzer(audio_path)
+        return analyze_audio_file(audio_path, ffmpeg_path=ffmpeg_path or "ffmpeg")
+    except Exception as exc:  # noqa: BLE001 - do not fail the transcription retry path.
+        _log_event(
+            "uploaded_clip_quality_analysis_failed",
+            audio_file=audio_path.name,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return None
 
 
 def _segment_payload(segment: UploadedClipSegment) -> dict[str, object]:

@@ -53,8 +53,8 @@ cloudfront_distribution_for_alias() {
 
 fallback_site_fqdn() {
   case "$1" in
-    dev) printf '%s' "${TALKINGBOATS_DEV_SITE_FQDN:-vhf-dev.robertboscacci.com}" ;;
-    prod) printf '%s' "${TALKINGBOATS_SITE_FQDN:-vhf.robertboscacci.com}" ;;
+    dev) printf '%s' "${TALKINGBOATS_DEV_SITE_FQDN:-dev.seattleboatradio.com}" ;;
+    prod) printf '%s' "${TALKINGBOATS_SITE_FQDN:-seattleboatradio.com}" ;;
     *) return 1 ;;
   esac
 }

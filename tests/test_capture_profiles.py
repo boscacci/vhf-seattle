@@ -88,6 +88,28 @@ def test_airband_config_rejects_conflicting_squelch_modes() -> None:
         raise AssertionError("conflicting Airband squelch modes should fail")
 
 
+def test_airband_config_supports_per_channel_squelch_overrides() -> None:
+    config = render_rtlsdr_airband_config(
+        CAPTURE_PROFILES["voice_net_balanced"],
+        output_root="/opt/talkingboats/spool/airband",
+        squelch_threshold=-35.0,
+        channel_squelch_thresholds={"66A": -30.0},
+        channel_squelch_snr_thresholds={"14": 18.0},
+    )
+
+    assert config.count("squelch_threshold = -35;") == 17
+    assert (
+        "freq = 156325000;\n      modulation = \"nfm\";\n"
+        "      label = \"vhf-66a\";\n      squelch_threshold = -30;"
+        in config
+    )
+    assert (
+        "freq = 156700000;\n      modulation = \"nfm\";\n"
+        "      label = \"vhf-14\";\n      squelch_snr_threshold = 18;"
+        in config
+    )
+
+
 def test_elliott_bay_airband_config_writes_channel_mp3_spool_outputs() -> None:
     config = render_rtlsdr_airband_config(
         CAPTURE_PROFILES["elliott_bay"],

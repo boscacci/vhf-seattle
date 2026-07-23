@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,16 @@ SEARCH_RECENCY_WINDOWS = {
 }
 
 _EMBEDDERS: dict[str, Any] = {}
+_SEARCH_INDEX_CACHE_LOCK = threading.RLock()
+
+
+@dataclass(frozen=True)
+class _SearchIndexCacheEntry:
+    signature: tuple[int, int]
+    payload: dict[str, Any]
+
+
+_SEARCH_INDEX_CACHE: dict[Path, _SearchIndexCacheEntry] = {}
 
 
 class SearchIndexUnavailable(RuntimeError):
@@ -100,14 +112,51 @@ def write_search_index(path: Path, payload: dict[str, Any]) -> None:
     assert_public_safe(payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    with _SEARCH_INDEX_CACHE_LOCK:
+        _SEARCH_INDEX_CACHE.pop(path.resolve(), None)
 
 
 def read_search_index(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return missing_search_index()
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    assert_public_safe(payload)
-    return payload
+    cache_key = path.resolve()
+    with _SEARCH_INDEX_CACHE_LOCK:
+        for _attempt in range(2):
+            try:
+                signature = _search_index_signature(path)
+            except FileNotFoundError:
+                _SEARCH_INDEX_CACHE.pop(cache_key, None)
+                return missing_search_index()
+
+            cached = _SEARCH_INDEX_CACHE.get(cache_key)
+            if cached is not None and cached.signature == signature:
+                return cached.payload
+
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                if _search_index_changed(path, signature):
+                    continue
+                raise SearchIndexUnavailable("clip search index is not ready") from exc
+            if _search_index_changed(path, signature):
+                continue
+            assert_public_safe(payload)
+            _SEARCH_INDEX_CACHE[cache_key] = _SearchIndexCacheEntry(
+                signature=signature,
+                payload=payload,
+            )
+            return payload
+    raise SearchIndexUnavailable("clip search index changed while loading")
+
+
+def _search_index_signature(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _search_index_changed(path: Path, signature: tuple[int, int]) -> bool:
+    try:
+        return _search_index_signature(path) != signature
+    except FileNotFoundError:
+        return True
 
 
 def search_clips(

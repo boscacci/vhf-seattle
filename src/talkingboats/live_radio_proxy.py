@@ -375,7 +375,8 @@ class ProxySettings:
     receiver_status_url: str = "http://192.168.1.114:8050/current-status.json"
     transcript_url: str = "http://127.0.0.1:8055/api/live-transcript"
     private_api_url: str = "http://192.168.1.247:8034"
-    private_api_read_timeout_seconds: float = 8.0
+    private_api_read_timeout_seconds: float = 30.0
+    clip_search_read_timeout_seconds: float = 25.0
     ais_catcher_base_url: str = "http://192.168.1.114:8100"
     ais_catcher_dev_hosts: tuple[str, ...] = PERFORMANCE_DEV_HOSTS
     ais_catcher_dev_origin_hosts: tuple[str, ...] = PERFORMANCE_DEV_ORIGIN_HOSTS
@@ -428,6 +429,10 @@ class ProxySettings:
             private_api_read_timeout_seconds=_env_float(
                 "TALKINGBOATS_PROXY_PRIVATE_API_READ_TIMEOUT_SECONDS",
                 cls.private_api_read_timeout_seconds,
+            ),
+            clip_search_read_timeout_seconds=_env_float(
+                "TALKINGBOATS_PROXY_CLIP_SEARCH_READ_TIMEOUT_SECONDS",
+                cls.clip_search_read_timeout_seconds,
             ),
             ais_catcher_base_url=os.environ.get(
                 "TALKINGBOATS_PROXY_AIS_CATCHER_BASE_URL",
@@ -890,7 +895,13 @@ def create_app(
 
     @app.get("/api/clips/search")
     async def clip_search(request: Request) -> Response:
-        return await _proxy_private_api(request, "/api/clips/search", settings, client_factory)
+        return await _proxy_private_api(
+            request,
+            "/api/clips/search",
+            settings,
+            client_factory,
+            timeout_seconds=settings.clip_search_read_timeout_seconds,
+        )
 
     @app.api_route(
         "/ais-catcher",
@@ -1894,6 +1905,7 @@ async def _proxy_private_api(
     client_factory: ClientFactory,
     *,
     forward_content_type: bool = False,
+    timeout_seconds: float | None = None,
 ) -> Response:
     target_url = f"{settings.private_api_url.rstrip('/')}{path}"
     if request.url.query:
@@ -1906,7 +1918,7 @@ async def _proxy_private_api(
                 target_url,
                 content=await request.body(),
                 headers=_private_api_request_headers(request, forward_content_type),
-                timeout=settings.private_api_read_timeout_seconds,
+                timeout=timeout_seconds or settings.private_api_read_timeout_seconds,
             )
         except httpx.TimeoutException as exc:
             _log_proxy_private_api_event(
@@ -1989,7 +2001,12 @@ async def _proxy_ais_catcher(
                 headers=_ais_catcher_request_headers(request),
             )
         except httpx.HTTPError as exc:
+            if not proxy_path and request.method in {"GET", "HEAD"}:
+                return _ais_catcher_unavailable_response(request.method)
             raise HTTPException(status_code=502, detail="AIS-catcher viewer unavailable") from exc
+
+    if not proxy_path and upstream.status_code >= 500:
+        return _ais_catcher_unavailable_response(request.method)
 
     content = upstream.content
     content_type = upstream.headers.get("content-type", "")
@@ -2002,6 +2019,54 @@ async def _proxy_ais_catcher(
         status_code=upstream.status_code,
         headers=response_headers,
     )
+
+
+def _ais_catcher_unavailable_response(method: str) -> Response:
+    content = b"" if method == "HEAD" else _ais_catcher_unavailable_html().encode("utf-8")
+    return Response(
+        content=content,
+        status_code=503,
+        media_type="text/html",
+        headers={
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+def _ais_catcher_unavailable_html() -> str:
+    return """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="30">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AIS receiver temporarily unavailable</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+      body {
+        align-items: center;
+        background: #07110f;
+        color: #f6f0e9;
+        display: grid;
+        margin: 0;
+        min-height: 100vh;
+      }
+      main { margin: auto; max-width: 34rem; padding: 2rem; text-align: center; }
+      p { color: #adbbb6; line-height: 1.55; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>AIS receiver is temporarily unavailable</h1>
+      <p>
+        The local Elliott Bay receiver is reconnecting. This map retries automatically every 30
+        seconds.
+      </p>
+    </main>
+  </body>
+</html>"""
 
 
 def _ais_catcher_target_url(base_url: str, proxy_path: str, query: str) -> str:

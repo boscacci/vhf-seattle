@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+probe_timeout_seconds="${TALKINGBOATS_PI_HEALTHCHECK_TIMEOUT_SECONDS:-5}"
+probe_attempts="${TALKINGBOATS_PI_HEALTHCHECK_ATTEMPTS:-2}"
+restart_wait_seconds="${TALKINGBOATS_PI_HEALTHCHECK_RESTART_WAIT_SECONDS:-3}"
+
+log_event() {
+  local event="$1"
+  local service="$2"
+  local detail="$3"
+  printf 'event=%s service=%s detail=%s\n' "${event}" "${service}" "${detail}"
+}
+
+ensure_active() {
+  local service="$1"
+  if systemctl is-active --quiet "${service}"; then
+    return 0
+  fi
+  log_event "talkingboats_pi_health_restart" "${service}" "inactive"
+  systemctl reset-failed "${service}" >/dev/null 2>&1 || true
+  systemctl restart "${service}"
+  sleep "${restart_wait_seconds}"
+  if systemctl is-active --quiet "${service}"; then
+    return 0
+  fi
+  log_event "talkingboats_pi_health_failed" "${service}" "still_inactive"
+  return 1
+}
+
+probe_url() {
+  local url="$1"
+  local attempt
+  for attempt in $(seq 1 "${probe_attempts}"); do
+    if curl --fail --silent --show-error --max-time "${probe_timeout_seconds}" "${url}" >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+private_api_url() {
+  local env_file="${TALKINGBOATS_PI_ENV_FILE:-/etc/talkingboats/live-radio.env}"
+  local private_api
+
+  if [[ ! -r "${env_file}" ]]; then
+    return 1
+  fi
+
+  private_api="$(sed -n -E 's/^[[:space:]]*TALKINGBOATS_PRIVATE_API=(.*)$/\1/p' "${env_file}" | tail -n 1)"
+  private_api="${private_api%$'\r'}"
+  case "${private_api}" in
+    \"*\") private_api="${private_api:1:${#private_api}-2}" ;;
+    \'*\') private_api="${private_api:1:${#private_api}-2}" ;;
+  esac
+  [[ "${private_api}" =~ ^https?:// ]] || return 1
+  printf '%s\n' "${private_api%/}"
+}
+
+ensure_private_api_reachable() {
+  local private_api
+  if ! private_api="$(private_api_url)"; then
+    log_event "talkingboats_pi_health_failed" "private_api" "private_api_missing_or_invalid"
+    return 1
+  fi
+
+  if probe_url "${private_api}/healthz"; then
+    return 0
+  fi
+
+  # The uploader owns retrying uploads.  Do not restart it just because the
+  # upstream endpoint is unavailable; the timer provides bounded observability.
+  log_event "talkingboats_pi_health_failed" "private_api" "private_api_unreachable"
+  return 1
+}
+
+ensure_http_service() {
+  local service="$1"
+  local url="$2"
+  ensure_active "${service}"
+  if probe_url "${url}"; then
+    return 0
+  fi
+  log_event "talkingboats_pi_health_restart" "${service}" "probe_failed"
+  systemctl restart "${service}"
+  sleep "${restart_wait_seconds}"
+  if probe_url "${url}"; then
+    return 0
+  fi
+  log_event "talkingboats_pi_health_failed" "${service}" "probe_failed_after_restart"
+  return 1
+}
+
+failures=0
+
+ensure_active "talkingboats-spool-uploader.service" || failures=$((failures + 1))
+ensure_private_api_reachable || failures=$((failures + 1))
+ensure_http_service "talkingboats-ais-catcher.service" \
+  "http://127.0.0.1:8100/api/stat.json?receiver=" || failures=$((failures + 1))
+ensure_http_service "icecast2.service" \
+  "http://127.0.0.1:8000/status-json.xsl" || failures=$((failures + 1))
+ensure_active "talkingboats-profile-capture.service" || failures=$((failures + 1))
+ensure_http_service "talkingboats-live-radio-web.service" \
+  "http://127.0.0.1:8050/current-status.json" || failures=$((failures + 1))
+
+if [[ "${failures}" -gt 0 ]]; then
+  log_event "talkingboats_pi_health_degraded" "station" "failures_${failures}"
+  exit 1
+fi
+log_event "talkingboats_pi_health_ok" "station" "all_checks_passed"

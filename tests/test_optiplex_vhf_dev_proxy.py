@@ -27,12 +27,19 @@ def test_vhf_dev_proxy_nginx_tracks_shared_tailnet_sni_front_door() -> None:
 
     assert "stream {" in nginx_conf
     assert "ssl_preread_server_name" in nginx_conf
+    assert "pi.hole 127.0.0.1:9444;" in nginx_conf
+    assert "vhf-dev.robertboscacci.com 127.0.0.1:9443;" in nginx_conf
+    assert "dev.seattleboatradio.com 127.0.0.1:9443;" in nginx_conf
     assert "gotify.robertboscacci.com 127.0.0.1:8444;" in nginx_conf
     assert "laundry.robertboscacci.com 127.0.0.1:8444;" in nginx_conf
-    assert "default 127.0.0.1:9443;" in nginx_conf
+    assert "default 127.0.0.1:9444;" in nginx_conf
     assert "listen 100.124.5.39:443;" in nginx_conf
     assert "listen [fd7a:115c:a1e0::2601:597]:443;" in nginx_conf
     assert "listen 127.0.0.1:9443 ssl;" in nginx_conf
+    assert "listen 127.0.0.1:9444 ssl default_server;" in nginx_conf
+    assert "server_name pi.hole;" in nginx_conf
+    assert "ssl_certificate /etc/nginx/pihole/tls.pem;" in nginx_conf
+    assert "proxy_pass http://127.0.0.1:8082;" in nginx_conf
     assert "proxy_pass http://172.20.0.1:8095;" in nginx_conf
     assert "proxy_set_header X-TalkingBoats-Tailnet-Dev 1;" in nginx_conf
 
@@ -55,6 +62,22 @@ def test_optiplex_vhf_user_services_restart_and_install_under_default_target() -
         assert "WantedBy=multi-user.target" not in service, service_name
 
 
+def test_optiplex_api_uses_two_workers_to_isolate_slow_dynamodb_reads() -> None:
+    service = (SYSTEMD_DIR / "talkingboats-api.service.example").read_text(encoding="utf-8")
+
+    assert "uvicorn talkingboats.api:app" in service
+    assert "--workers 2" in service
+
+
+def test_optiplex_proxy_units_allow_a_bounded_private_api_recovery_window() -> None:
+    for service_name in [
+        "talkingboats-live-radio-proxy.service.example",
+        "talkingboats-public-live-radio-proxy.service.example",
+    ]:
+        service = (SYSTEMD_DIR / service_name).read_text(encoding="utf-8")
+        assert "TALKINGBOATS_PROXY_PRIVATE_API_READ_TIMEOUT_SECONDS=30" in service
+
+
 def test_optiplex_vhf_reboot_timers_are_persistent() -> None:
     for timer_name in [
         "talkingboats-lexical-refresh.timer.example",
@@ -75,7 +98,11 @@ def test_optiplex_vhf_boot_recovery_user_service_resets_and_starts_units() -> No
 
     assert "After=network-online.target" in service
     assert "StartLimitIntervalSec=0" in service
-    assert "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_optiplex_boot_recovery.sh" in service
+    assert (
+        "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/"
+        "scripts/talkingboats_optiplex_boot_recovery.sh"
+        in service
+    )
     assert "WantedBy=default.target" in service
     assert "systemctl --user reset-failed" in script
     assert "systemctl --user start" in script
@@ -83,3 +110,32 @@ def test_optiplex_vhf_boot_recovery_user_service_resets_and_starts_units() -> No
     assert "talkingboats-uploaded-clip-transcriber.service" in script
     assert "talkingboats-lexical-refresh.timer" in script
     assert "vhf-dev-proxy.service" in script
+    assert "TALKINGBOATS_SEARCH_WARM_URL" in script
+    assert "talkingboats_boot_recovery_search_warm" in script
+
+
+def test_optiplex_recurring_healthcheck_covers_api_proxies_and_transcriber() -> None:
+    service = Path(
+        "deploy/systemd/talkingboats-optiplex-healthcheck.service.example"
+    ).read_text(encoding="utf-8")
+    timer = Path(
+        "deploy/systemd/talkingboats-optiplex-healthcheck.timer.example"
+    ).read_text(encoding="utf-8")
+    script = Path("scripts/talkingboats_optiplex_healthcheck.sh").read_text(encoding="utf-8")
+
+    assert "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/" in service
+    assert "talkingboats_optiplex_healthcheck.sh" in service
+    assert "TimeoutStartSec=2min" in service
+    assert "OnBootSec=3min" in timer
+    assert "OnUnitActiveSec=2min" in timer
+    assert "Persistent=true" in timer
+    assert "Unit=talkingboats-optiplex-healthcheck.service" in timer
+    assert "talkingboats-api.service" in script
+    assert "talkingboats-live-radio-proxy.service" in script
+    assert "talkingboats-public-live-radio-proxy.service" in script
+    assert "talkingboats-uploaded-clip-transcriber.service" in script
+    assert "talkingboats_lan_address.sh" in script
+    assert "192.168.1.247:8034/healthz" not in script
+    assert "172.20.0.1:8095/healthz" in script
+    assert "127.0.0.1:8096/healthz" in script
+    assert "uploaded_clip_transcriber_poll" in script

@@ -612,6 +612,7 @@ def test_proxy_clip_search_endpoint_is_public_read_only() -> None:
             "http://private-api.test/api/clips/search?q=barge&limit=5&recency=24h"
         )
         assert "x-talkingboats-operator-token" not in request.headers
+        assert request.extensions["timeout"]["read"] == 17.0
         return httpx.Response(
             200,
             json={
@@ -625,6 +626,7 @@ def test_proxy_clip_search_endpoint_is_public_read_only() -> None:
     app = create_app(
         ProxySettings(
             private_api_url="http://private-api.test",
+            clip_search_read_timeout_seconds=17.0,
             tailnet_dev_routes_enabled=True,
         ),
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
@@ -634,6 +636,16 @@ def test_proxy_clip_search_endpoint_is_public_read_only() -> None:
 
     assert response.status_code == 200
     assert response.json()["query"] == "barge"
+
+
+def test_proxy_clip_search_timeout_has_a_dedicated_environment_override(monkeypatch) -> None:
+    assert ProxySettings().clip_search_read_timeout_seconds == 25.0
+    monkeypatch.setenv("TALKINGBOATS_PROXY_CLIP_SEARCH_READ_TIMEOUT_SECONDS", "22")
+
+    settings = ProxySettings.from_env()
+
+    assert settings.clip_search_read_timeout_seconds == 22.0
+    assert settings.private_api_read_timeout_seconds == 30.0
 
 
 def test_proxy_operator_session_endpoint_is_not_exposed() -> None:
@@ -1107,6 +1119,25 @@ def test_proxy_ais_catcher_viewer_is_public_read_only_and_public_safe() -> None:
     assert response.status_code == 200
     assert '<base href="/ais-catcher/" />' in response.text
     assert "set-cookie" not in response.headers
+
+
+def test_proxy_ais_catcher_root_unavailable_returns_retryable_html() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("receiver offline")
+
+    app = create_app(
+        ProxySettings(ais_catcher_base_url="http://pi.test:8100"),
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    response = _run(_asgi_get(app, "/ais-catcher/", headers={"Host": "vhf.robertboscacci.com"}))
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["cache-control"] == "no-store"
+    assert "AIS receiver is temporarily unavailable" in response.text
+    assert '<meta http-equiv="refresh" content="30">' in response.text
+    assert "AIS-catcher viewer unavailable" not in response.text
 
 
 def test_proxy_ais_catcher_subpaths_and_redirects_stay_under_dev_prefix() -> None:

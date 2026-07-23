@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from heapq import nlargest
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -121,13 +122,15 @@ def discover_completed_audio_files(
     min_age_seconds: float,
     stat_func=None,
     duration_probe: DurationProbe | None = None,
+    max_candidates: int | None = None,
 ) -> list[SpooledAudioClip]:
     stat_func = stat_func or (lambda path: path.stat())
     duration_probe = duration_probe or probe_audio_duration_seconds
     clips: list[SpooledAudioClip] = []
     if not spool_root.exists():
         return clips
-    for audio_path in sorted(spool_root.rglob("*")):
+    candidates: list[tuple[datetime, datetime, Path, Channel]] = []
+    for audio_path in spool_root.rglob("*"):
         if not audio_path.is_file() or audio_path.suffix.lower() not in CONTENT_TYPES:
             continue
         stat = stat_func(audio_path)
@@ -140,10 +143,25 @@ def discover_completed_audio_files(
             channel = infer_spool_channel(audio_path)
         except ValueError:
             continue
+        candidates.append(
+            (
+                _started_at_from_filename(audio_path) or modified_at,
+                modified_at,
+                audio_path,
+                channel,
+            )
+        )
+    if max_candidates is not None:
+        candidates = nlargest(
+            max(0, max_candidates),
+            candidates,
+            key=lambda candidate: (candidate[0], candidate[1], str(candidate[2])),
+        )
+    for filename_started_at, modified_at, audio_path, channel in candidates:
         metadata = _read_audio_metadata(audio_path)
         started_at = (
             _metadata_datetime(metadata, "started_at")
-            or _started_at_from_filename(audio_path)
+            or filename_started_at
             or modified_at
         )
         ended_at = _metadata_datetime(metadata, "ended_at")
@@ -174,6 +192,72 @@ def discover_completed_audio_files(
             )
         )
     return sorted(clips, key=lambda clip: clip.started_at, reverse=True)
+
+
+def prune_completed_audio_files(
+    *,
+    spool_root: Path,
+    now: datetime,
+    min_age_seconds: float,
+    max_retained_files: int | None,
+    stat_func=None,
+) -> int:
+    """Discard oldest stable recognized clips when an edge spool exceeds its cap.
+
+    The capture process can keep recording while the LAN is unavailable.  A
+    bounded spool preserves the newest, most useful clips and prevents an
+    outage from consuming the Pi's storage indefinitely.  Files younger than
+    ``min_age_seconds`` are intentionally left alone so an in-progress writer
+    is never pruned.
+    """
+    if max_retained_files is None:
+        return 0
+    if max_retained_files < 0:
+        raise ValueError("max_retained_files must not be negative")
+    stat_func = stat_func or (lambda path: path.stat())
+    if not spool_root.exists():
+        return 0
+
+    candidates: list[tuple[datetime, datetime, Path]] = []
+    for audio_path in spool_root.rglob("*"):
+        if not audio_path.is_file() or audio_path.suffix.lower() not in CONTENT_TYPES:
+            continue
+        stat = stat_func(audio_path)
+        if stat.st_size <= 0:
+            continue
+        modified_at = datetime.fromtimestamp(stat.st_mtime, UTC)
+        if (now - modified_at).total_seconds() < min_age_seconds:
+            continue
+        try:
+            infer_spool_channel(audio_path)
+        except ValueError:
+            continue
+        candidates.append(
+            (_started_at_from_filename(audio_path) or modified_at, modified_at, audio_path)
+        )
+
+    if len(candidates) <= max_retained_files:
+        return 0
+    retained_paths = {
+        path
+        for _, _, path in nlargest(
+            max_retained_files,
+            candidates,
+            key=lambda candidate: (candidate[0], candidate[1], str(candidate[2])),
+        )
+    }
+    pruned = 0
+    for _, _, audio_path in candidates:
+        if audio_path in retained_paths:
+            continue
+        audio_path.unlink(missing_ok=True)
+        for metadata_path in (
+            audio_path.with_suffix(".json"),
+            audio_path.with_name(f"{audio_path.name}.json"),
+        ):
+            metadata_path.unlink(missing_ok=True)
+        pruned += 1
+    return pruned
 
 
 def upload_spooled_clip(*, api_url: str, ingest_token: str, clip: SpooledAudioClip) -> UploadResult:
@@ -236,6 +320,7 @@ def process_spool_once(
     runner: Runner = subprocess.run,
     failed_root: Path | None = None,
     max_files: int | None = 100,
+    max_retained_files: int | None = None,
     fallback_to_original_on_prepare_error: bool = True,
     duration_probe: DurationProbe | None = None,
 ) -> int:
@@ -249,12 +334,26 @@ def process_spool_once(
         failed_root=failed_root,
         stat_func=stat_func,
     )
+    pruned = prune_completed_audio_files(
+        spool_root=spool_root,
+        now=now,
+        min_age_seconds=min_age_seconds,
+        max_retained_files=max_retained_files,
+        stat_func=stat_func,
+    )
+    if pruned:
+        _log_event(
+            "spool_clips_pruned",
+            pruned=pruned,
+            max_retained_files=max_retained_files,
+        )
     clips = discover_completed_audio_files(
         spool_root=spool_root,
         now=now,
         min_age_seconds=min_age_seconds,
         stat_func=stat_func,
         duration_probe=duration_probe,
+        max_candidates=max_files,
     )
     if max_files is not None:
         clips = clips[: max(0, max_files)]
@@ -524,6 +623,12 @@ def main() -> None:
         default=int(os.getenv("TALKINGBOATS_SPOOL_MAX_FILES_PER_POLL", "100")),
     )
     parser.add_argument(
+        "--max-retained-files",
+        type=_nonnegative_int,
+        default=os.getenv("TALKINGBOATS_SPOOL_MAX_RETAINED_FILES") or None,
+        help="Keep only this many completed source clips while the uploader is offline.",
+    )
+    parser.add_argument(
         "--no-preparation-fallback",
         action="store_false",
         dest="fallback_to_original_on_prepare_error",
@@ -555,6 +660,7 @@ def main() -> None:
                 ffmpeg_path=args.ffmpeg_path,
                 failed_root=args.failed_root,
                 max_files=args.max_files_per_poll,
+                max_retained_files=args.max_retained_files,
                 fallback_to_original_on_prepare_error=args.fallback_to_original_on_prepare_error,
             )
             _log_event("spool_uploader_poll", uploaded=uploaded)
@@ -622,6 +728,13 @@ def _env_bool(value: str | None, *, default: bool) -> bool:
     if stripped in {"0", "false", "no", "off", "disabled"}:
         return False
     raise ValueError(f"invalid boolean value: {value}")
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must not be negative")
+    return parsed
 
 
 def _parse_utc(value: str) -> datetime:

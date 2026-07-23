@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from talkingboats.clip_transcriber import (
     ClipNotAvailable,
+    ClipQualityMetadata,
     UploadedClipStore,
     _transcriber_start_log_fields,
     is_displayable_transcript,
@@ -375,6 +376,48 @@ def test_recent_transcribed_clips_returns_newest_with_segments(tmp_path) -> None
     channel_14_clips = store.recent_transcribed(limit=10, channel="14")
 
     assert [clip.key for clip in channel_14_clips] == [older_key]
+
+
+def test_recent_transcribed_clips_hide_quarantined_by_default(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    good_key = "raw/channel=14/date=2026-05-24/20260524T210000Z-good.mp3"
+    noisy_key = "raw/channel=66A/date=2026-05-24/20260524T213000Z-noisy.mp3"
+    store.record_presigned_upload(key=good_key, request=_clip_request(channel="14"))
+    store.record_presigned_upload(
+        key=noisy_key,
+        request=_clip_request(channel="66A", started_at="2026-05-24T21:30:00Z"),
+    )
+    store.mark_transcribed(
+        good_key,
+        [_segment("Seattle Traffic roger", "2026-05-24T21:00:00Z", "2026-05-24T21:00:02Z")],
+        quality=ClipQualityMetadata(quality_status="ok", quality_score=91.0),
+    )
+    store.mark_transcribed(
+        noisy_key,
+        [_segment("No address is moving", "2026-05-24T21:30:00Z", "2026-05-24T21:30:03Z")],
+        quality=ClipQualityMetadata(
+            quality_status="quarantined",
+            quality_score=24.0,
+            quality_reason="low_snr",
+            quality_flags=("low_snr",),
+            audio_metrics={"speech_contrast_db": 1.4, "hiss_band_ratio": 0.32},
+        ),
+    )
+
+    visible = store.recent_transcribed(limit=10)
+    quarantined = store.recent_transcribed(limit=10, quality="quarantined")
+    all_clips = store.recent_transcribed(limit=10, quality="all")
+
+    assert [clip.key for clip in visible] == [good_key]
+    assert [clip.key for clip in quarantined] == [noisy_key]
+    assert quarantined[0].quality_status == "quarantined"
+    assert quarantined[0].quality_reason == "low_snr"
+    assert quarantined[0].quality_flags == ("low_snr",)
+    assert quarantined[0].audio_metrics["speech_contrast_db"] == 1.4
+    assert [clip.key for clip in all_clips] == [noisy_key, good_key]
+    assert store.transcribed_channel_counts() == {"14": 1}
+    assert store.transcribed_channel_counts(quality="quarantined") == {"66A": 1}
 
 
 def test_recent_transcribed_clips_hide_legacy_ellipsis_only_rows(tmp_path) -> None:

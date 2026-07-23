@@ -2,12 +2,17 @@
 Description=Elliott Bay VHF lexical analysis refresh
 After=network-online.target talkingboats-api.service
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
 EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env
+ExecStartPre=/bin/bash /home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_lan_address.sh --dns-host dynamodb.us-west-2.amazonaws.com
 ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/refresh_lexical_analysis.sh
+Restart=on-failure
+RestartSec=5min
+TimeoutStartSec=30min
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

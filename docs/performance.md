@@ -1,7 +1,7 @@
 # Performance Monitoring
 
 The private dev app exposes a **Performance** tab at
-`https://vhf-dev.robertboscacci.com`. It is intentionally dev-only and reachable
+`https://dev.seattleboatradio.com`. It is intentionally dev-only and reachable
 only from the tailnet. The tab reads `/api/live/performance`, which the live
 radio proxy serves only for configured dev hostnames or the tailnet dev reverse
 proxy path.
@@ -36,6 +36,23 @@ are:
 | `TALKINGBOATS_PROXY_PERFORMANCE_MEMORY_HISTORY_SECONDS` | `21600` |
 | `TALKINGBOATS_PROXY_PERFORMANCE_PERSIST_INTERVAL_SECONDS` | `60` |
 | `TALKINGBOATS_PROXY_PERFORMANCE_PERSIST_HISTORY_SECONDS` | `86400` |
+
+## Transcript Search Cold Starts
+
+The generated semantic-search index is intentionally held in the private API
+process after its first parse. The cache is keyed by file modification time and
+size, so a completed lexical refresh replaces it automatically without serving
+stale vectors. This trades bounded resident memory for predictable searches and
+avoids reparsing the full generated JSON payload on every request.
+
+`scripts/talkingboats_optiplex_boot_recovery.sh` warms search after the API
+starts, and `scripts/refresh_lexical_analysis.sh` warms the newly generated
+index before deployment. The public proxy keeps its general private-API timeout
+at 8 seconds and gives only `/api/clips/search` a 25-second cold-start allowance.
+Override that allowance with
+`TALKINGBOATS_PROXY_CLIP_SEARCH_READ_TIMEOUT_SECONDS`; override the warmup target
+or timeout with `TALKINGBOATS_SEARCH_WARM_URL` and
+`TALKINGBOATS_SEARCH_WARM_TIMEOUT_SECONDS`.
 
 ## Pressure Thresholds
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Talking Boats Pi receiver health checks regularly
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+RandomizedDelaySec=15s
+Persistent=true
+Unit=talkingboats-pi-healthcheck.service
+
+[Install]
+WantedBy=timers.target

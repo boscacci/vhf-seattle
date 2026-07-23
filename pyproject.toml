@@ -29,6 +29,9 @@ analysis = [
 transcribe = [
     "faster-whisper>=1.1,<2",
 ]
+mdns = [
+    "zeroconf>=0.147,<1",
+]
 asr-train = [
     "accelerate>=0.33,<2",
     "datasets>=2.19,<4",
@@ -59,6 +62,7 @@ talkingboats-train-asr-feedback = "talkingboats.asr_feedback:main"
 talkingboats-backfill-durable-events = "talkingboats.durable_backfill:main"
 talkingboats-tag-raw-retention = "talkingboats.retention:main"
 talkingboats-clean-noise-transcripts = "talkingboats.transcript_cleanup:main"
+talkingboats-mdns-advertiser = "talkingboats.mdns_advertiser:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

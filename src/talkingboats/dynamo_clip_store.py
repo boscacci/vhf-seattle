@@ -18,8 +18,17 @@ from talkingboats.asr_training_metadata import (
     normalize_training_split,
     validate_training_metadata,
 )
+from talkingboats.clip_quality import (
+    ClipQualityAssessment,
+    QualityFilter,
+    coerce_quality_assessment,
+    normalize_quality_filter,
+    normalize_quality_status,
+    quality_matches_filter,
+)
 from talkingboats.clip_transcriber import (
     ClipFeature,
+    ClipQualityMetadata,
     RecentTranscribedClip,
     TranscriptCorrection,
     UploadedClipRecord,
@@ -38,14 +47,19 @@ CLIP_STATE_SK = "state"
 TRANSCRIBED_PK = "clips#transcribed"
 CORRECTIONS_PK = "clip_corrections"
 FEATURED_PK = "clips#featured"
+QUALITY_TRANSCRIBED_PREFIX = "clips#transcribed#quality#"
 STATUS_PREFIX = "clip_status#"
 CHANNEL_TRANSCRIBED_PREFIX = "clips#transcribed#channel#"
 CHANNEL_FEATURED_PREFIX = "clips#featured#channel#"
-CHANNEL_COUNT_CACHE_TTL_SECONDS = 30.0
+QUALITY_INDEX_STATUSES = ("quarantined",)
+# Channel counts require a full DynamoDB index scan. They are dashboard
+# statistics, so bounded staleness is preferable to blocking live ingestion and
+# public clip reads whenever a new clip arrives.
+CHANNEL_COUNT_CACHE_TTL_SECONDS = 300.0
 PAGE_ANCHOR_CACHE_TTL_SECONDS = 30.0
 PAGE_ANCHOR_UI_PAGE_SIZES = (6, 12, 24)
 PAGE_ANCHOR_PROJECTION_EXPRESSION = (
-    "pk, sk, #channel, display_transcript, transcript, transcript_reviewed"
+    "pk, sk, #channel, display_transcript, transcript, transcript_reviewed, quality_status"
 )
 
 
@@ -184,7 +198,13 @@ class DynamoUploadedClipStore:
             payload=_event_payload(item, {"transcript": ""}),
         )
 
-    def mark_transcribed(self, key: str, segments: Iterable[UploadedClipSegment]) -> None:
+    def mark_transcribed(
+        self,
+        key: str,
+        segments: Iterable[UploadedClipSegment],
+        *,
+        quality: ClipQualityAssessment | ClipQualityMetadata | dict[str, object] | None = None,
+    ) -> None:
         item = self._state_item(key)
         if not item:
             return
@@ -193,6 +213,7 @@ class DynamoUploadedClipStore:
         if not is_displayable_transcript(transcript):
             self.mark_empty(key)
             return
+        quality_metadata = coerce_quality_assessment(quality)
         old_status = str(item.get("status"))
         item.update(
             {
@@ -202,10 +223,15 @@ class DynamoUploadedClipStore:
                 "error": None,
                 "segments": segment_payload,
                 "segment_count": len(segment_payload),
+                **quality_metadata.as_metadata(),
             }
         )
         self._put_state(item, old_status=old_status)
-        transcribed_event_id = stable_event_id(transcript, segment_payload)
+        transcribed_event_id = stable_event_id(
+            transcript,
+            segment_payload,
+            quality_metadata.as_metadata(),
+        )
         self.event_store.record_clip_event(
             "clip.transcribed",
             key=key,
@@ -244,6 +270,7 @@ class DynamoUploadedClipStore:
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
         reviewed_only: bool = False,
+        quality: QualityFilter = "visible",
         sort: Literal["newest", "oldest"] = "newest",
         page: int | None = None,
     ) -> list[RecentTranscribedClip]:
@@ -257,6 +284,12 @@ class DynamoUploadedClipStore:
             offset = (page - 1) * limit
         selected_channels = _unique_channels([channel] if channel else channels)
         scan_forward = sort == "oldest"
+        quality = normalize_quality_filter(quality)
+        pk = (
+            _quality_transcribed_pk("quarantined")
+            if quality == "quarantined" and not featured_only
+            else FEATURED_PK if featured_only else TRANSCRIBED_PK
+        )
         if selected_channels:
             needed = limit + offset
             index_items: list[dict[str, Any]] = []
@@ -275,6 +308,8 @@ class DynamoUploadedClipStore:
                         continue
                     if reviewed_only and not bool(item.get("transcript_reviewed")):
                         continue
+                    if not quality_matches_filter(item.get("quality_status"), quality):
+                        continue
                     channel_items.append(item)
                     if len(channel_items) >= needed:
                         break
@@ -286,11 +321,12 @@ class DynamoUploadedClipStore:
             index_items = index_items[offset : offset + limit]
         else:
             index_items = self._query_filtered_transcribed(
+                pk=pk,
                 limit=limit,
                 offset=offset,
                 excluded_channels={excluded.upper() for excluded in excluded_channels},
-                featured_only=featured_only,
                 reviewed_only=reviewed_only,
+                quality=quality,
                 sort=sort,
                 page=page,
             )
@@ -302,11 +338,17 @@ class DynamoUploadedClipStore:
         page_size: int,
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
+        quality: QualityFilter = "visible",
     ) -> Iterable[RecentTranscribedClip]:
         if page_size <= 0:
             raise ValueError("page_size must be positive")
         excluded = {excluded.upper() for excluded in excluded_channels}
-        pk = FEATURED_PK if featured_only else TRANSCRIBED_PK
+        quality = normalize_quality_filter(quality)
+        pk = (
+            _quality_transcribed_pk("quarantined")
+            if quality == "quarantined" and not featured_only
+            else FEATURED_PK if featured_only else TRANSCRIBED_PK
+        )
         for item in self._iter_query_items(
             pk,
             scan_forward=False,
@@ -315,6 +357,8 @@ class DynamoUploadedClipStore:
             if str(item.get("channel") or "").upper() in excluded:
                 continue
             if not _is_displayable_index_item(item):
+                continue
+            if not quality_matches_filter(item.get("quality_status"), quality):
                 continue
             yield _recent_from_item(item)
 
@@ -342,10 +386,12 @@ class DynamoUploadedClipStore:
         channel: str,
         started_at: str,
         excluded_channels: tuple[str, ...] = (),
+        quality: QualityFilter = "visible",
     ) -> RecentTranscribedClip | None:
         normalized = _format_utc(_parse_utc(started_at))
         if channel.upper() in {excluded.upper() for excluded in excluded_channels}:
             return None
+        quality = normalize_quality_filter(quality)
         prefix = f"{normalized}#"
         rows = self._query_items(
             _channel_transcribed_pk(channel),
@@ -354,7 +400,10 @@ class DynamoUploadedClipStore:
             limit=5,
         )
         for row in rows:
-            if _is_displayable_index_item(row):
+            if _is_displayable_index_item(row) and quality_matches_filter(
+                row.get("quality_status"),
+                quality,
+            ):
                 return _recent_from_item(row)
         return None
 
@@ -449,6 +498,7 @@ class DynamoUploadedClipStore:
             channel=channel,
             started_at=started_at,
             excluded_channels=excluded_channels,
+            quality="all",
         )
         if clip is None:
             raise LookupError("clip not found")
@@ -582,6 +632,7 @@ class DynamoUploadedClipStore:
             channel=channel,
             started_at=started_at,
             excluded_channels=excluded_channels,
+            quality="all",
         )
         if clip is None:
             raise LookupError("clip not found")
@@ -712,13 +763,16 @@ class DynamoUploadedClipStore:
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
         reviewed_only: bool = False,
+        quality: QualityFilter = "visible",
     ) -> dict[str, int]:
+        quality = normalize_quality_filter(quality)
         excluded = tuple(sorted({channel.upper() for channel in excluded_channels}))
         cache_key = (
             *self._cache_scope,
             "channel_counts",
             featured_only,
             reviewed_only,
+            quality,
             excluded,
         )
         cached = self._cached_channel_counts(cache_key)
@@ -726,7 +780,11 @@ class DynamoUploadedClipStore:
             return cached
         excluded_set = set(excluded)
         counts: dict[str, int] = {}
-        pk = FEATURED_PK if featured_only else TRANSCRIBED_PK
+        pk = (
+            _quality_transcribed_pk("quarantined")
+            if quality == "quarantined" and not featured_only
+            else FEATURED_PK if featured_only else TRANSCRIBED_PK
+        )
         page_anchor_profiles = self._page_anchor_profiles_for_count_scan(excluded)
         page_anchor_sets = {
             profile: self._empty_page_anchor_sets()
@@ -745,6 +803,9 @@ class DynamoUploadedClipStore:
             channel_upper = channel.upper()
             row_is_displayable = _is_displayable_index_item(item) and (
                 not reviewed_only or bool(item.get("transcript_reviewed"))
+            ) and quality_matches_filter(
+                item.get("quality_status"),
+                quality,
             )
             if row_is_displayable and channel_upper not in excluded_set:
                 counts[channel] = counts.get(channel, 0) + 1
@@ -768,6 +829,7 @@ class DynamoUploadedClipStore:
                 pk=pk,
                 excluded_channels=profile,
                 reviewed_only=reviewed_only,
+                quality=quality,
                 sort="newest",
                 anchors_by_size=anchors_by_size,
             )
@@ -781,7 +843,9 @@ class DynamoUploadedClipStore:
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
         reviewed_only: bool = False,
+        quality: QualityFilter = "visible",
     ) -> int:
+        quality = normalize_quality_filter(quality)
         selected_channels = _unique_channels([channel] if channel else channels)
         pk_for_channel = _channel_featured_pk if featured_only else _channel_transcribed_pk
         if selected_channels:
@@ -789,6 +853,7 @@ class DynamoUploadedClipStore:
                 self._query_displayable_count(
                     pk_for_channel(selected),
                     reviewed_only=reviewed_only,
+                    quality=quality,
                 )
                 for selected in selected_channels
             )
@@ -800,12 +865,19 @@ class DynamoUploadedClipStore:
                     excluded_channels=tuple(excluded),
                     featured_only=featured_only,
                     reviewed_only=reviewed_only,
+                    quality=quality,
                 ).items()
                 if selected.upper() not in excluded
             )
+        pk = (
+            _quality_transcribed_pk("quarantined")
+            if quality == "quarantined" and not featured_only
+            else FEATURED_PK if featured_only else TRANSCRIBED_PK
+        )
         return self._query_displayable_count(
-            FEATURED_PK if featured_only else TRANSCRIBED_PK,
+            pk,
             reviewed_only=reviewed_only,
+            quality=quality,
         )
 
     def non_transcribed_clip_count(self) -> int:
@@ -869,7 +941,6 @@ class DynamoUploadedClipStore:
         )
 
     def _put_state(self, item: dict[str, Any], *, old_status: str | None) -> None:
-        self._invalidate_channel_counts_cache()
         self._invalidate_page_anchors_cache()
         key = str(item["key"])
         channel = str(item["channel"])
@@ -883,9 +954,14 @@ class DynamoUploadedClipStore:
         if old_status == "transcribed" and status != "transcribed":
             self._delete_transcribed_indexes(channel, started_at, key)
             self._delete_featured_indexes(channel, started_at, key)
+        if old_status == "transcribed":
+            self._delete_quality_transcribed_indexes(started_at, key)
         if status == "transcribed" and _is_displayable_index_item(item):
             self._put_item(_index_item(TRANSCRIBED_PK, item))
             self._put_item(_index_item(_channel_transcribed_pk(channel), item))
+            quality_index_status = _indexed_quality_status(item)
+            if quality_index_status is not None:
+                self._put_item(_index_item(_quality_transcribed_pk(quality_index_status), item))
             if bool(item.get("featured")):
                 self._put_item(_index_item(FEATURED_PK, item))
                 self._put_item(_index_item(_channel_featured_pk(channel), item))
@@ -899,11 +975,17 @@ class DynamoUploadedClipStore:
         sk = _index_sk(started_at, key)
         self._delete_item({"pk": TRANSCRIBED_PK, "sk": sk})
         self._delete_item({"pk": _channel_transcribed_pk(channel), "sk": sk})
+        self._delete_quality_transcribed_indexes(started_at, key)
 
     def _delete_featured_indexes(self, channel: str, started_at: str, key: str) -> None:
         sk = _index_sk(started_at, key)
         self._delete_item({"pk": FEATURED_PK, "sk": sk})
         self._delete_item({"pk": _channel_featured_pk(channel), "sk": sk})
+
+    def _delete_quality_transcribed_indexes(self, started_at: str, key: str) -> None:
+        sk = _index_sk(started_at, key)
+        for status in QUALITY_INDEX_STATUSES:
+            self._delete_item({"pk": _quality_transcribed_pk(status), "sk": sk})
 
     def _state_item(self, key: str) -> dict[str, Any] | None:
         response = self.table.get_item(Key={"pk": _clip_pk(key), "sk": CLIP_STATE_SK})
@@ -1021,6 +1103,7 @@ class DynamoUploadedClipStore:
         pk: str,
         excluded_channels: tuple[str, ...],
         reviewed_only: bool,
+        quality: QualityFilter,
         sort: Literal["newest", "oldest"],
         page_size: int,
     ) -> tuple[object, ...]:
@@ -1030,6 +1113,7 @@ class DynamoUploadedClipStore:
             "page_anchors",
             pk,
             reviewed_only,
+            quality,
             sort,
             page_size,
             excluded,
@@ -1071,6 +1155,7 @@ class DynamoUploadedClipStore:
         pk: str,
         excluded_channels: tuple[str, ...],
         reviewed_only: bool,
+        quality: QualityFilter,
         sort: Literal["newest", "oldest"],
         anchors_by_size: dict[int, dict[int, dict[str, str] | None]],
     ) -> None:
@@ -1080,6 +1165,7 @@ class DynamoUploadedClipStore:
                     pk=pk,
                     excluded_channels=excluded_channels,
                     reviewed_only=reviewed_only,
+                    quality=quality,
                     sort=sort,
                     page_size=page_size,
                 ),
@@ -1132,26 +1218,35 @@ class DynamoUploadedClipStore:
                 break
         return total
 
-    def _query_displayable_count(self, pk: str, *, reviewed_only: bool = False) -> int:
+    def _query_displayable_count(
+        self,
+        pk: str,
+        *,
+        reviewed_only: bool = False,
+        quality: QualityFilter = "visible",
+    ) -> int:
+        quality = normalize_quality_filter(quality)
         return sum(
             1
             for item in self._query_items(pk)
             if _is_displayable_index_item(item)
             and (not reviewed_only or bool(item.get("transcript_reviewed")))
+            and quality_matches_filter(item.get("quality_status"), quality)
         )
 
     def _query_filtered_transcribed(
         self,
         *,
+        pk: str,
         limit: int,
         offset: int,
         excluded_channels: set[str],
-        featured_only: bool = False,
         reviewed_only: bool = False,
+        quality: QualityFilter = "visible",
         sort: Literal["newest", "oldest"] = "newest",
         page: int | None = None,
     ) -> list[dict[str, Any]]:
-        pk = FEATURED_PK if featured_only else TRANSCRIBED_PK
+        quality = normalize_quality_filter(quality)
         if page is not None:
             return self._query_filtered_transcribed_page(
                 pk=pk,
@@ -1159,6 +1254,7 @@ class DynamoUploadedClipStore:
                 page=page,
                 excluded_channels=excluded_channels,
                 reviewed_only=reviewed_only,
+                quality=quality,
                 sort=sort,
             )
         needed = limit + offset
@@ -1174,6 +1270,8 @@ class DynamoUploadedClipStore:
                 continue
             if reviewed_only and not bool(row.get("transcript_reviewed")):
                 continue
+            if not quality_matches_filter(row.get("quality_status"), quality):
+                continue
             filtered.append(row)
             if len(filtered) >= needed:
                 break
@@ -1187,6 +1285,7 @@ class DynamoUploadedClipStore:
         page: int,
         excluded_channels: set[str],
         reviewed_only: bool,
+        quality: QualityFilter,
         sort: Literal["newest", "oldest"],
     ) -> list[dict[str, Any]]:
         start_key: dict[str, Any] | None = None
@@ -1196,6 +1295,7 @@ class DynamoUploadedClipStore:
                 pk=pk,
                 excluded_channels=excluded,
                 reviewed_only=reviewed_only,
+                quality=quality,
                 sort=sort,
                 page_size=limit,
                 page=page,
@@ -1209,6 +1309,7 @@ class DynamoUploadedClipStore:
             start_key=start_key,
             excluded_channels=excluded_channels,
             reviewed_only=reviewed_only,
+            quality=quality,
             sort=sort,
         )
 
@@ -1218,6 +1319,7 @@ class DynamoUploadedClipStore:
         pk: str,
         excluded_channels: tuple[str, ...],
         reviewed_only: bool,
+        quality: QualityFilter,
         sort: Literal["newest", "oldest"],
         page_size: int,
         page: int,
@@ -1226,6 +1328,7 @@ class DynamoUploadedClipStore:
             pk=pk,
             excluded_channels=excluded_channels,
             reviewed_only=reviewed_only,
+            quality=quality,
             sort=sort,
             page_size=page_size,
         )
@@ -1236,6 +1339,7 @@ class DynamoUploadedClipStore:
             pk=pk,
             excluded_channels=set(excluded_channels),
             reviewed_only=reviewed_only,
+            quality=quality,
             sort=sort,
             page_size=page_size,
             through_page=page,
@@ -1251,6 +1355,7 @@ class DynamoUploadedClipStore:
         pk: str,
         excluded_channels: set[str],
         reviewed_only: bool,
+        quality: QualityFilter,
         sort: Literal["newest", "oldest"],
         page_size: int,
         through_page: int,
@@ -1271,6 +1376,7 @@ class DynamoUploadedClipStore:
                 channel not in excluded_channels
                 and _is_displayable_index_item(row)
                 and (not reviewed_only or bool(row.get("transcript_reviewed")))
+                and quality_matches_filter(row.get("quality_status"), quality)
             ):
                 displayable_seen += 1
                 if displayable_seen > 1 and (displayable_seen - 1) % page_size == 0:
@@ -1290,6 +1396,7 @@ class DynamoUploadedClipStore:
         start_key: dict[str, Any] | None,
         excluded_channels: set[str],
         reviewed_only: bool,
+        quality: QualityFilter,
         sort: Literal["newest", "oldest"],
     ) -> list[dict[str, Any]]:
         filtered: list[dict[str, Any]] = []
@@ -1304,6 +1411,8 @@ class DynamoUploadedClipStore:
             if not _is_displayable_index_item(row):
                 continue
             if reviewed_only and not bool(row.get("transcript_reviewed")):
+                continue
+            if not quality_matches_filter(row.get("quality_status"), quality):
                 continue
             filtered.append(row)
             if len(filtered) >= limit:
@@ -1367,6 +1476,15 @@ def _channel_transcribed_pk(channel: str) -> str:
 
 def _channel_featured_pk(channel: str) -> str:
     return f"{CHANNEL_FEATURED_PREFIX}{channel}"
+
+
+def _quality_transcribed_pk(quality_status: str) -> str:
+    return f"{QUALITY_TRANSCRIBED_PREFIX}{quality_status}"
+
+
+def _indexed_quality_status(item: dict[str, Any]) -> str | None:
+    quality_status = normalize_quality_status(item.get("quality_status"))
+    return quality_status if quality_status in QUALITY_INDEX_STATUSES else None
 
 
 def _index_sk(started_at: str, key: str) -> str:
@@ -1436,6 +1554,11 @@ def _recent_from_item(item: dict[str, Any]) -> RecentTranscribedClip:
         training_split=normalize_training_split(item.get("training_split")),
         training_flags=tuple(_training_flags(item.get("training_flags"))),
         training_reason=_optional_str(item.get("training_reason")),
+        quality_status=normalize_quality_status(item.get("quality_status")),
+        quality_score=_optional_float(item.get("quality_score")),
+        quality_reason=_optional_str(item.get("quality_reason")),
+        quality_flags=tuple(_training_flags(item.get("quality_flags"))),
+        audio_metrics=_audio_metrics(item.get("audio_metrics")),
     )
 
 
@@ -1488,6 +1611,11 @@ def _event_payload(item: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any
         "idempotency_key": item.get("idempotency_key"),
         "status": item.get("status"),
         "error": item.get("error"),
+        "quality_status": item.get("quality_status"),
+        "quality_score": item.get("quality_score"),
+        "quality_reason": item.get("quality_reason"),
+        "quality_flags": item.get("quality_flags"),
+        "audio_metrics": item.get("audio_metrics"),
         **extra,
     }
 
@@ -1525,6 +1653,17 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _audio_metrics(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+    metrics: dict[str, float] = {}
+    for key, item in value.items():
+        parsed = _optional_float(item)
+        if parsed is not None:
+            metrics[str(key)] = parsed
+    return metrics
 
 
 def _as_list(value: Any) -> list[dict[str, Any]]:

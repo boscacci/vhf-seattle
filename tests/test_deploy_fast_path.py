@@ -215,9 +215,9 @@ def test_vhf_dev_tailnet_proxy_config_documents_custom_tls_front_door() -> None:
     assert "listen 100.124.5.39:443;" in nginx
     assert "listen [fd7a:115c:a1e0::2601:597]:443;" in nginx
     assert "listen 127.0.0.1:9443 ssl;" in nginx
-    assert "server_name vhf-dev.robertboscacci.com;" in nginx
+    assert "server_name dev.seattleboatradio.com;" in nginx
     assert (
-        "ssl_certificate /etc/letsencrypt/live/vhf-dev.robertboscacci.com/fullchain.pem;"
+        "ssl_certificate /etc/letsencrypt/live/dev.seattleboatradio.com/fullchain.pem;"
         in nginx
     )
     assert "proxy_set_header X-TalkingBoats-Tailnet-Dev 1;" in nginx

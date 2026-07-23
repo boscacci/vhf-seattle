@@ -775,6 +775,12 @@ button {
   background: rgba(255, 209, 102, 0.1);
 }
 
+.pill.quality-pill {
+  color: #ffb86b;
+  border-color: rgba(255, 184, 107, 0.48);
+  background: rgba(255, 184, 107, 0.1);
+}
+
 .feature-clip-button {
   display: inline-flex;
   align-items: center;
@@ -902,6 +908,10 @@ blockquote {
 
 .clip-card.is-reviewed blockquote {
   border-left-color: var(--teal);
+}
+
+.clip-card.is-quarantined blockquote {
+  border-left-color: #ffb86b;
 }
 
 .transcript-correction {
@@ -1617,6 +1627,39 @@ audio {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #07110f;
+}
+
+.ais-catcher-unavailable {
+  display: grid;
+  min-height: min(72vh, 760px);
+  box-sizing: border-box;
+  place-items: center;
+  padding: clamp(24px, 6vw, 72px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel), var(--bg) 14%);
+  text-align: center;
+}
+
+.ais-catcher-unavailable > div {
+  display: grid;
+  max-width: 540px;
+  gap: 12px;
+}
+
+.ais-catcher-unavailable h3,
+.ais-catcher-unavailable p {
+  margin: 0;
+}
+
+.ais-catcher-unavailable p:not(.eyebrow) {
+  color: var(--muted);
+}
+
+.ais-catcher-unavailable a {
+  justify-self: center;
+  color: var(--accent);
+  font-weight: 800;
 }
 
 .map-data-note {

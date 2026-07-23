@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Talking Boats OptiPlex service health checks regularly
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+RandomizedDelaySec=15s
+Persistent=true
+Unit=talkingboats-optiplex-healthcheck.service
+
+[Install]
+WantedBy=timers.target

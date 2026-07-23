@@ -8,8 +8,8 @@ StartLimitIntervalSec=0
 Type=simple
 WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
 EnvironmentFile=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env
-ExecStartPre=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell python -m talkingboats.network_readiness --lan-address 192.168.1.247/24
-ExecStart=/home/rob/miniforge3/condabin/conda run -n dell uvicorn talkingboats.api:app --host 192.168.1.247 --port 8034
+ExecStartPre=/bin/bash /home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_lan_address.sh
+ExecStart=/bin/bash -lc 'bind_host="$$(/bin/bash /home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_lan_address.sh)"; exec /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell uvicorn talkingboats.api:app --host "$${bind_host}" --port 8034 --workers 2'
 Restart=always
 RestartSec=10
 

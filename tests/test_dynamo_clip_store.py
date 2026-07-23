@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from talkingboats.clip_transcriber import ClipQualityMetadata
 from talkingboats.durable_backfill import backfill_clip_read_model
 from talkingboats.dynamo_clip_store import DynamoClipStoreConfig, DynamoUploadedClipStore
 from talkingboats.schemas import ClipPresignRequest
@@ -249,6 +250,116 @@ def test_dynamo_clip_store_hides_legacy_ellipsis_only_rows() -> None:
     assert [clip.key for clip in store.recent_transcribed(limit=5)] == [good_key]
     assert store.transcribed_channel_counts() == {"14": 1}
     assert store.transcribed_clip_count(channel="14") == 1
+
+
+def test_dynamo_clip_store_hides_quarantined_recent_clips_by_default() -> None:
+    table = FakeDynamoTable()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    good_key = "raw/channel=14/date=2026-06-01/good.mp3"
+    noisy_key = "raw/channel=66A/date=2026-06-01/noisy.mp3"
+    store.record_presigned_upload(key=good_key, request=_request(channel="14"))
+    store.record_presigned_upload(key=noisy_key, request=_request(channel="66A"))
+    store.mark_transcribed(
+        good_key,
+        [
+            SimpleNamespace(
+                text="Seattle Traffic roger",
+                started_at="2026-06-01T12:00:00Z",
+                ended_at="2026-06-01T12:00:02Z",
+                relative_start_seconds=0.0,
+                relative_end_seconds=2.0,
+            )
+        ],
+        quality=ClipQualityMetadata(quality_status="ok", quality_score=93.0),
+    )
+    store.mark_transcribed(
+        noisy_key,
+        [
+            SimpleNamespace(
+                text="No address is moving",
+                started_at="2026-06-01T12:00:00Z",
+                ended_at="2026-06-01T12:00:02Z",
+                relative_start_seconds=0.0,
+                relative_end_seconds=2.0,
+            )
+        ],
+        quality=ClipQualityMetadata(
+            quality_status="quarantined",
+            quality_score=18.0,
+            quality_reason="low_snr",
+            quality_flags=("low_snr",),
+            audio_metrics={"speech_contrast_db": 1.1},
+        ),
+    )
+
+    assert [clip.key for clip in store.recent_transcribed(limit=5)] == [good_key]
+    quarantined = store.recent_transcribed(limit=5, quality="quarantined")
+    assert [clip.key for clip in quarantined] == [noisy_key]
+    assert quarantined[0].quality_reason == "low_snr"
+    assert quarantined[0].audio_metrics["speech_contrast_db"] == 1.1
+    assert store.transcribed_channel_counts() == {"14": 1}
+    assert store.transcribed_channel_counts(quality="quarantined") == {"66A": 1}
+
+
+def test_dynamo_clip_store_reads_quarantine_lane_from_quality_index() -> None:
+    table = FakeDynamoTable(page_size=2)
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    noisy_key = "raw/channel=66A/date=2026-06-01/noisy.mp3"
+    for index in range(12):
+        key = f"raw/channel=14/date=2026-06-01/legacy-{index}.mp3"
+        store.record_presigned_upload(key=key, request=_request(channel="14"))
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Seattle Traffic legacy {index}",
+                    started_at=f"2026-06-01T12:00:{index:02d}Z",
+                    ended_at=f"2026-06-01T12:00:{index + 1:02d}Z",
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+    store.record_presigned_upload(key=noisy_key, request=_request(channel="66A"))
+    store.mark_transcribed(
+        noisy_key,
+        [
+            SimpleNamespace(
+                text="No address is moving",
+                started_at="2026-06-01T12:00:30Z",
+                ended_at="2026-06-01T12:00:31Z",
+                relative_start_seconds=0.0,
+                relative_end_seconds=1.0,
+            )
+        ],
+        quality=ClipQualityMetadata(
+            quality_status="quarantined",
+            quality_score=17.0,
+            quality_reason="low_snr",
+        ),
+    )
+
+    table.query_calls.clear()
+
+    assert [clip.key for clip in store.recent_transcribed(limit=5, quality="quarantined")] == [
+        noisy_key
+    ]
+    assert store.transcribed_channel_counts(quality="quarantined") == {"66A": 1}
+    assert store.transcribed_clip_count(quality="quarantined") == 1
+
+    queried_pks = [
+        call["ExpressionAttributeValues"][":pk"]
+        for call in table.query_calls
+        if "ExpressionAttributeValues" in call
+    ]
+    assert "clips#transcribed#quality#quarantined" in queried_pks
+    assert "clips#transcribed" not in queried_pks
 
 
 def test_dynamo_clip_store_cleanup_marks_legacy_noise_transcripts_empty() -> None:
@@ -552,13 +663,66 @@ def test_dynamo_clip_store_counts_channels_with_projected_cached_global_query() 
     assert len(count_queries) == 2
     assert all(
         call["ProjectionExpression"]
-        == "pk, sk, #channel, display_transcript, transcript, transcript_reviewed"
+        == (
+            "pk, sk, #channel, display_transcript, transcript, transcript_reviewed, "
+            "quality_status"
+        )
         for call in count_queries
     )
     assert all(
         call["ExpressionAttributeNames"] == {"#channel": "channel"}
         for call in count_queries
     )
+
+
+def test_dynamo_clip_store_keeps_channel_counts_cached_during_live_writes() -> None:
+    table = FakeDynamoTable(page_size=2)
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    first_key = "raw/channel=14/date=2026-06-01/first.mp3"
+    store.record_presigned_upload(key=first_key, request=_request(channel="14"))
+    store.mark_transcribed(
+        first_key,
+        [
+            SimpleNamespace(
+                text="Seattle Traffic first",
+                started_at="2026-06-01T12:00:00Z",
+                ended_at="2026-06-01T12:00:01Z",
+                relative_start_seconds=0.0,
+                relative_end_seconds=1.0,
+            )
+        ],
+    )
+
+    table.query_calls.clear()
+    assert store.transcribed_channel_counts() == {"14": 1}
+
+    second_key = "raw/channel=68/date=2026-06-01/second.mp3"
+    store.record_presigned_upload(key=second_key, request=_request(channel="68"))
+    store.mark_transcribed(
+        second_key,
+        [
+            SimpleNamespace(
+                text="Seattle Traffic second",
+                started_at="2026-06-01T12:00:02Z",
+                ended_at="2026-06-01T12:00:03Z",
+                relative_start_seconds=0.0,
+                relative_end_seconds=1.0,
+            )
+        ],
+    )
+
+    # A live write must not force another full DynamoDB count scan. The count
+    # refreshes on the bounded cache TTL instead.
+    assert store.transcribed_channel_counts() == {"14": 1}
+    count_queries = [
+        call
+        for call in table.query_calls
+        if call["ExpressionAttributeValues"][":pk"] == "clips#transcribed"
+    ]
+    assert len(count_queries) == 1
 
 
 def _request(*, channel: str) -> ClipPresignRequest:

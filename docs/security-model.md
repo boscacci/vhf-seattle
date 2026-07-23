@@ -2,7 +2,7 @@
 
 ## Public Boundary
 
-`vhf.robertboscacci.com` is public read-only. It serves static app assets and
+`seattleboatradio.com` is public read-only. It serves static app assets and
 published clip audio from a private S3 bucket through CloudFront Origin Access
 Control, then routes read-only live API paths to the Ubuntu micro-computer proxy through
 Tailscale Funnel.

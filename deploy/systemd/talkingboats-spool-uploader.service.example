@@ -8,7 +8,7 @@ StartLimitIntervalSec=0
 Type=simple
 EnvironmentFile=/etc/talkingboats/live-radio.env
 Environment=PYTHONPATH=/opt/talkingboats/app/src
-ExecStart=/usr/bin/python3 -m talkingboats.spool_uploader --spool-root /opt/talkingboats/spool/airband --poll-seconds 20 --min-age-seconds 10 --delete-after-upload
+ExecStart=/usr/bin/python3 -m talkingboats.spool_uploader --spool-root /opt/talkingboats/spool/airband --poll-seconds 20 --min-age-seconds 10 --max-retained-files 300 --delete-after-upload
 Restart=always
 RestartSec=10
 Nice=5

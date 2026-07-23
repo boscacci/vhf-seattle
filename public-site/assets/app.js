@@ -157,6 +157,12 @@ const routeMetadata = {
       "Human-reviewed public Elliott Bay marine VHF clip transcripts and audio from the receiver archive.",
     url: `${siteCanonicalOrigin}/reviewed/`,
   },
+  quarantine: {
+    title: "Quarantined Elliott Bay VHF Clips",
+    description:
+      "Receiver clips held aside by automatic audio and transcript quality checks for operator review.",
+    url: `${siteCanonicalOrigin}/clips/?quality=quarantined`,
+  },
   search: {
     title: "Elliott Bay VHF Transcript Search",
     description:
@@ -343,6 +349,7 @@ const channelFilter = document.querySelector("#channel-filter");
 const refreshButton = document.querySelector("#refresh-clips");
 const stats = document.querySelector("#stats");
 const tabs = [...document.querySelectorAll(".tab")];
+const tabViewStart = document.querySelector("#tab-view-start");
 const languageTab = document.querySelector("#tab-language");
 const performanceTab = document.querySelector("#tab-performance");
 const mapTab = document.querySelector("#tab-map");
@@ -381,6 +388,7 @@ const systemMediaControlsToggle = document.querySelector("#system-media-controls
 const systemMediaNote = document.querySelector("#system-media-note");
 const mapStatus = document.querySelector("#map-status");
 const aisCatcherFrame = document.querySelector("#ais-catcher-frame");
+const aisCatcherUnavailable = document.querySelector("#ais-catcher-unavailable");
 const aisFallbackLink = document.querySelector("#ais-fallback-link");
 const languageStatus = document.querySelector("#language-status");
 const lexicalAnalysis = document.querySelector("#lexical-analysis");
@@ -691,7 +699,7 @@ document.addEventListener("focusin", closeChannelFilterOnOutsideFocus);
 
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
-    activateTab(tab.dataset.tab);
+    activateTab(tab.dataset.tab, { scrollToTab: true });
   });
 });
 
@@ -1057,7 +1065,9 @@ async function performClipSearch() {
     });
     const response = await fetch(`${clipSearchUrl}?${params.toString()}`, { cache: "no-store" });
     if (!response.ok) {
-      throw new Error(`clip search HTTP ${response.status}`);
+      const error = new Error(`clip search HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
     }
     const payload = await response.json();
     if (requestId !== searchRequestSequence) {
@@ -1065,14 +1075,39 @@ async function performClipSearch() {
     }
     latestSearchPayload = payload;
     renderSearchResults(payload);
-  } catch {
+  } catch (error) {
     if (requestId !== searchRequestSequence) {
       return;
     }
+    const failure = clipSearchFailureContent(error);
     searchResults.removeAttribute("aria-busy");
-    searchResults.replaceChildren(emptySearchMessage("Search is not ready yet."));
-    searchStatus.textContent = "Search unavailable";
+    searchResults.replaceChildren(emptySearchMessage(failure.message));
+    searchStatus.textContent = failure.status;
+    if (searchSuggestions) {
+      searchSuggestions.hidden = false;
+      renderSearchSuggestions(latestSearchSuggestions || fallbackSearchSuggestionGroups);
+    }
   }
+}
+
+function clipSearchFailureContent(error) {
+  const status = Number(error?.status || 0);
+  if (status === 504) {
+    return {
+      status: "Search is warming up",
+      message: "The transcript search is warming up. Try the same search again in a moment.",
+    };
+  }
+  if (status === 503) {
+    return {
+      status: "Search index is rebuilding",
+      message: "The transcript search index is rebuilding. Try again soon.",
+    };
+  }
+  return {
+    status: "Search temporarily unavailable",
+    message: "Recent clips are still available while transcript search recovers.",
+  };
 }
 
 function renderEmptySearchState() {
@@ -1259,6 +1294,11 @@ function normalizeCachedRecentClipPayload(payload) {
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript_public || clip.transcript || "",
       transcript_reviewed: Boolean(clip.transcript_reviewed),
+      quality_status: clip.quality_status || "unknown",
+      quality_score: clip.quality_score ?? null,
+      quality_reason: clip.quality_reason || "",
+      quality_flags: Array.isArray(clip.quality_flags) ? clip.quality_flags : [],
+      audio_metrics: clip.audio_metrics || {},
       featured: Boolean(clip.featured),
       featured_at: clip.featured_at || "",
       audio_url: clip.audio_url || "",
@@ -1392,6 +1432,9 @@ function clipRequestUrl(page = selectedClipPage, { includeCounts = true } = {}) 
   }
   if (clipReviewedFilter) {
     params.push("reviewed=true");
+  }
+  if (clipCollectionFilter === "quarantined") {
+    params.push("quality=quarantined");
   }
   if (clipSortDirection === "oldest") {
     params.push("sort=oldest");
@@ -1604,6 +1647,11 @@ function normalizeLivePayload(payload) {
       training_split: clip.training_split || "auto",
       training_flags: Array.isArray(clip.training_flags) ? clip.training_flags : [],
       training_reason: clip.training_reason || "",
+      quality_status: clip.quality_status || "unknown",
+      quality_score: clip.quality_score ?? null,
+      quality_reason: clip.quality_reason || "",
+      quality_flags: Array.isArray(clip.quality_flags) ? clip.quality_flags : [],
+      audio_metrics: clip.audio_metrics || {},
       featured: Boolean(clip.featured),
       featured_at: clip.featured_at || "",
       audio_url: clip.audio_url || "",
@@ -1639,6 +1687,11 @@ function normalizePublishedManifest(payload) {
       training_split: clip.training_split || "auto",
       training_flags: Array.isArray(clip.training_flags) ? clip.training_flags : [],
       training_reason: clip.training_reason || "",
+      quality_status: clip.quality_status || "unknown",
+      quality_score: clip.quality_score ?? null,
+      quality_reason: clip.quality_reason || "",
+      quality_flags: Array.isArray(clip.quality_flags) ? clip.quality_flags : [],
+      audio_metrics: clip.audio_metrics || {},
       featured: Boolean(clip.featured),
       featured_at: clip.featured_at || "",
       audio_public_filename: clip.audio_public_filename || "",
@@ -1843,6 +1896,9 @@ function clipCollectionTitle() {
   if (clipCollectionFilter === "reviewed") {
     return "Reviewed Clips";
   }
+  if (clipCollectionFilter === "quarantined") {
+    return "Quarantined Clips";
+  }
   return "Recent Clips";
 }
 
@@ -1869,6 +1925,19 @@ function renderClipDisplayControlSet() {
           return;
         }
         clipCollectionFilter = "reviewed";
+        resetClipPagination();
+        updateTabRoute("clips");
+        loadAndRender();
+      },
+    },
+    {
+      label: "Quarantine",
+      active: clipCollectionFilter === "quarantined",
+      onClick: () => {
+        if (clipCollectionFilter === "quarantined") {
+          return;
+        }
+        clipCollectionFilter = "quarantined";
         resetClipPagination();
         updateTabRoute("clips");
         loadAndRender();
@@ -2062,6 +2131,8 @@ function filterClipsByChannel(clips) {
     visibleClips = visibleClips.filter((clip) => clip.featured);
   } else if (clipCollectionFilter === "reviewed") {
     visibleClips = visibleClips.filter((clip) => clip.transcript_reviewed);
+  } else if (clipCollectionFilter === "quarantined") {
+    visibleClips = visibleClips.filter((clip) => clip.quality_status === "quarantined");
   }
   if (selectedChannelPreset === "all-but-traffic") {
     return visibleClips.filter((clip) => !trafficChannelIds.has(String(clip.channel || "").toUpperCase()));
@@ -2103,6 +2174,11 @@ function renderClips(clips) {
         selectedChannels.size === 0
           ? "No reviewed clips yet."
           : "No reviewed clips for the selected channels.";
+    } else if (clipCollectionFilter === "quarantined") {
+      empty.textContent =
+        selectedChannels.size === 0
+          ? "No quarantined clips yet."
+          : "No quarantined clips for the selected channels.";
     } else {
       empty.textContent =
         selectedChannels.size === 0
@@ -2344,6 +2420,10 @@ function renderClipCard(clip) {
   if (clip.duration_seconds) {
     meta.append(renderPill(`${Math.round(Number(clip.duration_seconds))}s`));
   }
+  if (clip.quality_status === "quarantined") {
+    meta.append(renderQualityPill(clip));
+    article.classList.add("is-quarantined");
+  }
   if (clip.transcript_reviewed) {
     meta.append(renderReviewedPill());
     article.classList.add("is-reviewed");
@@ -2392,6 +2472,10 @@ function clipRenderSignature(clip) {
     clip.training_split || "",
     Array.isArray(clip.training_flags) ? clip.training_flags.join(",") : "",
     clip.training_reason || "",
+    clip.quality_status || "unknown",
+    clip.quality_score ?? "",
+    clip.quality_reason || "",
+    Array.isArray(clip.quality_flags) ? clip.quality_flags.join(",") : "",
     clip.featured ? "featured" : "standard",
     clip.featured_at || "",
     clip.playback_url || clip.audio_url
@@ -2482,6 +2566,7 @@ function renderTranscriptCorrectionForm(clip, transcriptElement, article) {
 function renderTranscriptTrainingMetadata(clip) {
   const fieldset = document.createElement("fieldset");
   fieldset.className = "training-metadata";
+  const isQuarantined = clip.quality_status === "quarantined";
 
   const legend = document.createElement("legend");
   legend.textContent = "Training example";
@@ -2491,7 +2576,9 @@ function renderTranscriptTrainingMetadata(clip) {
   const include = document.createElement("input");
   include.type = "checkbox";
   include.name = "include_in_training";
-  include.checked = !clip.transcript_reviewed || clip.include_in_training !== false;
+  include.checked = clip.transcript_reviewed
+    ? clip.include_in_training !== false
+    : !isQuarantined;
   includeLabel.append(include, document.createTextNode("Include in training"));
 
   const grid = document.createElement("div");
@@ -2501,7 +2588,7 @@ function renderTranscriptTrainingMetadata(clip) {
     name: "training_quality",
     label: "Quality",
     options: trainingQualityOptions,
-    value: clip.transcript_reviewed ? clip.training_quality || "good" : "good",
+    value: clip.transcript_reviewed ? clip.training_quality || "good" : isQuarantined ? "poor" : "good",
   });
   const split = renderSelectControl({
     name: "training_split",
@@ -2514,6 +2601,11 @@ function renderTranscriptTrainingMetadata(clip) {
   const flags = document.createElement("div");
   flags.className = "training-flags";
   const selectedFlags = new Set(Array.isArray(clip.training_flags) ? clip.training_flags : []);
+  if (!clip.transcript_reviewed && isQuarantined && Array.isArray(clip.quality_flags)) {
+    for (const flag of clip.quality_flags) {
+      selectedFlags.add(flag);
+    }
+  }
   for (const [value, labelText] of trainingFlagOptions) {
     const flagLabel = document.createElement("label");
     const flag = document.createElement("input");
@@ -2677,7 +2769,7 @@ async function deleteTranscriptCorrection(clip, controls) {
     clip.training_reason = "";
     transcriptElement.textContent = clip.transcript_public;
     textarea.value = clip.transcript_public;
-    resetTranscriptTrainingMetadata(trainingMetadata);
+    resetTranscriptTrainingMetadata(trainingMetadata, clip);
     updateReviewedClipCard(article, false);
     summary.textContent = "Fix transcript";
     remove.hidden = true;
@@ -2694,12 +2786,13 @@ async function deleteTranscriptCorrection(clip, controls) {
   }
 }
 
-function resetTranscriptTrainingMetadata(trainingMetadata) {
-  trainingMetadata.include.checked = true;
-  trainingMetadata.quality.value = "good";
+function resetTranscriptTrainingMetadata(trainingMetadata, clip) {
+  const isQuarantined = clip.quality_status === "quarantined";
+  trainingMetadata.include.checked = !isQuarantined;
+  trainingMetadata.quality.value = isQuarantined ? "poor" : "good";
   trainingMetadata.split.value = "auto";
   for (const flag of trainingMetadata.flags.querySelectorAll("input[name='training_flags']")) {
-    flag.checked = false;
+    flag.checked = isQuarantined && Array.isArray(clip.quality_flags) && clip.quality_flags.includes(flag.value);
   }
   trainingMetadata.reason.value = "";
 }
@@ -2708,6 +2801,19 @@ function renderReviewedPill() {
   const reviewed = renderPill("Reviewed");
   reviewed.classList.add("reviewed-pill");
   return reviewed;
+}
+
+function renderQualityPill(clip) {
+  const label = clip.quality_reason ? `Quarantine: ${formatQualityReason(clip.quality_reason)}` : "Quarantined";
+  const pill = renderPill(label);
+  pill.classList.add("quality-pill");
+  return pill;
+}
+
+function formatQualityReason(reason) {
+  return String(reason || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
 function updateReviewedClipCard(article, reviewed) {
@@ -3046,6 +3152,9 @@ function collectionFilterFromRoute(routeName, url) {
   if (normalizedRouteName === hallOfFameRouteSegment || url.searchParams.get("featured") === "true") {
     return "featured";
   }
+  if (url.searchParams.get("quality") === "quarantined") {
+    return "quarantined";
+  }
   return "recent";
 }
 
@@ -3074,6 +3183,9 @@ function tabRouteUrl(name) {
   }
   url.pathname = `/${routeSegment}/`;
   url.search = "";
+  if (name === "clips" && clipCollectionFilter === "quarantined") {
+    url.searchParams.set("quality", "quarantined");
+  }
   url.hash = "";
   return url;
 }
@@ -3097,6 +3209,9 @@ function routeMetadataForTab(name) {
   }
   if (normalized === "clips" && clipCollectionFilter === "reviewed") {
     return routeMetadata[reviewedRouteSegment];
+  }
+  if (normalized === "clips" && clipCollectionFilter === "quarantined") {
+    return routeMetadata.quarantine;
   }
   return routeMetadata[normalized] || routeMetadata.clips;
 }
@@ -3158,8 +3273,13 @@ function enabledTabName(name) {
   return name;
 }
 
-function activateTab(name, { updateRoute = true, replaceRoute = false } = {}) {
+function activateTab(
+  name,
+  { updateRoute = true, replaceRoute = false, scrollToTab = false } = {},
+) {
   name = enabledTabName(normalizeTabName(name));
+  const previousTab = activeTab;
+  const shouldScrollToTab = scrollToTab && previousTab !== name;
   activeTab = name;
   tabs.forEach((tab) => {
     tab.classList.toggle("is-active", tab.dataset.tab === name);
@@ -3205,6 +3325,16 @@ function activateTab(name, { updateRoute = true, replaceRoute = false } = {}) {
   if (updateRoute) {
     updateTabRoute(name, { replaceRoute });
   }
+  if (shouldScrollToTab) {
+    scrollTabViewToTop();
+  }
+}
+
+function scrollTabViewToTop() {
+  if (!tabViewStart) {
+    return;
+  }
+  window.scrollTo({ top: Math.max(0, tabViewStart.offsetTop), behavior: "auto" });
 }
 
 async function loadAndRenderLanguage() {
@@ -3226,16 +3356,51 @@ async function loadAndRenderMap({ showLoading = true } = {}) {
     mapStatus.textContent = "Loading AIS...";
   }
   mapPayloadLoaded = true;
-  renderAisCatcherFrame();
+  try {
+    await probeAisCatcherViewer();
+    renderAisCatcherFrame();
+  } catch {
+    renderAisCatcherUnavailable();
+  }
+}
+
+async function probeAisCatcherViewer() {
+  const response = await fetch(aisCatcherFrameUrl, {
+    method: "HEAD",
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`AIS-catcher viewer returned ${response.status}`);
+  }
 }
 
 function renderAisCatcherFrame() {
   if (!aisCatcherFrame || !mapStatus) {
     return;
   }
+  aisCatcherFrame.hidden = false;
+  if (aisCatcherUnavailable) {
+    aisCatcherUnavailable.hidden = true;
+  }
   aisCatcherFrame.src = aisCatcherFrameUrl;
   aisCatcherFrame.title = "AIS-catcher live map";
   mapStatus.textContent = "Showing AIS-catcher live map";
+  if (aisFallbackLink) {
+    aisFallbackLink.href = aisCatcherFallbackUrl;
+  }
+}
+
+function renderAisCatcherUnavailable() {
+  if (!aisCatcherFrame || !mapStatus) {
+    return;
+  }
+  aisCatcherFrame.removeAttribute("src");
+  aisCatcherFrame.hidden = true;
+  aisCatcherFrame.title = "AIS receiver unavailable";
+  if (aisCatcherUnavailable) {
+    aisCatcherUnavailable.hidden = false;
+  }
+  mapStatus.textContent = "AIS receiver is temporarily unavailable.";
   if (aisFallbackLink) {
     aisFallbackLink.href = aisCatcherFallbackUrl;
   }
@@ -5958,6 +6123,11 @@ function statusText(payload, clips, filteredTotal) {
         ? "No reviewed clips yet"
         : "No reviewed clips for the selected channels yet";
     }
+    if (clipCollectionFilter === "quarantined") {
+      return selectedChannels.size === 0
+        ? "No quarantined clips yet"
+        : "No quarantined clips for the selected channels yet";
+    }
     return selectedChannels.size === 0 ? "No clips yet" : "No clips for the selected channels yet";
   }
   const scopeText = selectedChannelStatusScope();
@@ -5969,6 +6139,8 @@ function statusText(payload, clips, filteredTotal) {
       ? "featured "
       : clipCollectionFilter === "reviewed"
       ? "reviewed "
+      : clipCollectionFilter === "quarantined"
+      ? "quarantined "
       : "";
   const totalsText = receivedAndAnalyzedStatusText(payload);
   if (payload.source === "live") {
@@ -6005,7 +6177,12 @@ function filteredClipCount(payload, clips) {
   if (payload.stats?.filtered_playable_clip_count !== undefined) {
     return Number(payload.stats.filtered_playable_clip_count);
   }
-  if ((clipCollectionFilter === "featured" || clipCollectionFilter === "reviewed") && payload.source !== "live") {
+  if (
+    (clipCollectionFilter === "featured" ||
+      clipCollectionFilter === "reviewed" ||
+      clipCollectionFilter === "quarantined") &&
+    payload.source !== "live"
+  ) {
     return clips.length;
   }
   if (selectedChannels.size) {
