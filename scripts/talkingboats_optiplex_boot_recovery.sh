@@ -13,6 +13,7 @@ critical_units=(
 
 critical_timers=(
   talkingboats-lexical-refresh.timer
+  talkingboats-public-clip-refresh.timer
   vhf-dev-cert-renew.timer
 )
 

@@ -12,7 +12,9 @@ clip_store_backend="${TALKINGBOATS_CLIP_STORE_BACKEND:-dynamodb}"
 conda_env="${TALKINGBOATS_LEXICAL_CONDA_ENV:-dell}"
 conda_bin="${TALKINGBOATS_CONDA_BIN:-/home/rob/miniforge3/condabin/conda}"
 lock_file="${TALKINGBOATS_LEXICAL_LOCK_FILE:-outputs/.lexical-refresh.lock}"
+public_export_lock_file="${TALKINGBOATS_PUBLIC_EXPORT_LOCK_FILE:-outputs/.public-export.lock}"
 analysis_work_dir="${output_dir}/.analysis-refresh"
+analysis_manifest_path="${analysis_work_dir}/public_manifest.snapshot.json"
 previous_analysis_dir="${output_dir}/.analysis-previous"
 page_size="${TALKINGBOATS_LEXICAL_PAGE_SIZE:-500}"
 export_limit="${TALKINGBOATS_LEXICAL_EXPORT_LIMIT:-3000}"
@@ -38,6 +40,7 @@ Environment overrides:
   TALKINGBOATS_LEXICAL_CONDA_ENV        Conda env; defaults to dell
   TALKINGBOATS_CONDA_BIN                Conda binary path
   TALKINGBOATS_LEXICAL_LOCK_FILE        Crash-safe refresh lock file
+  TALKINGBOATS_PUBLIC_EXPORT_LOCK_FILE  Export lock shared with the fast public refresh
   TALKINGBOATS_LEXICAL_PAGE_SIZE        Analysis clip-store page size
   TALKINGBOATS_LEXICAL_EXPORT_LIMIT     Public clip export limit
   TALKINGBOATS_LEXICAL_RAW_BUCKET_OUTPUT OpenTofu output name for raw bucket
@@ -122,6 +125,9 @@ if ! flock -n 9; then
   echo "Lexical refresh is already running; skipping this tick."
   exit 0
 fi
+mkdir -p "$(dirname "${public_export_lock_file}")"
+exec 8>"${public_export_lock_file}"
+flock 8
 trap cleanup EXIT
 
 mkdir -p "${output_dir}"
@@ -139,15 +145,19 @@ export TALKINGBOATS_CLIP_STORE_BACKEND="${clip_store_backend}"
   --output-dir "${output_dir}" \
   --limit "${export_limit}"
 
-echo "Refreshing lexical analysis from transcript store into ${analysis_work_dir}"
 rm -rf "${analysis_work_dir}" "${previous_analysis_dir}"
 mkdir -p "${analysis_work_dir}"
+cp "${output_dir}/public_manifest.json" "${analysis_manifest_path}"
+flock -u 8
+
+echo "Refreshing lexical analysis from transcript store into ${analysis_work_dir}"
 "${conda_bin}" run --no-capture-output -n "${conda_env}" \
   talkingboats-analyze-transcripts \
   --clip-store-backend "${clip_store_backend}" \
-  --public-audio-manifest-path "${output_dir}/public_manifest.json" \
+  --public-audio-manifest-path "${analysis_manifest_path}" \
   --output-dir "${analysis_work_dir}" \
   --page-size "${page_size}"
+flock 8
 if [[ ! -d "${analysis_work_dir}/analysis" ]]; then
   echo "Lexical analysis did not produce ${analysis_work_dir}/analysis" >&2
   exit 1
@@ -174,4 +184,5 @@ for deploy_env in ${deploy_envs}; do
       ;;
   esac
 done
+flock -u 8
 echo "Refresh complete"

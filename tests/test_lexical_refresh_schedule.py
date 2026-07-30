@@ -30,7 +30,8 @@ def test_lexical_refresh_script_regenerates_exports_and_promotes_generated_prod_
     assert 'mv "${analysis_work_dir}/analysis" "${output_dir}/analysis"' in script
     assert "talkingboats-analyze-transcripts" in script
     assert "--clip-store-backend \"${clip_store_backend}\"" in script
-    assert "--public-audio-manifest-path \"${output_dir}/public_manifest.json\"" in script
+    assert 'analysis_manifest_path="${analysis_work_dir}/public_manifest.snapshot.json"' in script
+    assert '--public-audio-manifest-path "${analysis_manifest_path}"' in script
     assert "--public-manifest-path" not in script
     assert "--output-dir \"${output_dir}\"" in script
     assert "talkingboats-export-public" in script
@@ -75,10 +76,12 @@ def test_lexical_refresh_systemd_timer_runs_every_six_hours() -> None:
         "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/refresh_lexical_analysis.sh"
         in service
     )
-    assert "StartLimitIntervalSec=0" in service
+    assert "StartLimitIntervalSec=3h" in service
+    assert "StartLimitBurst=2" in service
     assert "talkingboats_lan_address.sh --dns-host dynamodb.us-west-2.amazonaws.com" in service
     assert "Restart=on-failure" in service
-    assert "RestartSec=5min" in service
+    assert "RestartSec=15min" in service
+    assert "TimeoutStartSec=2h" in service
     assert "CPUQuota=150%" in service
     assert "CPUWeight=20" in service
     assert "OnBootSec=15min" in timer
