@@ -77,7 +77,7 @@ def test_lexical_refresh_systemd_timer_runs_every_six_hours() -> None:
         "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/refresh_lexical_analysis.sh"
         in service
     )
-    assert "StartLimitIntervalSec=3h" in service
+    assert "StartLimitIntervalSec=6h" in service
     assert "StartLimitBurst=2" in service
     assert "talkingboats_lan_address.sh --dns-host dynamodb.us-west-2.amazonaws.com" in service
     assert "Restart=on-failure" in service

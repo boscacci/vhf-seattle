@@ -2,7 +2,7 @@
 Description=Elliott Bay VHF lexical analysis refresh
 After=network-online.target talkingboats-api.service
 Wants=network-online.target
-StartLimitIntervalSec=3h
+StartLimitIntervalSec=6h
 StartLimitBurst=2
 
 [Service]
