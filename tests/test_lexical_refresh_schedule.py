@@ -23,8 +23,9 @@ def test_lexical_refresh_script_regenerates_exports_and_promotes_generated_prod_
     assert "/home/rob/.local/bin:/snap/bin" in script
     assert 'exec 9>"${lock_file}"' in script
     assert "flock -n 9" in script
-    assert 'analysis_work_dir="${output_dir}/.analysis-refresh"' in script
-    assert 'previous_analysis_dir="${output_dir}/.analysis-previous"' in script
+    assert 'analysis_work_dir="${output_dir}.analysis-refresh"' in script
+    assert 'previous_analysis_dir="${output_dir}.analysis-previous"' in script
+    assert 'analysis_work_dir="${output_dir}/.analysis-refresh"' not in script
     assert "rm -rf \"${output_dir}/analysis\"" not in script
     assert '--output-dir "${analysis_work_dir}"' in script
     assert 'mv "${analysis_work_dir}/analysis" "${output_dir}/analysis"' in script
