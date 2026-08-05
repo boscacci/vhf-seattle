@@ -1,7 +1,6 @@
 # Transcription Queue Capacity Incident — 2026-08-05
 
-Status: remediation validated; bounded production purge and release verification
-in progress.
+Status: remediated and production-verified.
 
 ## Summary
 
@@ -40,6 +39,11 @@ It does not delete transcribed or empty records, durable event history, public
 artifacts, or raw S3 audio. Raw audio continues to use the existing lifecycle
 retention policy. The utility is dry-run by default and requires both
 `--execute` and an exact `--confirm-table` match for destructive use.
+
+Execution deleted all 521,816 matched queue records, or 1,043,632 DynamoDB
+items including their canonical state records. A second bounded dry-run found
+zero pre-cutoff pending, processing, waiting-upload, or error records. The
+post-cutoff queue remained intact.
 
 ## Model decision
 
@@ -89,6 +93,25 @@ behavior. Production verification must show the worker model and CPU limits in
 its start event, fresh poll events, new clips reaching terminal states, no
 failed units, working public audio, and a queue slope below zero during a
 backlog drain or near zero when idle.
+
+The isolated release candidate passed all 442 Python tests, Ruff, diff checks,
+and Markdown lint. Production startup telemetry confirmed `base.en`, CPU
+`int8`, two threads, one worker, and unchanged VAD-off behavior. Eight initial
+five-clip batches reached terminal states with no failures and no busy-loop
+delay. During a measured interval the pending queue fell from 140 to 128 despite
+new arrivals. The API, private and public live proxies, dev proxy, transcriber,
+and recurring healthcheck were healthy with no failed user units. The public
+recent-clips endpoint returned HTTP 200 and ranged MP3 playback returned HTTP
+206.
+
+The repository had no callable CI/CD workflow or active dev deployment target.
+The explicit operator request to restore production was therefore handled as a
+documented break-glass apply after the versioned candidate was validated and
+pushed as commit `786e054`. The live deployment directory contains pre-existing
+unversioned divergence, so full artifact parity cannot be claimed; the scoped
+model, polling, and systemd values were independently asserted in the exact
+live import path before restart. Restoring an immutable dev-to-production
+pipeline remains a release-engineering follow-up.
 
 Rollback is to the prior versioned runtime configuration. Returning to `turbo`
 under the same host budget is not a capacity-safe steady state: it may be used
