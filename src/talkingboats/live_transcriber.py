@@ -30,6 +30,7 @@ from talkingboats.audio_processing import (
 from talkingboats.durable_events import to_dynamodb_item
 
 DEFAULT_AUDIO_FILTER = DEFAULT_SPEECH_AUDIO_FILTER
+DEFAULT_TRANSCRIBE_MODEL = "base.en"
 
 
 class TranscriptStore:
@@ -491,7 +492,10 @@ def main() -> None:
     parser.add_argument("--stream-url", default=os.getenv("TALKINGBOATS_TRANSCRIBE_STREAM_URL"))
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8055)
-    parser.add_argument("--model-size", default=os.getenv("TALKINGBOATS_TRANSCRIBE_MODEL", "turbo"))
+    parser.add_argument(
+        "--model-size",
+        default=os.getenv("TALKINGBOATS_TRANSCRIBE_MODEL", DEFAULT_TRANSCRIBE_MODEL),
+    )
     parser.add_argument("--device", default=os.getenv("TALKINGBOATS_TRANSCRIBE_DEVICE", "cpu"))
     parser.add_argument(
         "--compute-type",

@@ -93,7 +93,7 @@ class DynamoUploadedClipStore:
             table = resource.Table(config.table_name)
         self.table = table
         self._cache_scope = (
-            ("injected", id(table))
+            ("injected", object())
             if table_was_injected
             else ("table", config.aws_region, config.table_name, config.environment)
         )

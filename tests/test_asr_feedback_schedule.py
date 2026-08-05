@@ -44,18 +44,16 @@ def test_asr_feedback_training_service_is_manual_only() -> None:
     assert not Path("deploy/systemd/talkingboats-asr-feedback-train.timer.example").exists()
 
 
-def test_uploaded_clip_transcriber_can_load_promoted_feedback_model() -> None:
+def test_uploaded_clip_transcriber_pins_capacity_tested_model() -> None:
     service = Path(
         "deploy/systemd/talkingboats-uploaded-clip-transcriber.service.example"
     ).read_text(encoding="utf-8")
 
-    assert (
-        "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/outputs/asr-feedback/latest_model.env"
-        in service
-    )
+    assert "outputs/asr-feedback/latest_model.env" not in service
+    assert "Environment=TALKINGBOATS_TRANSCRIBE_MODEL=base.en" in service
     assert "Nice=10" in service
     assert "CPUWeight=25" in service
-    assert "CPUQuota=125%" in service
+    assert "CPUQuota=200%" in service
     assert "IOSchedulingPriority=6" in service
 
 

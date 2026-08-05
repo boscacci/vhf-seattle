@@ -1161,7 +1161,7 @@ try {
       !aboutState.bodyText.includes("Raspberry Pi radio edge") ||
       !aboutState.bodyText.includes("Ubuntu micro-computer") ||
       !aboutState.bodyText.includes("Whisper") ||
-      !aboutState.bodyText.includes("whisper-large-v3-turbo") ||
+      !aboutState.bodyText.includes("Whisper base.en") ||
       !aboutState.bodyText.includes("CTranslate2/faster-whisper")
     ) {
       throw new Error(`about tab did not expose the project write-up: ${JSON.stringify(aboutState)}`);
