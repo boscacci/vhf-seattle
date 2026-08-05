@@ -96,13 +96,15 @@ backlog drain or near zero when idle.
 
 The isolated release candidate passed all 442 Python tests, Ruff, diff checks,
 and Markdown lint. Production startup telemetry confirmed `base.en`, CPU
-`int8`, two threads, one worker, and unchanged VAD-off behavior. Eight initial
-five-clip batches reached terminal states with no failures and no busy-loop
-delay. During a measured interval the pending queue fell from 140 to 128 despite
-new arrivals. The API, private and public live proxies, dev proxy, transcriber,
-and recurring healthcheck were healthy with no failed user units. The public
-recent-clips endpoint returned HTTP 200 and ranged MP3 playback returned HTTP
-206.
+`int8`, two threads, one worker, and unchanged VAD-off behavior. The production
+canary processed all 178 post-cutoff clips that accumulated during remediation:
+153 were transcribed and 25 were empty, with no failures or waiting-upload
+transitions. Pending fell from 140 to zero despite new arrivals. Three subsequent
+idle polls reported `processed: 0` and `next_poll_delay_seconds: 30.0`, proving
+continuous drain under load and bounded polling at idle. The API, private and
+public live proxies, dev proxy, transcriber, and recurring healthcheck were
+healthy with no failed user units. The public recent-clips endpoint returned
+HTTP 200 and ranged MP3 playback returned HTTP 206.
 
 The repository had no callable CI/CD workflow or active dev deployment target.
 The explicit operator request to restore production was therefore handled as a
