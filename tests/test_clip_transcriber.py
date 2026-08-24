@@ -26,6 +26,20 @@ def test_uploaded_clip_transcriber_defaults_to_capacity_tested_base_model() -> N
 
 def test_uploaded_clip_transcriber_only_waits_when_queue_is_idle() -> None:
     assert _next_poll_delay_seconds(ProcessSummary(processed=5), idle_delay_seconds=30) == 0
+    assert (
+        _next_poll_delay_seconds(
+            ProcessSummary(processed=2, waiting_upload=2),
+            idle_delay_seconds=30,
+        )
+        == 30
+    )
+    assert (
+        _next_poll_delay_seconds(
+            ProcessSummary(processed=5, waiting_upload=2),
+            idle_delay_seconds=30,
+        )
+        == 0
+    )
     assert _next_poll_delay_seconds(ProcessSummary(), idle_delay_seconds=30) == 30
 
 

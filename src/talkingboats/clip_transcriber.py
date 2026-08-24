@@ -2027,10 +2027,11 @@ def _next_poll_delay_seconds(
     *,
     idle_delay_seconds: float,
 ) -> float:
-    """Poll immediately after work, but back off when the queue is empty."""
+    """Poll immediately after durable progress, but back off on unavailable uploads."""
     if idle_delay_seconds <= 0:
         raise ValueError("idle_delay_seconds must be positive")
-    return 0.0 if summary.processed > 0 else float(idle_delay_seconds)
+    made_progress = summary.processed > summary.waiting_upload
+    return 0.0 if made_progress else float(idle_delay_seconds)
 
 
 def _row_to_record(row: tuple[Any, ...]) -> UploadedClipRecord:
