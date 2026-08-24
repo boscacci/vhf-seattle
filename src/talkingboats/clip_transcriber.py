@@ -58,6 +58,7 @@ _DISPLAYABLE_TRANSCRIPT_SQL = (
     f"talkingboats_transcript_displayable({_DISPLAYED_TRANSCRIPT_SQL}) = 1"
 )
 DEFAULT_TRANSCRIBE_VAD_FILTER = True
+DEFAULT_TRANSCRIBE_MODEL = "base.en"
 DEFAULT_TRANSCRIBE_VAD_MIN_SILENCE_DURATION_MS = 500
 DEFAULT_TRANSCRIBE_VAD_SPEECH_PAD_MS = 400
 
@@ -1858,7 +1859,10 @@ def main() -> None:
     parser.add_argument("--db-path", type=Path, default=_default_db_path())
     parser.add_argument("--bucket", default=os.getenv("TALKINGBOATS_RAW_BUCKET", ""))
     parser.add_argument("--aws-region", default=os.getenv("TALKINGBOATS_AWS_REGION", "us-west-2"))
-    parser.add_argument("--model-size", default=os.getenv("TALKINGBOATS_TRANSCRIBE_MODEL", "turbo"))
+    parser.add_argument(
+        "--model-size",
+        default=os.getenv("TALKINGBOATS_TRANSCRIBE_MODEL", DEFAULT_TRANSCRIBE_MODEL),
+    )
     parser.add_argument("--device", default=os.getenv("TALKINGBOATS_TRANSCRIBE_DEVICE", "cpu"))
     parser.add_argument(
         "--compute-type",
@@ -2003,10 +2007,31 @@ def main() -> None:
                 args.audio_quality_analysis and not args.no_audio_quality_analysis
             ),
         )
-        _log_event("uploaded_clip_transcriber_poll", **asdict(summary))
+        next_poll_delay_seconds = _next_poll_delay_seconds(
+            summary,
+            idle_delay_seconds=args.poll_seconds,
+        )
+        _log_event(
+            "uploaded_clip_transcriber_poll",
+            **asdict(summary),
+            next_poll_delay_seconds=next_poll_delay_seconds,
+        )
         if args.once:
             break
-        time.sleep(args.poll_seconds)
+        if next_poll_delay_seconds > 0:
+            time.sleep(next_poll_delay_seconds)
+
+
+def _next_poll_delay_seconds(
+    summary: ProcessSummary,
+    *,
+    idle_delay_seconds: float,
+) -> float:
+    """Poll immediately after durable progress, but back off on unavailable uploads."""
+    if idle_delay_seconds <= 0:
+        raise ValueError("idle_delay_seconds must be positive")
+    made_progress = summary.processed > summary.waiting_upload
+    return 0.0 if made_progress else float(idle_delay_seconds)
 
 
 def _row_to_record(row: tuple[Any, ...]) -> UploadedClipRecord:

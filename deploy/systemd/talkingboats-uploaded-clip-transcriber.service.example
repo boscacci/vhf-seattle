@@ -8,7 +8,11 @@ StartLimitIntervalSec=0
 Type=simple
 WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
 EnvironmentFile=/home/rob/.config/talkingboats/api.env
-EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/outputs/asr-feedback/latest_model.env
+Environment=TALKINGBOATS_TRANSCRIBE_MODEL=base.en
+Environment=TALKINGBOATS_TRANSCRIBE_DEVICE=cpu
+Environment=TALKINGBOATS_TRANSCRIBE_COMPUTE_TYPE=int8
+Environment=TALKINGBOATS_TRANSCRIBE_CPU_THREADS=2
+Environment=TALKINGBOATS_TRANSCRIBE_WORKERS=1
 Environment=TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true
 ExecStartPre=/bin/bash /home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_lan_address.sh --dns-host dynamodb.us-west-2.amazonaws.com
 ExecStart=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-transcribe-uploaded-clips --poll-seconds 30 --limit 5
@@ -16,7 +20,7 @@ Restart=always
 RestartSec=10
 Nice=10
 CPUWeight=25
-CPUQuota=125%
+CPUQuota=200%
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
 

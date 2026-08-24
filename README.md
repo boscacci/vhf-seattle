@@ -138,6 +138,9 @@ Default edge audio/transcription settings:
 
 ```bash
 TALKINGBOATS_AUDIO_FILTER_ENABLED=true
+TALKINGBOATS_TRANSCRIBE_MODEL=base.en
+TALKINGBOATS_TRANSCRIBE_CPU_THREADS=2
+TALKINGBOATS_TRANSCRIBE_WORKERS=1
 TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ=16000
 TALKINGBOATS_TRANSCRIBE_BEAM_SIZE=5
 TALKINGBOATS_TRANSCRIBE_HOTWORDS="Seattle Traffic,VTS,Puget Sound"
@@ -174,9 +177,9 @@ Transcript corrections become supervised training examples by default:
   unchanged datasets by fingerprint.
 - Raw private S3 audio is archived locally and paired with corrected text into
   training JSONL so later retries do not depend on short-lived raw-object access.
-- The configured Whisper checkpoint is fine-tuned, converted to CTranslate2,
-  evaluated against the local baseline, and promoted through `latest-ct2` only
-  when the candidate model improves transcription accuracy.
+- Feedback candidates can be fine-tuned, converted to CTranslate2, and evaluated
+  offline. The production clip worker remains pinned to the capacity-tested
+  `base.en` model; candidates cannot silently override that runtime guardrail.
 
 Default guardrails are defined in `src/talkingboats/asr_feedback.py`, including
 the minimum reviewed correction count, base model, fingerprinting, model

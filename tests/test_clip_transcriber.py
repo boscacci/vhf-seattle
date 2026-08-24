@@ -6,15 +6,41 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from talkingboats.clip_transcriber import (
+    DEFAULT_TRANSCRIBE_MODEL,
     ClipNotAvailable,
     ClipQualityMetadata,
+    ProcessSummary,
     UploadedClipStore,
+    _next_poll_delay_seconds,
     _transcriber_start_log_fields,
     is_displayable_transcript,
     process_pending_uploads_once,
 )
 from talkingboats.schemas import ClipPresignRequest
 from talkingboats.transcript_cleanup import cleanup_noise_transcripts
+
+
+def test_uploaded_clip_transcriber_defaults_to_capacity_tested_base_model() -> None:
+    assert DEFAULT_TRANSCRIBE_MODEL == "base.en"
+
+
+def test_uploaded_clip_transcriber_only_waits_when_queue_is_idle() -> None:
+    assert _next_poll_delay_seconds(ProcessSummary(processed=5), idle_delay_seconds=30) == 0
+    assert (
+        _next_poll_delay_seconds(
+            ProcessSummary(processed=2, waiting_upload=2),
+            idle_delay_seconds=30,
+        )
+        == 30
+    )
+    assert (
+        _next_poll_delay_seconds(
+            ProcessSummary(processed=5, waiting_upload=2),
+            idle_delay_seconds=30,
+        )
+        == 0
+    )
+    assert _next_poll_delay_seconds(ProcessSummary(), idle_delay_seconds=30) == 30
 
 
 def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:

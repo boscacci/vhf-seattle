@@ -553,3 +553,14 @@ def test_uploaded_clip_transcriber_defaults_to_edge_preprocessed_mp3s() -> None:
 
     assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true" in unit
     assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" in compose
+
+
+def test_uploaded_clip_transcriber_service_uses_capacity_tested_base_model() -> None:
+    unit = Path("deploy/systemd/talkingboats-uploaded-clip-transcriber.service.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Environment=TALKINGBOATS_TRANSCRIBE_MODEL=base.en" in unit
+    assert "Environment=TALKINGBOATS_TRANSCRIBE_MODEL=turbo" not in unit
+    assert "Environment=TALKINGBOATS_TRANSCRIBE_CPU_THREADS=2" in unit
+    assert "CPUQuota=200%" in unit

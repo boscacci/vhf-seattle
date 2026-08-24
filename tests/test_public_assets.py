@@ -697,7 +697,7 @@ def test_public_site_has_about_tab_linking_project_writeup() -> None:
     assert "Ubuntu micro-computer" in index_html
     assert "OptiPlex" not in index_html
     assert "Whisper" in index_html
-    assert "whisper-large-v3-turbo" in index_html
+    assert "Whisper base.en" in index_html
     assert "CTranslate2/faster-whisper" in index_html
     assert "dAISy-catcher receiver" in index_html
     assert "https://github.com/astuder" in index_html
