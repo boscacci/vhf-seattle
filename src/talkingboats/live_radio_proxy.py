@@ -24,7 +24,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -32,7 +32,7 @@ from talkingboats.audio_dsp import build_ffmpeg_dsp_command, dsp_profile_for_nam
 from talkingboats.channel_metadata import CHANNEL_METADATA, VOICE_NET_BALANCED_CHANNELS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CLIP_CONSOLE_DIR = REPO_ROOT / "public-site"
+DEFAULT_STATIC_SHELL_DIR = REPO_ROOT / "public-site"
 DEFAULT_PERFORMANCE_HISTORY_DB_PATH = REPO_ROOT / "data" / "performance_telemetry.sqlite3"
 SHELL_ASSET_TYPES = {
     "index.html": "text/html",
@@ -42,6 +42,7 @@ SHELL_ASSET_TYPES = {
     "llms.txt": "text/plain",
     "sitemap.xml": "application/xml",
     "public_manifest.json": "application/json",
+    "recent_clips.json": "application/json",
 }
 PERFORMANCE_DISK_PATHS = (
     ("system", Path("/")),
@@ -50,7 +51,7 @@ PERFORMANCE_DISK_PATHS = (
 )
 TAILNET_DEV_API_HOSTS = ("optiplex.tailbea63b.ts.net",)
 PERFORMANCE_DEV_HOSTS = (
-    "vhf-dev.robertboscacci.com",
+    "dev.seattleboatradio.com",
     "localhost",
     "127.0.0.1",
     "testserver",
@@ -81,6 +82,7 @@ PERFORMANCE_MEMORY_HISTORY_SECONDS = 6 * 60 * 60
 PERFORMANCE_PERSIST_INTERVAL_SECONDS = 60.0
 PERFORMANCE_PERSIST_HISTORY_SECONDS = 24 * 60 * 60
 PERFORMANCE_PUBLIC_HISTORY_LIMIT = 6_000
+MAX_PROXIED_CLIP_AUDIO_BYTES = 25 * 1024 * 1024
 PI_PERFORMANCE_SCRIPT = r"""
 import json
 import os
@@ -393,12 +395,13 @@ class ProxySettings:
     performance_persist_interval_seconds: float = PERFORMANCE_PERSIST_INTERVAL_SECONDS
     performance_persist_history_seconds: int = PERFORMANCE_PERSIST_HISTORY_SECONDS
     performance_history_db_path: str = str(DEFAULT_PERFORMANCE_HISTORY_DB_PATH)
+    static_shell_dir: str = str(DEFAULT_STATIC_SHELL_DIR)
     public_site_dir: str = str(REPO_ROOT / "outputs/public-site")
     performance_dev_hosts: tuple[str, ...] = PERFORMANCE_DEV_HOSTS
     performance_dev_origin_hosts: tuple[str, ...] = PERFORMANCE_DEV_ORIGIN_HOSTS
     cors_origins: tuple[str, ...] = (
-        "https://vhf.robertboscacci.com",
-        "https://vhf-dev.robertboscacci.com",
+        "https://seattleboatradio.com",
+        "https://dev.seattleboatradio.com",
     )
 
     @classmethod
@@ -483,6 +486,10 @@ class ProxySettings:
             performance_history_db_path=os.environ.get(
                 "TALKINGBOATS_PROXY_PERFORMANCE_HISTORY_DB_PATH",
                 cls.performance_history_db_path,
+            ),
+            static_shell_dir=os.environ.get(
+                "TALKINGBOATS_PROXY_STATIC_SHELL_DIR",
+                cls.static_shell_dir,
             ),
             public_site_dir=os.environ.get(
                 "TALKINGBOATS_PROXY_PUBLIC_SITE_DIR",
@@ -783,6 +790,7 @@ def create_app(
     retuner = retuner or retune_pi
     performance_collector = performance_collector or collect_performance_snapshot
     performance_history = PerformanceHistoryStore.from_settings(settings)
+    static_shell_dir = Path(settings.static_shell_dir).resolve()
     retune_lock = asyncio.Lock()
 
     @contextlib.asynccontextmanager
@@ -822,40 +830,19 @@ def create_app(
 
     @app.get("/api/clips/audio")
     async def clip_audio(request: Request) -> Response:
-        return await _proxy_private_api(request, "/api/clips/audio", settings, client_factory)
+        return await _proxy_private_audio(request, settings, client_factory)
 
     if settings.tailnet_dev_routes_enabled:
 
-        @app.post("/api/clips/corrections")
-        async def clip_correction(request: Request) -> Response:
+        @app.delete("/api/clips/archive")
+        async def delete_clip_archive(request: Request) -> Response:
             _require_tailnet_operator(request)
             return await _proxy_private_api(
                 request,
-                "/api/clips/corrections",
+                "/api/clips/archive",
                 settings,
                 client_factory,
                 forward_content_type=True,
-            )
-
-        @app.delete("/api/clips/corrections")
-        async def remove_clip_correction(request: Request) -> Response:
-            _require_tailnet_operator(request)
-            return await _proxy_private_api(
-                request,
-                "/api/clips/corrections",
-                settings,
-                client_factory,
-                forward_content_type=True,
-            )
-
-        @app.get("/api/clips/corrections")
-        async def clip_corrections(request: Request) -> Response:
-            _require_tailnet_operator(request)
-            return await _proxy_private_api(
-                request,
-                "/api/clips/corrections",
-                settings,
-                client_factory,
             )
 
         @app.post("/api/clips/features")
@@ -869,29 +856,13 @@ def create_app(
                 forward_content_type=True,
             )
 
-        @app.get("/api/clips/corrections/export")
-        async def clip_corrections_export(request: Request) -> Response:
-            _require_tailnet_operator(request)
-            return await _proxy_private_api(
-                request,
-                "/api/clips/corrections/export",
-                settings,
-                client_factory,
-            )
-
-        @app.get("/api/asr-feedback/status")
-        async def asr_feedback_status(request: Request) -> Response:
-            _require_tailnet_operator(request)
-            return await _proxy_private_api(
-                request,
-                "/api/asr-feedback/status",
-                settings,
-                client_factory,
-            )
-
     @app.get("/api/analysis/lexical")
-    async def lexical_analysis(request: Request) -> Response:
-        return await _proxy_private_api(request, "/api/analysis/lexical", settings, client_factory)
+    async def lexical_analysis() -> RedirectResponse:
+        return RedirectResponse(
+            url="/analysis/lexical.json",
+            status_code=307,
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/api/clips/search")
     async def clip_search(request: Request) -> Response:
@@ -1014,8 +985,6 @@ def create_app(
     @app.get("/clips/", include_in_schema=False)
     @app.get("/hall-of-fame", include_in_schema=False)
     @app.get("/hall-of-fame/", include_in_schema=False)
-    @app.get("/reviewed", include_in_schema=False)
-    @app.get("/reviewed/", include_in_schema=False)
     @app.get("/search", include_in_schema=False)
     @app.get("/search/", include_in_schema=False)
     @app.get("/live", include_in_schema=False)
@@ -1033,33 +1002,41 @@ def create_app(
     @app.get("/operator", include_in_schema=False)
     @app.get("/operator/", include_in_schema=False)
     async def clip_console_index() -> Response:
-        return _shell_asset_response("index.html")
+        return _shell_asset_response(static_shell_dir, "index.html")
 
     @app.get("/assets/app.js", include_in_schema=False)
     async def clip_console_app_js() -> Response:
-        return _shell_asset_response("assets/app.js")
+        return _shell_asset_response(static_shell_dir, "assets/app.js")
 
     @app.get("/assets/styles.css", include_in_schema=False)
     async def clip_console_styles() -> Response:
-        return _shell_asset_response("assets/styles.css")
+        return _shell_asset_response(static_shell_dir, "assets/styles.css")
 
     @app.get("/robots.txt", include_in_schema=False)
     async def clip_console_robots() -> Response:
-        return _shell_asset_response("robots.txt")
+        return _shell_asset_response(static_shell_dir, "robots.txt")
 
     @app.get("/llms.txt", include_in_schema=False)
     async def clip_console_llms() -> Response:
-        return _shell_asset_response("llms.txt")
+        return _shell_asset_response(static_shell_dir, "llms.txt")
 
     @app.get("/sitemap.xml", include_in_schema=False)
     async def clip_console_sitemap() -> Response:
-        return _shell_asset_response("sitemap.xml")
+        return _shell_asset_response(static_shell_dir, "sitemap.xml")
 
     @app.get("/public_manifest.json", include_in_schema=False)
     async def clip_console_manifest() -> Response:
         return _generated_public_site_asset_response(
             settings,
             "public_manifest.json",
+            media_type="application/json",
+        )
+
+    @app.get("/recent_clips.json", include_in_schema=False)
+    async def recent_clip_snapshot() -> Response:
+        return _generated_public_site_asset_response(
+            settings,
+            "recent_clips.json",
             media_type="application/json",
         )
 
@@ -1071,7 +1048,15 @@ def create_app(
             media_type="text/html",
         )
 
-    app.mount("/", StaticFiles(directory=CLIP_CONSOLE_DIR, html=True), name="clip-console")
+    @app.get("/analysis/lexical.json", include_in_schema=False)
+    async def lexical_analysis_json() -> Response:
+        return _generated_public_site_asset_response(
+            settings,
+            "analysis/lexical.json",
+            media_type="application/json",
+        )
+
+    app.mount("/", StaticFiles(directory=static_shell_dir, html=True), name="clip-console")
     return app
 
 
@@ -1629,10 +1614,10 @@ def _format_utc(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _shell_asset_response(relative_path: str) -> Response:
-    path = (CLIP_CONSOLE_DIR / relative_path).resolve()
+def _shell_asset_response(root: Path, relative_path: str) -> Response:
+    path = (root / relative_path).resolve()
     try:
-        path.relative_to(CLIP_CONSOLE_DIR.resolve())
+        path.relative_to(root)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="asset not found") from exc
     if not path.is_file():
@@ -1954,6 +1939,140 @@ async def _proxy_private_api(
         content=upstream.content,
         status_code=upstream.status_code,
         headers=response_headers,
+    )
+
+
+async def _proxy_private_audio(
+    request: Request,
+    settings: ProxySettings,
+    client_factory: ClientFactory,
+) -> Response:
+    path = "/api/clips/audio"
+    target_url = f"{settings.private_api_url.rstrip('/')}{path}"
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+    started = time.monotonic()
+    async with client_factory() as client:
+        try:
+            upstream = await client.get(
+                target_url,
+                timeout=settings.private_api_read_timeout_seconds,
+            )
+            location = upstream.headers.get("location", "")
+            if upstream.status_code not in {301, 302, 303, 307, 308}:
+                return _sanitized_private_api_response(upstream)
+            if not _is_approved_s3_audio_url(location):
+                _log_proxy_private_api_event(
+                    "proxy_private_audio_rejected_redirect",
+                    method=request.method,
+                    path=path,
+                    elapsed_seconds=time.monotonic() - started,
+                    status_code=upstream.status_code,
+                )
+                return _audio_unavailable_response()
+
+            audio_headers: dict[str, str] = {}
+            range_header = request.headers.get("range", "")
+            if len(range_header) <= 128 and re.fullmatch(r"bytes=\d*-\d*", range_header):
+                audio_headers["range"] = range_header
+            audio = await client.get(
+                location,
+                headers=audio_headers,
+                timeout=settings.private_api_read_timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            _log_proxy_private_api_event(
+                "proxy_private_audio_timeout",
+                method=request.method,
+                path=path,
+                elapsed_seconds=time.monotonic() - started,
+                error_type=type(exc).__name__,
+            )
+            return _private_api_unavailable_response()
+        except httpx.HTTPError as exc:
+            _log_proxy_private_api_event(
+                "proxy_private_audio_error",
+                method=request.method,
+                path=path,
+                elapsed_seconds=time.monotonic() - started,
+                error_type=type(exc).__name__,
+            )
+            return _private_api_unavailable_response()
+
+    content_length = _int_or_none(audio.headers.get("content-length"))
+    if (
+        audio.status_code not in {200, 206}
+        or (content_length is not None and content_length > MAX_PROXIED_CLIP_AUDIO_BYTES)
+        or len(audio.content) > MAX_PROXIED_CLIP_AUDIO_BYTES
+    ):
+        _log_proxy_private_api_event(
+            "proxy_private_audio_upstream_rejected",
+            method=request.method,
+            path=path,
+            elapsed_seconds=time.monotonic() - started,
+            status_code=audio.status_code,
+        )
+        return _audio_unavailable_response()
+
+    _log_proxy_private_api_event(
+        "proxy_private_audio_response",
+        method=request.method,
+        path=path,
+        elapsed_seconds=time.monotonic() - started,
+        status_code=audio.status_code,
+        content_bytes=len(audio.content),
+    )
+    response_headers = {
+        name: value
+        for name, value in audio.headers.items()
+        if name.lower()
+        in {"accept-ranges", "content-length", "content-range", "content-type", "etag"}
+    }
+    response_headers["cache-control"] = "no-store"
+    return Response(
+        content=audio.content,
+        status_code=audio.status_code,
+        headers=response_headers,
+    )
+
+
+def _sanitized_private_api_response(upstream: httpx.Response) -> Response:
+    response_headers = {
+        name: value
+        for name, value in upstream.headers.items()
+        if name.lower() in {"cache-control", "content-type"}
+    }
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=response_headers,
+    )
+
+
+def _is_approved_s3_audio_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    host_labels = host.split(".")
+    return (
+        parsed.scheme == "https"
+        and parsed.username is None
+        and parsed.password is None
+        and port in {None, 443}
+        and host.endswith(".amazonaws.com")
+        and any(label == "s3" or label.startswith("s3-") for label in host_labels)
+    )
+
+
+def _audio_unavailable_response() -> Response:
+    return Response(
+        content=json.dumps({"detail": "audio unavailable"}),
+        status_code=502,
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
     )
 
 

@@ -69,12 +69,16 @@ def test_lexical_refresh_systemd_timer_runs_every_six_hours() -> None:
     )
 
     assert "Type=oneshot" in service
-    assert "WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy" in service
     assert (
-        "EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env" in service
+        "WorkingDirectory=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy"
+        in service
     )
     assert (
-        "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/refresh_lexical_analysis.sh"
+        "EnvironmentFile=-%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/.env"
+        in service
+    )
+    assert (
+        "ExecStart=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/scripts/refresh_lexical_analysis.sh"
         in service
     )
     assert "StartLimitIntervalSec=6h" in service

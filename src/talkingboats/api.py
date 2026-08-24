@@ -1,28 +1,32 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import hashlib
 import json
-import os
+import logging
+import time
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path as FilePath
 from typing import Annotated, Any, Literal
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import httpx
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
-from talkingboats.asr_feedback import (
-    DEFAULT_BASE_MODEL,
-    DEFAULT_MIN_CORRECTIONS,
-    DEFAULT_OUTPUT_DIR,
-    has_new_training_corrections,
-)
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
-from talkingboats.clip_quality import QualityFilter, normalize_quality_filter
+from talkingboats.clip_quality import (
+    QualityFilter,
+    is_quality_visible,
+    normalize_quality_filter,
+)
 from talkingboats.clip_search import (
     SearchIndexUnavailable,
     read_search_index,
@@ -51,13 +55,11 @@ from talkingboats.schemas import (
     LiveChannelsResponse,
     PlaybackUrlRequest,
     PlaybackUrlResponse,
-    TranscriptCorrectionDeleteRequest,
-    TranscriptCorrectionDeleteResponse,
-    TranscriptCorrectionRequest,
-    TranscriptCorrectionResponse,
 )
 from talkingboats.security import require_token
 from talkingboats.storage import S3AudioStorage
+
+logger = logging.getLogger("uvicorn.error")
 
 
 async def get_settings() -> Settings:
@@ -97,6 +99,7 @@ async def get_clip_store(
                 table_name=table_name,
                 aws_region=settings.aws_region,
                 environment=settings.durable_events_environment,
+                aggregate_counts_enabled=settings.clip_count_aggregates_enabled,
             ),
             event_store=event_store,
         )
@@ -130,6 +133,8 @@ PUBLISHED_SEARCH_INDEX_PATH = (
     FilePath(__file__).resolve().parents[2] / "outputs/public-site/analysis/search_index.json"
 )
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
+CLIP_NAVIGATION_TIMEZONE_NAME = "America/Los_Angeles"
+CLIP_NAVIGATION_TIMEZONE = ZoneInfo(CLIP_NAVIGATION_TIMEZONE_NAME)
 if SHARED_UI_DIR.exists():
     app.mount("/operator", StaticFiles(directory=SHARED_UI_DIR, html=True), name="operator")
 
@@ -138,7 +143,6 @@ def _published_playable_clip_summary(
     public_site_dir: FilePath,
     *,
     featured_only: bool = False,
-    reviewed_only: bool = False,
 ) -> dict[str, object]:
     manifest_path = public_site_dir / "public_manifest.json"
     try:
@@ -154,8 +158,6 @@ def _published_playable_clip_summary(
         if not isinstance(clip, Mapping):
             continue
         if featured_only and not clip.get("featured"):
-            continue
-        if reviewed_only and not clip.get("transcript_reviewed"):
             continue
         if not clip.get("audio_public_filename"):
             continue
@@ -173,9 +175,7 @@ def _published_playable_clip_summary(
             started_values.append(started_at)
     return {
         "playable_clip_count": len(clips),
-        "playable_channel_counts": dict(
-            sorted(channel_counts.items(), key=lambda item: item[0])
-        ),
+        "playable_channel_counts": dict(sorted(channel_counts.items(), key=lambda item: item[0])),
         "latest_playable_started_at": max(started_values) if started_values else None,
     }
 
@@ -205,6 +205,17 @@ def _received_clip_count(
     if not isinstance(counts, Mapping):
         return fallback
     return sum(int(count or 0) for count in counts.values())
+
+
+def _clip_count_snapshot(clip_store: object) -> Any | None:
+    try:
+        return clip_store.clip_count_snapshot()  # type: ignore[attr-defined]
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _aggregate_counts_required(clip_store: object) -> bool:
+    return bool(getattr(clip_store, "aggregate_counts_enabled", False))
 
 
 @app.get("/healthz")
@@ -247,6 +258,7 @@ async def presign_clip_upload(
                 "ended_at": _format_utc(request.ended_at) if request.ended_at else None,
                 "duration_seconds": request.duration_seconds,
                 "content_type": request.content_type,
+                "audio_profile": request.audio_profile,
                 "idempotency_key": request.idempotency_key,
             },
         )
@@ -283,7 +295,7 @@ async def ingest_clip_stats(
 @app.get(
     "/api/clips/recent",
 )
-async def recent_clips(
+def recent_clips(
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
     clip_store: Annotated[
@@ -293,10 +305,11 @@ async def recent_clips(
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
     offset: Annotated[int, Query(ge=0)] = 0,
     page: Annotated[int | None, Query(ge=1)] = None,
+    cursor: Annotated[str | None, Query(min_length=1, max_length=2048)] = None,
+    around: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
     channel: Annotated[str | None, Query(min_length=1, max_length=8)] = None,
     channels: Annotated[list[str] | None, Query()] = None,
     featured: bool = False,
-    reviewed: bool = False,
     quality: Annotated[QualityFilter, Query()] = "visible",
     include_playback_url: bool = True,
     verify_playback_exists: bool = True,
@@ -305,6 +318,12 @@ async def recent_clips(
     sort: Annotated[Literal["newest", "oldest"], Query()] = "newest",
 ) -> dict[str, object]:
     quality = normalize_quality_filter(quality)
+    around_utc = _clip_navigation_utc(around) if around else None
+    if cursor is not None and (offset != 0 or page is not None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cursor cannot be combined with offset or page",
+        )
     effective_offset = (page - 1) * limit if page is not None else offset
     effective_page = page if page is not None else (effective_offset // limit) + 1
     requested_excluded_channels = _requested_public_excluded_channels(exclude_channels)
@@ -313,11 +332,20 @@ async def recent_clips(
         channels=channels,
         excluded_channels=requested_excluded_channels,
     )
+    cursor_binding = _clip_cursor_binding(
+        channels=selected_channels,
+        excluded_channels=requested_excluded_channels,
+        featured=featured,
+        quality=quality,
+        sort=sort,
+        around=around_utc,
+    )
+    cursor_anchor = _decode_clip_cursor(cursor, binding=cursor_binding) if cursor else None
+    counts_deferred = not include_counts
     if include_counts:
         playable_summary = _published_playable_clip_summary(
             settings.public_site_dir,
             featured_only=featured,
-            reviewed_only=reviewed,
         )
         playable_channel_counts = dict(playable_summary["playable_channel_counts"])
         playable_clip_count = int(playable_summary["playable_clip_count"])
@@ -349,43 +377,93 @@ async def recent_clips(
             "offset": effective_offset,
             "page": effective_page,
             "featured": featured,
-            "reviewed": reviewed,
             "quality": quality,
             "channel_counts": {},
             "channel_labels": public_monitored_channel_labels(),
+            "next_cursor": None,
+            "counts_deferred": counts_deferred,
+            **_clip_navigation_metadata(around_utc),
         }
-    filtered_collection = featured or reviewed or quality != "visible"
+    filtered_collection = featured or quality != "visible"
     if include_counts:
-        all_channel_counts = clip_store.transcribed_channel_counts(
-            excluded_channels=requested_excluded_channels,
-            quality=quality,
-        )
-        channel_counts = (
-            clip_store.transcribed_channel_counts(
+        snapshot = _clip_count_snapshot(clip_store)
+        if snapshot is not None:
+            all_channel_counts = snapshot.counts_for(
                 excluded_channels=requested_excluded_channels,
-                featured_only=featured,
-                reviewed_only=reviewed,
                 quality=quality,
             )
-            if filtered_collection
-            else all_channel_counts
-        )
-        clip_count = sum(all_channel_counts.values())
-        received_clip_count = clip_count
-        analyzed_clip_count = clip_count
-        filtered_clip_count = (
-            sum(channel_counts.get(selected_channel, 0) for selected_channel in selected_channels)
-            if selected_channels
-            else sum(channel_counts.values())
-        )
-        if not selected_channels and requested_excluded_channels != PUBLIC_EXCLUDED_CHANNELS:
-            playable_channel_counts = dict(channel_counts)
-            playable_clip_count = sum(playable_channel_counts.values())
-            filtered_playable_clip_count = filtered_clip_count
-        if filtered_collection:
-            playable_channel_counts = dict(channel_counts)
-            playable_clip_count = sum(playable_channel_counts.values())
-            filtered_playable_clip_count = filtered_clip_count
+            channel_counts = (
+                snapshot.counts_for(
+                    excluded_channels=requested_excluded_channels,
+                    featured_only=featured,
+                    quality=quality,
+                )
+                if filtered_collection
+                else all_channel_counts
+            )
+            clip_count = sum(all_channel_counts.values())
+            received_clip_count = clip_count + snapshot.non_transcribed_count()
+            analyzed_clip_count = clip_count
+            filtered_clip_count = (
+                sum(
+                    channel_counts.get(selected_channel, 0)
+                    for selected_channel in selected_channels
+                )
+                if selected_channels
+                else sum(channel_counts.values())
+            )
+            if not selected_channels and requested_excluded_channels != PUBLIC_EXCLUDED_CHANNELS:
+                playable_channel_counts = dict(channel_counts)
+                playable_clip_count = sum(playable_channel_counts.values())
+                filtered_playable_clip_count = filtered_clip_count
+            if filtered_collection:
+                playable_channel_counts = dict(channel_counts)
+                playable_clip_count = sum(playable_channel_counts.values())
+                filtered_playable_clip_count = filtered_clip_count
+        elif _aggregate_counts_required(clip_store):
+            # The rollout flag deliberately turns scans off.  A missing or
+            # invalid snapshot must be visible to callers rather than quietly
+            # recreating the high-cost query path.
+            all_channel_counts = {}
+            channel_counts = {}
+            clip_count = 0
+            received_clip_count = 0
+            analyzed_clip_count = 0
+            filtered_clip_count = 0
+            counts_deferred = True
+        else:
+            all_channel_counts = clip_store.transcribed_channel_counts(
+                excluded_channels=requested_excluded_channels,
+                quality=quality,
+            )
+            channel_counts = (
+                clip_store.transcribed_channel_counts(
+                    excluded_channels=requested_excluded_channels,
+                    featured_only=featured,
+                    quality=quality,
+                )
+                if filtered_collection
+                else all_channel_counts
+            )
+            clip_count = sum(all_channel_counts.values())
+            received_clip_count = _received_clip_count(clip_store, fallback=clip_count)
+            analyzed_clip_count = clip_count
+            filtered_clip_count = (
+                sum(
+                    channel_counts.get(selected_channel, 0)
+                    for selected_channel in selected_channels
+                )
+                if selected_channels
+                else sum(channel_counts.values())
+            )
+            if not selected_channels and requested_excluded_channels != PUBLIC_EXCLUDED_CHANNELS:
+                playable_channel_counts = dict(channel_counts)
+                playable_clip_count = sum(playable_channel_counts.values())
+                filtered_playable_clip_count = filtered_clip_count
+            if filtered_collection:
+                playable_channel_counts = dict(channel_counts)
+                playable_clip_count = sum(playable_channel_counts.values())
+                filtered_playable_clip_count = filtered_clip_count
     else:
         channel_counts = {}
         clip_count = 0
@@ -407,12 +485,14 @@ async def recent_clips(
             "offset": effective_offset,
             "page": effective_page,
             "featured": featured,
-            "reviewed": reviewed,
             "quality": quality,
             "channel_counts": channel_counts,
             "channel_labels": public_monitored_channel_labels(channel_counts),
+            "next_cursor": None,
+            "counts_deferred": counts_deferred,
+            **_clip_navigation_metadata(around_utc),
         }
-    clips, live_latest_playable_started_at = _recent_playable_clip_page(
+    clips, live_latest_playable_started_at, next_anchor = _recent_playable_clip_page(
         settings=settings,
         storage=storage,
         clip_store=clip_store,
@@ -423,11 +503,17 @@ async def recent_clips(
         channels=selected_channels,
         excluded_channels=requested_excluded_channels,
         featured_only=featured,
-        reviewed_only=reviewed,
         quality=quality,
         include_playback_url=include_playback_url,
         verify_playback_exists=verify_playback_exists,
         sort=sort,
+        cursor_anchor=cursor_anchor,
+        starting_at=around_utc,
+    )
+    next_cursor = (
+        _encode_clip_cursor(anchor=next_anchor, binding=cursor_binding)
+        if next_anchor is not None
+        else None
     )
     return {
         "clips": clips,
@@ -447,11 +533,13 @@ async def recent_clips(
         "offset": effective_offset,
         "page": effective_page,
         "featured": featured,
-        "reviewed": reviewed,
         "quality": quality,
         "sort": sort,
         "channel_counts": channel_counts,
         "channel_labels": public_monitored_channel_labels(channel_counts),
+        "next_cursor": next_cursor,
+        "counts_deferred": counts_deferred,
+        **_clip_navigation_metadata(around_utc),
     }
 
 
@@ -467,20 +555,28 @@ def _recent_playable_clip_page(
     page: int | None = None,
     excluded_channels: tuple[str, ...] = PUBLIC_EXCLUDED_CHANNELS,
     featured_only: bool = False,
-    reviewed_only: bool = False,
     quality: QualityFilter = "visible",
     include_playback_url: bool = True,
     verify_playback_exists: bool = True,
     sort: Literal["newest", "oldest"] = "newest",
-) -> tuple[list[dict[str, object]], str | None]:
+    cursor_anchor: tuple[str, str] | None = None,
+    starting_at: str | None = None,
+) -> tuple[list[dict[str, object]], str | None, tuple[str, str] | None]:
     clips: list[dict[str, object]] = []
     latest_playable_started_at: str | None = None
     playable_seen = 0
     candidate_offset = 0
-    indexed_page = page is not None and not verify_playback_exists
+    indexed_page = (
+        page is not None
+        and not verify_playback_exists
+        and quality != "visible"
+    )
     batch_size = limit if indexed_page else max(limit, 50)
     playable_offset = 0 if indexed_page else offset
-    while len(clips) < limit:
+    target_count = limit + 1
+    returned_anchors: list[tuple[str, str]] = []
+    cursor_pending = cursor_anchor is not None
+    while len(clips) < target_count:
         candidates = clip_store.recent_transcribed(
             limit=batch_size,
             offset=candidate_offset,
@@ -489,19 +585,27 @@ def _recent_playable_clip_page(
             channels=channels,
             excluded_channels=excluded_channels,
             featured_only=featured_only,
-            reviewed_only=reviewed_only,
             quality=quality,
             sort=sort,
+            starting_at=starting_at,
         )
         if not candidates:
             break
         for clip in candidates:
+            clip_anchor = (clip.started_at, _clip_cursor_key(clip.key))
+            if cursor_pending:
+                if clip_anchor == cursor_anchor:
+                    cursor_pending = False
+                continue
+            if quality == "visible" and not is_quality_visible(
+                clip.quality_status,
+                clip.quality_score,
+            ):
+                continue
             try:
                 if verify_playback_exists and not storage.playback_exists(clip.key):
                     continue
-                playback_url = (
-                    storage.presign_playback(clip.key) if include_playback_url else None
-                )
+                playback_url = storage.presign_playback(clip.key) if include_playback_url else None
             except RuntimeError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -522,12 +626,6 @@ def _recent_playable_clip_page(
                 "duration_seconds": clip.duration_seconds,
                 "content_type": clip.content_type,
                 "transcript": clip.transcript,
-                "transcript_reviewed": clip.transcript_reviewed,
-                "include_in_training": clip.include_in_training,
-                "training_quality": clip.training_quality,
-                "training_split": clip.training_split,
-                "training_flags": list(clip.training_flags),
-                "training_reason": clip.training_reason,
                 "quality_status": clip.quality_status,
                 "quality_score": clip.quality_score,
                 "quality_reason": clip.quality_reason,
@@ -539,24 +637,97 @@ def _recent_playable_clip_page(
             }
             if playback_url is not None:
                 clip_payload["playback_url"] = playback_url
-                clip_payload["playback_expires_in_seconds"] = (
-                    settings.playback_presign_seconds
-                )
+                clip_payload["playback_expires_in_seconds"] = settings.playback_presign_seconds
             else:
                 clip_payload["audio_url"] = _public_clip_audio_url(
                     channel=clip.channel,
                     started_at=clip.started_at,
                 )
             clips.append(clip_payload)
+            returned_anchors.append(clip_anchor)
             playable_seen += 1
-            if len(clips) >= limit:
+            if len(clips) >= target_count:
                 break
         if indexed_page:
             break
         candidate_offset += len(candidates)
         if len(candidates) < batch_size:
             break
-    return clips, latest_playable_started_at
+    if cursor_pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="clip cursor anchor is no longer available",
+        )
+    has_more = len(clips) > limit
+    visible_clips = clips[:limit]
+    next_anchor = returned_anchors[limit - 1] if has_more and limit > 0 else None
+    return visible_clips, latest_playable_started_at, next_anchor
+
+
+def _clip_cursor_binding(
+    *,
+    channels: list[str],
+    excluded_channels: tuple[str, ...],
+    featured: bool,
+    quality: QualityFilter,
+    sort: Literal["newest", "oldest"],
+    around: str | None,
+) -> str:
+    payload = {
+        "channels": sorted(channels),
+        "excluded_channels": sorted(excluded_channels),
+        "featured": featured,
+        "quality": quality,
+        "sort": sort,
+        "around": around,
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(serialized).hexdigest()
+
+
+def _encode_clip_cursor(*, anchor: tuple[str, str], binding: str) -> str:
+    payload = json.dumps(
+        {
+            "v": 1,
+            "started_at": anchor[0],
+            "anchor": anchor[1],
+            "binding": binding,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_clip_cursor(value: str, *, binding: str) -> tuple[str, str]:
+    try:
+        padded = value + ("=" * (-len(value) % 4))
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+    except (UnicodeEncodeError, binascii.Error, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid clip cursor",
+        ) from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("v") != 1
+        or not isinstance(payload.get("started_at"), str)
+        or not isinstance(payload.get("anchor"), str)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid clip cursor",
+        )
+    if payload.get("binding") != binding:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cursor does not match the requested clip filters",
+        )
+    return payload["started_at"], payload["anchor"]
+
+
+def _clip_cursor_key(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
 
 
 @app.get(
@@ -622,123 +793,6 @@ async def public_clip_audio(
 
 
 @app.post(
-    "/api/clips/corrections",
-    response_model=TranscriptCorrectionResponse,
-)
-async def correct_clip_transcript(
-    request: TranscriptCorrectionRequest,
-    clip_store: Annotated[
-        UploadedClipStore | DynamoUploadedClipStore | None,
-        Depends(get_clip_store),
-    ],
-) -> TranscriptCorrectionResponse:
-    if clip_store is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="clip store unavailable",
-        )
-    try:
-        correction = clip_store.correct_transcript(
-            channel=request.channel,
-            started_at=request.started_at,
-            corrected_transcript=request.transcript,
-            reviewer=request.reviewer,
-            note=request.note,
-            include_in_training=request.include_in_training,
-            training_quality=request.training_quality,
-            training_split=request.training_split,
-            training_flags=request.training_flags,
-            training_reason=request.training_reason,
-            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return TranscriptCorrectionResponse(
-        status="corrected",
-        channel=correction.channel,
-        started_at=correction.started_at,
-        original_transcript=correction.original_transcript,
-        corrected_transcript=correction.corrected_transcript,
-        transcript_reviewed=True,
-        include_in_training=correction.include_in_training,
-        training_quality=correction.training_quality,
-        training_split=correction.training_split,
-        training_flags=list(correction.training_flags),
-        training_reason=correction.training_reason,
-    )
-
-
-@app.delete(
-    "/api/clips/corrections",
-    response_model=TranscriptCorrectionDeleteResponse,
-)
-async def remove_clip_transcript_correction(
-    request: TranscriptCorrectionDeleteRequest,
-    clip_store: Annotated[
-        UploadedClipStore | DynamoUploadedClipStore | None,
-        Depends(get_clip_store),
-    ],
-) -> TranscriptCorrectionDeleteResponse:
-    if clip_store is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="clip store unavailable",
-        )
-    try:
-        correction = clip_store.remove_transcript_correction(
-            channel=request.channel,
-            started_at=request.started_at,
-            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="clip not found") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return TranscriptCorrectionDeleteResponse(
-        status="uncorrected",
-        channel=correction.channel,
-        started_at=correction.started_at,
-        original_transcript=correction.original_transcript,
-        corrected_transcript=correction.corrected_transcript,
-        transcript=correction.original_transcript,
-        transcript_reviewed=False,
-        include_in_training=False,
-    )
-
-
-@app.get(
-    "/api/clips/corrections",
-)
-async def list_clip_transcript_corrections(
-    clip_store: Annotated[
-        UploadedClipStore | DynamoUploadedClipStore | None,
-        Depends(get_clip_store),
-    ],
-    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
-    offset: Annotated[int, Query(ge=0)] = 0,
-) -> dict[str, object]:
-    if clip_store is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="clip store unavailable",
-        )
-    corrections = clip_store.transcript_corrections(limit=limit, offset=offset)
-    training_corrections = clip_store.transcript_corrections_for_training()
-    return {
-        "status": "ok",
-        "correction_count": clip_store.transcript_correction_count(),
-        "training_example_count": len(training_corrections),
-        "returned_count": len(corrections),
-        "limit": limit,
-        "offset": offset,
-        "training_export_url": "/api/clips/corrections/export",
-        "corrections": [_public_training_record(correction) for correction in corrections],
-    }
-
-
-@app.post(
     "/api/clips/features",
     response_model=ClipFeatureResponse,
 )
@@ -782,70 +836,6 @@ async def feature_clip(
     )
 
 
-@app.get(
-    "/api/clips/corrections/export",
-)
-async def export_clip_transcript_corrections(
-    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
-) -> Response:
-    if clip_store is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="clip store unavailable",
-        )
-    lines = [
-        json.dumps(_public_training_record(correction), sort_keys=True)
-        for correction in clip_store.transcript_corrections_for_training()
-    ]
-    content = "\n".join(lines)
-    if content:
-        content += "\n"
-    return Response(
-        content=content,
-        media_type="application/x-ndjson",
-        headers={"Cache-Control": "no-store"},
-    )
-
-
-@app.get(
-    "/api/asr-feedback/status",
-)
-async def asr_feedback_status(
-    clip_store: Annotated[UploadedClipStore | None, Depends(get_clip_store)],
-) -> dict[str, object]:
-    if clip_store is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="clip store unavailable",
-        )
-    corrections = clip_store.transcript_corrections_for_training()
-    correction_count = len(corrections)
-    reviewed_correction_count = clip_store.transcript_correction_count()
-    min_corrections = _env_positive_int(
-        "TALKINGBOATS_ASR_FEEDBACK_MIN_CORRECTIONS",
-        DEFAULT_MIN_CORRECTIONS,
-    )
-    output_dir = FilePath(
-        os.getenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR))
-    )
-    new_corrections_since_last_train = has_new_training_corrections(output_dir, corrections)
-    return {
-        "status": "ok",
-        "reviewed_correction_count": reviewed_correction_count,
-        "training_example_count": correction_count,
-        "min_corrections": min_corrections,
-        "new_corrections_since_last_train": new_corrections_since_last_train,
-        "ready_for_training": (
-            correction_count >= min_corrections and new_corrections_since_last_train
-        ),
-        "base_model": os.getenv("TALKINGBOATS_ASR_FEEDBACK_BASE_MODEL", DEFAULT_BASE_MODEL),
-        "nightly_schedule": "manual only",
-        "corrections_url": "/api/clips/corrections",
-        "export_url": "/api/clips/corrections/export",
-        "training_status": _read_public_asr_feedback_status(),
-    }
-
-
 def public_playback_clip(
     clip_store: UploadedClipStore | None,
     *,
@@ -868,68 +858,41 @@ def _public_clip_audio_url(*, channel: str, started_at: str) -> str:
     return "/api/clips/audio?" + urlencode({"channel": channel, "started_at": started_at})
 
 
-def _public_training_record(correction: dict[str, object]) -> dict[str, object]:
-    channel = str(correction["channel"])
-    started_at = str(correction["started_at"])
-    return {
-        "audio_url": _public_clip_audio_url(channel=channel, started_at=started_at),
-        "channel": channel,
-        "started_at": started_at,
-        "duration_seconds": correction["duration_seconds"],
-        "content_type": correction["content_type"],
-        "original_text": correction["original_transcript"],
-        "text": correction["corrected_transcript"],
-        "reviewer": correction["reviewer"],
-        "note": correction["note"],
-        "include_in_training": correction.get("include_in_training", True),
-        "training_quality": correction.get("training_quality", "unknown"),
-        "training_split": correction.get("training_split", "auto"),
-        "training_flags": correction.get("training_flags", []),
-        "training_reason": correction.get("training_reason"),
-    }
-
-
-def _read_public_asr_feedback_status() -> dict[str, object] | None:
-    output_dir = FilePath(
-        os.getenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR))
-    )
-    status_path = output_dir / "training_status.json"
-    try:
-        payload = json.loads(status_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
-    except (OSError, json.JSONDecodeError):
-        return {"status": "unreadable"}
-    if not isinstance(payload, dict):
-        return {"status": "unreadable"}
-    allowed_keys = {
-        "status",
-        "reason",
-        "correction_count",
-        "min_corrections",
-        "last_trained_at",
-        "generated_at",
-        "promotion",
-        "eval",
-    }
-    return {key: value for key, value in payload.items() if key in allowed_keys}
-
-
-def _env_positive_int(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    try:
-        parsed = int(value)
-    except ValueError:
-        return default
-    return parsed if parsed > 0 else default
-
-
 def _format_utc(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _clip_navigation_utc(value: str) -> str:
+    try:
+        if "T" not in value and " " not in value:
+            raise ValueError("time component is required")
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="around must be an ISO 8601 date and time",
+        ) from exc
+    if parsed.tzinfo is None:
+        local_wall_time = parsed
+        parsed = local_wall_time.replace(tzinfo=CLIP_NAVIGATION_TIMEZONE)
+        round_trip = parsed.astimezone(UTC).astimezone(CLIP_NAVIGATION_TIMEZONE)
+        if round_trip.replace(tzinfo=None) != local_wall_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="around is not a valid Pacific date and time",
+            )
+    return _format_utc(parsed.replace(microsecond=0))
+
+
+def _clip_navigation_metadata(around_utc: str | None) -> dict[str, str]:
+    if around_utc is None:
+        return {}
+    return {
+        "around": around_utc,
+        "around_timezone": CLIP_NAVIGATION_TIMEZONE_NAME,
+    }
 
 
 def iter_playback_body(body: Any):
@@ -970,19 +933,48 @@ async def clip_search(
     recency: Annotated[str, Query(min_length=1, max_length=8)] = "7d",
 ) -> dict[str, object]:
     index_path = _search_index_path(settings)
+    started_at = time.monotonic()
     try:
-        return search_index_clips(
-            read_search_index(index_path),
+        index = await run_in_threadpool(read_search_index, index_path)
+        payload = await run_in_threadpool(
+            search_index_clips,
+            index,
             query=q,
             limit=limit,
             recency=recency,
         )
+        logger.info(
+            "event=talkingboats_clip_search status=ok recency=%s limit=%s count=%s "
+            "query_length=%s elapsed_ms=%s",
+            payload.get("recency"),
+            limit,
+            payload.get("count"),
+            len(q),
+            round((time.monotonic() - started_at) * 1000),
+        )
+        return payload
     except SearchIndexUnavailable as exc:
+        logger.warning(
+            "event=talkingboats_clip_search status=index_unavailable recency=%s limit=%s "
+            "query_length=%s elapsed_ms=%s",
+            recency,
+            limit,
+            len(q),
+            round((time.monotonic() - started_at) * 1000),
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="clip search index is not ready",
         ) from exc
     except ImportError as exc:
+        logger.exception(
+            "event=talkingboats_clip_search status=model_unavailable recency=%s limit=%s "
+            "query_length=%s elapsed_ms=%s",
+            recency,
+            limit,
+            len(q),
+            round((time.monotonic() - started_at) * 1000),
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"clip search embedding model is unavailable: {exc.name or type(exc).__name__}",

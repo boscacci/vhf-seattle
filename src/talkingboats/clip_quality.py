@@ -12,6 +12,14 @@ QualityFilter = Literal["visible", "quarantined", "all"]
 VISIBLE_QUALITY_STATUSES = {"unknown", "ok", "marginal"}
 QUALITY_STATUS_VALUES = ("unknown", "ok", "marginal", "quarantined")
 QUALITY_FILTER_VALUES = ("visible", "quarantined", "all")
+MIN_CLEAR_SPEECH_CONTRAST_DB = 5.0
+MIN_CLEAR_PRESENCE_BAND_RATIO = 0.12
+MAX_CLEAR_NOISE_FLOOR_DBFS = -24.0
+MIN_CLEAR_ASR_MEAN_AVG_LOGPROB = -0.8
+# Older records predate the blocking ASR-confidence rule. Their rounded score
+# is the only persisted confidence signal, so keep them out of the normal feed
+# when that score is below the equivalent conservative display threshold.
+MIN_VISIBLE_QUALITY_SCORE = 90.0
 
 
 @dataclass(frozen=True)
@@ -55,8 +63,14 @@ def normalize_quality_filter(value: object | None) -> QualityFilter:
     return quality_filter  # type: ignore[return-value]
 
 
-def is_quality_visible(status: object | None) -> bool:
-    return normalize_quality_status(status) in VISIBLE_QUALITY_STATUSES
+def is_quality_visible(
+    status: object | None,
+    quality_score: object | None = None,
+) -> bool:
+    if normalize_quality_status(status) not in VISIBLE_QUALITY_STATUSES:
+        return False
+    score = _optional_float(quality_score)
+    return score is None or score >= MIN_VISIBLE_QUALITY_SCORE
 
 
 def summarize_asr_quality(segments: Iterable[Any]) -> AsrQualitySummary:
@@ -109,10 +123,24 @@ def assess_clip_quality(
         if audio.peak_dbfs <= -45.0:
             flags.append("static_or_no_speech")
             reason = reason or "static_or_no_speech"
-        if audio.speech_contrast_db < 2.5 and audio.voice_band_ratio < 0.5:
+        if audio.noise_floor_dbfs >= MAX_CLEAR_NOISE_FLOOR_DBFS:
+            flags.append("low_snr")
+            reason = reason or "low_snr"
+        weak_intelligibility_band = (
+            audio.presence_band_ratio < MIN_CLEAR_PRESENCE_BAND_RATIO
+        )
+        if audio.speech_contrast_db < 2.5 and (
+            audio.voice_band_ratio < 0.5 or weak_intelligibility_band
+        ):
             flags.append("static_or_no_speech")
             reason = reason or "static_or_no_speech"
-        elif audio.speech_contrast_db < 4.0 and audio.voice_band_ratio < 0.62:
+        elif (
+            (
+                audio.speech_contrast_db < MIN_CLEAR_SPEECH_CONTRAST_DB
+                and weak_intelligibility_band
+            )
+            or (audio.speech_contrast_db < 4.0 and audio.voice_band_ratio < 0.62)
+        ):
             flags.append("low_snr")
             reason = reason or "low_snr"
         if audio.hiss_band_ratio >= 0.28 and audio.voice_band_ratio < 0.68:
@@ -125,6 +153,9 @@ def assess_clip_quality(
     if asr is not None:
         if asr.mean_avg_logprob is not None:
             score -= max(0.0, -0.45 - asr.mean_avg_logprob) * 30.0
+            if asr.mean_avg_logprob <= MIN_CLEAR_ASR_MEAN_AVG_LOGPROB:
+                flags.append("static_or_no_speech")
+                reason = reason or "static_or_no_speech"
         if asr.max_no_speech_prob is not None and asr.max_no_speech_prob >= 0.75:
             flags.append("static_or_no_speech")
             reason = reason or "static_or_no_speech"

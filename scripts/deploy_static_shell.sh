@@ -11,7 +11,7 @@ so generated clips, analysis artifacts, and manifests already in the bucket are
 preserved.
 
 Dev shell deploys also sync the Ubuntu micro-computer tailnet deploy copy by
-default, because `vhf-dev.robertboscacci.com` is served from that tailnet host. Set
+default, because `dev.seattleboatradio.com` is served from that tailnet host. Set
 `TALKINGBOATS_SKIP_TAILNET_DEV_SYNC=1` to skip that extra sync.
 
 Dev shell deploys also allow archive/no-git deploy copies. Prod shell deploys
@@ -72,8 +72,8 @@ cloudfront_distribution_for_alias() {
 
 fallback_site_fqdn() {
   case "$1" in
-    dev) printf '%s' "${TALKINGBOATS_DEV_SITE_FQDN:-vhf-dev.robertboscacci.com}" ;;
-    prod) printf '%s' "${TALKINGBOATS_SITE_FQDN:-vhf.robertboscacci.com}" ;;
+    dev) printf '%s' "${TALKINGBOATS_DEV_SITE_FQDN:-dev.seattleboatradio.com}" ;;
+    prod) printf '%s' "${TALKINGBOATS_SITE_FQDN:-seattleboatradio.com}" ;;
     *) return 1 ;;
   esac
 }
@@ -163,6 +163,16 @@ upload_shell_entrypoint() {
       --cache-control "no-store" \
       --output json
   fi
+
+  if [[ -f "${source_dir}/assets/styles.css" ]]; then
+    aws s3api put-object \
+      --bucket "${target_bucket}" \
+      --key "assets/styles.css" \
+      --body "${source_dir}/assets/styles.css" \
+      --content-type "text/css" \
+      --cache-control "no-store" \
+      --output json
+  fi
 }
 
 upload_crawler_assets() {
@@ -197,10 +207,27 @@ delete_retired_route_indexes() {
   done
 }
 
+tailnet_sync_target_is_local() {
+  local target="$1"
+  local tailnet_dns_name=""
+
+  if [[ "${target}" == "local" ]]; then
+    return 0
+  fi
+  if [[ "${target}" == "$(hostname)" || "${target}" == "$(hostname -s)" ]]; then
+    return 0
+  fi
+  if command -v tailscale >/dev/null; then
+    tailnet_dns_name="$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' || true)"
+    tailnet_dns_name="${tailnet_dns_name%.}"
+  fi
+  [[ -n "${tailnet_dns_name}" && "${target%.}" == "${tailnet_dns_name}" ]]
+}
+
 sync_tailnet_dev_static_shell() {
   local source_dir="$1"
   local target="${TALKINGBOATS_DEV_TAILNET_SSH_TARGET:-optiplex}"
-  local target_dir="${TALKINGBOATS_DEV_TAILNET_PUBLIC_SITE_DIR:-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/public-site}"
+  local target_dir="${TALKINGBOATS_DEV_TAILNET_PUBLIC_SITE_DIR:-${HOME}/repos/elliott-bay-vhf/.runtime/live-ais-deploy/public-site}"
 
   if [[ "${environment}" != "dev" || "${TALKINGBOATS_SKIP_TAILNET_DEV_SYNC:-0}" == "1" ]]; then
     return
@@ -209,8 +236,18 @@ sync_tailnet_dev_static_shell() {
     echo "rsync is required for tailnet dev static shell sync." >&2
     exit 1
   fi
+  if tailnet_sync_target_is_local "${target}"; then
+    echo "Syncing static shell to local dev copy: ${target_dir}"
+    mkdir -p "${target_dir}"
+    rsync -az "${sync_excludes[@]}" "${source_dir}/" "${target_dir}/"
+    return
+  fi
   echo "Syncing static shell to tailnet dev copy: ${target}:${target_dir}"
-  rsync -az "${sync_excludes[@]}" "${source_dir}/" "${target}:${target_dir}/"
+  rsync -az \
+    -e "ssh -o BatchMode=yes -o ConnectTimeout=10" \
+    "${sync_excludes[@]}" \
+    "${source_dir}/" \
+    "${target}:${target_dir}/"
 }
 
 enforce_branch_hygiene() {
@@ -260,7 +297,6 @@ branch="$(current_git_branch)"
 route_index_paths=(
   "clips/index.html"
   "hall-of-fame/index.html"
-  "reviewed/index.html"
   "search/index.html"
   "live/index.html"
   "ais/index.html"
@@ -273,8 +309,6 @@ route_direct_paths=(
   "clips"
   "hall-of-fame/"
   "hall-of-fame"
-  "reviewed/"
-  "reviewed"
   "search/"
   "search"
   "live/"
@@ -298,11 +332,7 @@ dev_only_route_direct_paths=(
   "operator/"
   "operator"
 )
-retired_route_paths=(
-  "fine-tuning/index.html"
-  "fine-tuning/"
-  "fine-tuning"
-)
+retired_route_paths=()
 prod_retired_route_paths=(
   "performance/index.html"
   "performance/"
@@ -332,8 +362,6 @@ invalidate_paths=(
   "/clips/*"
   "/hall-of-fame"
   "/hall-of-fame/*"
-  "/reviewed"
-  "/reviewed/*"
   "/search"
   "/search/*"
   "/live"
@@ -349,13 +377,12 @@ invalidate_paths=(
   "/about/*"
   "/performance"
   "/performance/*"
-  "/fine-tuning"
-  "/fine-tuning/*"
   "/operator"
   "/operator/*"
 )
 sync_excludes=(
   --exclude "public_manifest.json"
+  --exclude "recent_clips.json"
   --exclude "clips/*"
   --exclude "analysis/*"
   --exclude "live/current.m3u8"

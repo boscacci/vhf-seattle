@@ -1,6 +1,16 @@
 output "prod_clip_freshness_alarm_name" {
-  description = "CloudWatch alarm for stale or missing production public clips."
+  description = "Non-paging CloudWatch diagnostic for stale production public clips."
   value       = aws_cloudwatch_metric_alarm.prod_clip_freshness.alarm_name
+}
+
+output "prod_public_manifest_freshness_alarm_name" {
+  description = "CloudWatch alarm that detects a stalled production public manifest publisher"
+  value       = aws_cloudwatch_metric_alarm.prod_public_manifest_freshness.alarm_name
+}
+
+output "prod_ais_freshness_alarm_name" {
+  description = "CloudWatch alarm that detects stale production AIS ingest"
+  value       = aws_cloudwatch_metric_alarm.prod_ais_freshness.alarm_name
 }
 
 output "prod_clip_freshness_alert_topic_arn" {

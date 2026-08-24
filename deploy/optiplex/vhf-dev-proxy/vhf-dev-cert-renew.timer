@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily vhf-dev.robertboscacci.com certificate renewal check
+Description=Daily dev.seattleboatradio.com certificate renewal check
 
 [Timer]
 OnCalendar=daily

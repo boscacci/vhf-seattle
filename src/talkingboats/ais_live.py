@@ -4,7 +4,8 @@ import base64
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -161,7 +162,7 @@ def _candidate_vessels(payload: object) -> list[Mapping[str, Any]]:
         return [item for item in payload if isinstance(item, Mapping)]
     if not isinstance(payload, Mapping):
         return []
-    for key in ("vessels", "ships", "ais", "messages", "data"):
+    for key in ("vessels", "ships", "ais", "messages", "msgs", "data"):
         value = payload.get(key)
         if isinstance(value, list):
             return [item for item in value if isinstance(item, Mapping)]
@@ -340,8 +341,45 @@ def _connection_ids_from_table(env: Mapping[str, str]) -> list[str]:
 
 
 def assert_public_safe(value: object) -> None:
-    rendered = json.dumps(value, sort_keys=True, default=str)
-    forbidden = ("192.168.", "10.", "172.16.", ".tail", "s3://", "raw_nmea", "token")
-    for marker in forbidden:
-        if marker.lower() in rendered.lower():
-            raise ValueError(f"forbidden public AIS value: {marker}")
+    issue = _public_safety_issue(value)
+    if issue:
+        raise ValueError(issue)
+
+
+_PRIVATE_IPV4_PATTERN = re.compile(
+    r"(?<!\d)(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|"
+    r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?!\d)"
+)
+_FORBIDDEN_PUBLIC_AIS_FIELDS = {
+    "internal_url",
+    "lan_url",
+    "raw_nmea",
+    "receiver_id",
+    "stream_url",
+    "token",
+}
+
+
+def _public_safety_issue(value: object, path: str = "$") -> str | None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text.lower() in _FORBIDDEN_PUBLIC_AIS_FIELDS:
+                return f"forbidden public AIS field at {path}.{key_text}"
+            issue = _public_safety_issue(item, f"{path}.{key_text}")
+            if issue:
+                return issue
+        return None
+
+    if isinstance(value, str):
+        lowered = value.lower()
+        if "s3://" in lowered or ".tail" in lowered or _PRIVATE_IPV4_PATTERN.search(value):
+            return f"forbidden public AIS value at {path}"
+        return None
+
+    if isinstance(value, Sequence) and not isinstance(value, bytes | bytearray):
+        for index, item in enumerate(value):
+            issue = _public_safety_issue(item, f"{path}[{index}]")
+            if issue:
+                return issue
+    return None

@@ -71,8 +71,8 @@ cloudfront_distribution_for_alias() {
 
 fallback_site_fqdn() {
   case "$1" in
-    dev) printf '%s' "${TALKINGBOATS_DEV_SITE_FQDN:-vhf-dev.robertboscacci.com}" ;;
-    prod) printf '%s' "${TALKINGBOATS_SITE_FQDN:-vhf.robertboscacci.com}" ;;
+    dev) printf '%s' "${TALKINGBOATS_DEV_SITE_FQDN:-dev.seattleboatradio.com}" ;;
+    prod) printf '%s' "${TALKINGBOATS_SITE_FQDN:-seattleboatradio.com}" ;;
     *) return 1 ;;
   esac
 }
@@ -246,7 +246,6 @@ branch="$(current_git_branch)"
 route_index_paths=(
   "clips/index.html"
   "hall-of-fame/index.html"
-  "reviewed/index.html"
   "search/index.html"
   "live/index.html"
   "ais/index.html"
@@ -259,8 +258,6 @@ route_direct_paths=(
   "clips"
   "hall-of-fame/"
   "hall-of-fame"
-  "reviewed/"
-  "reviewed"
   "search/"
   "search"
   "live/"
@@ -284,11 +281,7 @@ dev_only_route_direct_paths=(
   "operator/"
   "operator"
 )
-retired_route_paths=(
-  "fine-tuning/index.html"
-  "fine-tuning/"
-  "fine-tuning"
-)
+retired_route_paths=()
 prod_retired_route_paths=(
   "performance/index.html"
   "performance/"

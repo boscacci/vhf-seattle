@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 from talkingboats.clip_transcriber import (
-    DEFAULT_TRANSCRIBE_MODEL,
     ClipNotAvailable,
     ClipQualityMetadata,
     ProcessSummary,
     UploadedClipStore,
+    _load_faster_whisper_model,
     _next_poll_delay_seconds,
+    _quality_gate_log_fields,
     _transcriber_start_log_fields,
     is_displayable_transcript,
     process_pending_uploads_once,
@@ -20,11 +22,7 @@ from talkingboats.schemas import ClipPresignRequest
 from talkingboats.transcript_cleanup import cleanup_noise_transcripts
 
 
-def test_uploaded_clip_transcriber_defaults_to_capacity_tested_base_model() -> None:
-    assert DEFAULT_TRANSCRIBE_MODEL == "base.en"
-
-
-def test_uploaded_clip_transcriber_only_waits_when_queue_is_idle() -> None:
+def test_uploaded_clip_transcriber_backs_off_when_only_uploads_are_missing() -> None:
     assert _next_poll_delay_seconds(ProcessSummary(processed=5), idle_delay_seconds=30) == 0
     assert (
         _next_poll_delay_seconds(
@@ -41,6 +39,36 @@ def test_uploaded_clip_transcriber_only_waits_when_queue_is_idle() -> None:
         == 0
     )
     assert _next_poll_delay_seconds(ProcessSummary(), idle_delay_seconds=30) == 30
+
+
+def test_faster_whisper_model_is_limited_to_two_cpu_threads(monkeypatch) -> None:
+    received: dict[str, object] = {}
+
+    def fake_whisper_model(model_size, **kwargs):
+        received.update(model_size=model_size, **kwargs)
+        return object()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        SimpleNamespace(WhisperModel=fake_whisper_model),
+    )
+
+    _load_faster_whisper_model(
+        model_size="turbo",
+        device="cpu",
+        compute_type="int8",
+        cpu_threads=2,
+        num_workers=1,
+    )
+
+    assert received == {
+        "model_size": "turbo",
+        "device": "cpu",
+        "compute_type": "int8",
+        "cpu_threads": 2,
+        "num_workers": 1,
+    }
 
 
 def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
@@ -72,11 +100,8 @@ def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
             "ended_at": "2026-05-24T21:00:03Z",
         }
     ]
-    assert FakeSpeechModel.last_kwargs["vad_filter"] is True
-    assert FakeSpeechModel.last_kwargs["vad_parameters"] == {
-        "min_silence_duration_ms": 500,
-        "speech_pad_ms": 400,
-    }
+    assert FakeSpeechModel.last_kwargs["vad_filter"] is False
+    assert "vad_parameters" not in FakeSpeechModel.last_kwargs
     assert FakeSpeechModel.last_kwargs["beam_size"] == 5
     assert [event["event_type"] for event in event_store.events] == [
         "clip.processing",
@@ -96,12 +121,42 @@ def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
     ]
 
 
-def test_uploaded_clip_transcriber_prepares_audio_before_model_transcription(tmp_path) -> None:
+def test_default_transcription_keeps_low_confidence_speech_at_both_playable_edges(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=68/date=2026-05-24/20260524T210000Z-boundaries.mp3"
+    store.record_presigned_upload(
+        key=key,
+        request=_clip_request(duration_seconds=4.0),
+    )
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=WritingClipReader(),
+        model=BoundarySpeechModel(),
+        limit=10,
+    )
+
+    clip = store.get_clip(key)
+    assert summary.transcribed == 1
+    assert clip is not None
+    assert clip.transcript == "Head call Main message Tail sign-off"
+    assert [segment["text"] for segment in store.segments_for_clip(key)] == [
+        "Head call",
+        "Main message",
+        "Tail sign-off",
+    ]
+    assert BoundarySpeechModel.last_kwargs["vad_filter"] is False
+    assert "vad_parameters" not in BoundarySpeechModel.last_kwargs
+
+
+def test_uploaded_clip_transcriber_rejects_a_second_audio_filter(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)
     key = "raw/channel=68/date=2026-05-24/20260524T210000Z-test.mp3"
     store.record_presigned_upload(key=key, request=_clip_request())
-    model = FakeSpeechModel()
     ffmpeg_calls = []
 
     def fake_ffmpeg(command, *, check):
@@ -113,7 +168,7 @@ def test_uploaded_clip_transcriber_prepares_audio_before_model_transcription(tmp
     summary = process_pending_uploads_once(
         store=store,
         clip_reader=WritingClipReader(),
-        model=model,
+        model=FakeSpeechModel(),
         limit=10,
         audio_filter="highpass=f=250,lowpass=f=3200,afftdn=nf=-28",
         sample_rate_hz=16_000,
@@ -123,18 +178,13 @@ def test_uploaded_clip_transcriber_prepares_audio_before_model_transcription(tmp
         ffmpeg_runner=fake_ffmpeg,
     )
 
-    assert summary.transcribed == 1
-    assert ffmpeg_calls
-    assert ffmpeg_calls[0][1] is True
-    assert "-af" in ffmpeg_calls[0][0]
-    assert FakeSpeechModel.last_path.endswith(".wav")
-    assert FakeSpeechModel.last_path != ffmpeg_calls[0][0][ffmpeg_calls[0][0].index("-i") + 1]
-    assert not Path(FakeSpeechModel.last_path).exists()
-    assert FakeSpeechModel.last_kwargs["beam_size"] == 5
-    assert FakeSpeechModel.last_kwargs["hotwords"] == "Seattle Traffic, Elliott Bay, VTS"
+    assert summary.failed == 1
+    assert summary.transcribed == 0
+    assert ffmpeg_calls == []
+    assert store.get_clip(key).status == "error"
 
 
-def test_uploaded_clip_transcriber_can_trust_edge_preprocessed_mp3(tmp_path) -> None:
+def test_uploaded_clip_transcriber_reads_canonical_mp3_directly(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)
     key = "raw/channel=68/date=2026-05-24/20260524T210000Z-edge.mp3"
@@ -150,8 +200,7 @@ def test_uploaded_clip_transcriber_can_trust_edge_preprocessed_mp3(tmp_path) -> 
         clip_reader=WritingClipReader(),
         model=FakeSpeechModel(),
         limit=10,
-        audio_filter="highpass=f=250,lowpass=f=3200,afftdn=nf=-28",
-        trust_edge_preprocessed_audio=True,
+        audio_filter=None,
         ffmpeg_runner=fake_ffmpeg,
     )
 
@@ -168,6 +217,15 @@ def test_dynamo_transcriber_start_log_does_not_report_sqlite_path(tmp_path) -> N
     )
 
     assert fields == {"bucket": "raw-audio", "clip_store_backend": "dynamodb"}
+
+
+def test_transcriber_start_log_reports_active_quality_thresholds() -> None:
+    assert _quality_gate_log_fields() == {
+        "quality_min_asr_mean_avg_logprob": -0.8,
+        "quality_max_noise_floor_dbfs": -24.0,
+        "quality_min_presence_band_ratio": 0.12,
+        "quality_min_speech_contrast_db": 5.0,
+    }
 
 
 def test_uploaded_clip_transcriber_leaves_missing_objects_retryable(tmp_path) -> None:
@@ -517,8 +575,7 @@ def test_cleanup_noise_transcripts_does_not_skip_rows_after_mutating_sqlite_page
     store = UploadedClipStore(db_path)
     good_key = "raw/channel=10/date=2026-06-13/20260613T232949Z-good.mp3"
     noise_keys = [
-        f"raw/channel=10/date=2026-06-13/20260613T2330{index}1Z-noise.mp3"
-        for index in range(3)
+        f"raw/channel=10/date=2026-06-13/20260613T2330{index}1Z-noise.mp3" for index in range(3)
     ]
     for index, key in enumerate([good_key, *noise_keys]):
         store.record_presigned_upload(
@@ -549,174 +606,6 @@ def test_cleanup_noise_transcripts_does_not_skip_rows_after_mutating_sqlite_page
     assert summary.cleaned == 3
     assert [store.get_clip(key).status for key in noise_keys] == ["empty", "empty", "empty"]
     assert [clip.key for clip in store.recent_transcribed(limit=10)] == [good_key]
-
-
-def test_transcript_corrections_override_recent_text_and_export_training_pairs(tmp_path) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    store = UploadedClipStore(db_path)
-    key = "raw/channel=14/date=2026-05-24/20260524T213000Z-pan-pan.mp3"
-    store.record_presigned_upload(
-        key=key,
-        request=_clip_request(channel="14", started_at="2026-05-24T21:30:00Z"),
-    )
-    store.mark_transcribed(
-        key,
-        [_segment("PON PON all stations", "2026-05-24T21:30:00Z", "2026-05-24T21:30:03Z")],
-    )
-
-    correction = store.correct_transcript(
-        channel="14",
-        started_at="2026-05-24T21:30:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="rob",
-        note="marine urgency proword",
-    )
-
-    assert correction.key == key
-    assert correction.original_transcript == "PON PON all stations"
-    assert correction.corrected_transcript == "PAN-PAN, all stations."
-    clips = store.recent_transcribed(limit=10, channel="14")
-    assert clips[0].transcript == "PAN-PAN, all stations."
-    assert clips[0].transcript_reviewed is True
-    assert store.transcript_corrections(limit=10) == [
-        {
-            "key": key,
-            "channel": "14",
-            "started_at": "2026-05-24T21:30:00Z",
-            "ended_at": "2026-05-24T21:30:05Z",
-            "duration_seconds": 5.0,
-            "content_type": "audio/mpeg",
-            "original_transcript": "PON PON all stations",
-            "corrected_transcript": "PAN-PAN, all stations.",
-            "reviewer": "rob",
-            "note": "marine urgency proword",
-            "include_in_training": True,
-            "training_quality": "good",
-            "training_split": "auto",
-            "training_flags": [],
-            "training_reason": None,
-        }
-    ]
-
-    updated = store.correct_transcript(
-        channel="14",
-        started_at="2026-05-24T21:30:00Z",
-        corrected_transcript="PAN-PAN, PAN-PAN, all stations.",
-    )
-    assert updated.original_transcript == "PON PON all stations"
-    assert updated.corrected_transcript == "PAN-PAN, PAN-PAN, all stations."
-    assert store.transcript_corrections_for_training()[0]["corrected_transcript"] == (
-        "PAN-PAN, PAN-PAN, all stations."
-    )
-    assert store.transcript_corrections(limit=10)[0]["include_in_training"] is True
-
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-05-24T21:30:00Z",
-        corrected_transcript="PAN-PAN, PAN-PAN, all stations.",
-        include_in_training=False,
-    )
-    assert store.transcript_corrections_for_training() == []
-    assert store.transcript_corrections(limit=10)[0]["include_in_training"] is False
-
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-05-24T21:30:00Z",
-        corrected_transcript="PAN-PAN, PAN-PAN, all stations.",
-        include_in_training=True,
-        training_quality="good",
-        training_split="validation",
-        training_flags=["low_snr"],
-        training_reason="clear domain phrase despite noise",
-    )
-    assert store.transcript_corrections(limit=10)[0]["include_in_training"] is True
-    exported = store.transcript_corrections_for_training()
-    assert exported == [
-        {
-            "key": key,
-            "channel": "14",
-            "started_at": "2026-05-24T21:30:00Z",
-            "ended_at": "2026-05-24T21:30:05Z",
-            "duration_seconds": 5.0,
-            "content_type": "audio/mpeg",
-            "original_transcript": "PON PON all stations",
-            "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
-            "reviewer": "rob",
-            "note": None,
-            "include_in_training": True,
-            "training_quality": "good",
-            "training_split": "validation",
-            "training_flags": ["low_snr"],
-            "training_reason": "clear domain phrase despite noise",
-        }
-    ]
-
-
-def test_transcript_correction_can_be_removed_from_training_and_recent_reviewed_filter(
-    tmp_path,
-) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    event_store = CapturingEventStore()
-    store = UploadedClipStore(db_path, event_store=event_store)
-    key = "raw/channel=14/date=2026-05-24/20260524T213000Z-pan-pan.mp3"
-    store.record_presigned_upload(
-        key=key,
-        request=_clip_request(channel="14", started_at="2026-05-24T21:30:00Z"),
-    )
-    store.mark_transcribed(
-        key,
-        [_segment("PON PON all stations", "2026-05-24T21:30:00Z", "2026-05-24T21:30:03Z")],
-    )
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-05-24T21:30:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="rob",
-    )
-
-    removed = store.remove_transcript_correction(
-        channel="14",
-        started_at="2026-05-24T21:30:00Z",
-    )
-
-    assert removed.key == key
-    assert removed.original_transcript == "PON PON all stations"
-    assert removed.corrected_transcript == "PAN-PAN, all stations."
-    assert store.transcript_corrections(limit=10) == []
-    assert store.transcript_corrections_for_training() == []
-    assert store.recent_transcribed(limit=10, reviewed_only=True) == []
-    recent = store.recent_transcribed(limit=10, channel="14")
-    assert recent[0].transcript == "PON PON all stations"
-    assert recent[0].transcript_reviewed is False
-    assert event_store.events[-1]["event_type"] == "clip.transcript_correction_removed"
-
-
-def test_transcript_training_examples_reject_blocking_quality_flags(tmp_path) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    store = UploadedClipStore(db_path)
-    key = "raw/channel=14/date=2026-05-24/20260524T213000Z-static.mp3"
-    store.record_presigned_upload(
-        key=key,
-        request=_clip_request(channel="14", started_at="2026-05-24T21:30:00Z"),
-    )
-    store.mark_transcribed(
-        key,
-        [_segment("Static burst", "2026-05-24T21:30:00Z", "2026-05-24T21:30:03Z")],
-    )
-
-    try:
-        store.correct_transcript(
-            channel="14",
-            started_at="2026-05-24T21:30:00Z",
-            corrected_transcript="Static burst",
-            include_in_training=True,
-            training_quality="good",
-            training_flags=["static_or_no_speech"],
-        )
-    except ValueError as exc:
-        assert "cannot include blocking training flags" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_featured_clips_can_be_starred_filtered_and_unstarred(tmp_path) -> None:
@@ -779,8 +668,11 @@ def _clip_request(
     *,
     channel: str = "68",
     started_at: str = "2026-05-24T21:00:00Z",
+    duration_seconds: float = 5.0,
 ) -> ClipPresignRequest:
-    ended_at = datetime.fromisoformat(started_at.replace("Z", "+00:00")) + timedelta(seconds=5)
+    ended_at = datetime.fromisoformat(started_at.replace("Z", "+00:00")) + timedelta(
+        seconds=duration_seconds
+    )
     ended_at_text = ended_at.isoformat().replace("+00:00", "Z")
     return ClipPresignRequest(
         channel=channel,
@@ -788,7 +680,7 @@ def _clip_request(
         ended_at=ended_at_text,
         content_type="audio/mpeg",
         idempotency_key=f"radio-event-{channel}-{started_at}",
-        duration_seconds=5.0,
+        duration_seconds=duration_seconds,
     )
 
 
@@ -868,6 +760,36 @@ class FakeSpeechModel:
                     end=3.0,
                     text=" Seattle traffic inbound for the locks ",
                 )
+            ],
+            None,
+        )
+
+
+class BoundarySpeechModel:
+    last_kwargs = {}
+
+    def transcribe(self, path: str, **kwargs):
+        BoundarySpeechModel.last_kwargs = kwargs
+        return (
+            [
+                SimpleNamespace(
+                    start=0.0,
+                    end=0.35,
+                    text=" Head call ",
+                    avg_logprob=-0.95,
+                ),
+                SimpleNamespace(
+                    start=0.35,
+                    end=3.6,
+                    text=" Main message ",
+                    avg_logprob=-0.2,
+                ),
+                SimpleNamespace(
+                    start=3.6,
+                    end=4.0,
+                    text=" Tail sign-off ",
+                    avg_logprob=-0.9,
+                ),
             ],
             None,
         )

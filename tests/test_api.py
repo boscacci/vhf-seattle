@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import inspect
 import json
 import sys
 import types
@@ -7,8 +9,14 @@ from pathlib import Path
 
 import httpx
 
-from talkingboats.api import app, get_durable_event_store, get_settings, get_storage
-from talkingboats.asr_feedback import AsrFeedbackConfig, run_nightly_training
+from talkingboats.api import (
+    app,
+    get_clip_store,
+    get_durable_event_store,
+    get_settings,
+    get_storage,
+    recent_clips,
+)
 from talkingboats.clip_transcriber import ClipQualityMetadata, UploadedClipStore
 from talkingboats.config import LiveChannel, Settings
 from talkingboats.durable_events import NullDurableEventStore
@@ -59,6 +67,10 @@ class FakeStorage:
         if self.tag_error:
             raise self.tag_error
         self.featured_tags.append((key, featured))
+
+
+def test_recent_clips_runs_blocking_storage_work_in_fastapi_threadpool() -> None:
+    assert inspect.iscoroutinefunction(recent_clips) is False
 
 
 class FakePlaybackBody:
@@ -175,6 +187,7 @@ def test_ingest_presign_records_durable_event_without_sqlite() -> None:
                 "ended_at": None,
                 "duration_seconds": 12.5,
                 "content_type": "audio/mpeg",
+                "audio_profile": None,
                 "idempotency_key": "unique-radio-event",
             },
         }
@@ -292,6 +305,61 @@ def test_recent_clips_quarantine_filter_is_explicit(tmp_path) -> None:
     assert quarantine_body["quality"] == "quarantined"
 
 
+def test_recent_clips_hide_legacy_scores_below_current_intelligibility_limit(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    garbage_key = "raw/channel=06/date=2026-07-28/garbage.mp3"
+    clear_key = "raw/channel=06/date=2026-07-28/clear.mp3"
+    garbage_started_at = datetime(2026, 7, 28, 21, 9, 22, tzinfo=UTC)
+    clear_started_at = garbage_started_at + timedelta(seconds=10)
+    for key, started_at, score, text in (
+        (garbage_key, garbage_started_at, 88.4, "All right."),
+        (clear_key, clear_started_at, 91.0, "Seattle Traffic, roger."),
+    ):
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel="06").model_copy(
+                update={
+                    "started_at": started_at,
+                    "ended_at": started_at + timedelta(seconds=2),
+                    "idempotency_key": f"radio-event-{key.rsplit('/', 1)[-1]}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=text,
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=2))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                )
+            ],
+            quality=ClipQualityMetadata(quality_status="ok", quality_score=score),
+        )
+
+    visible_body = client.get(
+        "/api/clips/recent?limit=5&include_playback_url=false&verify_playback_exists=false"
+    ).json()
+    all_body = client.get(
+        "/api/clips/recent?limit=5&quality=all&include_playback_url=false&"
+        "verify_playback_exists=false"
+    ).json()
+
+    assert [clip["transcript"] for clip in visible_body["clips"]] == [
+        "Seattle Traffic, roger."
+    ]
+    assert [clip["transcript"] for clip in all_body["clips"]] == [
+        "Seattle Traffic, roger.",
+        "All right.",
+    ]
+
+
 def test_recent_clips_can_defer_presigned_playback_urls(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     storage = FakeStorage()
@@ -382,6 +450,39 @@ def test_recent_clips_can_skip_count_queries_for_live_queue(tmp_path, monkeypatc
     assert body["clip_count"] == 0
     assert body["received_clip_count"] == 0
     assert body["channel_counts"] == {}
+    assert body["counts_deferred"] is True
+
+
+def test_recent_clips_does_not_fall_back_to_a_scan_when_aggregate_is_missing(tmp_path) -> None:
+    client = _client(clip_db_path=tmp_path / "radio.sqlite3", storage=NoPlaybackHeadStorage())
+
+    class AggregateOnlyStore:
+        aggregate_counts_enabled = True
+
+        def clip_count_snapshot(self):
+            return None
+
+        def transcribed_channel_counts(self, **kwargs):
+            raise AssertionError("aggregate rollout must not fall back to a count scan")
+
+        def recent_transcribed(self, **kwargs):
+            return []
+
+    async def override_clip_store():
+        return AggregateOnlyStore()
+
+    app.dependency_overrides[get_clip_store] = override_clip_store
+
+    response = client.get(
+        "/api/clips/recent?limit=5&include_playback_url=false&verify_playback_exists=false"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["clips"] == []
+    assert body["clip_count"] == 0
+    assert body["channel_counts"] == {}
+    assert body["counts_deferred"] is True
 
 
 def test_recent_clips_can_exclude_traffic_channel_for_live_queue(tmp_path, monkeypatch) -> None:
@@ -482,192 +583,6 @@ def test_recent_clips_exclude_traffic_counts_without_channel_fanout(tmp_path) ->
     assert body["filtered_clip_count"] == 1
     assert body["playable_clip_count"] == 1
     assert body["filtered_playable_clip_count"] == 1
-
-
-def test_operator_can_correct_transcript_for_future_training(tmp_path) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    event_store = CapturingEventStore()
-    client = _client(clip_db_path=db_path, event_store=event_store)
-    store = UploadedClipStore(db_path)
-    key = "raw/channel=14/date=2026-05-20/pan-pan.mp3"
-    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
-    store.mark_transcribed(
-        key,
-        [
-            _segment(
-                text="PON PON all stations",
-                started_at="2026-05-20T19:12:00Z",
-                ended_at="2026-05-20T19:12:04Z",
-            )
-        ],
-    )
-
-    response = client.post(
-        "/api/clips/corrections",
-        json={
-            "channel": "14",
-            "started_at": "2026-05-20T19:12:00Z",
-            "transcript": "PAN-PAN, PAN-PAN, all stations.",
-            "reviewer": "rob",
-            "note": "USCG urgency marker",
-            "include_in_training": True,
-            "training_quality": "good",
-            "training_split": "validation",
-            "training_flags": ["low_snr"],
-            "training_reason": "domain phrase with readable audio",
-        },
-    )
-    recent = client.get("/api/clips/recent?limit=1&channel=14")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "corrected",
-        "channel": "14",
-        "started_at": "2026-05-20T19:12:00Z",
-        "original_transcript": "PON PON all stations",
-        "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
-        "transcript_reviewed": True,
-        "include_in_training": True,
-        "training_quality": "good",
-        "training_split": "validation",
-        "training_flags": ["low_snr"],
-        "training_reason": "domain phrase with readable audio",
-    }
-    body = recent.json()
-    assert body["clips"][0]["transcript"] == "PAN-PAN, PAN-PAN, all stations."
-    assert body["clips"][0]["transcript_reviewed"] is True
-    assert key not in response.text
-    assert key not in recent.text
-    assert event_store.events[-1]["event_type"] == "clip.transcript_corrected"
-    assert event_store.events[-1]["key"] == key
-    assert event_store.events[-1]["observed_at"] == datetime(2026, 5, 20, 19, 12, tzinfo=UTC)
-    assert str(event_store.events[-1]["idempotency_key"]).startswith(
-        f"{key}:clip.transcript_corrected:"
-    )
-    assert event_store.events[-1]["payload"] == {
-        "channel": "14",
-        "started_at": "2026-05-20T19:12:00Z",
-        "ended_at": "2026-05-20T19:12:05Z",
-        "duration_seconds": 5.0,
-        "content_type": "audio/mpeg",
-        "original_transcript": "PON PON all stations",
-        "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
-        "reviewer": "rob",
-        "note": "USCG urgency marker",
-        "include_in_training": True,
-        "training_quality": "good",
-        "training_split": "validation",
-        "training_flags": ["low_snr"],
-        "training_reason": "domain phrase with readable audio",
-    }
-
-
-def test_recent_clips_can_filter_to_manually_reviewed_transcripts(tmp_path) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    client = _client(clip_db_path=db_path)
-    store = UploadedClipStore(db_path)
-    reviewed_key = "raw/channel=14/date=2026-05-20/reviewed.mp3"
-    plain_key = "raw/channel=68/date=2026-05-20/plain.mp3"
-    store.record_presigned_upload(key=reviewed_key, request=_clip_presign(channel="14"))
-    store.record_presigned_upload(
-        key=plain_key,
-        request=_clip_presign(channel="68").model_copy(
-            update={
-                "started_at": datetime(2026, 5, 20, 19, 13, tzinfo=UTC),
-                "ended_at": datetime(2026, 5, 20, 19, 13, 5, tzinfo=UTC),
-                "idempotency_key": "radio-event-68-plain",
-            }
-        ),
-    )
-    store.mark_transcribed(
-        reviewed_key,
-        [
-            _segment(
-                text="PON PON all stations",
-                started_at="2026-05-20T19:12:00Z",
-                ended_at="2026-05-20T19:12:04Z",
-            )
-        ],
-    )
-    store.mark_transcribed(
-        plain_key,
-        [
-            _segment(
-                text="Routine call",
-                started_at="2026-05-20T19:13:00Z",
-                ended_at="2026-05-20T19:13:04Z",
-            )
-        ],
-    )
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-05-20T19:12:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="operator-ui",
-    )
-
-    response = client.get("/api/clips/recent?limit=5&reviewed=true")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["reviewed"] is True
-    assert body["featured"] is False
-    assert body["filtered_clip_count"] == 1
-    assert [clip["transcript"] for clip in body["clips"]] == ["PAN-PAN, all stations."]
-    assert body["clips"][0]["transcript_reviewed"] is True
-    assert reviewed_key not in response.text
-    assert plain_key not in response.text
-
-
-def test_operator_can_remove_transcript_correction_from_training_program(tmp_path) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    event_store = CapturingEventStore()
-    client = _client(clip_db_path=db_path, event_store=event_store)
-    store = UploadedClipStore(db_path)
-    key = "raw/channel=14/date=2026-05-20/pan-pan.mp3"
-    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
-    store.mark_transcribed(
-        key,
-        [
-            _segment(
-                text="PON PON all stations",
-                started_at="2026-05-20T19:12:00Z",
-                ended_at="2026-05-20T19:12:04Z",
-            )
-        ],
-    )
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-05-20T19:12:00Z",
-        corrected_transcript="PAN-PAN, PAN-PAN, all stations.",
-        reviewer="operator-ui",
-        include_in_training=True,
-        training_quality="good",
-    )
-
-    response = client.delete(
-        "/api/clips/corrections",
-        json={"channel": "14", "started_at": "2026-05-20T19:12:00Z"},
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "uncorrected",
-        "channel": "14",
-        "started_at": "2026-05-20T19:12:00Z",
-        "original_transcript": "PON PON all stations",
-        "corrected_transcript": "PAN-PAN, PAN-PAN, all stations.",
-        "transcript": "PON PON all stations",
-        "transcript_reviewed": False,
-        "include_in_training": False,
-    }
-    assert client.get("/api/clips/corrections/export").text == ""
-    assert client.get("/api/clips/recent?limit=5&reviewed=true").json()["clips"] == []
-    recent = client.get("/api/clips/recent?limit=1&channel=14").json()["clips"][0]
-    assert recent["transcript"] == "PON PON all stations"
-    assert recent["transcript_reviewed"] is False
-    assert event_store.events[-1]["event_type"] == "clip.transcript_correction_removed"
-    assert key not in response.text
 
 
 def test_operator_can_star_clip_for_hall_of_fame_filter(tmp_path) -> None:
@@ -785,9 +700,7 @@ def test_featured_recent_clips_report_live_featured_playable_counts(tmp_path) ->
                 _segment(
                     text=f"Live featured {index}",
                     started_at=started_at.isoformat().replace("+00:00", "Z"),
-                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace(
-                        "+00:00", "Z"
-                    ),
+                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace("+00:00", "Z"),
                 )
             ],
         )
@@ -885,340 +798,6 @@ def test_operator_star_returns_503_when_retention_tag_update_fails(tmp_path) -> 
 
     assert response.status_code == 503
     assert response.json()["detail"] == "S3 tagging failed"
-
-
-def test_operator_can_export_transcript_corrections_as_training_jsonl(tmp_path) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    client = _client(clip_db_path=db_path)
-    store = UploadedClipStore(db_path)
-    key = "raw/channel=14/date=2026-05-20/pan-pan.mp3"
-    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
-    store.mark_transcribed(
-        key,
-        [
-            _segment(
-                text="PON PON all stations",
-                started_at="2026-05-20T19:12:00Z",
-                ended_at="2026-05-20T19:12:04Z",
-            )
-        ],
-    )
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-05-20T19:12:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="rob",
-        note="urgency signal",
-        include_in_training=True,
-        training_quality="good",
-        training_split="train",
-        training_flags=[],
-        training_reason="clear urgency proword",
-    )
-
-    response = client.get("/api/clips/corrections/export")
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("application/x-ndjson")
-    records = [json.loads(line) for line in response.text.splitlines()]
-    assert records == [
-        {
-            "audio_url": ("/api/clips/audio?channel=14&started_at=2026-05-20T19%3A12%3A00Z"),
-            "channel": "14",
-            "started_at": "2026-05-20T19:12:00Z",
-            "duration_seconds": 5.0,
-            "content_type": "audio/mpeg",
-            "original_text": "PON PON all stations",
-            "text": "PAN-PAN, all stations.",
-            "reviewer": "rob",
-            "note": "urgency signal",
-            "include_in_training": True,
-            "training_quality": "good",
-            "training_split": "train",
-            "training_flags": [],
-            "training_reason": "clear urgency proword",
-        }
-    ]
-    assert key not in response.text
-
-
-def test_operator_correction_defaults_to_training_example(tmp_path) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    client = _client(clip_db_path=db_path)
-    store = UploadedClipStore(db_path)
-    key = "raw/channel=14/date=2026-05-20/default-training.mp3"
-    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
-    store.mark_transcribed(
-        key,
-        [
-            _segment(
-                text="PON PON all stations",
-                started_at="2026-05-20T19:12:00Z",
-                ended_at="2026-05-20T19:12:04Z",
-            )
-        ],
-    )
-
-    response = client.post(
-        "/api/clips/corrections",
-        json={
-            "channel": "14",
-            "started_at": "2026-05-20T19:12:00Z",
-            "transcript": "PAN-PAN, all stations.",
-            "reviewer": "operator-ui",
-        },
-    )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["include_in_training"] is True
-    assert body["training_quality"] == "good"
-    assert len(client.get("/api/clips/corrections/export").text.splitlines()) == 1
-
-
-def test_operator_can_list_all_reviewed_corrections_separately_from_training_export(
-    tmp_path,
-) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    client = _client(clip_db_path=db_path)
-    store = UploadedClipStore(db_path)
-    for index, include_in_training in [(0, False), (1, True)]:
-        started_at = datetime(2026, 5, 20, 19, 12 + index, tzinfo=UTC)
-        started_text = started_at.isoformat().replace("+00:00", "Z")
-        key = f"raw/channel=14/date=2026-05-20/pan-pan-{index}.mp3"
-        store.record_presigned_upload(
-            key=key,
-            request=_clip_presign(channel="14").model_copy(
-                update={
-                    "started_at": started_at,
-                    "ended_at": started_at + timedelta(seconds=5),
-                    "idempotency_key": f"radio-event-review-{index}",
-                }
-            ),
-        )
-        store.mark_transcribed(
-            key,
-            [
-                _segment(
-                    text=f"PON PON all stations {index}",
-                    started_at=started_text,
-                    ended_at=(started_at + timedelta(seconds=4))
-                    .isoformat()
-                    .replace("+00:00", "Z"),
-                )
-            ],
-        )
-        store.correct_transcript(
-            channel="14",
-            started_at=started_text,
-            corrected_transcript=f"PAN-PAN, all stations {index}.",
-            reviewer="rob",
-            include_in_training=include_in_training,
-            training_quality="good" if include_in_training else None,
-        )
-
-    response = client.get("/api/clips/corrections?limit=10")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["correction_count"] == 2
-    assert body["training_example_count"] == 1
-    assert [record["include_in_training"] for record in body["corrections"]] == [True, False]
-    assert body["corrections"][0]["audio_url"] == (
-        "/api/clips/audio?channel=14&started_at=2026-05-20T19%3A13%3A00Z"
-    )
-    assert "pan-pan" not in response.text
-
-    training_response = client.get("/api/clips/corrections/export")
-    assert len(training_response.text.splitlines()) == 1
-
-
-def test_operator_can_read_asr_feedback_status(tmp_path: Path, monkeypatch) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    client = _client(clip_db_path=db_path)
-    store = UploadedClipStore(db_path)
-    key = "raw/channel=14/date=2026-05-20/pan-pan.mp3"
-    store.record_presigned_upload(key=key, request=_clip_presign(channel="14"))
-    store.mark_transcribed(
-        key,
-        [
-            _segment(
-                text="PON PON all stations",
-                started_at="2026-05-20T19:12:00Z",
-                ended_at="2026-05-20T19:12:04Z",
-            )
-        ],
-    )
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-05-20T19:12:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="rob",
-        include_in_training=True,
-        training_quality="good",
-    )
-    output_dir = tmp_path / "asr-feedback"
-    output_dir.mkdir()
-    (output_dir / "training_status.json").write_text(
-        json.dumps(
-            {
-                "status": "trained",
-                "correction_count": 20,
-                "generated_at": "2026-06-01T10:00:00Z",
-                "correction_fingerprint": "private-fingerprint",
-                "dataset_path": "/home/rob/private/train.jsonl",
-                "latest_model_dir": "/home/rob/private/latest-ct2",
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(output_dir))
-    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_MIN_CORRECTIONS", "2")
-
-    response = client.get("/api/asr-feedback/status")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["reviewed_correction_count"] == 1
-    assert body["training_example_count"] == 1
-    assert body["min_corrections"] == 2
-    assert body["ready_for_training"] is False
-    assert body["nightly_schedule"] == "manual only"
-    assert body["training_status"] == {
-        "status": "trained",
-        "correction_count": 20,
-        "generated_at": "2026-06-01T10:00:00Z",
-    }
-    assert "private" not in json.dumps(body)
-
-
-def test_asr_feedback_status_reports_reviewed_and_training_counts_separately(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    client = _client(clip_db_path=db_path)
-    store = UploadedClipStore(db_path)
-    for index, include_in_training in [(0, False), (1, True)]:
-        started_at = datetime(2026, 5, 20, 19, 12 + index, tzinfo=UTC)
-        started_text = started_at.isoformat().replace("+00:00", "Z")
-        key = f"raw/channel=14/date=2026-05-20/status-{index}.mp3"
-        store.record_presigned_upload(
-            key=key,
-            request=_clip_presign(channel="14").model_copy(
-                update={
-                    "started_at": started_at,
-                    "ended_at": started_at + timedelta(seconds=5),
-                    "idempotency_key": f"radio-event-status-{index}",
-                }
-            ),
-        )
-        store.mark_transcribed(
-            key,
-            [
-                _segment(
-                    text=f"PON PON all stations {index}",
-                    started_at=started_text,
-                    ended_at=(started_at + timedelta(seconds=4))
-                    .isoformat()
-                    .replace("+00:00", "Z"),
-                )
-            ],
-        )
-        store.correct_transcript(
-            channel="14",
-            started_at=started_text,
-            corrected_transcript=f"PAN-PAN, all stations {index}.",
-            include_in_training=include_in_training,
-            training_quality="good" if include_in_training else None,
-        )
-    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(tmp_path / "missing"))
-
-    response = client.get("/api/asr-feedback/status")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["reviewed_correction_count"] == 2
-    assert body["training_example_count"] == 1
-    assert body["corrections_url"] == "/api/clips/corrections"
-
-
-def test_asr_feedback_status_is_not_ready_when_labels_match_latest_training(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    db_path = tmp_path / "radio.sqlite3"
-    output_dir = tmp_path / "asr-feedback"
-    client = _client(clip_db_path=db_path)
-    store = UploadedClipStore(db_path)
-    for index in range(2):
-        started_at = datetime(2026, 5, 20, 19, 12 + index, tzinfo=UTC)
-        key = f"raw/channel=14/date=2026-05-20/pan-pan-{index}.mp3"
-        store.record_presigned_upload(
-            key=key,
-            request=_clip_presign(channel="14").model_copy(
-                update={
-                    "started_at": started_at,
-                    "ended_at": started_at + timedelta(seconds=5),
-                    "idempotency_key": f"radio-event-{index}",
-                }
-            ),
-        )
-        store.mark_transcribed(
-            key,
-            [
-                _segment(
-                    text=f"PON PON all stations {index}",
-                    started_at=started_at.isoformat().replace("+00:00", "Z"),
-                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace("+00:00", "Z"),
-                )
-            ],
-        )
-        store.correct_transcript(
-            channel="14",
-            started_at=started_at.isoformat().replace("+00:00", "Z"),
-            corrected_transcript=f"PAN-PAN, all stations {index}.",
-            reviewer="rob",
-            include_in_training=True,
-            training_quality="good",
-        )
-
-    class FakeReader:
-        def download(self, key: str, output_path: Path) -> None:
-            output_path.write_bytes(f"audio for {key}".encode())
-
-    def fake_trainer(
-        config: AsrFeedbackConfig,
-        run_dir: Path,
-        dataset_path: Path,
-    ) -> dict[str, str]:
-        model_dir = run_dir / "model-ct2"
-        model_dir.mkdir()
-        (model_dir / "model.bin").write_bytes(b"model")
-        return {"ct2_model_dir": str(model_dir)}
-
-    run_nightly_training(
-        AsrFeedbackConfig(
-            db_path=db_path,
-            output_dir=output_dir,
-            min_corrections=2,
-            restart_service=None,
-        ),
-        clip_reader=FakeReader(),
-        trainer=fake_trainer,
-        now=datetime(2026, 6, 1, 10, 0, tzinfo=UTC),
-    )
-    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_OUTPUT_DIR", str(output_dir))
-    monkeypatch.setenv("TALKINGBOATS_ASR_FEEDBACK_MIN_CORRECTIONS", "2")
-
-    response = client.get("/api/asr-feedback/status")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["reviewed_correction_count"] == 2
-    assert body["min_corrections"] == 2
-    assert body["new_corrections_since_last_train"] is False
-    assert body["ready_for_training"] is False
 
 
 def test_recent_clips_skip_missing_playback_objects(tmp_path) -> None:
@@ -1388,6 +967,171 @@ def test_recent_clips_pages_over_playable_clips(tmp_path) -> None:
         "Playable page clip 2",
         "Playable page clip 3",
     ]
+
+
+def test_recent_clips_cursor_is_stable_when_new_clip_arrives(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    for index in range(7):
+        started_at = datetime(2026, 7, 28, 12, index, tzinfo=UTC)
+        key = f"raw/channel=14/date=2026-07-28/cursor-{index}.mp3"
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel="14").model_copy(
+                update={
+                    "started_at": started_at,
+                    "ended_at": started_at + timedelta(seconds=5),
+                    "idempotency_key": f"cursor-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"Cursor clip {index}",
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace("+00:00", "Z"),
+                )
+            ],
+        )
+
+    first = client.get("/api/clips/recent?limit=3&channel=14")
+    assert first.status_code == 200
+    first_body = first.json()
+    assert [clip["transcript"] for clip in first_body["clips"]] == [
+        "Cursor clip 6",
+        "Cursor clip 5",
+        "Cursor clip 4",
+    ]
+    assert first_body["next_cursor"]
+    padded_cursor = first_body["next_cursor"] + ("=" * (-len(first_body["next_cursor"]) % 4))
+    decoded_cursor = json.loads(base64.urlsafe_b64decode(padded_cursor))
+    assert "anchor" in decoded_cursor
+    assert "key" not in decoded_cursor
+    assert "raw/channel=" not in json.dumps(decoded_cursor)
+
+    newest_at = datetime(2026, 7, 28, 12, 10, tzinfo=UTC)
+    newest_key = "raw/channel=14/date=2026-07-28/cursor-new.mp3"
+    store.record_presigned_upload(
+        key=newest_key,
+        request=_clip_presign(channel="14").model_copy(
+            update={
+                "started_at": newest_at,
+                "ended_at": newest_at + timedelta(seconds=5),
+                "idempotency_key": "cursor-new",
+            }
+        ),
+    )
+    store.mark_transcribed(
+        newest_key,
+        [
+            _segment(
+                text="Cursor clip new",
+                started_at=newest_at.isoformat().replace("+00:00", "Z"),
+                ended_at=(newest_at + timedelta(seconds=4)).isoformat().replace("+00:00", "Z"),
+            )
+        ],
+    )
+
+    second = client.get(
+        "/api/clips/recent",
+        params={"limit": 3, "channel": "14", "cursor": first_body["next_cursor"]},
+    )
+    assert second.status_code == 200
+    assert [clip["transcript"] for clip in second.json()["clips"]] == [
+        "Cursor clip 3",
+        "Cursor clip 2",
+        "Cursor clip 1",
+    ]
+    assert not {clip["transcript"] for clip in first_body["clips"]} & {
+        clip["transcript"] for clip in second.json()["clips"]
+    }
+
+
+def test_recent_clips_cursor_is_bound_to_filters(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    for index in range(2):
+        started_at = datetime(2026, 7, 28, 13, index, tzinfo=UTC)
+        key = f"raw/channel=14/date=2026-07-28/bound-{index}.mp3"
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel="14").model_copy(
+                update={
+                    "started_at": started_at,
+                    "idempotency_key": f"bound-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"Bound cursor {index}",
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace("+00:00", "Z"),
+                )
+            ],
+        )
+    cursor = client.get("/api/clips/recent?limit=1&channel=14").json()["next_cursor"]
+
+    response = client.get(
+        "/api/clips/recent",
+        params={"limit": 1, "channel": "68", "cursor": cursor},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "cursor does not match the requested clip filters"
+
+
+def test_recent_clips_cursor_is_bound_to_datetime_anchor(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    for index in range(3):
+        started_at = datetime(2026, 7, 28, 13, index, tzinfo=UTC)
+        key = f"raw/channel=14/date=2026-07-28/around-bound-{index}.mp3"
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel="14").model_copy(
+                update={
+                    "started_at": started_at,
+                    "idempotency_key": f"around-bound-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=f"Around bound cursor {index}",
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                )
+            ],
+        )
+    cursor = client.get(
+        "/api/clips/recent",
+        params={"limit": 1, "channel": "14", "around": "2026-07-28T13:02:00Z"},
+    ).json()["next_cursor"]
+
+    response = client.get(
+        "/api/clips/recent",
+        params={
+            "limit": 1,
+            "channel": "14",
+            "around": "2026-07-28T13:01:00Z",
+            "cursor": cursor,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "cursor does not match the requested clip filters"
 
 
 def test_public_clip_playback_url_can_be_refreshed_without_exposing_key(tmp_path) -> None:
@@ -1602,6 +1346,96 @@ def test_recent_clips_can_filter_by_multiple_channels(tmp_path) -> None:
     assert body["channel_counts"] == {"13": 1, "14": 1, "68": 1, "72": 1}
 
 
+def test_recent_clips_can_start_around_pacific_datetime_and_filter_channel(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    client = _client(clip_db_path=db_path)
+    store = UploadedClipStore(db_path)
+    clips = [
+        ("68", datetime(2026, 5, 20, 18, 58, tzinfo=UTC), "Before target"),
+        ("14", datetime(2026, 5, 20, 18, 59, tzinfo=UTC), "Other channel"),
+        ("68", datetime(2026, 5, 20, 19, 1, tzinfo=UTC), "After target one"),
+        ("68", datetime(2026, 5, 20, 19, 2, tzinfo=UTC), "After target two"),
+    ]
+    for index, (channel, started_at, transcript) in enumerate(clips):
+        key = f"raw/channel={channel}/date=2026-05-20/around-{index}.mp3"
+        store.record_presigned_upload(
+            key=key,
+            request=_clip_presign(channel=channel).model_copy(
+                update={
+                    "started_at": started_at,
+                    "ended_at": started_at + timedelta(seconds=5),
+                    "idempotency_key": f"radio-event-around-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                _segment(
+                    text=transcript,
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                )
+            ],
+        )
+
+    earlier = client.get(
+        "/api/clips/recent",
+        params={"limit": 5, "around": "2026-05-20T12:00", "channels": "68"},
+    )
+    later = client.get(
+        "/api/clips/recent",
+        params={
+            "limit": 5,
+            "around": "2026-05-20T12:00",
+            "channels": "68",
+            "sort": "oldest",
+        },
+    )
+    unfiltered = client.get(
+        "/api/clips/recent",
+        params={"limit": 5, "around": "2026-05-20T12:00"},
+    )
+
+    assert earlier.status_code == 200
+    assert later.status_code == 200
+    assert unfiltered.status_code == 200
+    assert [clip["transcript"] for clip in earlier.json()["clips"]] == ["Before target"]
+    assert [clip["transcript"] for clip in later.json()["clips"]] == [
+        "After target one",
+        "After target two",
+    ]
+    assert earlier.json()["around"] == "2026-05-20T19:00:00Z"
+    assert earlier.json()["around_timezone"] == "America/Los_Angeles"
+    assert [clip["transcript"] for clip in unfiltered.json()["clips"]] == [
+        "Other channel",
+        "Before target",
+    ]
+
+
+def test_recent_clips_reject_invalid_around_datetime(tmp_path) -> None:
+    client = _client(clip_db_path=tmp_path / "radio.sqlite3")
+
+    response = client.get("/api/clips/recent", params={"around": "not-a-datetime"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "around must be an ISO 8601 date and time"
+
+
+def test_recent_clips_reject_nonexistent_pacific_daylight_time(tmp_path) -> None:
+    client = _client(clip_db_path=tmp_path / "radio.sqlite3")
+
+    response = client.get(
+        "/api/clips/recent",
+        params={"around": "2026-03-08T02:30"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "around is not a valid Pacific date and time"
+
+
 def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     client = _client(clip_db_path=db_path)
@@ -1653,42 +1487,43 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
     assert wx_response.json() == {
         "clips": [],
         "clip_count": 1,
-        "received_clip_count": 1,
+        "received_clip_count": 2,
         "analyzed_clip_count": 1,
         "filtered_clip_count": 0,
         "playable_clip_count": 0,
         "filtered_playable_clip_count": 0,
         "playable_channel_counts": {},
         "latest_playable_started_at": None,
+        "next_cursor": None,
         "limit": 5,
         "offset": 0,
         "page": 1,
         "featured": False,
-        "reviewed": False,
         "quality": "visible",
         "channel_counts": {"14": 1},
+        "counts_deferred": False,
         "channel_labels": {
-                "05A": "VTS / Port Ops",
-                "06": "Intership Safety",
-                "09": "Calling / Commercial",
-                "10": "Commercial",
-                "13": "Bridge-to-bridge",
-                "14": "VTS / Seattle Traffic",
-                "68": "Recreational",
-                "16": "Distress / Calling",
-                "22A": "USCG Liaison",
-                "65A": "Port Operations",
-                "66A": "Port Operations",
-                "67": "Commercial / Bridge",
-                "69": "Non-commercial",
-                "71": "Non-commercial",
-                "72": "Ship-to-ship",
-                "73": "Port Operations",
-                "74": "Port Operations",
-                "77": "Ship-to-ship",
-                "78A": "Non-commercial",
-            },
-        }
+            "05A": "VTS / Port Ops",
+            "06": "Intership Safety",
+            "09": "Calling / Commercial",
+            "10": "Commercial",
+            "13": "Bridge-to-bridge",
+            "14": "VTS / Seattle Traffic",
+            "68": "Recreational",
+            "16": "Distress / Calling",
+            "22A": "USCG Liaison",
+            "65A": "Port Operations",
+            "66A": "Port Operations",
+            "67": "Commercial / Bridge",
+            "69": "Non-commercial",
+            "71": "Non-commercial",
+            "72": "Ship-to-ship",
+            "73": "Port Operations",
+            "74": "Port Operations",
+            "77": "Ship-to-ship",
+            "78A": "Non-commercial",
+        },
+    }
 
 
 def test_public_lexical_analysis_returns_missing_payload_without_cache(tmp_path) -> None:
@@ -1800,7 +1635,7 @@ def test_public_clip_search_returns_vector_ranked_audio_results(
                 "duration_seconds": 10,
                 "content_type": "audio/mpeg",
                 "transcript": "Bridge to bridge passing arrangement.",
-                "embedding": [0.2, 0.8],
+                "embedding": [0.8, 0.2],
             },
             {
                 "channel": "14",
@@ -1933,7 +1768,7 @@ def _client(
             raw_presign_seconds=900,
             playback_presign_seconds=300,
             public_site_dir=public_site_dir or Path("/tmp/talkingboats-missing-public-site"),
-            public_base_url="https://vhf.robertboscacci.com",
+            public_base_url="https://seattleboatradio.com",
             live_channels={
                 "68": LiveChannel(
                     channel="68",

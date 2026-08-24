@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import talkingboats.lexical_analysis as lexical_analysis
-from talkingboats.clip_transcriber import UploadedClipStore
+from talkingboats.clip_transcriber import RecentTranscribedClip, UploadedClipStore
 from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 from talkingboats.lexical_analysis import (
     TranscriptClip,
@@ -116,38 +116,6 @@ def test_generate_lexical_analysis_counts_terms_entities_and_writes_cache(tmp_pa
     assert_public_safe(payload)
 
 
-def test_generate_lexical_analysis_uses_corrected_transcripts(tmp_path: Path) -> None:
-    db_path = tmp_path / "clips.sqlite3"
-    output_dir = tmp_path / "site"
-    store = UploadedClipStore(db_path)
-    _transcribe(
-        store,
-        key="raw/channel=14/date=2026-05-25/pan.mp3",
-        channel="14",
-        started_at="2026-05-25T22:10:00Z",
-        text="PON PON all stations",
-    )
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-05-25T22:10:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="rob",
-    )
-
-    payload = generate_lexical_analysis(
-        db_path=db_path,
-        output_dir=output_dir,
-        generated_at=datetime(2026, 5, 26, 1, 2, 3, tzinfo=UTC),
-    )
-
-    assert ("pan-pan", 1) in _term_pairs(
-        payload["terms"]["semantic_buckets"]["communication_markers"]
-    )
-    assert ("pon pon", 1) not in _term_pairs(
-        payload["terms"]["semantic_buckets"]["communication_markers"]
-    )
-
-
 def test_generate_lexical_analysis_can_use_cloud_clip_store(tmp_path: Path) -> None:
     store = FakeAnalysisClipStore(
         [
@@ -173,6 +141,90 @@ def test_generate_lexical_analysis_can_use_cloud_clip_store(tmp_path: Path) -> N
     assert payload["channels"] == {"14": 1}
     assert ("seattle traffic", 1) in _term_pairs(payload["terms"]["bigrams"])
     assert store.calls == [{"limit": 500, "excluded_channels": ("WX",), "offset": 0}]
+
+
+def test_generate_lexical_analysis_from_store_excludes_clips_hidden_by_quality_gate(
+    tmp_path: Path,
+) -> None:
+    store = StreamingAnalysisClipStore(
+        [
+            _recent_analysis_clip(
+                key="raw/channel=14/date=2026-05-25/clear.mp3",
+                channel="14",
+                started_at="2026-05-25T22:10:00Z",
+                transcript="Seattle Traffic clear radio report.",
+                quality_status="ok",
+                quality_score=96.0,
+            ),
+            _recent_analysis_clip(
+                key="raw/channel=06/date=2026-05-25/legacy-low-score.mp3",
+                channel="06",
+                started_at="2026-05-25T22:11:00Z",
+                transcript="Static should stay out of the analysis corpus.",
+                quality_status="ok",
+                quality_score=89.9,
+            ),
+            _recent_analysis_clip(
+                key="raw/channel=74/date=2026-05-25/quarantined.mp3",
+                channel="74",
+                started_at="2026-05-25T22:12:00Z",
+                transcript="Quarantined noise should stay out too.",
+                quality_status="quarantined",
+                quality_score=100.0,
+            ),
+        ]
+    )
+
+    payload = generate_lexical_analysis_from_store(
+        clip_store=store,
+        output_dir=tmp_path / "site",
+        generated_at=datetime(2026, 5, 26, 1, 2, 3, tzinfo=UTC),
+    )
+
+    assert payload["source_clip_count"] == 1
+    assert payload["channels"] == {"14": 1}
+    assert "Static should stay out" not in json.dumps(payload)
+    assert "Quarantined noise" not in json.dumps(payload)
+
+
+def test_generate_lexical_analysis_from_sqlite_excludes_low_quality_legacy_records(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "clips.sqlite3"
+    store = UploadedClipStore(db_path)
+    _transcribe(
+        store,
+        key="raw/channel=14/date=2026-05-25/clear.mp3",
+        channel="14",
+        started_at="2026-05-25T22:10:00Z",
+        text="Seattle Traffic clear radio report.",
+    )
+    _transcribe(
+        store,
+        key="raw/channel=06/date=2026-05-25/legacy-low-score.mp3",
+        channel="06",
+        started_at="2026-05-25T22:11:00Z",
+        text="Static legacy record should stay out of analysis.",
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE uploaded_clips SET quality_status = 'ok', quality_score = 96.0 "
+            "WHERE channel = '14'"
+        )
+        connection.execute(
+            "UPDATE uploaded_clips SET quality_status = 'ok', quality_score = 89.9 "
+            "WHERE channel = '06'"
+        )
+
+    payload = generate_lexical_analysis(
+        db_path=db_path,
+        output_dir=tmp_path / "site",
+        generated_at=datetime(2026, 5, 26, 1, 2, 3, tzinfo=UTC),
+    )
+
+    assert payload["source_clip_count"] == 1
+    assert payload["channels"] == {"14": 1}
+    assert "Static legacy record" not in json.dumps(payload)
 
 
 def test_generate_lexical_analysis_from_store_counts_all_transcripts_and_marks_public_audio(
@@ -271,6 +323,24 @@ def test_generate_lexical_analysis_uses_only_public_playable_manifest_clips(
                         "audio_public_filename": "20260604T200200Z-vhf-14-ellipsis.mp3",
                     },
                     {
+                        "id": "clip-low-score",
+                        "channel": "06",
+                        "started_at": "2026-06-04T20:02:30Z",
+                        "transcript_public": "Crackly low-score radio should not count.",
+                        "audio_public_filename": "20260604T200230Z-vhf-06-low-score.mp3",
+                        "quality_status": "ok",
+                        "quality_score": 89.9,
+                    },
+                    {
+                        "id": "clip-quarantined",
+                        "channel": "74",
+                        "started_at": "2026-06-04T20:02:45Z",
+                        "transcript_public": "Quarantined radio should not count.",
+                        "audio_public_filename": "20260604T200245Z-vhf-74-quarantined.mp3",
+                        "quality_status": "quarantined",
+                        "quality_score": 100.0,
+                    },
+                    {
                         "id": "clip-weather",
                         "channel": "WX",
                         "started_at": "2026-06-04T20:03:00Z",
@@ -294,6 +364,8 @@ def test_generate_lexical_analysis_uses_only_public_playable_manifest_clips(
     assert ("seattle traffic", 1) in _term_pairs(payload["terms"]["bigrams"])
     rendered = json.dumps(payload)
     assert "should not count" not in rendered
+    assert "Crackly low-score" not in rendered
+    assert "Quarantined radio" not in rendered
     assert "... ... ..." not in rendered
     assert payload["entities"][0]["examples"][0]["audio_public_filename"] == (
         "20260604T200000Z-vhf-14-good.mp3"
@@ -920,6 +992,10 @@ def test_mobile_topic_plot_html_supports_two_finger_camera_zoom() -> None:
     assert "Plotly.relayout" in topic_html
     assert '"scene.camera.eye"' in topic_html
     assert "requestAnimationFrame" in topic_html
+    assert "talkingboats-topic-plot-rotation" in topic_html
+    assert 'window.addEventListener("message"' in topic_html
+    assert "rotationRequested" in topic_html
+    assert "prefers-reduced-motion" in topic_html
     assert repeated_html.count("topic-map-mobile-enhancements") == 1
 
 
@@ -1049,6 +1125,29 @@ def _transcribe(
                 relative_end_seconds=8.0,
             )
         ],
+    )
+
+
+def _recent_analysis_clip(
+    *,
+    key: str,
+    channel: str,
+    started_at: str,
+    transcript: str,
+    quality_status: str,
+    quality_score: float,
+) -> RecentTranscribedClip:
+    return RecentTranscribedClip(
+        key=key,
+        channel=channel,
+        started_at=started_at,
+        ended_at=None,
+        duration_seconds=8.0,
+        content_type="audio/mpeg",
+        transcript=transcript,
+        segments=[],
+        quality_status=quality_status,
+        quality_score=quality_score,
     )
 
 

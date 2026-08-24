@@ -1,7 +1,12 @@
 data "aws_caller_identity" "current" {}
 
-data "aws_route53_zone" "root" {
-  name         = "${var.root_domain}."
+data "aws_route53_zone" "site" {
+  name         = "${var.site_zone_domain}."
+  private_zone = false
+}
+
+data "aws_route53_zone" "dev_site" {
+  name         = "${var.dev_site_zone_domain}."
   private_zone = false
 }
 
@@ -34,9 +39,8 @@ data "archive_file" "ais_lambda" {
 }
 
 locals {
-  site_fqdn            = "${var.site_subdomain}.${var.root_domain}"
-  dev_site_fqdn        = "${var.dev_site_subdomain}.${var.root_domain}"
-  ais_live_fqdn        = "${var.ais_live_subdomain}.${var.root_domain}"
+  site_fqdn            = var.site_fqdn
+  dev_site_fqdn        = var.dev_site_fqdn
   bucket_base          = replace("${var.project_name}-${var.resource_site_subdomain}", ".", "-")
   dev_bucket_base      = replace("${var.project_name}-${var.dev_resource_site_subdomain}", ".", "-")
   public_bucket        = coalesce(var.public_site_bucket_name, "${local.bucket_base}-${data.aws_caller_identity.current.account_id}-public")
@@ -63,7 +67,6 @@ locals {
   ais_websocket_lambda_name        = replace("${var.project_name}-${var.resource_site_subdomain}-ais-websocket", ".", "-")
   site_cert_validation_domains     = toset([local.site_fqdn])
   dev_site_cert_validation_domains = toset([local.dev_site_fqdn])
-  ais_live_cert_validation_domains = toset([local.ais_live_fqdn])
   origin_id                        = "s3-public-site"
   dev_origin_id                    = "s3-dev-public-site"
   live_origin_id                   = "live-radio-proxy"
@@ -120,7 +123,6 @@ resource "aws_s3_bucket_cors_configuration" "raw_audio" {
     allowed_methods = ["GET", "HEAD"]
     allowed_origins = [
       "https://seattleboatradio.com",
-      "https://vhf.robertboscacci.com",
     ]
     expose_headers  = ["ETag"]
     max_age_seconds = 3000
@@ -508,94 +510,6 @@ resource "aws_lambda_permission" "ais_websocket" {
   source_arn    = "${aws_apigatewayv2_api.ais_websocket.execution_arn}/*"
 }
 
-resource "aws_acm_certificate" "ais_live" {
-  domain_name       = local.ais_live_fqdn
-  validation_method = "DNS"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  tags = merge(local.common_tags, {
-    Environment = "prod"
-    Role        = "ais-live-tls-certificate"
-  })
-}
-
-resource "aws_route53_record" "ais_live_cert_validation" {
-  for_each = local.ais_live_cert_validation_domains
-
-  zone_id = data.aws_route53_zone.root.zone_id
-  name = one([
-    for dvo in aws_acm_certificate.ais_live.domain_validation_options : dvo.resource_record_name
-    if dvo.domain_name == each.value
-  ])
-  type = one([
-    for dvo in aws_acm_certificate.ais_live.domain_validation_options : dvo.resource_record_type
-    if dvo.domain_name == each.value
-  ])
-  ttl = 60
-  records = [
-    one([
-      for dvo in aws_acm_certificate.ais_live.domain_validation_options : dvo.resource_record_value
-      if dvo.domain_name == each.value
-    ])
-  ]
-
-  allow_overwrite = true
-}
-
-resource "aws_acm_certificate_validation" "ais_live" {
-  certificate_arn         = aws_acm_certificate.ais_live.arn
-  validation_record_fqdns = [for record in aws_route53_record.ais_live_cert_validation : record.fqdn]
-}
-
-resource "aws_apigatewayv2_domain_name" "ais_live" {
-  domain_name = local.ais_live_fqdn
-
-  domain_name_configuration {
-    certificate_arn = aws_acm_certificate_validation.ais_live.certificate_arn
-    endpoint_type   = "REGIONAL"
-    security_policy = "TLS_1_2"
-  }
-
-  tags = merge(local.common_tags, {
-    Environment = "prod"
-    Role        = "ais-live-websocket-domain"
-  })
-}
-
-resource "aws_apigatewayv2_api_mapping" "ais_websocket" {
-  api_id          = aws_apigatewayv2_api.ais_websocket.id
-  domain_name     = aws_apigatewayv2_domain_name.ais_live.id
-  stage           = aws_apigatewayv2_stage.ais_websocket.name
-  api_mapping_key = "v1"
-}
-
-resource "aws_route53_record" "ais_live_a" {
-  zone_id = data.aws_route53_zone.root.zone_id
-  name    = local.ais_live_fqdn
-  type    = "A"
-
-  alias {
-    name                   = aws_apigatewayv2_domain_name.ais_live.domain_name_configuration[0].target_domain_name
-    zone_id                = aws_apigatewayv2_domain_name.ais_live.domain_name_configuration[0].hosted_zone_id
-    evaluate_target_health = false
-  }
-}
-
-resource "aws_route53_record" "ais_live_aaaa" {
-  zone_id = data.aws_route53_zone.root.zone_id
-  name    = local.ais_live_fqdn
-  type    = "AAAA"
-
-  alias {
-    name                   = aws_apigatewayv2_domain_name.ais_live.domain_name_configuration[0].target_domain_name
-    zone_id                = aws_apigatewayv2_domain_name.ais_live.domain_name_configuration[0].hosted_zone_id
-    evaluate_target_health = false
-  }
-}
-
 resource "aws_acm_certificate" "site" {
   provider          = aws.us_east_1
   domain_name       = local.site_fqdn
@@ -614,7 +528,7 @@ resource "aws_acm_certificate" "site" {
 resource "aws_route53_record" "site_cert_validation" {
   for_each = local.site_cert_validation_domains
 
-  zone_id = data.aws_route53_zone.root.zone_id
+  zone_id = data.aws_route53_zone.site.zone_id
   name = one([
     for dvo in aws_acm_certificate.site.domain_validation_options : dvo.resource_record_name
     if dvo.domain_name == each.value
@@ -834,9 +748,10 @@ resource "aws_s3_bucket_policy" "public_site" {
 }
 
 resource "aws_route53_record" "site_a" {
-  zone_id = data.aws_route53_zone.root.zone_id
-  name    = local.site_fqdn
-  type    = "A"
+  zone_id         = data.aws_route53_zone.site.zone_id
+  name            = local.site_fqdn
+  type            = "A"
+  allow_overwrite = true
 
   alias {
     name                   = aws_cloudfront_distribution.site.domain_name
@@ -846,9 +761,10 @@ resource "aws_route53_record" "site_a" {
 }
 
 resource "aws_route53_record" "site_aaaa" {
-  zone_id = data.aws_route53_zone.root.zone_id
-  name    = local.site_fqdn
-  type    = "AAAA"
+  zone_id         = data.aws_route53_zone.site.zone_id
+  name            = local.site_fqdn
+  type            = "AAAA"
+  allow_overwrite = true
 
   alias {
     name                   = aws_cloudfront_distribution.site.domain_name
@@ -901,7 +817,6 @@ resource "aws_s3_bucket_cors_configuration" "dev_raw_audio" {
     allowed_methods = ["GET", "HEAD"]
     allowed_origins = [
       "https://dev.seattleboatradio.com",
-      "https://vhf-dev.robertboscacci.com",
     ]
     expose_headers  = ["ETag"]
     max_age_seconds = 3000
@@ -1017,7 +932,7 @@ resource "aws_acm_certificate" "dev_site" {
 resource "aws_route53_record" "dev_site_cert_validation" {
   for_each = local.dev_site_cert_validation_domains
 
-  zone_id = data.aws_route53_zone.root.zone_id
+  zone_id = data.aws_route53_zone.dev_site.zone_id
   name = one([
     for dvo in aws_acm_certificate.dev_site.domain_validation_options : dvo.resource_record_name
     if dvo.domain_name == each.value
@@ -1053,7 +968,7 @@ resource "aws_cloudfront_origin_access_control" "dev_public_site" {
 
 resource "aws_cloudfront_distribution" "dev_site" {
   enabled             = false
-  comment             = "Disabled legacy Talking Boats dev CloudFront distribution; dev DNS is tailnet-only"
+  comment             = "Disabled Talking Boats dev CloudFront distribution; dev DNS is tailnet-only"
   aliases             = [local.dev_site_fqdn]
   default_root_object = "index.html"
   is_ipv6_enabled     = true
@@ -1130,17 +1045,19 @@ resource "aws_s3_bucket_policy" "dev_public_site" {
 }
 
 resource "aws_route53_record" "dev_site_a" {
-  zone_id = data.aws_route53_zone.root.zone_id
-  name    = local.dev_site_fqdn
-  type    = "A"
-  ttl     = 300
-  records = var.dev_tailnet_ipv4_addresses
+  zone_id         = data.aws_route53_zone.dev_site.zone_id
+  name            = local.dev_site_fqdn
+  type            = "A"
+  ttl             = 300
+  records         = var.dev_tailnet_ipv4_addresses
+  allow_overwrite = true
 }
 
 resource "aws_route53_record" "dev_site_aaaa" {
-  zone_id = data.aws_route53_zone.root.zone_id
-  name    = local.dev_site_fqdn
-  type    = "AAAA"
-  ttl     = 300
-  records = var.dev_tailnet_ipv6_addresses
+  zone_id         = data.aws_route53_zone.dev_site.zone_id
+  name            = local.dev_site_fqdn
+  type            = "AAAA"
+  ttl             = 300
+  records         = var.dev_tailnet_ipv6_addresses
+  allow_overwrite = true
 }

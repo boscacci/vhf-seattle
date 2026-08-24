@@ -37,6 +37,7 @@ class Settings:
     durable_events_table: str | None = None
     durable_events_environment: str = "dev"
     durable_events_required: bool = True
+    clip_count_aggregates_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -50,7 +51,7 @@ class Settings:
             public_site_dir=Path(os.getenv("TALKINGBOATS_PUBLIC_SITE_DIR", "outputs/public-site")),
             public_base_url=os.getenv(
                 "TALKINGBOATS_PUBLIC_BASE_URL",
-                "https://vhf.robertboscacci.com",
+                "https://seattleboatradio.com",
             ),
             clip_db_path=Path(os.environ["TALKINGBOATS_CLIP_DB_PATH"])
             if os.getenv("TALKINGBOATS_CLIP_DB_PATH")
@@ -59,6 +60,10 @@ class Settings:
             durable_events_table=os.getenv("TALKINGBOATS_DURABLE_EVENTS_TABLE"),
             durable_events_environment=os.getenv("TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT", "dev"),
             durable_events_required=_env_bool("TALKINGBOATS_DURABLE_EVENTS_REQUIRED", True),
+            clip_count_aggregates_enabled=_env_bool(
+                "TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED",
+                False,
+            ),
             live_channels={
                 "13": _live_channel_from_metadata("13", os.getenv("TALKINGBOATS_LIVE_13_URL")),
                 "14": LiveChannel(

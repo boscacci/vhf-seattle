@@ -139,7 +139,7 @@ def _settings() -> Settings:
         raw_presign_seconds=900,
         playback_presign_seconds=300,
         public_site_dir="outputs/public-site",
-        public_base_url="https://vhf.robertboscacci.com",
+        public_base_url="https://seattleboatradio.com",
         live_channels={
             "68": LiveChannel(
                 channel="68",

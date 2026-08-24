@@ -114,6 +114,21 @@ class S3AudioStorage:
         self._cache_playback_exists(cache_key)
         return True
 
+    def delete_playback(self, key: str) -> None:
+        if not is_allowed_audio_key(key):
+            raise ValueError("playback key must be in raw/ or hall-of-fame/")
+        if not self.settings.raw_bucket:
+            raise RuntimeError("TALKINGBOATS_RAW_BUCKET is not configured")
+        cache_key = (self.settings.raw_bucket, key)
+        try:
+            self.client.delete_object(Bucket=self.settings.raw_bucket, Key=key)
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            code = error.get("Code", "")
+            status_code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            raise RuntimeError(f"playback object delete failed: {code or status_code}") from exc
+        self._uncache_playback_exists(cache_key)
+
     def _cached_playback_exists(self, cache_key: tuple[str, str]) -> bool:
         now = time.monotonic()
         with self._playback_exists_cache_lock:
@@ -128,6 +143,10 @@ class S3AudioStorage:
     def _cache_playback_exists(self, cache_key: tuple[str, str]) -> None:
         with self._playback_exists_cache_lock:
             self._playback_exists_cache[cache_key] = time.monotonic()
+
+    def _uncache_playback_exists(self, cache_key: tuple[str, str]) -> None:
+        with self._playback_exists_cache_lock:
+            self._playback_exists_cache.pop(cache_key, None)
 
     def open_playback(self, key: str) -> Any:
         if not is_allowed_audio_key(key):

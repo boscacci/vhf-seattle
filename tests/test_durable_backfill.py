@@ -8,7 +8,7 @@ from talkingboats.durable_backfill import backfill_clip_events
 from talkingboats.schemas import ClipPresignRequest
 
 
-def test_backfill_clip_events_exports_existing_transcript_and_correction(tmp_path: Path) -> None:
+def test_backfill_clip_events_exports_existing_transcript(tmp_path: Path) -> None:
     db_path = tmp_path / "clips.sqlite3"
     key = "raw/channel=14/date=2026-06-01/example.mp3"
     store = UploadedClipStore(db_path)
@@ -35,23 +35,15 @@ def test_backfill_clip_events_exports_existing_transcript_and_correction(tmp_pat
             )
         ],
     )
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-06-01T12:00:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="rob",
-        note="urgency signal",
-    )
     event_store = CapturingEventStore()
 
     summary = backfill_clip_events(db_path=db_path, event_store=event_store)
 
     assert summary.clip_count == 1
-    assert summary.event_count == 3
+    assert summary.event_count == 2
     assert [event["event_type"] for event in event_store.events] == [
         "clip.presigned",
         "clip.transcribed",
-        "clip.transcript_corrected",
     ]
     assert event_store.events[0]["idempotency_key"] == "edge-upload-14"
     assert event_store.events[1]["payload"]["transcript"] == "PON PON all stations"
@@ -64,7 +56,6 @@ def test_backfill_clip_events_exports_existing_transcript_and_correction(tmp_pat
             "relative_end_seconds": 3.0,
         }
     ]
-    assert event_store.events[2]["payload"]["corrected_transcript"] == "PAN-PAN, all stations."
 
 
 class CapturingEventStore:

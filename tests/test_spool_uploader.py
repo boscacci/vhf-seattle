@@ -7,6 +7,9 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
+from talkingboats.audio_processing import CanonicalAudioResult
 from talkingboats.spool_uploader import (
     SpooledAudioClip,
     UploadResult,
@@ -15,6 +18,26 @@ from talkingboats.spool_uploader import (
     process_spool_once,
     upload_spooled_clip,
 )
+
+
+@pytest.fixture(autouse=True)
+def fake_canonical_audio_processor(monkeypatch):
+    def process(source_path, output_path, **_kwargs):
+        output_path.write_bytes(b"canonical:" + source_path.read_bytes())
+        return CanonicalAudioResult(
+            audio_profile="canonical-v1",
+            source_peak_db=-12.0,
+            normalized_gain_db=11.8,
+            compressed_peak_db=-3.0,
+            compensation_gain_db=2.8,
+            decoded_peak_db=-0.2,
+            duration_seconds=None,
+        )
+
+    monkeypatch.setattr(
+        "talkingboats.spool_uploader.process_canonical_clip_audio",
+        process,
+    )
 
 
 def test_spool_uploader_discovers_stable_channel_files(tmp_path) -> None:
@@ -168,6 +191,7 @@ def test_upload_spooled_clip_posts_duration_metadata(monkeypatch, tmp_path) -> N
             idempotency_key="spool-v1:14:2026-07-06T04:23:07Z:test",
             ended_at=ended_at,
             duration_seconds=3.25,
+            audio_profile="canonical-v1",
         ),
     )
 
@@ -178,6 +202,7 @@ def test_upload_spooled_clip_posts_duration_metadata(monkeypatch, tmp_path) -> N
             "ended_at": "2026-07-06T04:23:10.250000Z",
             "duration_seconds": 3.25,
             "content_type": "audio/mpeg",
+            "audio_profile": "canonical-v1",
             "idempotency_key": "spool-v1:14:2026-07-06T04:23:07Z:test",
         }
     ]
@@ -269,7 +294,7 @@ def test_spool_uploader_does_not_infer_channel_from_unrelated_ancestors(tmp_path
     assert clips[0].channel == "14"
 
 
-def test_spool_uploader_optimizes_clip_before_upload(tmp_path) -> None:
+def test_spool_uploader_optimizes_clip_before_upload(monkeypatch, tmp_path) -> None:
     channel_dir = tmp_path / "14"
     channel_dir.mkdir()
     source = channel_dir / "vhf-14_20260528_004617.mp3"
@@ -278,9 +303,23 @@ def test_spool_uploader_optimizes_clip_before_upload(tmp_path) -> None:
     commands = []
     uploaded = []
 
-    def fake_run(command, *, check):
-        commands.append((command, check))
-        Path(command[-1]).write_bytes(b"edge optimized mp3")
+    def fake_process(source_path, output_path, **kwargs):
+        commands.append((source_path, output_path, kwargs))
+        output_path.write_bytes(b"canonical mp3")
+        return CanonicalAudioResult(
+            audio_profile="canonical-v1",
+            source_peak_db=-18.0,
+            normalized_gain_db=17.8,
+            compressed_peak_db=-3.0,
+            compensation_gain_db=2.8,
+            decoded_peak_db=-0.2,
+            duration_seconds=2.5,
+        )
+
+    monkeypatch.setattr(
+        "talkingboats.spool_uploader.process_canonical_clip_audio",
+        fake_process,
+    )
 
     def fake_upload(*, api_url, ingest_token, clip):
         uploaded.append((api_url, ingest_token, clip, clip.audio_path.read_bytes()))
@@ -297,23 +336,23 @@ def test_spool_uploader_optimizes_clip_before_upload(tmp_path) -> None:
         upload_func=fake_upload,
         audio_filter="highpass=f=250,acompressor=threshold=0.06",
         ffmpeg_path="ffmpeg",
-        runner=fake_run,
     )
 
     assert count == 1
     assert source.exists()
     assert commands
-    command, check = commands[0]
-    assert check is True
-    assert "-af" in command
-    assert command[command.index("-af") + 1] == "highpass=f=250,acompressor=threshold=0.06"
-    assert command[command.index("-codec:a") + 1] == "libmp3lame"
+    processed_source, processed_output, process_kwargs = commands[0]
+    assert processed_source == source
+    assert processed_output.name.endswith("-canonical.mp3")
+    assert process_kwargs["bitrate"] == "64k"
     assert len(uploaded) == 1
     _, _, clip, uploaded_bytes = uploaded[0]
     assert clip.audio_path.suffix == ".mp3"
     assert clip.content_type == "audio/mpeg"
+    assert clip.audio_profile == "canonical-v1"
+    assert clip.duration_seconds == 2.5
     assert clip.idempotency_key.startswith("spool-v1:14:2026-05-28T00:46:17Z:")
-    assert uploaded_bytes == b"edge optimized mp3"
+    assert uploaded_bytes == b"canonical mp3"
     assert not clip.audio_path.exists()
 
 
@@ -352,16 +391,14 @@ def test_spool_uploader_prioritizes_recent_files_when_limited(tmp_path) -> None:
     )
 
     assert count == 1
-    assert uploaded == [new.name]
+    assert uploaded == ["vhf-14_20260528_004700-canonical.mp3"]
 
 
 def test_spool_uploader_discards_old_completed_files_beyond_retention_cap(tmp_path) -> None:
     channel_dir = tmp_path / "14"
     channel_dir.mkdir()
     now = datetime(2026, 5, 28, 1, 0, tzinfo=UTC)
-    clips = [
-        channel_dir / f"vhf-14_20260528_00{minute:02d}00.mp3" for minute in range(56, 60)
-    ]
+    clips = [channel_dir / f"vhf-14_20260528_00{minute:02d}00.mp3" for minute in range(56, 60)]
     old_timestamp = (now - timedelta(seconds=20)).timestamp()
     for clip in clips:
         clip.write_bytes(b"audio")
@@ -390,14 +427,14 @@ def test_spool_uploader_discards_old_completed_files_beyond_retention_cap(tmp_pa
     )
 
     assert count == 1
-    assert uploaded == [clips[-1].name]
+    assert uploaded == ["vhf-14_20260528_005900-canonical.mp3"]
     assert {path.name for path in channel_dir.glob("*.mp3")} == {
         clips[-2].name,
         clips[-1].name,
     }
 
 
-def test_spool_uploader_quarantines_failed_preparation_and_continues(tmp_path) -> None:
+def test_spool_uploader_quarantines_failed_preparation_and_continues(monkeypatch, tmp_path) -> None:
     failed_root = tmp_path / "failed"
     bad_dir = tmp_path / "13"
     good_dir = tmp_path / "14"
@@ -410,10 +447,24 @@ def test_spool_uploader_quarantines_failed_preparation_and_continues(tmp_path) -
     old_timestamp = datetime(2026, 5, 28, 0, 48, tzinfo=UTC).timestamp()
     uploaded = []
 
-    def fake_run(command, *, check):
-        if str(bad) in command:
-            raise subprocess.CalledProcessError(returncode=1, cmd=command)
-        Path(command[-1]).write_bytes(b"edge optimized mp3")
+    def fake_process(source_path, output_path, **_kwargs):
+        if source_path == bad:
+            raise subprocess.CalledProcessError(returncode=1, cmd=["ffmpeg"])
+        output_path.write_bytes(b"canonical mp3")
+        return CanonicalAudioResult(
+            audio_profile="canonical-v1",
+            source_peak_db=-12.0,
+            normalized_gain_db=11.8,
+            compressed_peak_db=-3.0,
+            compensation_gain_db=2.8,
+            decoded_peak_db=-0.2,
+            duration_seconds=None,
+        )
+
+    monkeypatch.setattr(
+        "talkingboats.spool_uploader.process_canonical_clip_audio",
+        fake_process,
+    )
 
     def fake_upload(*, api_url, ingest_token, clip):
         uploaded.append(clip.audio_path.name)
@@ -434,13 +485,12 @@ def test_spool_uploader_quarantines_failed_preparation_and_continues(tmp_path) -
         upload_func=fake_upload,
         audio_filter="highpass=f=250,acompressor=threshold=0.06",
         ffmpeg_path="ffmpeg",
-        runner=fake_run,
         failed_root=failed_root,
         fallback_to_original_on_prepare_error=False,
     )
 
     assert count == 1
-    assert uploaded == ["vhf-14_20260528_004700-edge.mp3"]
+    assert uploaded == ["vhf-14_20260528_004700-canonical.mp3"]
     assert not bad.exists()
     assert (failed_root / "13" / bad.name).read_bytes() == b"bad mp3"
     assert not good.exists()
@@ -459,7 +509,7 @@ def test_spool_uploader_upload_failure_does_not_block_later_files(tmp_path) -> N
     uploaded = []
 
     def fake_upload(*, api_url, ingest_token, clip):
-        if clip.audio_path == bad:
+        if clip.channel == "13":
             raise RuntimeError("presign failed")
         uploaded.append(clip.audio_path.name)
         return UploadResult(
@@ -481,12 +531,98 @@ def test_spool_uploader_upload_failure_does_not_block_later_files(tmp_path) -> N
     )
 
     assert count == 1
-    assert uploaded == [good.name]
+    assert uploaded == ["vhf-14_20260528_004700-canonical.mp3"]
     assert bad.exists()
     assert not good.exists()
 
 
-def test_spool_uploader_uploads_original_when_optimization_fails(tmp_path) -> None:
+def test_spool_uploader_discards_subsecond_clips_before_upload(tmp_path, capsys) -> None:
+    short_dir = tmp_path / "13"
+    good_dir = tmp_path / "14"
+    short_dir.mkdir()
+    good_dir.mkdir()
+    short = short_dir / "vhf-13_20260724_152900.mp3"
+    good = good_dir / "vhf-14_20260724_152901.mp3"
+    short.write_bytes(b"squelch click")
+    good.write_bytes(b"radio transmission")
+    old_timestamp = datetime(2026, 7, 24, 15, 30, tzinfo=UTC).timestamp()
+    uploaded = []
+
+    def fake_upload(*, api_url, ingest_token, clip):
+        uploaded.append(clip.audio_path.name)
+        return UploadResult(
+            bucket="bucket",
+            key=f"raw/channel={clip.channel}/clip.mp3",
+            bytes_uploaded=18,
+        )
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        min_duration_seconds=1.0,
+        delete_after_upload=True,
+        now=datetime(2026, 7, 24, 15, 31, tzinfo=UTC),
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        duration_probe=lambda path: 0.4 if path == short else 2.0,
+        upload_func=fake_upload,
+    )
+
+    assert count == 1
+    assert uploaded == ["vhf-14_20260724_152901-canonical.mp3"]
+    assert not short.exists()
+    assert not good.exists()
+    assert '"event": "spool_short_clip_discarded"' in capsys.readouterr().out
+
+
+def test_spool_uploader_discards_impossible_synchronous_channel_burst(tmp_path, capsys) -> None:
+    burst_paths = []
+    for channel in ("06", "13", "14", "72"):
+        channel_dir = tmp_path / channel
+        channel_dir.mkdir()
+        path = channel_dir / f"vhf-{channel.lower()}_20260724_154200.mp3"
+        path.write_bytes(f"wideband interference {channel}".encode())
+        burst_paths.append(path)
+    good_dir = tmp_path / "77"
+    good_dir.mkdir()
+    good = good_dir / "vhf-77_20260724_154201.mp3"
+    good.write_bytes(b"isolated radio transmission")
+    old_timestamp = datetime(2026, 7, 24, 15, 43, tzinfo=UTC).timestamp()
+    uploaded = []
+
+    def fake_upload(*, api_url, ingest_token, clip):
+        uploaded.append(clip.audio_path.name)
+        return UploadResult(
+            bucket="bucket",
+            key=f"raw/channel={clip.channel}/clip.mp3",
+            bytes_uploaded=27,
+        )
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        min_duration_seconds=1.0,
+        max_synchronous_channels=3,
+        delete_after_upload=True,
+        now=datetime(2026, 7, 24, 15, 44, tzinfo=UTC),
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        duration_probe=lambda path: 2.0,
+        upload_func=fake_upload,
+    )
+
+    assert count == 1
+    assert uploaded == ["vhf-77_20260724_154201-canonical.mp3"]
+    assert all(not path.exists() for path in burst_paths)
+    assert not good.exists()
+    output = capsys.readouterr().out
+    assert '"event": "spool_synchronous_burst_discarded"' in output
+    assert '"channel_count": 4' in output
+
+
+def test_spool_uploader_quarantines_when_canonical_processing_fails(monkeypatch, tmp_path) -> None:
     channel_dir = tmp_path / "16"
     channel_dir.mkdir()
     source = channel_dir / "vhf-16_20260704_194027.mp3"
@@ -494,8 +630,13 @@ def test_spool_uploader_uploads_original_when_optimization_fails(tmp_path) -> No
     old_timestamp = datetime(2026, 7, 4, 19, 41, tzinfo=UTC).timestamp()
     uploaded = []
 
-    def fake_run(command, *, check):
-        raise subprocess.CalledProcessError(returncode=183, cmd=command)
+    def fake_process(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(returncode=183, cmd=["ffmpeg"])
+
+    monkeypatch.setattr(
+        "talkingboats.spool_uploader.process_canonical_clip_audio",
+        fake_process,
+    )
 
     def fake_upload(*, api_url, ingest_token, clip):
         uploaded.append((clip.audio_path, clip.content_type, clip.audio_path.read_bytes()))
@@ -516,14 +657,55 @@ def test_spool_uploader_uploads_original_when_optimization_fails(tmp_path) -> No
         upload_func=fake_upload,
         audio_filter="highpass=f=250,acompressor=threshold=0.06",
         ffmpeg_path="ffmpeg",
-        runner=fake_run,
         failed_root=tmp_path / "failed",
     )
 
-    assert count == 1
-    assert uploaded == [(source, "audio/mpeg", b"original airband mp3")]
+    assert count == 0
+    assert uploaded == []
     assert not source.exists()
-    assert not (tmp_path / "failed").exists()
+    assert (tmp_path / "failed" / "16" / source.name).read_bytes() == b"original airband mp3"
+
+
+def test_spool_uploader_never_uploads_unprocessed_fallback(monkeypatch, tmp_path) -> None:
+    channel_dir = tmp_path / "14"
+    channel_dir.mkdir()
+    source = channel_dir / "vhf-14_20260728_120000.mp3"
+    source.write_bytes(b"raw receiver audio")
+    uploaded = []
+
+    def fake_process(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=["ffmpeg"])
+
+    monkeypatch.setattr(
+        "talkingboats.spool_uploader.process_canonical_clip_audio",
+        fake_process,
+    )
+
+    def fake_upload(*, api_url, ingest_token, clip):
+        uploaded.append(clip)
+        return UploadResult(bucket="bucket", key="unexpected", bytes_uploaded=0)
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=True,
+        now=datetime(2026, 7, 28, 12, 1, tzinfo=UTC),
+        stat_func=lambda path: FakeStat(
+            size=path.stat().st_size,
+            mtime=datetime(2026, 7, 28, 12, 0, 30, tzinfo=UTC).timestamp(),
+        ),
+        upload_func=fake_upload,
+        audio_filter="legacy-filter-must-not-control-canonical-processing",
+        ffmpeg_path="ffmpeg",
+        failed_root=tmp_path / "failed",
+    )
+
+    assert count == 0
+    assert uploaded == []
+    assert not source.exists()
+    assert (tmp_path / "failed" / "14" / source.name).read_bytes() == b"raw receiver audio"
 
 
 def test_spool_uploader_quarantines_stale_empty_completed_files(tmp_path) -> None:
@@ -560,7 +742,7 @@ def test_spool_uploader_quarantines_stale_empty_completed_files(tmp_path) -> Non
     )
 
     assert count == 1
-    assert uploaded == [good.name]
+    assert uploaded == ["vhf-74_20260704_194500-canonical.mp3"]
     assert not empty.exists()
     assert not good.exists()
     assert (failed_root / "14" / empty.name).read_bytes() == b""

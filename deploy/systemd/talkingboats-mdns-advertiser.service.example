@@ -6,7 +6,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
+WorkingDirectory=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy
 ExecStart=/home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-mdns-advertiser --hostname optiplex.local --interface eth0 --network 192.168.1.0/24 --port 8034
 Restart=always
 RestartSec=10

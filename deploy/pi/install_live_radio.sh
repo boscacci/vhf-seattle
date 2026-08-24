@@ -60,7 +60,8 @@ install -d -m 0755 \
   "${airband_spool_root}/77" \
   "${airband_spool_root}/78A" \
   /etc/talkingboats \
-  /etc/systemd/system
+  /etc/systemd/system \
+  /etc/systemd/system.conf.d
 rm -f \
   /opt/talkingboats/live-radio/index.html \
   /opt/talkingboats/live-radio/app.js \
@@ -123,6 +124,9 @@ install -m 0644 \
 install -m 0644 \
   "${repo_root}/deploy/systemd/talkingboats-pi-healthcheck.timer.example" \
   /etc/systemd/system/talkingboats-pi-healthcheck.timer
+install -m 0644 \
+  "${repo_root}/deploy/systemd/talkingboats-system-watchdog.conf.example" \
+  /etc/systemd/system.conf.d/90-talkingboats-hardware-watchdog.conf
 generate_password() {
   openssl rand -base64 36 | tr -d '\n' | tr '+/' '-_'
 }
@@ -157,8 +161,6 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_EDGE_RECORD_UPLOAD_QUEUE_SIZE=%q\n' "4"
     printf 'TALKINGBOATS_EDGE_UPLOAD_ENABLED=%q\n' "false"
     printf 'TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3=%q\n' "true"
-    printf 'TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER=%q\n' \
-      "highpass=f=250,lowpass=f=3200,afftdn=nf=-28,acompressor=threshold=0.06:ratio=3:attack=8:release=180:makeup=4,loudnorm=I=-16:LRA=8:TP=-6"
     printf 'TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD=%q\n' "false"
     printf 'TALKINGBOATS_EDGE_THRESHOLD_RMS=%q\n' "8000"
     printf 'TALKINGBOATS_EDGE_MIN_CLIP_SECONDS=%q\n' "1.0"
@@ -208,7 +210,7 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_AIS_COMMUNITY_FEED=%q\n' "anonymous"
     printf 'TALKINGBOATS_AIS_SHARING_KEY=%q\n' ""
     printf 'TALKINGBOATS_AIS_STATION_NAME=%q\n' "Elliott Bay VHF"
-    printf 'TALKINGBOATS_AIS_STATION_LINK=%q\n' "https://robertboscacci.com"
+    printf 'TALKINGBOATS_AIS_STATION_LINK=%q\n' "https://seattleboatradio.com"
     printf 'TALKINGBOATS_AIS_LAT=%q\n' "47.6190158"
     printf 'TALKINGBOATS_AIS_LON=%q\n' "-122.3595353"
     printf 'TALKINGBOATS_AIS_SHARE_LOC=%q\n' "on"
@@ -262,8 +264,6 @@ append_env_if_missing TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED "false"
 append_env_if_missing TALKINGBOATS_EDGE_RECORD_UPLOAD_QUEUE_SIZE "4"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENABLED "false"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3 "true"
-append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER \
-  "highpass=f=250,lowpass=f=3200,afftdn=nf=-28,acompressor=threshold=0.06:ratio=3:attack=8:release=180:makeup=4,loudnorm=I=-16:LRA=8:TP=-6"
 append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD "false"
 append_env_if_missing TALKINGBOATS_CLOUD_HLS_ENABLED "false"
 append_env_if_missing TALKINGBOATS_PUBLIC_SITE_BUCKET ""
@@ -313,7 +313,7 @@ append_env_if_missing TALKINGBOATS_AIS_WEB_PORT "8100"
 append_env_if_missing TALKINGBOATS_AIS_COMMUNITY_FEED "anonymous"
 append_env_if_missing TALKINGBOATS_AIS_SHARING_KEY ""
 append_env_if_missing TALKINGBOATS_AIS_STATION_NAME "Elliott Bay VHF"
-append_env_if_missing TALKINGBOATS_AIS_STATION_LINK "https://robertboscacci.com"
+append_env_if_missing TALKINGBOATS_AIS_STATION_LINK "https://seattleboatradio.com"
 append_env_if_missing TALKINGBOATS_AIS_LAT "47.6190158"
 append_env_if_missing TALKINGBOATS_AIS_LON "-122.3595353"
 append_env_if_missing TALKINGBOATS_AIS_SHARE_LOC "on"
@@ -589,6 +589,7 @@ if [[ -f /etc/default/icecast2 ]]; then
   fi
 fi
 
+systemctl daemon-reexec
 systemctl daemon-reload
 systemctl enable icecast2.service
 systemctl restart icecast2.service

@@ -124,14 +124,16 @@ def render_rtlsdr_airband_config(
       freq = {channel.frequency_hz};
       modulation = "nfm";
       label = "vhf-{channel.channel.lower()}";
-{_render_channel_squelch(
-        threshold_overrides.get(channel.channel, squelch_threshold)
-        if channel.channel not in snr_overrides
-        else None,
-        snr_overrides.get(channel.channel, squelch_snr_threshold)
-        if channel.channel not in threshold_overrides
-        else None,
-    )}
+{
+            _render_channel_squelch(
+                threshold_overrides.get(channel.channel, squelch_threshold)
+                if channel.channel not in snr_overrides
+                else None,
+                snr_overrides.get(channel.channel, squelch_snr_threshold)
+                if channel.channel not in threshold_overrides
+                else None,
+            )
+        }
       outputs:
       (
 {_render_channel_outputs(channel, cleaned_output_root, selected_icecast_outputs)}
@@ -170,6 +172,11 @@ def _render_channel_outputs(
           directory = {_config_string(f"{output_root}/{channel.channel}")};
           filename_template = "vhf-{channel.channel.lower()}";
           split_on_transmission = true;
+          pre_roll_seconds = 0.50;
+          post_roll_seconds = 0.75;
+          attack_confirmation_batches = 2;
+          minimum_active_batches = 3;
+          maximum_transmission_seconds = 45;
         }}"""
     ]
     for icecast_output in icecast_outputs:

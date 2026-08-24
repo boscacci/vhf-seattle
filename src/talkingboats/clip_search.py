@@ -9,10 +9,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+import numpy as np
+
 from talkingboats.channel_metadata import channel_label
 from talkingboats.security import assert_public_safe
 
 DEFAULT_SEARCH_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+MINIMUM_SEARCH_SCORE = 0.35
 SEARCH_INDEX_PATH = "/analysis/search_index.json"
 SEARCH_RECENCY_WINDOWS = {
     "24h": timedelta(hours=24),
@@ -23,13 +26,24 @@ SEARCH_RECENCY_WINDOWS = {
 }
 
 _EMBEDDERS: dict[str, Any] = {}
+_EMBEDDER_LOCK = threading.RLock()
 _SEARCH_INDEX_CACHE_LOCK = threading.RLock()
+_SEARCH_RUNTIME_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
 class _SearchIndexCacheEntry:
     signature: tuple[int, int]
     payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _VectorSearchRuntime:
+    clips: tuple[dict[str, Any], ...]
+    matrix: np.ndarray
+    norms: np.ndarray
+    started_at_seconds: np.ndarray
+    reference_time: datetime | None
 
 
 _SEARCH_INDEX_CACHE: dict[Path, _SearchIndexCacheEntry] = {}
@@ -176,21 +190,34 @@ def search_clips(
     clips = [clip for clip in index.get("clips", []) if isinstance(clip, dict)]
     if index.get("status") != "ok" or not clips:
         raise SearchIndexUnavailable("clip search index is not ready")
+    runtime = _vector_search_runtime(index, clips)
     embedding_model = str(index.get("embedding_model") or DEFAULT_SEARCH_EMBEDDING_MODEL)
-    query_embedding = query_vector or embed_query(normalized_query, embedding_model)
-    reference_time = _latest_clip_time(clips)
+    query_embedding = (
+        query_vector if query_vector is not None else embed_query(normalized_query, embedding_model)
+    )
+    query_array = np.asarray(query_embedding, dtype=np.float32)
+    reference_time = runtime.reference_time
     cutoff = _recency_cutoff(reference_time, recency_key)
-    candidates = [
-        clip
-        for clip in clips
-        if cutoff is None or _parse_utc(str(clip.get("started_at") or "")) >= cutoff
-    ]
     scored = []
-    for clip in candidates:
-        score = cosine_similarity(query_embedding, clip.get("embedding"))
-        if not number_is_finite(score):
-            continue
-        scored.append((score, clip))
+    if query_array.ndim == 1 and runtime.matrix.shape[1:] == query_array.shape:
+        query_norm = float(np.linalg.norm(query_array))
+        if query_norm > 0:
+            candidate_indexes = (
+                np.arange(len(runtime.clips))
+                if cutoff is None
+                else np.flatnonzero(runtime.started_at_seconds >= cutoff.timestamp())
+            )
+            candidate_scores = (
+                runtime.matrix[candidate_indexes] @ query_array
+            ) / (runtime.norms[candidate_indexes] * query_norm)
+            for runtime_index, score in zip(
+                candidate_indexes.tolist(),
+                candidate_scores.tolist(),
+                strict=True,
+            ):
+                if not number_is_finite(score) or score < MINIMUM_SEARCH_SCORE:
+                    continue
+                scored.append((score, runtime.clips[runtime_index]))
     scored.sort(key=lambda item: (item[0], str(item[1].get("started_at") or "")), reverse=True)
     results = [_search_result(clip, score) for score, clip in scored[:limit]]
     payload = {
@@ -198,6 +225,7 @@ def search_clips(
         "query": normalized_query,
         "recency": recency_key,
         "limit": limit,
+        "minimum_score": MINIMUM_SEARCH_SCORE,
         "count": len(results),
         "reference_started_at": reference_time.isoformat().replace("+00:00", "Z")
         if reference_time
@@ -214,12 +242,74 @@ def search_clips(
     return payload
 
 
-def embed_query(query: str, model_name: str) -> list[float]:
-    if model_name not in _EMBEDDERS:
-        from sentence_transformers import SentenceTransformer
+def _vector_search_runtime(
+    index: dict[str, Any],
+    clips: list[dict[str, Any]],
+) -> _VectorSearchRuntime:
+    runtime = index.get("_vector_search_runtime")
+    if isinstance(runtime, _VectorSearchRuntime):
+        return runtime
+    with _SEARCH_RUNTIME_LOCK:
+        runtime = index.get("_vector_search_runtime")
+        if isinstance(runtime, _VectorSearchRuntime):
+            return runtime
+        runtime = _build_vector_search_runtime(index, clips)
+        index["_vector_search_runtime"] = runtime
+        for clip in clips:
+            clip.pop("embedding", None)
+        return runtime
 
-        _EMBEDDERS[model_name] = SentenceTransformer(model_name)
-    encoded = _EMBEDDERS[model_name].encode([query], show_progress_bar=False)
+
+def _build_vector_search_runtime(
+    index: dict[str, Any],
+    clips: list[dict[str, Any]],
+) -> _VectorSearchRuntime:
+    dimension = int(index.get("vector_dimension") or 0)
+    if dimension <= 0:
+        dimension = next(
+            (
+                len(embedding)
+                for clip in clips
+                if isinstance((embedding := clip.get("embedding")), list) and embedding
+            ),
+            0,
+        )
+    runtime_clips = []
+    raw_vectors = []
+    started_at_seconds = []
+    for clip in clips:
+        embedding = clip.get("embedding")
+        if not isinstance(embedding, list) or len(embedding) != dimension:
+            continue
+        try:
+            started_at = _parse_utc(str(clip.get("started_at") or ""))
+        except ValueError:
+            continue
+        runtime_clips.append(clip)
+        raw_vectors.append(embedding)
+        started_at_seconds.append(started_at.timestamp())
+    matrix = np.asarray(raw_vectors, dtype=np.float32)
+    if matrix.size == 0:
+        matrix = np.empty((0, max(0, dimension)), dtype=np.float32)
+    norms = np.linalg.norm(matrix, axis=1)
+    valid_rows = np.isfinite(matrix).all(axis=1) & np.isfinite(norms) & (norms > 0)
+    valid_indexes = np.flatnonzero(valid_rows).tolist()
+    return _VectorSearchRuntime(
+        clips=tuple(runtime_clips[index] for index in valid_indexes),
+        matrix=matrix[valid_rows],
+        norms=norms[valid_rows],
+        started_at_seconds=np.asarray(started_at_seconds, dtype=np.float64)[valid_rows],
+        reference_time=_latest_clip_time(clips),
+    )
+
+
+def embed_query(query: str, model_name: str) -> list[float]:
+    with _EMBEDDER_LOCK:
+        if model_name not in _EMBEDDERS:
+            from sentence_transformers import SentenceTransformer
+
+            _EMBEDDERS[model_name] = SentenceTransformer(model_name)
+        encoded = _EMBEDDERS[model_name].encode([query], show_progress_bar=False)
     return _embedding_at(encoded, 0)
 
 

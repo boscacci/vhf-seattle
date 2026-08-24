@@ -1,0 +1,279 @@
+diff --git a/src/config.cpp b/src/config.cpp
+index c0b829b..3a28699 100644
+--- a/src/config.cpp
++++ b/src/config.cpp
+@@ -120,6 +120,17 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
+             fdata->continuous = outs[o].exists("continuous") ? (bool)(outs[o]["continuous"]) : false;
+             fdata->append = (!outs[o].exists("append")) || (bool)(outs[o]["append"]);
+             fdata->split_on_transmission = outs[o].exists("split_on_transmission") ? (bool)(outs[o]["split_on_transmission"]) : false;
++            fdata->pre_roll_seconds = outs[o].exists("pre_roll_seconds") ? (double)outs[o]["pre_roll_seconds"] : 0.0;
++            fdata->post_roll_seconds = outs[o].exists("post_roll_seconds") ? (double)outs[o]["post_roll_seconds"] : 0.5;
++            fdata->attack_confirmation_batches =
++                outs[o].exists("attack_confirmation_batches") ? (unsigned int)outs[o]["attack_confirmation_batches"] : 1;
++            fdata->minimum_active_batches =
++                outs[o].exists("minimum_active_batches") ? (unsigned int)outs[o]["minimum_active_batches"] : 1;
++            fdata->maximum_transmission_seconds =
++                outs[o].exists("maximum_transmission_seconds") ? (double)outs[o]["maximum_transmission_seconds"] : 3600.0;
++            fdata->active_batches = 0;
++            fdata->trailing_batches = 0;
++            fdata->total_batches = 0;
+             fdata->include_freq = outs[o].exists("include_freq") ? (bool)(outs[o]["include_freq"]) : false;
+
+             channel->outputs[oo].has_mp3_output = true;
+@@ -133,6 +144,12 @@ static int parse_outputs(libconfig::Setting& outs, channel_t* channel, int i, in
+                     cerr << "Configuration error: devices.[" << i << "] channels.[" << j << "] outputs.[" << o << "]: can't have both continuous and split_on_transmission\n";
+                     error();
+                 }
++                if (fdata->pre_roll_seconds < 0.0 || fdata->post_roll_seconds < 0.0 ||
++                    fdata->attack_confirmation_batches < 1 || fdata->minimum_active_batches < 1 ||
++                    fdata->maximum_transmission_seconds <= 0.0) {
++                    cerr << "Configuration error: buffered split_on_transmission values must be positive\n";
++                    error();
++                }
+             }
+
+         } else if (!strncmp(outs[o]["type"], "rawfile", 7)) {
+diff --git a/src/output.cpp b/src/output.cpp
+index 2bc4a19..e05e22d 100644
+--- a/src/output.cpp
++++ b/src/output.cpp
+@@ -47,6 +47,7 @@
+ #include <ctime>
+ #include <sstream>
+ #include <string>
++#include <vector>
+ #include "config.h"
+ #include "helper_functions.h"
+ #include "input-common.h"
+@@ -357,6 +358,129 @@ static void close_file(output_t* output) {
+     fdata->file_path_tmp.clear();
+ }
+
++static bool output_file_ready(channel_t* channel, output_t* output);
++
++static bool encode_split_batch(output_t* output, const std::vector<float>& samples) {
++    file_data* fdata = (file_data*)(output->data);
++    if (!fdata || !fdata->f || samples.size() != WAVE_BATCH) {
++        return false;
++    }
++    int mp3_bytes = lame_encode_buffer_ieee_float(
++        output->lame,
++        samples.data(),
++        NULL,
++        WAVE_BATCH,
++        output->lamebuf,
++        LAMEBUF_SIZE);
++    if (mp3_bytes < 0) {
++        log(LOG_WARNING, "lame_encode_buffer_ieee_float: %d\n", mp3_bytes);
++        return false;
++    }
++    if (mp3_bytes > 0 &&
++        fwrite(output->lamebuf, 1, (size_t)mp3_bytes, fdata->f) < (size_t)mp3_bytes) {
++        log(LOG_WARNING, "Cannot write buffered transmission to %s (%s)\n",
++            fdata->file_path.c_str(), strerror(errno));
++        return false;
++    }
++    gettimeofday(&fdata->last_write_time, NULL);
++    return true;
++}
++
++static void finish_split_file(output_t* output, bool keep) {
++    file_data* fdata = (file_data*)(output->data);
++    if (!fdata) {
++        return;
++    }
++    std::string completed_path = fdata->file_path;
++    close_file(output);
++    if (!keep && !completed_path.empty()) {
++        unlink(completed_path.c_str());
++        debug_print("discarded short buffered transmission %s\n", completed_path.c_str());
++    }
++    fdata->attack.clear();
++    fdata->active_batches = 0;
++    fdata->trailing_batches = 0;
++    fdata->total_batches = 0;
++}
++
++static bool process_buffered_split_output(channel_t* channel, output_t* output) {
++    file_data* fdata = (file_data*)(output->data);
++    if (!fdata || !fdata->split_on_transmission || output->type != O_FILE) {
++        return false;
++    }
++    const bool signal = channel->axcindicate != NO_SIGNAL;
++    const unsigned int pre_roll_batches =
++        (unsigned int)ceil(fdata->pre_roll_seconds * WAVE_RATE / WAVE_BATCH);
++    const unsigned int post_roll_batches =
++        (unsigned int)ceil(fdata->post_roll_seconds * WAVE_RATE / WAVE_BATCH);
++    const unsigned int maximum_batches =
++        (unsigned int)ceil(fdata->maximum_transmission_seconds * WAVE_RATE / WAVE_BATCH);
++    std::vector<float> batch(
++        channel->waveout_unsquelched,
++        channel->waveout_unsquelched + WAVE_BATCH);
++
++    if (!fdata->f) {
++        if (!signal) {
++            fdata->attack.clear();
++            fdata->pre_roll.push_back(batch);
++            while (fdata->pre_roll.size() > pre_roll_batches) {
++                fdata->pre_roll.pop_front();
++            }
++            return true;
++        }
++        fdata->attack.push_back(batch);
++        if (fdata->attack.size() < fdata->attack_confirmation_batches) {
++            return true;
++        }
++        if (!output_file_ready(channel, output)) {
++            log(LOG_WARNING, "Buffered transmission output disabled\n");
++            output->enabled = false;
++            return true;
++        }
++        for (const std::vector<float>& buffered : fdata->pre_roll) {
++            if (!encode_split_batch(output, buffered)) {
++                finish_split_file(output, false);
++                output->enabled = false;
++                return true;
++            }
++            fdata->total_batches++;
++        }
++        fdata->pre_roll.clear();
++        for (const std::vector<float>& confirmed : fdata->attack) {
++            if (!encode_split_batch(output, confirmed)) {
++                finish_split_file(output, false);
++                output->enabled = false;
++                return true;
++            }
++            fdata->active_batches++;
++            fdata->total_batches++;
++        }
++        fdata->attack.clear();
++        output->active = true;
++        return true;
++    }
++
++    if (!encode_split_batch(output, batch)) {
++        finish_split_file(output, false);
++        output->enabled = false;
++        return true;
++    }
++    fdata->total_batches++;
++    if (signal) {
++        fdata->active_batches++;
++        fdata->trailing_batches = 0;
++    } else {
++        fdata->trailing_batches++;
++    }
++    if (fdata->total_batches >= maximum_batches ||
++        (!signal && fdata->trailing_batches >= post_roll_batches)) {
++        const bool keep = fdata->active_batches >= fdata->minimum_active_batches;
++        finish_split_file(output, keep);
++        output->active = false;
++    }
++    return true;
++}
++
+ /*
+  * Close current output file based on certain conditions:
+  * If "split_on_transmission" mode is true check:
+@@ -529,6 +651,10 @@ void process_outputs(channel_t* channel, int cur_scan_freq) {
+         } else if (channel->outputs[k].type == O_FILE || channel->outputs[k].type == O_RAWFILE) {
+             file_data* fdata = (file_data*)(channel->outputs[k].data);
+
++            if (process_buffered_split_output(channel, &channel->outputs[k])) {
++                continue;
++            }
++
+             if (fdata->continuous == false && channel->axcindicate == NO_SIGNAL && channel->outputs[k].active == false) {
+                 close_if_necessary(&channel->outputs[k]);
+                 continue;
+@@ -960,6 +1086,7 @@ void* output_thread(void* param) {
+                     channel_t* channel = devices[i].channels + j;
+                     process_outputs(channel, new_freq);
+                     memcpy(channel->waveout, channel->waveout + WAVE_BATCH, AGC_EXTRA * 4);
++                    memcpy(channel->waveout_unsquelched, channel->waveout_unsquelched + WAVE_BATCH, AGC_EXTRA * 4);
+                 }
+                 dev->waveavail = 0;
+             }
+@@ -983,6 +1110,7 @@ void* output_thread(void* param) {
+             channel_t* channel = devices[i].channels + j;
+             process_outputs(channel, -1);
+             memcpy(channel->waveout, channel->waveout + WAVE_BATCH, AGC_EXTRA * 4);
++            memcpy(channel->waveout_unsquelched, channel->waveout_unsquelched + WAVE_BATCH, AGC_EXTRA * 4);
+         }
+         dev->waveavail = 0;
+     }
+diff --git a/src/rtl_airband.cpp b/src/rtl_airband.cpp
+index 1ac420b..0e6df07 100644
+--- a/src/rtl_airband.cpp
++++ b/src/rtl_airband.cpp
+@@ -571,10 +571,11 @@ void* demodulate(void* params) {
+                         }
+                     }
+
+-                    float& waveout = channel->waveout[j];
++                    float& waveout = channel->waveout_unsquelched[j];
++                    waveout = 0.0f;
+
+                     // If squelch sees power then do modulation-specific processing
+-                    if (fparms->squelch.should_process_audio()) {
++                    if (fparms->squelch.should_process_audio() || fparms->squelch.should_filter_sample()) {
+                         if (fparms->modulation == MOD_AM) {
+                             if (channel->wavein[j] > fparms->squelch.squelch_level()) {
+                                 fparms->agcavgfast = fparms->agcavgfast * 0.995f + channel->wavein[j] * 0.005f;
+@@ -629,6 +630,7 @@ void* demodulate(void* params) {
+                         }
+
+                         channel->axcindicate = SIGNAL;
++                        channel->waveout[j] = waveout;
+                         if (channel->has_iq_outputs) {
+                             channel->iq_out[2 * (j - AGC_EXTRA)] = real;
+                             channel->iq_out[2 * (j - AGC_EXTRA) + 1] = imag;
+@@ -636,7 +638,7 @@ void* demodulate(void* params) {
+
+                         // Squelch is closed
+                     } else {
+-                        waveout = 0;
++                        channel->waveout[j] = 0;
+                         if (channel->has_iq_outputs) {
+                             channel->iq_out[2 * (j - AGC_EXTRA)] = 0;
+                             channel->iq_out[2 * (j - AGC_EXTRA) + 1] = 0;
+diff --git a/src/rtl_airband.h b/src/rtl_airband.h
+index d649322..1d00a7d 100644
+--- a/src/rtl_airband.h
++++ b/src/rtl_airband.h
+@@ -28,8 +28,10 @@
+ #include <sys/time.h>
+ #include <complex>
+ #include <cstdio>
++#include <deque>
+ #include <libconfig.h++>
+ #include <string>
++#include <vector>
+
+ #include "config.h"
+
+@@ -139,6 +141,16 @@ struct file_data {
+     bool continuous;
+     bool append;
+     bool split_on_transmission;
++    double pre_roll_seconds;
++    double post_roll_seconds;
++    unsigned int attack_confirmation_batches;
++    unsigned int minimum_active_batches;
++    double maximum_transmission_seconds;
++    std::deque<std::vector<float> > pre_roll;
++    std::vector<std::vector<float> > attack;
++    unsigned int active_batches;
++    unsigned int trailing_batches;
++    unsigned int total_batches;
+     bool include_freq;
+     timeval open_time;
+     timeval last_write_time;
+@@ -253,6 +265,7 @@ struct freq_t {
+ struct channel_t {
+     float wavein[WAVE_LEN];      // FFT output waveform
+     float waveout[WAVE_LEN];     // waveform after squelch + AGC (left/center channel mixer output)
++    float waveout_unsquelched[WAVE_LEN];  // demodulated waveform retained for buffered clip edges
+     float waveout_r[WAVE_LEN];   // right channel mixer output
+     float iq_in[2 * WAVE_LEN];   // raw input samples for I/Q outputs and NFM demod
+     float iq_out[2 * WAVE_LEN];  // raw output samples for I/Q outputs (FIXME: allocate only if required)

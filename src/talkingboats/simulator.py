@@ -43,11 +43,11 @@ CHANNEL_SCRIPTS: dict[Channel, ChannelScript] = {
             "Marina approach question",
         ),
         transcripts=(
-            "Reviewed synthetic clip: a small boat asks for room near the marina entrance.",
-            "Reviewed synthetic clip: two pleasure boats coordinate a low-speed pass.",
-            "Reviewed synthetic clip: a skipper confirms the dock assignment and ETA.",
+            "Synthetic clip: a small boat asks for room near the marina entrance.",
+            "Synthetic clip: two pleasure boats coordinate a low-speed pass.",
+            "Synthetic clip: a skipper confirms the dock assignment and ETA.",
         ),
-        tags=("fun-channel", "small-boats", "reviewed-demo"),
+        tags=("fun-channel", "small-boats", "demo"),
         vessel_type="recreational",
     ),
     "14": ChannelScript(
@@ -61,13 +61,13 @@ CHANNEL_SCRIPTS: dict[Channel, ChannelScript] = {
             "Commercial vessel coordination",
         ),
         transcripts=(
-            "Reviewed synthetic clip: Seattle Traffic coordinates a northbound harbor transit.",
-            "Reviewed synthetic clip: a workboat reports position and confirms "
+            "Synthetic clip: Seattle Traffic coordinates a northbound harbor transit.",
+            "Synthetic clip: a workboat reports position and confirms "
             "passing arrangements.",
-            "Reviewed synthetic clip: traffic control acknowledges a commercial "
+            "Synthetic clip: traffic control acknowledges a commercial "
             "movement near the bay.",
         ),
-        tags=("business-channel", "vts", "reviewed-demo"),
+        tags=("business-channel", "vts", "demo"),
         vessel_type="cargo",
     ),
 }

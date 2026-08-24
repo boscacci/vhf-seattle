@@ -9,7 +9,6 @@ Public pages listed here are intentionally crawlable for search and AI discovery
 - [Overview](https://seattleboatradio.com/): Live Elliott Bay marine VHF audio and recent receiver clips.
 - [Recent clips](https://seattleboatradio.com/clips/): Public receiver clip list with transcripts and channel metadata.
 - [Hall of Fame](https://seattleboatradio.com/hall-of-fame/): Featured public radio clips.
-- [Reviewed clips](https://seattleboatradio.com/reviewed/): Human-reviewed public clip transcripts.
 - [Transcript search](https://seattleboatradio.com/search/): Semantic search across public transcript meaning.
 - [Live audio](https://seattleboatradio.com/live/): Current receiver stream and live channel state.
 - [Vessel map](https://seattleboatradio.com/ais/): AIS-catcher map for nearby vessel traffic.

@@ -9,14 +9,14 @@ const sampleCount = envNumber("TALKINGBOATS_SLO_API_SAMPLES", 5);
 const requestTimeoutMs = envNumber("TALKINGBOATS_SLO_REQUEST_TIMEOUT_MS", 8000);
 const budgets = {
   recentApiP95Ms: envNumber("TALKINGBOATS_SLO_RECENT_API_P95_MS", 1500),
-  pageFiveApiP95Ms: envNumber("TALKINGBOATS_SLO_PAGE_FIVE_API_P95_MS", 1500),
+  loadMoreApiP95Ms: envNumber("TALKINGBOATS_SLO_LOAD_MORE_API_P95_MS", 1500),
   oldestApiP95Ms: envNumber("TALKINGBOATS_SLO_OLDEST_API_P95_MS", 1500),
-  mobileClipReadyMs: envNumber("TALKINGBOATS_SLO_MOBILE_CLIP_READY_MS", 5000),
-  pageFiveReadyMs: envNumber("TALKINGBOATS_SLO_PAGE_FIVE_READY_MS", 3000),
-  oldestPageReadyMs: envNumber("TALKINGBOATS_SLO_OLDEST_PAGE_READY_MS", 3000),
+  mobileClipReadyMs: envNumber("TALKINGBOATS_SLO_MOBILE_CLIP_READY_MS", 2000),
+  loadMoreReadyMs: envNumber("TALKINGBOATS_SLO_LOAD_MORE_READY_MS", 3000),
+  oldestBatchReadyMs: envNumber("TALKINGBOATS_SLO_OLDEST_BATCH_READY_MS", 2000),
   clipAllButTrafficReadyMs: envNumber(
     "TALKINGBOATS_SLO_CLIP_ALL_BUT_TRAFFIC_READY_MS",
-    3000,
+    2000,
   ),
   allButTrafficSelectorReadyMs: envNumber(
     "TALKINGBOATS_SLO_ALL_BUT_TRAFFIC_SELECTOR_READY_MS",
@@ -24,14 +24,13 @@ const budgets = {
   ),
   allButTrafficQueueReadyMs: envNumber(
     "TALKINGBOATS_SLO_ALL_BUT_TRAFFIC_QUEUE_READY_MS",
-    3000,
+    2000,
   ),
 };
 
 const recentFastPath =
-  "/api/clips/recent?limit=24&include_playback_url=true&verify_playback_exists=false&include_counts=false";
+  "/api/clips/recent?limit=24&include_playback_url=false&verify_playback_exists=false&include_counts=false";
 const allButTrafficFastPath = `${recentFastPath}&exclude_channels=14`;
-const pageFiveFastPath = `${recentFastPath}&page=5`;
 const oldestFastPath = `${recentFastPath}&sort=oldest`;
 
 const result = {
@@ -41,7 +40,7 @@ const result = {
   api: {
     everything: await sampleRecentEndpoint(recentFastPath),
     allButTraffic: await sampleRecentEndpoint(allButTrafficFastPath),
-    pageFive: await sampleRecentEndpoint(pageFiveFastPath),
+    secondBatch: await sampleCursorEndpoint(recentFastPath),
     oldest: await sampleRecentEndpoint(oldestFastPath),
   },
   browser: await measureMobileLiveInteraction(),
@@ -49,7 +48,7 @@ const result = {
 const failures = [
   ...assertP95("api.everything", result.api.everything, budgets.recentApiP95Ms),
   ...assertP95("api.allButTraffic", result.api.allButTraffic, budgets.recentApiP95Ms),
-  ...assertP95("api.pageFive", result.api.pageFive, budgets.pageFiveApiP95Ms),
+  ...assertP95("api.secondBatch", result.api.secondBatch, budgets.loadMoreApiP95Ms),
   ...assertP95("api.oldest", result.api.oldest, budgets.oldestApiP95Ms),
   ...assertMax(
     "browser.mobileClipReadyMs",
@@ -57,14 +56,14 @@ const failures = [
     budgets.mobileClipReadyMs,
   ),
   ...assertMax(
-    "browser.pageFiveReadyMs",
-    result.browser.pageFiveReadyMs,
-    budgets.pageFiveReadyMs,
+    "browser.loadMoreReadyMs",
+    result.browser.loadMoreReadyMs,
+    budgets.loadMoreReadyMs,
   ),
   ...assertMax(
-    "browser.oldestPageReadyMs",
-    result.browser.oldestPageReadyMs,
-    budgets.oldestPageReadyMs,
+    "browser.oldestBatchReadyMs",
+    result.browser.oldestBatchReadyMs,
+    budgets.oldestBatchReadyMs,
   ),
   ...assertMax(
     "browser.clipAllButTrafficReadyMs",
@@ -102,7 +101,28 @@ async function sampleRecentEndpoint(pathname) {
   }
   const elapsed = samples.map((sample) => sample.elapsedMs);
   return {
-    samples,
+    samples: samples.map(withoutCursor),
+    p95Ms: percentile(elapsed, 95),
+    maxMs: Math.max(...elapsed),
+    returnedCounts: samples.map((sample) => sample.returned),
+    latestStartedAt: samples[0]?.latestStartedAt || null,
+  };
+}
+
+async function sampleCursorEndpoint(pathname) {
+  const samples = [];
+  for (let index = 0; index < sampleCount; index += 1) {
+    const first = await fetchRecent(pathname);
+    if (!first.nextCursor) {
+      throw new Error("recent clips response did not provide a next_cursor");
+    }
+    const cursorUrl = new URL(pathname, baseUrl);
+    cursorUrl.searchParams.set("cursor", first.nextCursor);
+    samples.push(await fetchRecent(`${cursorUrl.pathname}${cursorUrl.search}`));
+  }
+  const elapsed = samples.map((sample) => sample.elapsedMs);
+  return {
+    samples: samples.map(withoutCursor),
     p95Ms: percentile(elapsed, 95),
     maxMs: Math.max(...elapsed),
     returnedCounts: samples.map((sample) => sample.returned),
@@ -133,6 +153,7 @@ async function fetchRecent(pathname) {
       latestStartedAt: payload.latest_playable_started_at || null,
       firstChannel: payload.clips?.[0]?.channel || null,
       clipCount: payload.clip_count,
+      nextCursor: payload.next_cursor || null,
     };
   } finally {
     clearTimeout(timeout);
@@ -148,8 +169,8 @@ async function measureMobileLiveInteraction() {
   });
   const errors = [];
   let mobileClipReadyMs = null;
-  let pageFiveReadyMs = null;
-  let oldestPageReadyMs = null;
+  let loadMoreReadyMs = null;
+  let oldestBatchReadyMs = null;
   let clipAllButTrafficReadyMs = null;
   let allButTrafficSelectorReadyMs = null;
   let allButTrafficQueueReadyMs = null;
@@ -172,47 +193,55 @@ async function measureMobileLiveInteraction() {
     });
     mobileClipReadyMs = Math.round(performance.now() - started);
 
-    const pageFiveStarted = performance.now();
-    await page.locator("#clip-pagination").getByRole("button", { name: "Page 5", exact: true }).click();
+    const loadMoreStarted = performance.now();
+    await page.locator(".clip-load-more-sentinel").evaluate((node) => {
+      node.scrollIntoView({ block: "center" });
+    });
     await page.waitForFunction(
       () => {
         const clipList = document.querySelector("#clips");
         return (
-          document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() === "5" &&
           clipList?.getAttribute("aria-busy") === "false" &&
-          document.querySelectorAll("#clips .clip-card").length > 0
+          document.querySelectorAll("#clips .clip-card").length >= 48
         );
       },
       null,
-      { timeout: budgets.pageFiveReadyMs },
+      { timeout: budgets.loadMoreReadyMs },
     );
-    pageFiveReadyMs = Math.round(performance.now() - pageFiveStarted);
+    loadMoreReadyMs = Math.round(performance.now() - loadMoreStarted);
 
     const oldestStarted = performance.now();
-    await page.locator("#clip-pagination").getByRole("button", { name: "Oldest page" }).click();
+    await page
+      .locator("#clip-display-controls")
+      .getByRole("button", { name: "Oldest", exact: true })
+      .click();
     await page.waitForFunction(
       () => {
         const clipList = document.querySelector("#clips");
-        const activeSort = document
-          .querySelector("#clip-display-controls .clip-control-group:last-child button[aria-pressed='true']")
-          ?.textContent?.trim();
+        const oldestButton = [...document.querySelectorAll("#clip-display-controls button")]
+          .find((button) => button.textContent?.trim() === "Oldest");
         return (
-          activeSort === "Oldest" &&
+          oldestButton?.getAttribute("aria-pressed") === "true" &&
           clipList?.getAttribute("aria-busy") === "false" &&
           document.querySelectorAll("#clips .clip-card").length > 0
         );
       },
       null,
-      { timeout: budgets.oldestPageReadyMs },
+      { timeout: budgets.oldestBatchReadyMs },
     );
-    oldestPageReadyMs = Math.round(performance.now() - oldestStarted);
-    await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
+    oldestBatchReadyMs = Math.round(performance.now() - oldestStarted);
+    await page
+      .locator("#clip-display-controls")
+      .getByRole("button", { name: "Newest", exact: true })
+      .click();
     await page.waitForFunction(
       () => {
-        const activeSort = document
-          .querySelector("#clip-display-controls .clip-control-group:last-child button[aria-pressed='true']")
-          ?.textContent?.trim();
-        return activeSort === "Newest" && document.querySelector("#clips")?.getAttribute("aria-busy") === "false";
+        const newestButton = [...document.querySelectorAll("#clip-display-controls button")]
+          .find((button) => button.textContent?.trim() === "Newest");
+        return (
+          newestButton?.getAttribute("aria-pressed") === "true" &&
+          document.querySelector("#clips")?.getAttribute("aria-busy") === "false"
+        );
       },
       null,
       { timeout: requestTimeoutMs },
@@ -241,7 +270,7 @@ async function measureMobileLiveInteraction() {
     );
     clipAllButTrafficReadyMs = Math.round(performance.now() - clipFilterStarted);
 
-    await page.getByRole("tab", { name: "Live Monitor" }).click();
+    await page.getByRole("tab", { name: "Listen live" }).click();
     const selectorStarted = performance.now();
     await page
       .locator("#live-primary-channel-picker")
@@ -286,8 +315,8 @@ async function measureMobileLiveInteraction() {
   }
     return {
       mobileClipReadyMs,
-      pageFiveReadyMs,
-      oldestPageReadyMs,
+      loadMoreReadyMs,
+      oldestBatchReadyMs,
       clipAllButTrafficReadyMs,
       allButTrafficSelectorReadyMs,
       allButTrafficQueueReadyMs,
@@ -301,6 +330,10 @@ function assertP95(label, measurement, budgetMs) {
     return [];
   }
   return [`${label} p95 ${measurement.p95Ms}ms exceeded ${budgetMs}ms`];
+}
+
+function withoutCursor({ nextCursor: _nextCursor, ...sample }) {
+  return sample;
 }
 
 function assertMax(label, actualMs, budgetMs) {
@@ -330,12 +363,18 @@ async function captureBrowserState(page) {
       };
       return {
         activeTab: document.querySelector(".tab.is-active")?.textContent?.trim() || "",
-        activeClipSort: document
-          .querySelector("#clip-display-controls .clip-control-group:last-child button[aria-pressed='true']")
-          ?.textContent?.trim() || "",
+        activeClipSort:
+          [...document.querySelectorAll("#clip-display-controls button")]
+            .find(
+              (button) =>
+                button.getAttribute("aria-pressed") === "true" &&
+                ["Newest", "Oldest"].includes(button.textContent?.trim() || ""),
+            )
+            ?.textContent?.trim() || "",
         clipListBusy: document.querySelector("#clips")?.getAttribute("aria-busy") || "",
         clipStatus: document.querySelector("#clip-status")?.textContent?.trim() || "",
-        activeClipPage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
+        loadMoreState:
+          document.querySelector("#clip-pagination .clip-load-more-button")?.textContent?.trim() || "",
         clipCards: document.querySelectorAll("#clips .clip-card").length,
         clipCardChannels: [...document.querySelectorAll("#clips .clip-card .channel-pill")]
           .slice(0, 6)

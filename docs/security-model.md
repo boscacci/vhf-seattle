@@ -27,7 +27,7 @@ The trusted compute boundary is intentionally local-first:
   telemetry, and the read-only proxy used by CloudFront.
 - **AWS:** durable storage and public edge. S3 receives raw objects only through
   presigned URLs or service-held credentials. DynamoDB stores durable clip
-  metadata, transcripts, and transcript corrections. CloudFront exposes only
+  metadata and transcripts. CloudFront exposes only
   sanitized static assets plus narrow read-only live/API routes.
 - **Public browser:** untrusted. It can read published clips, recent public clip
   metadata, current status, and live audio, but it cannot retune the receiver,
@@ -75,11 +75,11 @@ Do not expose AIS-catcher control, metrics, or Prometheus paths publicly unless
 they have an explicit read-only threat review.
 
 Protect write/admin paths with LAN/Tailscale/VPN plus service-held credentials.
-Transcript correction writes must arrive through the tailnet dev reverse proxy,
-which marks them with `X-TalkingBoats-Tailnet-Dev: 1`. The public Funnel target
-uses a separate read-only proxy process with tailnet dev routes disabled, so
-viewer-supplied marker headers are ignored there. Do not require an operator to
-manually paste tokens into the browser.
+The tailnet dev reverse proxy marks private operator traffic with
+`X-TalkingBoats-Tailnet-Dev: 1`. The public Funnel target uses a separate
+read-only proxy process with tailnet dev routes disabled, so viewer-supplied
+marker headers are ignored there. Do not require an operator to manually paste
+tokens into the browser.
 
 The private LAN path from the Pi to the Ubuntu micro-computer is private
 infrastructure. If the Pi cannot reach the Ubuntu micro-computer, it should keep
@@ -92,7 +92,7 @@ retry uploads/exports when connectivity returns.
 - `raw/`: unstarred raw audio, expired by S3 lifecycle after 90 days.
 - Starred clips: raw audio tagged `talkingboats-featured=true` and retained
   indefinitely for the hall of fame.
-- Transcripts, corrections, and metadata: stored durably in DynamoDB unless
+- Transcripts and metadata: stored durably in DynamoDB unless
   intentionally published through the sanitizer.
 - Playback controls: shown only when the matching audio object can still be
   resolved; expired audio should not leave dead controls in the public UI.

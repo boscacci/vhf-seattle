@@ -19,7 +19,7 @@ from heapq import nlargest
 from pathlib import Path
 from typing import Literal, Protocol
 
-from talkingboats.audio_processing import build_ffmpeg_upload_mp3_command
+from talkingboats.audio_processing import process_canonical_clip_audio
 
 ALLOWED_CHANNELS = {
     "05A",
@@ -87,6 +87,7 @@ class SpooledAudioClip:
     idempotency_key: str
     ended_at: datetime | None = None
     duration_seconds: float | None = None
+    audio_profile: str | None = None
 
 
 @dataclass(frozen=True)
@@ -160,9 +161,7 @@ def discover_completed_audio_files(
     for filename_started_at, modified_at, audio_path, channel in candidates:
         metadata = _read_audio_metadata(audio_path)
         started_at = (
-            _metadata_datetime(metadata, "started_at")
-            or filename_started_at
-            or modified_at
+            _metadata_datetime(metadata, "started_at") or filename_started_at or modified_at
         )
         ended_at = _metadata_datetime(metadata, "ended_at")
         duration_seconds = _metadata_positive_float(metadata.get("duration_seconds"))
@@ -276,6 +275,8 @@ def upload_spooled_clip(*, api_url: str, ingest_token: str, clip: SpooledAudioCl
         payload["ended_at"] = _format_utc(clip.ended_at)
     if clip.duration_seconds is not None:
         payload["duration_seconds"] = clip.duration_seconds
+    if clip.audio_profile is not None:
+        payload["audio_profile"] = clip.audio_profile
     presign_request = urllib.request.Request(
         f"{api_url}/api/ingest/clips/presign",
         data=json.dumps(payload).encode("utf-8"),
@@ -321,9 +322,15 @@ def process_spool_once(
     failed_root: Path | None = None,
     max_files: int | None = 100,
     max_retained_files: int | None = None,
-    fallback_to_original_on_prepare_error: bool = True,
+    fallback_to_original_on_prepare_error: bool = False,
     duration_probe: DurationProbe | None = None,
+    min_duration_seconds: float = 0.0,
+    max_synchronous_channels: int = 0,
 ) -> int:
+    if min_duration_seconds < 0:
+        raise ValueError("min_duration_seconds must not be negative")
+    if max_synchronous_channels < 0:
+        raise ValueError("max_synchronous_channels must not be negative")
     uploaded = 0
     now = now or datetime.now(UTC)
     failed_root = failed_root or spool_root.parent / f"{spool_root.name}-failed"
@@ -357,7 +364,39 @@ def process_spool_once(
     )
     if max_files is not None:
         clips = clips[: max(0, max_files)]
+    if max_synchronous_channels:
+        burst_groups: dict[datetime, list[SpooledAudioClip]] = {}
+        for clip in clips:
+            started_at_second = clip.started_at.replace(microsecond=0)
+            burst_groups.setdefault(started_at_second, []).append(clip)
+        burst_paths: set[Path] = set()
+        for started_at, group in burst_groups.items():
+            channels = sorted({clip.channel for clip in group})
+            if len(channels) <= max_synchronous_channels:
+                continue
+            for clip in group:
+                _discard_spooled_clip(clip.audio_path)
+                burst_paths.add(clip.audio_path)
+            _log_event(
+                "spool_synchronous_burst_discarded",
+                started_at=_format_utc(started_at),
+                channel_count=len(channels),
+                channels=channels,
+                clip_count=len(group),
+                max_synchronous_channels=max_synchronous_channels,
+            )
+        clips = [clip for clip in clips if clip.audio_path not in burst_paths]
     for clip in clips:
+        if clip.duration_seconds is not None and clip.duration_seconds < min_duration_seconds:
+            _discard_spooled_clip(clip.audio_path)
+            _log_event(
+                "spool_short_clip_discarded",
+                channel=clip.channel,
+                audio_file=clip.audio_path.name,
+                duration_seconds=clip.duration_seconds,
+                min_duration_seconds=min_duration_seconds,
+            )
+            continue
         try:
             with prepared_spooled_clip_for_upload(
                 clip,
@@ -547,43 +586,36 @@ def prepared_spooled_clip_for_upload(
     mp3_bitrate: str = "64k",
     ffmpeg_path: str = "ffmpeg",
     runner: Runner = subprocess.run,
-    fallback_to_original_on_prepare_error: bool = True,
+    fallback_to_original_on_prepare_error: bool = False,
 ) -> Iterator[SpooledAudioClip]:
-    resolved_filter = _optional_audio_filter(audio_filter)
-    if resolved_filter is None:
-        yield clip
-        return
-
+    del audio_filter, fallback_to_original_on_prepare_error
     with tempfile.TemporaryDirectory(prefix="talkingboats-spool-upload-") as tempdir:
-        upload_path = Path(tempdir) / f"{clip.audio_path.stem}-edge.mp3"
+        upload_path = Path(tempdir) / f"{clip.audio_path.stem}-canonical.mp3"
         try:
-            runner(
-                build_ffmpeg_upload_mp3_command(
-                    clip.audio_path,
-                    upload_path,
-                    bitrate=mp3_bitrate,
-                    audio_filter=resolved_filter,
-                    ffmpeg_path=ffmpeg_path,
+            result = process_canonical_clip_audio(
+                clip.audio_path,
+                upload_path,
+                bitrate=mp3_bitrate,
+                ffmpeg_path=ffmpeg_path,
+                ffprobe_path=os.getenv(
+                    "TALKINGBOATS_EDGE_UPLOAD_FFPROBE_PATH",
+                    "ffprobe",
                 ),
-                check=True,
+                runner=runner,
             )
         except Exception as exc:  # noqa: BLE001 - daemon quarantines this local input.
-            if fallback_to_original_on_prepare_error and _clip_available_for_fallback(
-                clip.audio_path
-            ):
-                _log_event(
-                    "spool_clip_preparation_fallback",
-                    channel=clip.channel,
-                    audio_file=clip.audio_path.name,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-                yield clip
-                return
             raise ClipPreparationError(f"{type(exc).__name__}: {exc}") from exc
         yield replace(
             clip,
             audio_path=upload_path,
             content_type="audio/mpeg",
+            duration_seconds=result.duration_seconds or clip.duration_seconds,
+            ended_at=(
+                clip.started_at + timedelta(seconds=result.duration_seconds)
+                if result.duration_seconds is not None
+                else clip.ended_at
+            ),
+            audio_profile=result.audio_profile,
             idempotency_key=_idempotency_key(
                 channel=clip.channel,
                 started_at=clip.started_at,
@@ -598,11 +630,19 @@ def main() -> None:
     parser.add_argument("--api-url", default=os.getenv("TALKINGBOATS_PRIVATE_API", ""))
     parser.add_argument("--ingest-token", default=os.getenv("TALKINGBOATS_INGEST_TOKEN", ""))
     parser.add_argument("--min-age-seconds", type=float, default=10.0)
-    parser.add_argument("--poll-seconds", type=float, default=20.0)
     parser.add_argument(
-        "--audio-filter",
-        default=os.getenv("TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER"),
+        "--min-duration-seconds",
+        type=_nonnegative_float,
+        default=os.getenv("TALKINGBOATS_SPOOL_MIN_DURATION_SECONDS", "1"),
+        help="Discard completed clips shorter than this duration before upload.",
     )
+    parser.add_argument(
+        "--max-synchronous-channels",
+        type=_nonnegative_int,
+        default=os.getenv("TALKINGBOATS_SPOOL_MAX_SYNCHRONOUS_CHANNELS", "3"),
+        help="Discard same-second bursts spanning more than this many channels; 0 disables.",
+    )
+    parser.add_argument("--poll-seconds", type=float, default=20.0)
     parser.add_argument(
         "--mp3-bitrate",
         default=os.getenv("TALKINGBOATS_EDGE_UPLOAD_BITRATE", "64k"),
@@ -628,16 +668,6 @@ def main() -> None:
         default=os.getenv("TALKINGBOATS_SPOOL_MAX_RETAINED_FILES") or None,
         help="Keep only this many completed source clips while the uploader is offline.",
     )
-    parser.add_argument(
-        "--no-preparation-fallback",
-        action="store_false",
-        dest="fallback_to_original_on_prepare_error",
-        default=_env_bool(
-            os.getenv("TALKINGBOATS_EDGE_UPLOAD_FALLBACK_ORIGINAL_ON_PREPARE_ERROR"),
-            default=True,
-        ),
-        help="Quarantine clips instead of uploading originals when optional preparation fails.",
-    )
     parser.add_argument("--delete-after-upload", action="store_true")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
@@ -654,14 +684,14 @@ def main() -> None:
                 api_url=args.api_url,
                 ingest_token=args.ingest_token,
                 min_age_seconds=args.min_age_seconds,
+                min_duration_seconds=args.min_duration_seconds,
+                max_synchronous_channels=args.max_synchronous_channels,
                 delete_after_upload=args.delete_after_upload,
-                audio_filter=args.audio_filter,
                 mp3_bitrate=args.mp3_bitrate,
                 ffmpeg_path=args.ffmpeg_path,
                 failed_root=args.failed_root,
                 max_files=args.max_files_per_poll,
                 max_retained_files=args.max_retained_files,
-                fallback_to_original_on_prepare_error=args.fallback_to_original_on_prepare_error,
             )
             _log_event("spool_uploader_poll", uploaded=uploaded)
         except Exception as exc:  # noqa: BLE001 - keep daemon retrying.
@@ -737,6 +767,13 @@ def _nonnegative_int(value: str) -> int:
     return parsed
 
 
+def _nonnegative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must not be negative")
+    return parsed
+
+
 def _parse_utc(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -772,6 +809,15 @@ def quarantine_spooled_clip(
         encoding="utf-8",
     )
     return failed_path
+
+
+def _discard_spooled_clip(audio_path: Path) -> None:
+    audio_path.unlink(missing_ok=True)
+    for metadata_path in (
+        audio_path.with_suffix(".json"),
+        audio_path.with_name(f"{audio_path.name}.json"),
+    ):
+        metadata_path.unlink(missing_ok=True)
 
 
 def _unique_failed_path(path: Path) -> Path:

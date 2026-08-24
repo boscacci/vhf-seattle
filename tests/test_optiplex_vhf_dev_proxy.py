@@ -11,7 +11,10 @@ def test_vhf_dev_proxy_has_user_systemd_boot_service() -> None:
     assert "After=docker.service network-online.target" in service
     assert "Wants=network-online.target" in service
     assert "StartLimitIntervalSec=0" in service
-    assert "WorkingDirectory=/home/rob/vhf-dev-proxy" in service
+    assert (
+        "WorkingDirectory=%h/repos/elliott-bay-vhf/deploy/optiplex/vhf-dev-proxy"
+        in service
+    )
     assert "/usr/bin/docker info" in service
     assert "ExecStart=/usr/bin/docker compose up -d" in service
     assert "ExecStop=/usr/bin/docker compose stop" in service
@@ -28,7 +31,6 @@ def test_vhf_dev_proxy_nginx_tracks_shared_tailnet_sni_front_door() -> None:
     assert "stream {" in nginx_conf
     assert "ssl_preread_server_name" in nginx_conf
     assert "pi.hole 127.0.0.1:9444;" in nginx_conf
-    assert "vhf-dev.robertboscacci.com 127.0.0.1:9443;" in nginx_conf
     assert "dev.seattleboatradio.com 127.0.0.1:9443;" in nginx_conf
     assert "gotify.robertboscacci.com 127.0.0.1:8444;" in nginx_conf
     assert "laundry.robertboscacci.com 127.0.0.1:8444;" in nginx_conf
@@ -62,11 +64,25 @@ def test_optiplex_vhf_user_services_restart_and_install_under_default_target() -
         assert "WantedBy=multi-user.target" not in service, service_name
 
 
-def test_optiplex_api_uses_two_workers_to_isolate_slow_dynamodb_reads() -> None:
+def test_optiplex_api_uses_one_systemd_managed_worker_and_warms_search() -> None:
     service = (SYSTEMD_DIR / "talkingboats-api.service.example").read_text(encoding="utf-8")
+    override = Path(
+        "deploy/systemd/overrides/talkingboats-api.service.d/z99-dhcp-resilience.conf"
+    ).read_text(encoding="utf-8")
+    warm_script = Path("scripts/talkingboats_warm_search.sh").read_text(encoding="utf-8")
 
     assert "uvicorn talkingboats.api:app" in service
-    assert "--workers 2" in service
+    assert "--workers" not in service
+    assert "--workers" not in override
+    assert (
+        "ExecStartPost=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/"
+        "scripts/talkingboats_warm_search.sh"
+        in service
+    )
+    assert "TALKINGBOATS_SEARCH_WARM_URL" in warm_script
+    assert "TALKINGBOATS_SEARCH_WARM_TIMEOUT_SECONDS" in warm_script
+    assert "curl --fail --silent --show-error" in warm_script
+    assert "talkingboats_search_warm" in warm_script
 
 
 def test_optiplex_proxy_units_allow_a_bounded_private_api_recovery_window() -> None:
@@ -99,7 +115,7 @@ def test_optiplex_vhf_boot_recovery_user_service_resets_and_starts_units() -> No
     assert "After=network-online.target" in service
     assert "StartLimitIntervalSec=0" in service
     assert (
-        "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/"
+        "ExecStart=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/"
         "scripts/talkingboats_optiplex_boot_recovery.sh"
         in service
     )
@@ -123,7 +139,9 @@ def test_optiplex_recurring_healthcheck_covers_api_proxies_and_transcriber() -> 
     ).read_text(encoding="utf-8")
     script = Path("scripts/talkingboats_optiplex_healthcheck.sh").read_text(encoding="utf-8")
 
-    assert "ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/" in service
+    assert (
+        "ExecStart=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/" in service
+    )
     assert "talkingboats_optiplex_healthcheck.sh" in service
     assert "TimeoutStartSec=2min" in service
     assert "OnBootSec=3min" in timer
@@ -139,3 +157,5 @@ def test_optiplex_recurring_healthcheck_covers_api_proxies_and_transcriber() -> 
     assert "172.20.0.1:8095/healthz" in script
     assert "127.0.0.1:8096/healthz" in script
     assert "uploaded_clip_transcriber_poll" in script
+    assert "uploaded_clip_transcriber_start" in script
+    assert "transcriber_startup_grace" in script

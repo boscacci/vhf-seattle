@@ -16,14 +16,18 @@ let returnMixedAgeLiveQueue = false;
 let servedMixedAgeLiveQueue = false;
 let returnEmptyLiveQueue = false;
 let liveQueueRecentRequests = 0;
+let failLiveQueueRecentRequests = 0;
 let holdRecentClipResponses = false;
 let releaseRecentClipResponses = [];
 let holdFeatureClipResponses = false;
 let releaseFeatureClipResponses = [];
+let aisShipRequests = 0;
+let aisViewerHeadRequests = 0;
 let topicClusterReturnsNotFound = false;
+let injectFreshRecentClip = false;
+let freshRecentClipSequence = 0;
 const recentClipRequestUrls = [];
 const featuredClipIndexes = new Set([1, 7, 13, 49, 91]);
-const reviewedClipIndexes = new Set([0, 2, 5, 8, 21, 34]);
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -41,15 +45,24 @@ const server = createServer(async (request, response) => {
     if (url.pathname === "/api/clips/audio") {
       return sendBytes(
         response,
-        wavSilence({ durationSeconds: longLiveQueueClipAudio ? 8 : 0.25 }),
+        longLiveQueueClipAudio
+          ? wavSilence({ durationSeconds: 8 })
+          : wavTestSignal({ durationSeconds: 3 }),
         "audio/wav",
       );
+    }
+    if (/^\/clips\/[^/]+\.(mp3|wav|m4a|ogg)$/i.test(url.pathname)) {
+      return sendBytes(response, wavTestSignal({ durationSeconds: 3 }), "audio/wav");
     }
     if (url.pathname === "/api/live/current.mp3") {
       return sendBytes(response, wavSilence({ durationSeconds: 1 }), "audio/wav");
     }
     if (url.pathname === "/api/clips/recent") {
       recentClipRequestUrls.push(new URL(url.href));
+      if (isLiveQueueRecentRequest(url) && failLiveQueueRecentRequests > 0) {
+        failLiveQueueRecentRequests -= 1;
+        return sendJson(response, { detail: "private API unavailable" }, 504);
+      }
       if (holdRecentClipResponses) {
         await new Promise((resolve) => {
           releaseRecentClipResponses.push(resolve);
@@ -68,38 +81,48 @@ const server = createServer(async (request, response) => {
       }
       return sendJson(response, await clipFeaturePayload(request));
     }
-    if (url.pathname === "/api/clips/corrections" && request.method === "POST") {
-      if (request.headers["x-talkingboats-tailnet-dev"] !== "1") {
-        return sendJson(response, { detail: "tailnet operator access required" }, 403);
-      }
-      return sendJson(response, await transcriptCorrectionPayload(request));
-    }
-    if (url.pathname === "/api/clips/corrections" && request.method === "DELETE") {
-      if (request.headers["x-talkingboats-tailnet-dev"] !== "1") {
-        return sendJson(response, { detail: "tailnet operator access required" }, 403);
-      }
-      return sendJson(response, await transcriptCorrectionDeletePayload(request));
-    }
     if (url.pathname === "/api/clips/search") {
       return sendJson(response, searchPayload(url));
-    }
-    if (url.pathname === "/api/asr-feedback/status") {
-      if (request.headers["x-talkingboats-tailnet-dev"] !== "1") {
-        return sendJson(response, { detail: "tailnet operator access required" }, 403);
-      }
-      return sendJson(response, asrFeedbackStatusPayload());
     }
     if (url.pathname === "/api/live/performance") {
       return sendJson(response, performancePayload());
     }
     if (url.pathname === "/api/live/channels") {
-      return sendJson(response, { channels: [] });
+      return sendJson(response, liveChannelsPayload());
+    }
+    if (url.pathname === "/ais-catcher/ships.json") {
+      aisShipRequests += 1;
+      return sendJson(response, {
+        count: 2,
+        ships: [{ MMSI: 367000001 }, { MMSI: 367000002 }],
+      });
+    }
+    if (url.pathname === "/ais-catcher/" || url.pathname === "/ais-catcher") {
+      if (request.method === "HEAD") {
+        aisViewerHeadRequests += 1;
+        return sendJson(response, { detail: "upstream viewer does not answer HEAD" }, 504);
+      }
+      return sendHtml(response, "<html><body>AIS-catcher map</body></html>");
+    }
+    if (url.pathname === "/recent_clips.json" || url.pathname === "/public_manifest.json") {
+      return sendJson(response, publishedManifestPayload());
     }
     if (url.pathname === "/analysis/topic_clusters.html") {
       if (topicClusterReturnsNotFound) {
         return sendJson(response, { detail: "asset not found" }, 404);
       }
-      return sendHtml(response, "<html><body>topic clusters</body></html>");
+      return sendHtml(
+        response,
+        `<!doctype html><html><body data-topic-rotation="waiting">topic clusters
+<script>
+window.addEventListener("message", (event) => {
+  if (event.data?.type === "talkingboats-topic-plot-rotation") {
+    document.body.dataset.topicRotation = event.data.enabled ? "running" : "stopped";
+  }
+});
+</script>
+</body></html>`,
+      );
     }
     return sendStatic(response, url.pathname);
   } catch (error) {
@@ -121,46 +144,288 @@ try {
     const page = await context.newPage();
     holdRecentClipResponses = true;
     await page.goto(`${baseUrl}/clips/`);
-    await page.locator("#clips .clip-placeholder").first().waitFor({ state: "visible", timeout: 10000 });
+    await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
     const lazyClipShell = await page.evaluate(() => ({
       busy: document.querySelector("#clips")?.getAttribute("aria-busy"),
       placeholderCount: document.querySelectorAll("#clips .clip-placeholder").length,
+      clipCount: document.querySelectorAll("#clips .clip-card").length,
+      firstTranscript:
+        document.querySelector("#clips .clip-card:first-child blockquote")?.textContent || "",
       controlsText: document.querySelector("#clip-display-controls")?.textContent || "",
       status: document.querySelector("#clip-status")?.textContent || "",
     }));
     if (lazyClipShell.busy !== "true") {
       throw new Error(`recent clip list did not mark itself busy while lazy-loading: ${JSON.stringify(lazyClipShell)}`);
     }
-    if (lazyClipShell.placeholderCount < 3) {
-      throw new Error(`recent clip lazy placeholders did not render: ${JSON.stringify(lazyClipShell)}`);
+    if (
+      lazyClipShell.placeholderCount !== 0 ||
+      lazyClipShell.clipCount === 0 ||
+      !lazyClipShell.firstTranscript.includes("Smoke clip")
+    ) {
+      throw new Error(`published clips did not hide live latency: ${JSON.stringify(lazyClipShell)}`);
     }
     if (
-      !lazyClipShell.controlsText.includes("Clips per page") ||
-      !lazyClipShell.controlsText.includes("24") ||
-      lazyClipShell.controlsText.includes("48")
+      !lazyClipShell.controlsText.includes("Show clips") ||
+      !lazyClipShell.controlsText.includes("Flip page order") ||
+      lazyClipShell.controlsText.includes("Clips per page")
     ) {
       throw new Error(`recent clip controls were not available during lazy load: ${JSON.stringify(lazyClipShell)}`);
     }
-    if (!lazyClipShell.status.includes("Loading recent clips")) {
-      throw new Error(`recent clip lazy status was not clear: ${JSON.stringify(lazyClipShell)}`);
+    if (!lazyClipShell.status.includes("refreshing")) {
+      throw new Error(`recent clip background-refresh status was not clear: ${JSON.stringify(lazyClipShell)}`);
+    }
+    const initialClipRequest = recentClipRequestUrls[0];
+    if (
+      initialClipRequest?.searchParams.get("include_counts") !== "false" ||
+      initialClipRequest?.searchParams.get("include_playback_url") !== "false" ||
+      initialClipRequest?.searchParams.get("verify_playback_exists") !== "false"
+    ) {
+      throw new Error(`initial clip request was not on the fast path: ${initialClipRequest?.href}`);
     }
     holdRecentClipResponses = false;
     releaseRecentClipResponses.splice(0).forEach((release) => release());
-    await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
-    const labelingLink = await page.evaluate(() => {
-      const link = document.querySelector("#operator-labeling-link");
-      if (!(link instanceof HTMLAnchorElement)) {
-        throw new Error("operator labeling link did not render");
-      }
+    await page.waitForFunction(
+      () =>
+        document.querySelector("#clips")?.getAttribute("aria-busy") === "false" &&
+        (document.querySelector("#clips .clip-card:first-child blockquote")?.textContent || "").includes(
+          "Smoke clip",
+        ),
+    );
+    const mobileClipPlayButton = page
+      .locator("#clips .clip-card:first-child")
+      .getByRole("button", { name: "Play clip", exact: true });
+    const mobileClipProgress = page.locator(
+      "#clips .clip-card:first-child .clip-progress-input",
+    );
+    const mobileClipWaveform = page.locator(
+      "#clips .clip-card:first-child .clip-waveform-canvas",
+    );
+    await mobileClipWaveform.scrollIntoViewIfNeeded();
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector("#clips .clip-card:first-child .clip-waveform-canvas")
+          ?.getAttribute("data-waveform-status") === "ready",
+      null,
+      { timeout: 10000 },
+    );
+    const mobileClipPlayerTouchTarget = await mobileClipPlayButton.evaluate((button) => {
+        const bounds = button.getBoundingClientRect();
+        return {
+          height: bounds.height,
+          width: bounds.width,
+        };
+      });
+    if (
+      mobileClipPlayerTouchTarget.height < 56 ||
+      mobileClipPlayerTouchTarget.width < 72
+    ) {
+      throw new Error(
+        `mobile clip play target is too small: ${JSON.stringify(mobileClipPlayerTouchTarget)}`,
+      );
+    }
+    const mobileClipProgressState = await mobileClipProgress.evaluate((progress) => {
+      const bounds = progress.getBoundingClientRect();
       return {
-        hidden: link.hidden,
-        text: link.textContent?.trim() || "",
-        href: link.getAttribute("href") || "",
+        ariaLabel: progress.getAttribute("aria-label"),
+        height: bounds.height,
+        type: progress.getAttribute("type"),
+        width: bounds.width,
       };
     });
-    if (labelingLink.hidden || labelingLink.text !== "Label clips" || labelingLink.href !== "/operator/") {
-      throw new Error(`dev clip review labeling link is not reachable: ${JSON.stringify(labelingLink)}`);
+    if (
+      mobileClipProgressState.type !== "range" ||
+      mobileClipProgressState.ariaLabel !== "Clip playback position" ||
+      mobileClipProgressState.width < 80 ||
+      mobileClipProgressState.height < 36
+    ) {
+      throw new Error(
+        `mobile clip progress control is not usable: ${JSON.stringify(mobileClipProgressState)}`,
+      );
     }
+    const mobileWaveformState = await mobileClipWaveform.evaluate((canvas) => {
+      const bounds = canvas.getBoundingClientRect();
+      const context = canvas.getContext("2d");
+      const pixels = context?.getImageData(0, 0, canvas.width, canvas.height).data || [];
+      let coloredPixels = 0;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] > 0) {
+          coloredPixels += 1;
+        }
+      }
+      return {
+        coloredPixels,
+        height: bounds.height,
+        status: canvas.dataset.waveformStatus,
+        width: bounds.width,
+      };
+    });
+    if (
+      mobileWaveformState.status !== "ready" ||
+      mobileWaveformState.width < 80 ||
+      mobileWaveformState.height < 52 ||
+      mobileWaveformState.coloredPixels < 100
+    ) {
+      throw new Error(
+        `mobile clip waveform did not render actual audio: ${JSON.stringify(mobileWaveformState)}`,
+      );
+    }
+    await mobileClipPlayButton.click();
+    await page.waitForFunction(
+      () =>
+        !document.querySelector("#clips .clip-card:first-child audio")?.paused &&
+        document
+          .querySelector("#clips .clip-card:first-child .clip-play-button")
+          ?.getAttribute("aria-label") === "Pause clip",
+      null,
+      { timeout: 5000 },
+    );
+    await mobileClipProgress.evaluate((progress) => {
+      progress.value = String(Number(progress.max) / 2);
+      progress.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.waitForFunction(
+      () => {
+        const audio = document.querySelector("#clips .clip-card:first-child audio");
+        const progress = document.querySelector(
+          "#clips .clip-card:first-child .clip-progress-input",
+        );
+        const time = document.querySelector(
+          "#clips .clip-card:first-child .example-player-time",
+        );
+        return (
+          audio instanceof HTMLAudioElement &&
+          Number(audio.currentTime) > 0 &&
+          Number(progress?.value) > 0 &&
+          (time?.textContent || "").includes(" / ")
+        );
+      },
+      null,
+      { timeout: 5000 },
+    );
+    await page.getByRole("button", { name: "Pause clip", exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        document.querySelector("#clips .clip-card:first-child audio")?.paused &&
+        document
+          .querySelector("#clips .clip-card:first-child .clip-play-button")
+          ?.getAttribute("aria-label") === "Play clip",
+      null,
+      { timeout: 5000 },
+    );
+    const desktopClipContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    try {
+      const desktopClipPage = await desktopClipContext.newPage();
+      await desktopClipPage.goto(`${baseUrl}/clips/`);
+      const desktopClipAudio = desktopClipPage.locator("#clips .clip-card:first-child audio");
+      const desktopClipPlayButton = desktopClipPage
+        .locator("#clips .clip-card:first-child")
+        .getByRole("button", { name: "Play clip", exact: true });
+      const desktopClipProgress = desktopClipPage.locator(
+        "#clips .clip-card:first-child .clip-progress-input",
+      );
+      const desktopClipWaveform = desktopClipPage.locator(
+        "#clips .clip-card:first-child .clip-waveform-canvas",
+      );
+      await desktopClipPlayButton.waitFor({ state: "visible", timeout: 10000 });
+      await desktopClipPage.waitForFunction(
+        () =>
+          document
+            .querySelector("#clips .clip-card:first-child .clip-waveform-canvas")
+            ?.getAttribute("data-waveform-status") === "ready",
+        null,
+        { timeout: 10000 },
+      );
+      const desktopClipPlayerTarget = await desktopClipPlayButton.evaluate((button) => {
+        const bounds = button.getBoundingClientRect();
+        return { height: bounds.height, width: bounds.width };
+      });
+      if (
+        desktopClipPlayerTarget.height < 56 ||
+        desktopClipPlayerTarget.width < 72
+      ) {
+        throw new Error(
+          `desktop clip play target is too small: ${JSON.stringify(desktopClipPlayerTarget)}`,
+        );
+      }
+      const desktopClipProgressWidth = await desktopClipProgress.evaluate(
+        (progress) => progress.getBoundingClientRect().width,
+      );
+      const desktopWaveformState = await desktopClipWaveform.evaluate((canvas) => {
+        const bounds = canvas.getBoundingClientRect();
+        const playerWidth =
+          canvas.closest(".example-player")?.getBoundingClientRect().width || 0;
+        return {
+          height: bounds.height,
+          playerWidth,
+          status: canvas.dataset.waveformStatus,
+          width: bounds.width,
+        };
+      });
+      if (
+        desktopClipProgressWidth < 600 ||
+        desktopWaveformState.status !== "ready" ||
+        desktopWaveformState.width < 600 ||
+        desktopWaveformState.height < 52 ||
+        desktopWaveformState.playerWidth < 800
+      ) {
+        throw new Error(
+          `desktop clip waveform does not use available width: ${JSON.stringify({
+            desktopClipProgressWidth,
+            desktopWaveformState,
+          })}`,
+        );
+      }
+      await desktopClipPlayButton.click();
+      await desktopClipPage.waitForFunction(
+        (audio) => audio instanceof HTMLAudioElement && !audio.paused,
+        await desktopClipAudio.elementHandle(),
+        { timeout: 5000 },
+      );
+      await desktopClipProgress.evaluate((progress) => {
+        progress.value = String(Number(progress.max) / 2);
+        progress.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await desktopClipPage.waitForFunction(
+        (audio) => audio instanceof HTMLAudioElement && Number(audio.currentTime) > 0,
+        await desktopClipAudio.elementHandle(),
+        { timeout: 5000 },
+      );
+      await desktopClipPage.getByRole("button", { name: "Pause clip", exact: true }).click();
+      await desktopClipPage.waitForFunction(
+        (audio) => audio instanceof HTMLAudioElement && audio.paused,
+        await desktopClipAudio.elementHandle(),
+        { timeout: 5000 },
+      );
+    } finally {
+      await desktopClipContext.close();
+    }
+    const recentRequestsBeforeRefresh = recentClipRequestUrls.length;
+    injectFreshRecentClip = true;
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await page.waitForFunction(() =>
+      (document.querySelector("#clips .clip-card:first-child blockquote")?.textContent || "").includes(
+        "Fresh live clip",
+      ),
+    );
+    const freshRefreshState = await page.evaluate(() => ({
+      firstTranscript:
+        document.querySelector("#clips .clip-card:first-child blockquote")?.textContent || "",
+      status: document.querySelector("#clip-status")?.textContent || "",
+    }));
+    if (
+      recentClipRequestUrls.length <= recentRequestsBeforeRefresh ||
+      !freshRefreshState.firstTranscript.includes("Fresh live clip")
+    ) {
+      throw new Error(
+        `browser refresh did not replace the visible clip from the live API: ${JSON.stringify(freshRefreshState)}`,
+      );
+    }
+    injectFreshRecentClip = false;
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await page.waitForFunction(() =>
+      (document.querySelector("#clips .clip-card:first-child blockquote")?.textContent || "").includes("Smoke clip 1"),
+    );
     const devClipFeatureState = await page.evaluate(() => ({
       firstTranscript: document.querySelector("#clips .clip-card:first-child blockquote")?.textContent || "",
       buttonText:
@@ -170,17 +435,69 @@ try {
       buttonPressed:
         document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.getAttribute("aria-pressed") ||
         "",
-      correctionOpen: Boolean(document.querySelector("#clips .clip-card:first-child .transcript-correction")),
     }));
     if (
       !devClipFeatureState.firstTranscript.includes("Smoke clip 1") ||
       devClipFeatureState.buttonText !== "☆" ||
       devClipFeatureState.buttonLabel !== "Add to Hall of Fame" ||
-      devClipFeatureState.buttonPressed !== "false" ||
-      devClipFeatureState.correctionOpen
+      devClipFeatureState.buttonPressed !== "false"
     ) {
-      throw new Error(`dev clip review star action is not visible without transcript editing: ${JSON.stringify(devClipFeatureState)}`);
+      throw new Error(`dev clip review star action is not visible: ${JSON.stringify(devClipFeatureState)}`);
     }
+    await page.locator("#channel-filter details").evaluate((details) => {
+      details.open = true;
+    });
+    await page.locator('.channel-filter-checkbox[data-channel="14"]').check();
+    const datetimeResponse = page.waitForResponse((response) => {
+      const responseUrl = new URL(response.url());
+      return (
+        responseUrl.pathname === "/api/clips/recent" &&
+        responseUrl.searchParams.get("around") === "2026-08-15T12:30" &&
+        responseUrl.searchParams.getAll("channels").includes("14")
+      );
+    });
+    await page.locator("#clip-datetime-input").fill("2026-08-15T12:30");
+    await page.getByRole("button", { name: "Find clips" }).click();
+    await datetimeResponse;
+    await page.waitForFunction(() => {
+      const controls = document.querySelector("#clip-display-controls")?.textContent || "";
+      const status = document.querySelector("#clip-status")?.textContent || "";
+      return controls.includes("Browse from time") && status.includes("at or before");
+    });
+    const datetimeNavigatorState = await page.evaluate(() => ({
+      controls: document.querySelector("#clip-display-controls")?.textContent || "",
+      clearHidden: document.querySelector("#clear-clip-datetime")?.hidden ?? true,
+      status: document.querySelector("#clip-status")?.textContent || "",
+    }));
+    if (
+      !datetimeNavigatorState.controls.includes("Browse from time") ||
+      !datetimeNavigatorState.controls.includes("Earlier") ||
+      !datetimeNavigatorState.controls.includes("Later") ||
+      datetimeNavigatorState.clearHidden ||
+      !datetimeNavigatorState.status.includes("at or before")
+    ) {
+      throw new Error(`datetime clip navigator did not activate: ${JSON.stringify(datetimeNavigatorState)}`);
+    }
+    const laterResponse = page.waitForResponse((response) => {
+      const responseUrl = new URL(response.url());
+      return (
+        responseUrl.pathname === "/api/clips/recent" &&
+        responseUrl.searchParams.get("around") === "2026-08-15T12:30" &&
+        responseUrl.searchParams.get("sort") === "oldest"
+      );
+    });
+    await page.locator("#clip-display-controls").getByRole("button", { name: "Later" }).click();
+    await laterResponse;
+    const latestResponse = page.waitForResponse((response) => {
+      const responseUrl = new URL(response.url());
+      return (
+        responseUrl.pathname === "/api/clips/recent" &&
+        !responseUrl.searchParams.has("around") &&
+        !responseUrl.searchParams.has("sort")
+      );
+    });
+    await page.getByRole("button", { name: "Back to latest" }).click();
+    await latestResponse;
     await page.locator("#channel-filter details").evaluate((details) => {
       details.open = true;
     });
@@ -210,7 +527,7 @@ try {
     ) {
       throw new Error(`clip all-but-traffic preset rendered traffic: ${JSON.stringify(clipAllButTrafficState)}`);
     }
-    await page.getByRole("tab", { name: "Live Monitor" }).click();
+    await page.getByRole("tab", { name: "Listen live" }).click();
     const liveSelectorState = await page.evaluate(() => ({
       primaryLabels: [...document.querySelectorAll("#live-primary-channel-picker .live-channel-option")].map((button) =>
         button.textContent?.trim(),
@@ -283,13 +600,14 @@ try {
       const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
       const playLabel = document.querySelector("#play-live .play-label")?.textContent || "";
       return (
-        src.includes("/api/live/current.mp3") &&
-        document.querySelector("#live-queue")?.hidden === true &&
+        src === "" &&
+        document.querySelector("#live-queue")?.hidden === false &&
         playLabel === "Pause" &&
-        !queueText.includes("Catching up on latest 3 transmissions")
+        !queueText.includes("Catching up on latest 3 transmissions") &&
+        queueText.includes("Waiting for queued transmission")
       );
     });
-    const liveResumeState = await page.evaluate(() => ({
+    const liveQueueWaitState = await page.evaluate(() => ({
       selectedMode: document.querySelector("#live-channel")?.textContent || "",
       status: document.querySelector("#live-status")?.textContent || "",
       queueHidden: document.querySelector("#live-queue")?.hidden ?? false,
@@ -298,88 +616,48 @@ try {
       playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
     }));
     if (
-      !liveResumeState.selectedMode.includes("VHF 14") ||
-      !liveResumeState.queueHidden ||
-      !liveResumeState.src.includes("/api/live/current.mp3") ||
-      liveResumeState.playLabel !== "Pause"
+      liveQueueWaitState.selectedMode !== "Everything" ||
+      liveQueueWaitState.queueHidden ||
+      liveQueueWaitState.src !== "" ||
+      liveQueueWaitState.playLabel !== "Pause" ||
+      !liveQueueWaitState.queue.includes("Waiting for queued transmission")
     ) {
-      throw new Error(`live monitor did not resume the live stream after catch-up: ${JSON.stringify(liveResumeState)}`);
+      throw new Error(`live monitor did not wait for queued clips after catch-up: ${JSON.stringify(liveQueueWaitState)}`);
     }
     longLiveQueueClipAudio = false;
     injectLiveQueueRaceClip = false;
     await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
-    await page.locator("#panel-live").getByRole("button", { name: "Play" }).waitFor({ state: "visible" });
-    returnStaleLiveQueue = true;
     await page.locator("#live-primary-channel-picker").getByRole("button", { name: "Everything" }).click();
-    await page.locator("#panel-live").getByRole("button", { name: "Play" }).waitFor({ state: "visible" });
-    await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
-    await page.waitForFunction(() => {
-      const selectedMode = document.querySelector("#live-channel")?.textContent || "";
-      const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
-      return (
-        src.includes("/api/clips/audio?") ||
-        (selectedMode.includes("VHF 14") &&
-          src.includes("/api/live/current.mp3") &&
-          document.querySelector("#live-queue")?.hidden === true)
-      );
-    });
-    const staleQueueFallbackState = await page.evaluate(() => ({
-      queueHidden: document.querySelector("#live-queue")?.hidden ?? false,
-      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
-      status: document.querySelector("#live-status")?.textContent || "",
-      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
-    }));
-    if (
-      !servedStaleLiveQueue ||
-      !staleQueueFallbackState.queueHidden ||
-      !staleQueueFallbackState.src.includes("/api/live/current.mp3") ||
-      staleQueueFallbackState.playLabel !== "Pause"
-    ) {
-      throw new Error(
-        `live monitor did not fall back from a stale queue: ${JSON.stringify({ servedStaleLiveQueue, staleQueueFallbackState })}`,
-      );
-    }
-    returnStaleLiveQueue = false;
-    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
-    await page.locator("#panel-live").getByRole("button", { name: "Play" }).waitFor({ state: "visible" });
-    returnMixedAgeLiveQueue = true;
-    await page.locator("#live-primary-channel-picker").getByRole("button", { name: "Everything" }).click();
-    await page.locator("#panel-live").getByRole("button", { name: "Play" }).waitFor({ state: "visible" });
-    await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
-    await page.waitForFunction(() => {
-      const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
-      const selectedMode = document.querySelector("#live-channel")?.textContent || "";
-      return (
-        src.includes("/api/clips/audio?") ||
-        (selectedMode.includes("VHF 14") &&
-          src.includes("/api/live/current.mp3") &&
-          document.querySelector("#live-queue")?.hidden === true)
-      );
-    });
-    const mixedAgeFallbackState = await page.evaluate(() => ({
-      queueHidden: document.querySelector("#live-queue")?.hidden ?? false,
-      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
-      status: document.querySelector("#live-status")?.textContent || "",
-      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
-    }));
-    if (
-      !servedMixedAgeLiveQueue ||
-      !mixedAgeFallbackState.queueHidden ||
-      !mixedAgeFallbackState.src.includes("/api/live/current.mp3") ||
-      mixedAgeFallbackState.playLabel !== "Pause"
-    ) {
-      throw new Error(
-        `live monitor did not skip a stale clip in a mixed-age queue: ${JSON.stringify({ servedMixedAgeLiveQueue, mixedAgeFallbackState })}`,
-      );
-    }
-    returnMixedAgeLiveQueue = false;
-    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
-    await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All but Traffic" }).click();
+    failLiveQueueRecentRequests = 1;
     await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
     await page.waitForFunction(() => {
       const queueText = document.querySelector("#live-queue")?.textContent || "";
       const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
-      return queueText.includes("Seattle Traffic is filtered out") && src.includes("/api/clips/audio?channel=");
+      return queueText.includes("Catching up on latest 3 transmissions") && src.includes("/clips/");
+    });
+    const liveManifestFallbackState = await page.evaluate(() => ({
+      status: document.querySelector("#live-status")?.textContent || "",
+      queue: document.querySelector("#live-queue")?.textContent || "",
+      src: document.querySelector("#live-audio")?.getAttribute("src") || "",
+      playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
+    }));
+    if (
+      !liveManifestFallbackState.queue.includes("Queued2 transmissions") ||
+      !liveManifestFallbackState.src.includes("/clips/") ||
+      liveManifestFallbackState.playLabel !== "Pause"
+    ) {
+      throw new Error(
+        `live monitor did not fall back to published clips after live API failure: ${JSON.stringify(liveManifestFallbackState)}`,
+      );
+    }
+    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
+    await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All but Traffic" }).click();
+    longLiveQueueClipAudio = true;
+    await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
+    await page.waitForFunction(() => {
+      const queueText = document.querySelector("#live-queue")?.textContent || "";
+      const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
+      return queueText.includes("All but Traffic mode on") && src.includes("/api/clips/audio?channel=");
     });
     const allButTrafficState = await page.evaluate(() => ({
       selectedMode: document.querySelector("#live-channel")?.textContent || "",
@@ -394,38 +672,57 @@ try {
     ) {
       throw new Error(`all-but-traffic live mode did not exclude Seattle Traffic: ${JSON.stringify(allButTrafficState)}`);
     }
-    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
-    returnEmptyLiveQueue = true;
-    await page.locator("#live-primary-channel-picker").getByRole("button", { name: "Everything" }).click();
-    await page.locator("#panel-live").getByRole("button", { name: "Play" }).click();
+    await page.getByRole("tab", { name: /^(Clips|Clip Review)$/ }).click();
     await page.waitForFunction(() => {
-      const src = document.querySelector("#live-audio")?.getAttribute("src") || "";
-      return src.includes("/api/live/current.mp3") && document.querySelector("#live-queue")?.hidden === true;
+      const audio = document.querySelector("#live-audio");
+      const src = audio?.getAttribute("src") || "";
+      const playLabel = document.querySelector("#play-live .play-label")?.textContent || "";
+      return (
+        audio instanceof HTMLAudioElement &&
+        audio.paused &&
+        src === "" &&
+        playLabel === "Play"
+      );
     });
-    const emptyQueueFallbackState = await page.evaluate(() => ({
-      queueHidden: document.querySelector("#live-queue")?.hidden ?? false,
+    const stoppedLiveOnTabLeave = await page.evaluate(() => ({
+      paused: document.querySelector("#live-audio")?.paused ?? false,
       src: document.querySelector("#live-audio")?.getAttribute("src") || "",
-      status: document.querySelector("#live-status")?.textContent || "",
       playLabel: document.querySelector("#play-live .play-label")?.textContent || "",
     }));
     if (
-      !emptyQueueFallbackState.queueHidden ||
-      !emptyQueueFallbackState.src.includes("/api/live/current.mp3") ||
-      emptyQueueFallbackState.playLabel !== "Pause"
+      !stoppedLiveOnTabLeave.paused ||
+      stoppedLiveOnTabLeave.src !== "" ||
+      stoppedLiveOnTabLeave.playLabel !== "Play"
     ) {
-      throw new Error(`live monitor did not fall back from an empty queue: ${JSON.stringify(emptyQueueFallbackState)}`);
+      throw new Error(
+        `leaving Listen live did not stop the active stream: ${JSON.stringify(stoppedLiveOnTabLeave)}`,
+      );
     }
-    returnEmptyLiveQueue = false;
-    await page.locator("#panel-live").getByRole("button", { name: "Pause" }).click();
-    await page.getByRole("tab", { name: "Clip Review" }).click();
-    await page.getByRole("link", { name: "Label clips" }).click();
-    await page.waitForURL(`${baseUrl}/operator/`, { timeout: 10000 });
-    await page.locator("#clips .transcript-correction").first().waitFor({ state: "visible", timeout: 10000 });
+    longLiveQueueClipAudio = false;
     await page.goto(`${baseUrl}/analysis/`);
-    await page.locator("#lexical-analysis audio").waitFor({ state: "visible", timeout: 10000 });
+    await page
+      .locator("#lexical-analysis .clip-play-button")
+      .first()
+      .waitFor({ state: "visible", timeout: 10000 });
+    await page.waitForFunction(
+      () => {
+        const activeCard = [...document.querySelectorAll(".language-card")].find((card) =>
+          card.textContent?.includes("Analyzed channels"),
+        );
+        return (
+          activeCard?.querySelector("strong")?.textContent === "1 channel"
+          && ![...document.querySelectorAll(".channel-bar-label")].some((label) =>
+            label.textContent?.includes("VHF 06"),
+          )
+        );
+      },
+      null,
+      { timeout: 10000 },
+    );
     const result = await page.evaluate(async () => {
       const cards = [...document.querySelectorAll(".language-card")];
       const activeCard = cards.find((card) => card.textContent?.includes("Analyzed channels"));
+      const transcriptCard = cards.find((card) => card.textContent?.includes("Analyzed transcripts"));
       const audio = document.querySelector("#lexical-analysis audio");
       if (!(audio instanceof HTMLAudioElement)) {
         throw new Error("analysis audio control did not render");
@@ -473,10 +770,13 @@ try {
       });
       return {
         activeChannelMetric: activeCard?.querySelector("strong")?.textContent,
+        analyzedTranscriptMetric: transcriptCard?.querySelector("strong")?.textContent,
         audioCount: document.querySelectorAll("#lexical-analysis audio").length,
-        correctionCount: document.querySelectorAll("#lexical-analysis .analysis-correction").length,
         panelHeadings: [...document.querySelectorAll("#lexical-analysis .language-panel h3")].map(
           (heading) => heading.textContent || "",
+        ),
+        channelBarLabels: [...document.querySelectorAll(".channel-bar-label")].map(
+          (label) => label.textContent || "",
         ),
         topicFrame: {
           allow: topicFrame.getAttribute("allow"),
@@ -491,7 +791,6 @@ try {
         transcriptTopics: {
           title: topicPanel.querySelector("h3")?.textContent,
           topicCards: topicPanel.querySelectorAll(".topic-card").length,
-          correctionCount: topicPanel.querySelectorAll(".analysis-correction").length,
           hasRemovedSummary: Boolean(topicPanel.querySelector(".mobile-nlp-panel, .nlp-summary-grid")),
           bodyText: topicPanel.textContent || "",
         },
@@ -501,11 +800,14 @@ try {
     if (result.activeChannelMetric !== "1 channel") {
       throw new Error(`expected active channel metric 1 channel, saw ${result.activeChannelMetric}`);
     }
+    if (result.analyzedTranscriptMetric !== "46,668") {
+      throw new Error(`expected comma-formatted transcript count, saw ${result.analyzedTranscriptMetric}`);
+    }
+    if (result.channelBarLabels.some((label) => label.includes("VHF 06"))) {
+      throw new Error(`analysis chart included an unlistenable channel: ${JSON.stringify(result.channelBarLabels)}`);
+    }
     if (!String(result.metadata.src).includes("/api/clips/audio?channel=14&started_at=")) {
       throw new Error(`analysis audio did not use same-origin clip API: ${result.metadata.src}`);
-    }
-    if (result.correctionCount < 2 || result.transcriptTopics.correctionCount < 1) {
-      throw new Error(`analysis route should expose correction controls for ASR tuning: ${JSON.stringify(result)}`);
     }
     if (!Number.isFinite(result.metadata.duration) || result.metadata.duration <= 0) {
       throw new Error(`analysis audio metadata was not playable: ${result.metadata.duration}`);
@@ -540,38 +842,42 @@ try {
     if (!["pan-x pan-y pinch-zoom", "manipulation"].includes(result.topicFrame.touchAction)) {
       throw new Error(`topic iframe blocks pinch zoom: ${result.topicFrame.touchAction}`);
     }
-    await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction summary").click();
-    await page
-      .locator("#lexical-analysis .entity-card:first-child .analysis-correction .transcript-correction-label textarea")
-      .fill("Direct analysis page correction for ASR tuning.");
-    await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction button[type='submit']").click();
-    await page.waitForFunction(() =>
-      document
-        .querySelector("#lexical-analysis .entity-card:first-child blockquote")
-        ?.textContent?.includes("Direct analysis page correction"),
-    );
-    const directAnalysisCorrection = await page.evaluate(() => ({
-      summary:
-        document
-          .querySelector("#lexical-analysis .entity-card:first-child .analysis-correction summary")
-          ?.textContent?.trim() || "",
-      status:
-        document
-          .querySelector("#lexical-analysis .entity-card:first-child .analysis-correction .transcript-correction-status")
-          ?.textContent?.trim() || "",
-      quote: document.querySelector("#lexical-analysis .entity-card:first-child blockquote")?.textContent || "",
-    }));
-    if (
-      directAnalysisCorrection.summary !== "Edit correction" ||
-      !directAnalysisCorrection.status.includes("Saved for manual fine tuning") ||
-      !directAnalysisCorrection.quote.includes("Direct analysis page correction")
-    ) {
-      throw new Error(`direct analysis correction did not save: ${JSON.stringify(directAnalysisCorrection)}`);
-    }
-    topicClusterReturnsNotFound = true;
     const desktopContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     try {
       const desktopPage = await desktopContext.newPage();
+      await desktopPage.goto(`${baseUrl}/analysis/`);
+      await desktopPage.locator(".topic-card").first().waitFor({ state: "visible", timeout: 10000 });
+      await desktopPage.waitForFunction(
+        () => {
+          const frame = document.querySelector(".topic-frame");
+          return frame?.contentDocument?.body?.dataset.topicRotation === "running";
+        },
+        null,
+        { timeout: 10000 },
+      );
+      const runningTopicFrame = await desktopPage.evaluate(() => ({
+        rotation: document.querySelector(".topic-frame")?.contentDocument?.body?.dataset.topicRotation || "",
+        activeChannelMetric: [...document.querySelectorAll(".language-card")]
+          .find((card) => card.textContent?.includes("Analyzed channels"))
+          ?.querySelector("strong")?.textContent || "",
+        channelBarLabels: [...document.querySelectorAll(".channel-bar-label")].map(
+          (label) => label.textContent || "",
+        ),
+      }));
+      if (
+        runningTopicFrame.rotation !== "running"
+        || runningTopicFrame.activeChannelMetric !== "1 channel"
+        || runningTopicFrame.channelBarLabels.some((label) => label.includes("VHF 06"))
+      ) {
+        throw new Error(`analysis page did not apply live channel or topic rotation state: ${JSON.stringify(runningTopicFrame)}`);
+      }
+      await desktopPage.getByRole("tab", { name: /^(Clips|Clip Review)$/ }).click();
+      await desktopPage.waitForFunction(
+        () => document.querySelector(".topic-frame")?.contentDocument?.body?.dataset.topicRotation === "stopped",
+        null,
+        { timeout: 3000 },
+      );
+      topicClusterReturnsNotFound = true;
       await desktopPage.goto(`${baseUrl}/analysis/`);
       await desktopPage.locator(".topic-card").first().waitFor({ state: "visible", timeout: 10000 });
       await desktopPage.waitForFunction(
@@ -591,7 +897,7 @@ try {
       await desktopContext.close();
       topicClusterReturnsNotFound = false;
     }
-    await page.getByRole("tab", { name: "Clip Review" }).click();
+    await page.getByRole("tab", { name: /^(Clips|Clip Review)$/ }).click();
     await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
     await page.evaluate(() => {
       window.__clipAudioBeforeStatsPoll = document.querySelector("#clips .clip-card audio");
@@ -603,39 +909,71 @@ try {
     if (!clipAudioStableAfterStatsPoll) {
       throw new Error("clip stats polling replaced the existing audio control");
     }
-    const initialPagination = await page.evaluate(() => {
-      const pagination = document.querySelector("#clip-pagination");
-      if (!(pagination instanceof HTMLElement)) {
-        throw new Error("clip pagination did not render");
-      }
-      return {
-        text: pagination.textContent || "",
-        buttons: [...pagination.querySelectorAll("button")].map((button) => ({
-          text: button.textContent?.trim() || "",
-          current: button.getAttribute("aria-current"),
-          disabled: button.disabled,
-        })),
-        actionButtons: [...pagination.querySelectorAll(".pagination-actions button")].map((button) => ({
-          text: button.textContent?.trim() || "",
-          disabled: button.disabled,
-        })),
-        ellipsisCount: pagination.querySelectorAll(".pagination-ellipsis").length,
-      };
+    const initialInfiniteScroll = await page.evaluate(() => ({
+      renderedClips: document.querySelectorAll("#clips .clip-card").length,
+      loadMoreText:
+        document.querySelector("#clip-pagination .clip-load-more-button")?.textContent?.trim() || "",
+      hasOldPagination: Boolean(
+        document.querySelector(
+          "#clip-pagination .pagination-page-button, #clip-pagination .pagination-actions",
+        ),
+      ),
+      controlsText: document.querySelector("#clip-display-controls")?.textContent || "",
+    }));
+    if (
+      initialInfiniteScroll.renderedClips !== 24 ||
+      initialInfiniteScroll.loadMoreText !== "Load 24 more" ||
+      initialInfiniteScroll.hasOldPagination ||
+      initialInfiniteScroll.controlsText.includes("Clips per page")
+    ) {
+      throw new Error(
+        `initial infinite-scroll batch was incorrect: ${JSON.stringify(initialInfiniteScroll)}`,
+      );
+    }
+    await page.evaluate(() => {
+      window.__firstClipCardBeforeLoadMore = document.querySelector("#clips .clip-card");
+      window.__firstClipAudioBeforeLoadMore = document.querySelector("#clips .clip-card audio");
     });
-    if (initialPagination.actionButtons.map((button) => button.text).join(",") !== "Next,Oldest") {
-      throw new Error(`first page pagination should hide unusable previous actions: ${JSON.stringify(initialPagination)}`);
-    }
-    if (initialPagination.actionButtons.some((button) => button.disabled)) {
-      throw new Error(`visible first page pagination actions should be usable: ${JSON.stringify(initialPagination)}`);
-    }
-    if (!initialPagination.buttons.some((button) => button.text === "1" && button.current === "page")) {
-      throw new Error(`pagination current page button missing: ${JSON.stringify(initialPagination)}`);
-    }
-    if (initialPagination.buttons.some((button) => button.text === "24")) {
-      throw new Error(`pagination kept a redundant last-page anchor: ${JSON.stringify(initialPagination)}`);
-    }
-    if (initialPagination.ellipsisCount < 1) {
-      throw new Error(`pagination ellipsis missing: ${JSON.stringify(initialPagination)}`);
+    await page
+      .locator("#clip-pagination")
+      .getByRole("button", { name: "Load 24 more", exact: true })
+      .click();
+    await page.waitForFunction(
+      () => document.querySelectorAll("#clips .clip-card").length === 48,
+      null,
+      { timeout: 10000 },
+    );
+    await page
+      .locator("#clip-pagination")
+      .getByRole("button", { name: "Load 24 more", exact: true })
+      .click();
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll("#clips .clip-card").length >= 72 &&
+        !document.querySelector("#clip-pagination")?.hasAttribute("aria-busy"),
+      null,
+      { timeout: 10000 },
+    );
+    const infiniteScrollState = await page.evaluate(() => ({
+      renderedClips: document.querySelectorAll("#clips .clip-card").length,
+      firstTranscript: document.querySelector("#clips .clip-card:first-child blockquote")?.textContent || "",
+      preservedCard:
+        window.__firstClipCardBeforeLoadMore === document.querySelector("#clips .clip-card:first-child"),
+      preservedAudio:
+        window.__firstClipAudioBeforeLoadMore === document.querySelector("#clips .clip-card:first-child audio"),
+      loadMoreText:
+        document.querySelector("#clip-pagination .clip-load-more-button")?.textContent?.trim() || "",
+    }));
+    if (
+      infiniteScrollState.renderedClips < 72 ||
+      !infiniteScrollState.firstTranscript.includes("Smoke clip 1") ||
+      !infiniteScrollState.preservedCard ||
+      !infiniteScrollState.preservedAudio ||
+      infiniteScrollState.loadMoreText !== "Load 24 more"
+    ) {
+      throw new Error(
+        `infinite scroll did not preserve rendered clip state: ${JSON.stringify(infiniteScrollState)}`,
+      );
     }
     await page.locator("#clip-display-controls").getByRole("button", { name: "Hall of fame", exact: true }).click();
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 2"));
@@ -657,294 +995,7 @@ try {
     ) {
       throw new Error(`hall of fame filter did not show only featured clips: ${JSON.stringify(hallOfFameState)}`);
     }
-    await page.locator("#clip-display-controls").getByRole("button", { name: "Reviewed", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1 reviewed"));
-    const reviewedClipState = await page.evaluate(() => ({
-      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-      renderedClips: document.querySelectorAll("#clips .clip-card").length,
-      status: document.querySelector("#clip-status")?.textContent || "",
-      reviewedPills: document.querySelectorAll("#clips .reviewed-pill").length,
-      activeShowMode: document
-        .querySelector("#clip-display-controls .clip-control-group:first-child button[aria-pressed='true']")
-        ?.textContent?.trim(),
-    }));
-    if (
-      reviewedClipState.activeShowMode !== "Reviewed" ||
-      reviewedClipState.renderedClips !== reviewedClipIndexes.size ||
-      reviewedClipState.reviewedPills !== reviewedClipIndexes.size ||
-      !reviewedClipState.status.includes("reviewed") ||
-      !reviewedClipState.firstTranscript.includes("Smoke clip 1 reviewed")
-    ) {
-      throw new Error(`reviewed filter did not show only reviewed clips: ${JSON.stringify(reviewedClipState)}`);
-    }
     await page.locator("#clip-display-controls").getByRole("button", { name: "Recent", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
-    await page.locator("#clip-pagination").getByRole("button", { name: "Page 2", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"));
-    const secondPagePagination = await page.evaluate(() => ({
-      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-    }));
-    if (secondPagePagination.activePage !== "2") {
-      throw new Error(`pagination did not mark page 2 active: ${JSON.stringify(secondPagePagination)}`);
-    }
-    await page.locator("#clip-pagination").getByRole("button", { name: "Page 5", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 25"));
-    await page.locator("#clip-pagination").getByRole("button", { name: "Page 6", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 31"));
-    const middlePagination = await page.evaluate(() => {
-      const pagination = document.querySelector("#clip-pagination");
-      const numberedButtons = [...pagination.querySelectorAll(".pagination-page-button")].map((button) =>
-        button.textContent?.trim(),
-      );
-      return {
-        text: pagination.textContent || "",
-        numberedButtons,
-        ellipsisCount: pagination.querySelectorAll(".pagination-ellipsis").length,
-        activePage: pagination.querySelector("button[aria-current='page']")?.textContent?.trim() || "",
-      };
-    });
-    if (middlePagination.activePage !== "6") {
-      throw new Error(`pagination did not mark middle page active: ${JSON.stringify(middlePagination)}`);
-    }
-    if (middlePagination.numberedButtons.join(",") !== "4,5,6,7,8") {
-      throw new Error(`pagination did not show five centered page numbers: ${JSON.stringify(middlePagination)}`);
-    }
-    if (middlePagination.ellipsisCount !== 2) {
-      throw new Error(`pagination middle window should be bracketed by ellipses: ${JSON.stringify(middlePagination)}`);
-    }
-    holdRecentClipResponses = true;
-    await page.locator("#clip-pagination").getByRole("button", { name: "Page 7", exact: true }).click();
-    const pendingPagination = await page.evaluate(() => ({
-      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-      busy: document.querySelector("#clip-pagination")?.getAttribute("aria-busy") || "",
-      status: document.querySelector("#clip-status")?.textContent || "",
-      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-      loadingBanner: document.querySelector("#clips .clip-page-loading-banner")?.textContent || "",
-    }));
-    if (
-      pendingPagination.activePage !== "7" ||
-      pendingPagination.busy !== "true" ||
-      !pendingPagination.status.includes("Loading page 7") ||
-      !pendingPagination.loadingBanner.includes("Loading page 7")
-    ) {
-      throw new Error(`pagination did not provide immediate pending feedback: ${JSON.stringify(pendingPagination)}`);
-    }
-    if (!pendingPagination.firstTranscript.includes("Smoke clip 31")) {
-      throw new Error(`pagination pending state should not flicker away the current cards: ${JSON.stringify(pendingPagination)}`);
-    }
-    holdRecentClipResponses = false;
-    releaseRecentClipResponses.splice(0).forEach((release) => release());
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 37"));
-    const pageSevenRequest = [...recentClipRequestUrls].reverse().find(
-      (requestUrl) =>
-        requestUrl.searchParams.get("page") === "7" &&
-        !requestUrl.searchParams.has("offset"),
-    );
-    if (!pageSevenRequest) {
-      throw new Error("pagination numbered jump did not use page=7");
-    }
-    await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
-    await page.locator("#clip-pagination").getByRole("button", { name: "Oldest page" }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 144"));
-    const oldestPagePagination = await page.evaluate(() => ({
-      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-      text: document.querySelector("#clip-pagination")?.textContent || "",
-      activeSort: document
-        .querySelector("#clip-display-controls .clip-control-group:last-child button[aria-pressed='true']")
-        ?.textContent?.trim() || "",
-      numberedButtons: [...document.querySelectorAll("#clip-pagination .pagination-page-button")].map((button) =>
-        button.textContent?.trim(),
-      ),
-      actionButtons: [...document.querySelectorAll("#clip-pagination .pagination-actions button")].map((button) => ({
-        text: button.textContent?.trim() || "",
-        disabled: button.disabled,
-      })),
-    }));
-    const oldestPageRequest = [...recentClipRequestUrls].reverse().find(
-      (requestUrl) =>
-        requestUrl.searchParams.get("sort") === "oldest" &&
-        requestUrl.searchParams.get("page") === "1" &&
-        !requestUrl.searchParams.has("offset"),
-    );
-    if (!oldestPageRequest) {
-      throw new Error("pagination oldest jump did not use oldest-first page one");
-    }
-    if (oldestPagePagination.activePage !== "1" || oldestPagePagination.activeSort !== "Oldest") {
-      throw new Error(`pagination oldest jump did not switch to oldest-first page one: ${JSON.stringify(oldestPagePagination)}`);
-    }
-    if (oldestPagePagination.numberedButtons.join(",") !== "1,2,3,4,5") {
-      throw new Error(`pagination oldest window should show the oldest-first start: ${JSON.stringify(oldestPagePagination)}`);
-    }
-    if (oldestPagePagination.actionButtons.map((button) => button.text).join(",") !== "Next,Newest") {
-      throw new Error(`oldest page pagination should expose newer navigation: ${JSON.stringify(oldestPagePagination)}`);
-    }
-    if (oldestPagePagination.actionButtons.some((button) => button.disabled)) {
-      throw new Error(`visible oldest page pagination actions should be usable: ${JSON.stringify(oldestPagePagination)}`);
-    }
-    await page.locator("#clip-pagination").getByRole("button", { name: "Newest page" }).click();
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    const mobilePaginationScrollBeforeNext = await page.evaluate(() => ({
-      scrollY: window.scrollY,
-      clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
-    }));
-    holdRecentClipResponses = true;
-    await page.locator("#clip-pagination").getByRole("button", { name: "Next", exact: true }).click();
-    const mobilePaginationPendingNext = await page.evaluate(
-      (scrollBeforeNext) => ({
-        activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-        busy: document.querySelector("#clip-pagination")?.getAttribute("aria-busy") || "",
-        status: document.querySelector("#clip-status")?.textContent || "",
-        firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-        scrollY: window.scrollY,
-        scrollYBeforeNext: scrollBeforeNext.scrollY,
-        clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
-      }),
-      mobilePaginationScrollBeforeNext,
-    );
-    if (
-      mobilePaginationPendingNext.activePage !== "2" ||
-      mobilePaginationPendingNext.busy !== "true" ||
-      !mobilePaginationPendingNext.status.includes("Loading page 2") ||
-      !mobilePaginationPendingNext.firstTranscript.includes("Smoke clip 1") ||
-      mobilePaginationPendingNext.scrollY < mobilePaginationPendingNext.scrollYBeforeNext - 96 ||
-      mobilePaginationPendingNext.clipsTop > 96
-    ) {
-      throw new Error(`mobile next-page pending state should stay near the clicked pagination: ${JSON.stringify(mobilePaginationPendingNext)}`);
-    }
-    holdRecentClipResponses = false;
-    releaseRecentClipResponses.splice(0).forEach((release) => release());
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"));
-    await page.waitForFunction(() => {
-      const clips = document.querySelector("#clips");
-      const tabs = document.querySelector(".tabs");
-      const tabsHeight = tabs instanceof HTMLElement ? tabs.getBoundingClientRect().height : 0;
-      const clipsTop = clips instanceof HTMLElement ? clips.getBoundingClientRect().top : Number.NaN;
-      const minTop = tabsHeight > 0 ? tabsHeight - 4 : -1;
-      const maxTop = tabsHeight > 0 ? tabsHeight + 24 : 96;
-      return clipsTop >= minTop && clipsTop <= maxTop;
-    });
-    const sixClipPageTwo = await page.evaluate(
-      (scrollBeforeNext) => ({
-        firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-        renderedClips: document.querySelectorAll("#clips .clip-card").length,
-        pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
-        activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-        clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
-        stickyTabsHeight: document.querySelector(".tabs")?.getBoundingClientRect().height ?? null,
-      }),
-      mobilePaginationScrollBeforeNext,
-    );
-    if (
-      sixClipPageTwo.renderedClips !== 6 ||
-      sixClipPageTwo.activePage !== "2" ||
-      !sixClipPageTwo.firstTranscript.includes("Smoke clip 7")
-    ) {
-      throw new Error(`6-per-page second page did not establish the anchor: ${JSON.stringify(sixClipPageTwo)}`);
-    }
-    const minClipsTop = sixClipPageTwo.stickyTabsHeight ? sixClipPageTwo.stickyTabsHeight - 4 : -1;
-    const maxClipsTop = sixClipPageTwo.stickyTabsHeight ? sixClipPageTwo.stickyTabsHeight + 24 : 96;
-    if (
-      sixClipPageTwo.clipsTop < minClipsTop ||
-      sixClipPageTwo.clipsTop > maxClipsTop
-    ) {
-      throw new Error(`mobile next-page action did not scroll after the new clips rendered: ${JSON.stringify(sixClipPageTwo)}`);
-    }
-    let desktopPaginationState = null;
-    const desktopPaginationContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-    try {
-      const desktopPaginationPage = await desktopPaginationContext.newPage();
-      await desktopPaginationPage.goto(`${baseUrl}/clips/`);
-      await desktopPaginationPage.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
-      await desktopPaginationPage.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      const desktopPaginationBeforeNext = await desktopPaginationPage.evaluate(() => ({
-        scrollY: window.scrollY,
-        clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
-      }));
-      holdRecentClipResponses = true;
-      await desktopPaginationPage.locator("#clip-pagination").getByRole("button", { name: "Next", exact: true }).click();
-      const desktopPaginationPending = await desktopPaginationPage.evaluate(
-        (scrollBeforeNext) => ({
-          activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-          loadingBanner: document.querySelector("#clips .clip-page-loading-banner")?.textContent || "",
-          busy: document.querySelector("#clip-pagination")?.getAttribute("aria-busy") || "",
-          status: document.querySelector("#clip-status")?.textContent || "",
-          firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-          clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
-          scrollY: window.scrollY,
-          scrollYBeforeNext: scrollBeforeNext.scrollY,
-          clipsTopBeforeNext: scrollBeforeNext.clipsTop,
-        }),
-        desktopPaginationBeforeNext,
-      );
-      if (
-        desktopPaginationPending.activePage !== "2" ||
-        desktopPaginationPending.busy !== "true" ||
-        !desktopPaginationPending.status.includes("Loading page 2") ||
-        !desktopPaginationPending.loadingBanner.includes("Loading page 2") ||
-        !desktopPaginationPending.firstTranscript.includes("Smoke clip 1") ||
-        desktopPaginationPending.scrollY < desktopPaginationPending.scrollYBeforeNext - 96 ||
-        desktopPaginationPending.clipsTop > 96
-      ) {
-        throw new Error(`desktop next-page pending state should stay near the clicked pagination: ${JSON.stringify(desktopPaginationPending)}`);
-      }
-      holdRecentClipResponses = false;
-      releaseRecentClipResponses.splice(0).forEach((release) => release());
-      await desktopPaginationPage.waitForFunction(() =>
-        document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 7"),
-      );
-      await desktopPaginationPage.waitForFunction(() => {
-        const clips = document.querySelector("#clips");
-        const tabs = document.querySelector(".tabs");
-        const tabsHeight = tabs instanceof HTMLElement ? tabs.getBoundingClientRect().height : 0;
-        const clipsTop = clips instanceof HTMLElement ? clips.getBoundingClientRect().top : Number.NaN;
-        const minTop = tabsHeight > 0 ? tabsHeight - 4 : -1;
-        const maxTop = tabsHeight > 0 ? tabsHeight + 24 : 96;
-        return clipsTop >= minTop && clipsTop <= maxTop;
-      });
-      const desktopPaginationLoaded = await desktopPaginationPage.evaluate(() => ({
-        firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-        activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-        loadingBannerPresent: Boolean(document.querySelector("#clips .clip-page-loading-banner")),
-        clipsTop: document.querySelector("#clips")?.getBoundingClientRect().top ?? null,
-      }));
-      if (
-        desktopPaginationLoaded.activePage !== "2" ||
-        !desktopPaginationLoaded.firstTranscript.includes("Smoke clip 7") ||
-        desktopPaginationLoaded.loadingBannerPresent
-      ) {
-        throw new Error(`desktop next-page action did not settle on page 2: ${JSON.stringify(desktopPaginationLoaded)}`);
-      }
-      desktopPaginationState = {
-        pending: desktopPaginationPending,
-        loaded: desktopPaginationLoaded,
-      };
-    } finally {
-      holdRecentClipResponses = false;
-      releaseRecentClipResponses.splice(0).forEach((release) => release());
-      await desktopPaginationContext.close();
-    }
-    await page.locator("#clip-display-controls").getByRole("button", { name: "12", exact: true }).click();
-    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 12);
-    await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
-    const twelveClipPage = await page.evaluate(() => ({
-      firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
-      renderedClips: document.querySelectorAll("#clips .clip-card").length,
-      pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
-      activePage: document.querySelector("#clip-pagination button[aria-current='page']")?.textContent?.trim() || "",
-    }));
-    if (
-      twelveClipPage.renderedClips !== 12 ||
-      twelveClipPage.activePage !== "1" ||
-      !twelveClipPage.firstTranscript.includes("Smoke clip 1")
-    ) {
-      throw new Error(`12-per-page change did not snap to a page boundary: ${JSON.stringify(twelveClipPage)}`);
-    }
-    await page.locator("#clip-display-controls").getByRole("button", { name: "24", exact: true }).click();
-    await page.waitForFunction(() => document.querySelectorAll("#clips .clip-card").length === 24);
     await page.waitForFunction(() => document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 1"));
     const clipControlsBeforeFlip = await page.evaluate(() => {
       const headerControls = document.querySelector("#clip-display-controls");
@@ -963,25 +1014,22 @@ try {
         buttonLabels: [...headerControls.querySelectorAll("button")].map((button) =>
           button.textContent?.trim(),
         ),
-        pageSizeButtons: [
-          ...headerControls.querySelectorAll(".clip-control-group"),
-        ].find((group) => group.textContent?.includes("Clips per page"))?.querySelectorAll("button").length,
       };
     });
     if (
       clipControlsBeforeFlip.renderedClips !== 24 ||
       !clipControlsBeforeFlip.firstTranscript.includes("Smoke clip 1")
     ) {
-      throw new Error(`24-per-page change did not snap to page one: ${JSON.stringify(clipControlsBeforeFlip)}`);
+      throw new Error(`recent filter did not reset to one 24-clip batch: ${JSON.stringify(clipControlsBeforeFlip)}`);
     }
     await page.locator("#clip-display-controls").getByRole("button", { name: "Oldest", exact: true }).click();
     await page.waitForFunction(
       () => {
-        const activeControl = document
-          .querySelector("#clip-display-controls .clip-control-group:last-child button[aria-pressed='true']")
-          ?.textContent?.trim();
+        const activeControl = [...document.querySelectorAll("#clip-display-controls button")]
+          .find((button) => button.textContent?.trim() === "Oldest")
+          ?.getAttribute("aria-pressed");
         return (
-          activeControl === "Oldest" &&
+          activeControl === "true" &&
           document.querySelector("#clips")?.getAttribute("aria-busy") === "false" &&
           document.querySelector("#clips blockquote")?.textContent?.includes("Smoke clip 144")
         );
@@ -993,9 +1041,9 @@ try {
       firstTranscript: document.querySelector("#clips blockquote")?.textContent || "",
       pageStatus: document.querySelector("#clip-pagination")?.textContent || "",
       renderedClips: document.querySelectorAll("#clips .clip-card").length,
-      activeControl: document
-        .querySelector("#clip-display-controls .clip-control-group:last-child button[aria-pressed='true']")
-        ?.textContent?.trim(),
+      activeControl: [...document.querySelectorAll("#clip-display-controls button")]
+        .find((button) => button.textContent?.trim() === "Oldest")
+        ?.getAttribute("aria-pressed"),
     }));
     if (clipControlsBeforeFlip.display !== "grid") {
       throw new Error(`mobile clip controls are not in a grid: ${clipControlsBeforeFlip.display}`);
@@ -1004,11 +1052,10 @@ try {
       throw new Error(`mobile clip controls were duplicated in the clip list: ${JSON.stringify(clipControlsBeforeFlip)}`);
     }
     if (
-      clipControlsBeforeFlip.buttonLabels.includes("48") ||
-      !clipControlsBeforeFlip.buttonLabels.includes("24") ||
-      clipControlsBeforeFlip.pageSizeButtons !== 3
+      clipControlsBeforeFlip.buttonLabels.includes("24") ||
+      clipControlsBeforeFlip.buttonLabels.includes("48")
     ) {
-      throw new Error(`mobile page size controls are incomplete: ${JSON.stringify(clipControlsBeforeFlip)}`);
+      throw new Error(`removed page-size controls are still visible: ${JSON.stringify(clipControlsBeforeFlip)}`);
     }
     if (
       !clipControlsBeforeFlip.buttonLabels.includes("Hall of fame") ||
@@ -1023,10 +1070,7 @@ try {
       throw new Error(`expected oldest page order after flip: ${clipControlsAfterFlip.firstTranscript}`);
     }
     if (clipControlsAfterFlip.renderedClips !== 24) {
-      throw new Error(`clip controls did not keep the larger first page: ${JSON.stringify(clipControlsAfterFlip)}`);
-    }
-    if (await page.getByRole("button", { name: "Fine Tuning" }).count()) {
-      throw new Error("Fine Tuning tab should not crowd the primary mobile tabs");
+      throw new Error(`clip controls did not keep the fixed first batch: ${JSON.stringify(clipControlsAfterFlip)}`);
     }
     await page.goto(`${baseUrl}/operator/`);
     await page.locator("#clips .clip-card").first().waitFor({ state: "visible", timeout: 10000 });
@@ -1082,89 +1126,41 @@ try {
         document.querySelector("#clips .clip-card:first-child .feature-clip-button")?.getAttribute("aria-label") ||
         "",
       featuredPill: document.querySelector("#clips .clip-card:first-child .featured-pill")?.textContent || "",
-      correctionOpen: Boolean(document.querySelector("#clips .clip-card:first-child .transcript-correction")),
     }));
     if (
       !operatorFeatureState.firstTranscript.includes("Smoke clip 1") ||
       operatorFeatureState.buttonText !== "★" ||
       operatorFeatureState.buttonLabel !== "Remove from Hall of Fame" ||
-      operatorFeatureState.featuredPill !== "Featured" ||
-      !operatorFeatureState.correctionOpen
+      operatorFeatureState.featuredPill !== "Featured"
     ) {
       throw new Error(`operator feature action did not update the clip card: ${JSON.stringify(operatorFeatureState)}`);
     }
-    await page.getByRole("tab", { name: "Analysis" }).click();
-    await page
-      .locator("#lexical-analysis .entity-card:first-child .analysis-correction")
-      .waitFor({ state: "visible", timeout: 10000 });
-    await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction summary").click();
-    await page
-      .locator("#lexical-analysis .entity-card:first-child .analysis-correction .transcript-correction-label textarea")
-      .fill("Seattle Traffic corrected showcase example.");
-    await page.locator("#lexical-analysis .entity-card:first-child .analysis-correction button[type='submit']").click();
-    await page.waitForFunction(() =>
-      document.querySelector("#lexical-analysis .entity-card:first-child blockquote")?.textContent?.includes("corrected showcase"),
-    );
-    const operatorAnalysisCorrection = await page.evaluate(() => ({
-      summary:
-        document
-          .querySelector("#lexical-analysis .entity-card:first-child .analysis-correction summary")
-          ?.textContent?.trim() || "",
-      status:
-        document
-          .querySelector("#lexical-analysis .entity-card:first-child .analysis-correction .transcript-correction-status")
-          ?.textContent?.trim() || "",
-      quote: document.querySelector("#lexical-analysis .entity-card:first-child blockquote")?.textContent || "",
-    }));
-    if (
-      operatorAnalysisCorrection.summary !== "Edit correction" ||
-      !operatorAnalysisCorrection.status.includes("Saved for manual fine tuning") ||
-      !operatorAnalysisCorrection.quote.includes("corrected showcase")
-    ) {
-      throw new Error(`operator analysis correction did not save: ${JSON.stringify(operatorAnalysisCorrection)}`);
-    }
     await page.getByRole("tab", { name: "Performance" }).click();
-    await page.locator(".speech-training-panel .performance-card").first().waitFor({ state: "visible", timeout: 10000 });
-    const speechTraining = await page.evaluate(() => ({
-      title: document.querySelector(".speech-training-panel h3")?.textContent || "",
-      cards: [...document.querySelectorAll(".speech-training-panel .performance-card")].map((card) =>
-        card.textContent || "",
-      ),
-      bodyText: document.querySelector(".speech-training-panel")?.textContent || "",
-    }));
-    const trainingExamplesCard = speechTraining.cards.find((card) => card.includes("Training examples")) || "";
-    if (!trainingExamplesCard.includes("3") || trainingExamplesCard.includes("3 / 20")) {
-      throw new Error(`performance speech training correction card missing: ${JSON.stringify(speechTraining)}`);
-    }
-    if (!speechTraining.cards.some((card) => card.includes("Last ASR run") && card.includes("skipped"))) {
-      throw new Error(`performance speech training last-run card missing: ${JSON.stringify(speechTraining)}`);
-    }
-    if (speechTraining.bodyText.includes("Export JSONL") || speechTraining.bodyText.includes("Nightly training")) {
-      throw new Error(`performance speech training panel kept bulky operator actions: ${JSON.stringify(speechTraining)}`);
-    }
+    await page.locator(".system-kpi-panel .performance-card").first().waitFor({ state: "visible", timeout: 10000 });
     await page.getByRole("tab", { name: "About" }).click();
-    await page.locator("#panel-about .about-link").waitFor({ state: "visible", timeout: 10000 });
     const aboutState = await page.evaluate(() => ({
       pathname: window.location.pathname,
       hidden: document.querySelector("#panel-about")?.hidden ?? true,
       activeTab: document.querySelector(".tab.is-active")?.textContent?.trim() || "",
-      linkHref: document.querySelector("#panel-about .about-link")?.getAttribute("href") || "",
-      linkText: document.querySelector("#panel-about .about-link")?.textContent?.trim() || "",
+      creatorHref: document.querySelector("#panel-about .about-credit a")?.getAttribute("href") || "",
+      creatorText: document.querySelector("#panel-about .about-credit a")?.textContent?.trim() || "",
+      creatorRel: document.querySelector("#panel-about .about-credit a")?.getAttribute("rel") || "",
       bodyText: document.querySelector("#panel-about")?.textContent || "",
     }));
     if (
       aboutState.pathname !== "/about/" ||
       aboutState.hidden ||
       aboutState.activeTab !== "About" ||
-      aboutState.linkHref !== "https://robertboscacci.com/projects/elliott-bay-vhf/" ||
-      aboutState.linkText !== "Read the full project write-up" ||
+      aboutState.creatorHref !== "https://robertboscacci.com/" ||
+      aboutState.creatorText !== "Robert Boscacci" ||
+      aboutState.creatorRel !== "noopener" ||
       !aboutState.bodyText.includes("Raspberry Pi radio edge") ||
       !aboutState.bodyText.includes("Ubuntu micro-computer") ||
       !aboutState.bodyText.includes("Whisper") ||
-      !aboutState.bodyText.includes("Whisper base.en") ||
+      !aboutState.bodyText.includes("large-v3-turbo") ||
       !aboutState.bodyText.includes("CTranslate2/faster-whisper")
     ) {
-      throw new Error(`about tab did not expose the project write-up: ${JSON.stringify(aboutState)}`);
+      throw new Error(`about tab did not expose the creator credit: ${JSON.stringify(aboutState)}`);
     }
     const desktopPerformanceContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     let performanceHover = null;
@@ -1240,6 +1236,9 @@ try {
         resultCount: document.querySelectorAll(".search-result-card").length,
         firstTranscript: document.querySelector(".search-result-card blockquote")?.textContent || "",
         audioCount: document.querySelectorAll(".search-result-card audio").length,
+        playersPerResult: [...document.querySelectorAll(".search-result-card")].map(
+          (card) => card.querySelectorAll(".example-player").length,
+        ),
       }));
       if (searchResult.query !== "tug barge" || !searchResult.suggestionsHidden) {
         throw new Error(`search suggestion did not populate and hide suggestions: ${JSON.stringify(searchResult)}`);
@@ -1250,8 +1249,29 @@ try {
       if (!searchResult.firstTranscript.includes("Smoke search")) {
         throw new Error(`search result transcript did not come from search API: ${JSON.stringify(searchResult)}`);
       }
-      if (searchResult.audioCount < 1) {
-        throw new Error(`search result audio controls did not render: ${JSON.stringify(searchResult)}`);
+      if (
+        searchResult.audioCount !== searchResult.resultCount ||
+        searchResult.playersPerResult.some((count) => count !== 1)
+      ) {
+        throw new Error(`search results did not render exactly one audio player each: ${JSON.stringify(searchResult)}`);
+      }
+      await desktopPerformancePage
+        .locator("#clip-search-recency")
+        .getByRole("button", { name: "24h", exact: true })
+        .click();
+      await desktopPerformancePage.waitForFunction(
+        () => document.querySelector("#clip-search-status")?.textContent?.includes("last 24h"),
+        null,
+        { timeout: 10000 },
+      );
+      const searchRecencyState = await desktopPerformancePage.evaluate(() => ({
+        active: document.querySelector("#clip-search-recency .is-active")?.textContent?.trim() || "",
+        pressed24h: [...document.querySelectorAll("#clip-search-recency button")]
+          .find((button) => button.textContent?.trim() === "24h")
+          ?.getAttribute("aria-pressed"),
+      }));
+      if (searchRecencyState.active !== "24h" || searchRecencyState.pressed24h !== "true") {
+        throw new Error(`search recency selection did not update: ${JSON.stringify(searchRecencyState)}`);
       }
       await desktopPerformancePage.getByLabel("Search transcript meaning").fill("");
       await desktopPerformancePage.waitForFunction(
@@ -1357,32 +1377,175 @@ try {
     } finally {
       await desktopPerformanceContext.close();
     }
+    const aisMapPage = await context.newPage();
+    let aisMapState;
+    try {
+      await aisMapPage.goto(`${baseUrl}/ais/`);
+      await aisMapPage.waitForTimeout(1000);
+      aisMapState = await aisMapPage.evaluate(() => ({
+        frameSrc: document.querySelector("#ais-catcher-frame")?.getAttribute("src") || "",
+        frameHidden: document.querySelector("#ais-catcher-frame")?.hidden ?? null,
+        unavailableHidden: document.querySelector("#ais-catcher-unavailable")?.hidden ?? null,
+        status: document.querySelector("#map-status")?.textContent || "",
+      }));
+      aisMapState.shipRequests = aisShipRequests;
+      aisMapState.viewerHeadRequests = aisViewerHeadRequests;
+      if (
+        !aisMapState.frameSrc.startsWith("/ais-catcher/") ||
+        aisMapState.frameHidden ||
+        !aisMapState.unavailableHidden ||
+        !aisMapState.status.includes("Showing AIS-catcher live map") ||
+        aisMapState.shipRequests < 1 ||
+        aisMapState.viewerHeadRequests !== 0
+      ) {
+        throw new Error(`AIS map did not survive an upstream HEAD failure: ${JSON.stringify(aisMapState)}`);
+      }
+    } finally {
+      await aisMapPage.close();
+    }
+    const continuousPlaybackContext = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    let continuousPlaybackState;
+    try {
+      const continuousPlaybackPage = await continuousPlaybackContext.newPage();
+      await continuousPlaybackPage.route("**/api/clips/recent**", async (route) => {
+        const payload = recentClipPayload(new URL(route.request().url()));
+        payload.clips = payload.clips.slice(0, 2);
+        payload.clip_count = 2;
+        payload.filtered_clip_count = 2;
+        payload.channel_counts = { "14": 2 };
+        payload.next_cursor = null;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(payload),
+        });
+      });
+      await continuousPlaybackPage.goto(`${baseUrl}/clips/`);
+      await continuousPlaybackPage.waitForFunction(
+        () => document.querySelectorAll("#clips .clip-card").length === 2,
+        null,
+        { timeout: 10000 },
+      );
+      const playAllButton = continuousPlaybackPage.getByRole("button", {
+        name: "Play all recent clips",
+        exact: true,
+      });
+      const firstAudio = continuousPlaybackPage.locator("#clips .clip-card:nth-child(1) audio");
+      const secondAudio = continuousPlaybackPage.locator("#clips .clip-card:nth-child(2) audio");
+      await playAllButton.click();
+      await continuousPlaybackPage.waitForFunction(
+        () => {
+          const first = document.querySelector("#clips .clip-card:nth-child(1) audio");
+          return (
+            first instanceof HTMLAudioElement &&
+            !first.paused &&
+            Number.isFinite(first.duration) &&
+            document
+              .querySelector("#clips .clip-card:nth-child(1)")
+              ?.classList.contains("is-continuous-playing")
+          );
+        },
+        null,
+        { timeout: 10000 },
+      );
+      await firstAudio.evaluate((audio) => {
+        audio.currentTime = Math.max(0, audio.duration - 0.08);
+      });
+      await continuousPlaybackPage.waitForFunction(
+        () =>
+          document.querySelector(".clip-play-all-status")?.textContent ===
+          "Next clip in 2 seconds",
+        null,
+        { timeout: 5000 },
+      );
+      const firstGapObservedAt = Date.now();
+      await continuousPlaybackPage.waitForFunction(
+        () => {
+          const second = document.querySelector("#clips .clip-card:nth-child(2) audio");
+          return second instanceof HTMLAudioElement && !second.paused;
+        },
+        null,
+        { timeout: 5000 },
+      );
+      const observedGapMs = Date.now() - firstGapObservedAt;
+      if (observedGapMs < 1700 || observedGapMs > 3500) {
+        throw new Error(`continuous clip gap was not two seconds: ${observedGapMs}ms`);
+      }
+      await secondAudio.evaluate((audio) => {
+        audio.currentTime = Math.max(0, audio.duration - 0.08);
+      });
+      await continuousPlaybackPage.waitForFunction(
+        () =>
+          document.querySelector(".clip-play-all-status")?.textContent ===
+          "Next clip in 2 seconds",
+        null,
+        { timeout: 5000 },
+      );
+      await continuousPlaybackPage.waitForFunction(
+        () => {
+          const first = document.querySelector("#clips .clip-card:nth-child(1) audio");
+          return first instanceof HTMLAudioElement && !first.paused;
+        },
+        null,
+        { timeout: 5000 },
+      );
+      await continuousPlaybackPage.getByRole("button", {
+        name: "Stop continuous clip playback",
+        exact: true,
+      }).click();
+      continuousPlaybackState = await continuousPlaybackPage.evaluate(() => ({
+        active:
+          document.querySelector(".clip-play-all-button")?.getAttribute("aria-pressed") || "",
+        buttonLabel:
+          document.querySelector(".clip-play-all-button")?.getAttribute("aria-label") || "",
+        status: document.querySelector(".clip-play-all-status")?.textContent || "",
+        allPaused: [...document.querySelectorAll("#clips .clip-card audio")].every(
+          (audio) => audio.paused,
+        ),
+      }));
+      continuousPlaybackState.observedGapMs = observedGapMs;
+      if (
+        continuousPlaybackState.active !== "false" ||
+        continuousPlaybackState.buttonLabel !== "Play all recent clips" ||
+        !continuousPlaybackState.status.includes("2s between clips") ||
+        !continuousPlaybackState.allPaused
+      ) {
+        throw new Error(
+          `continuous clip playback did not loop and stop cleanly: ${JSON.stringify(continuousPlaybackState)}`,
+        );
+      }
+    } finally {
+      await continuousPlaybackContext.close();
+    }
     console.log(
       JSON.stringify(
         {
           status: "ok",
           baseUrl,
           lazyClipShell,
+          freshRefreshState,
           liveCatchupState,
           liveCatchupRaceState,
-          liveResumeState,
+          liveQueueWaitState,
           liveSelectorState,
+          liveManifestFallbackState,
           allButTrafficState,
           ...result,
           clipControls: {
-            initialPagination,
-            secondPagePagination,
-            pendingPagination,
-            oldestPagePagination,
-            desktopPaginationState,
+            initialInfiniteScroll,
+            infiniteScrollState,
             beforeFlip: clipControlsBeforeFlip,
             afterFlip: clipControlsAfterFlip,
           },
           aboutState,
-          directAnalysisCorrection,
-          speechTraining,
           searchDefaultState,
           performanceHover,
+          aisMapState,
+          continuousPlaybackState,
           defaultRangeState,
           shortRangeState,
           longRangeState,
@@ -1417,11 +1580,10 @@ function recentClipPayload(url) {
     }
   }
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 6), 1), 100);
-  const page = Math.max(Number(url.searchParams.get("page") || 1), 1);
-  const offset = Math.max(
-    Number(url.searchParams.get("offset") || (page - 1) * limit),
-    0,
-  );
+  const cursor = url.searchParams.get("cursor") || "";
+  const cursorMatch = /^cursor-(\d+)$/.exec(cursor);
+  const offset = cursorMatch ? Math.max(Number(cursorMatch[1]), 0) : 0;
+  const page = Math.floor(offset / limit) + 1;
   const selectedChannels = url.searchParams.getAll("channels").map((channel) => channel.toUpperCase());
   const excludedChannels = new Set(
     url.searchParams
@@ -1432,13 +1594,10 @@ function recentClipPayload(url) {
   );
   const total = 144;
   const featuredOnly = url.searchParams.get("featured") === "true";
-  const reviewedOnly = url.searchParams.get("reviewed") === "true";
   const oldestFirst = url.searchParams.get("sort") === "oldest";
+  const around = url.searchParams.get("around") || "";
   const indexes = Array.from({ length: total }, (_value, index) => index).filter((index) => {
     if (featuredOnly && !featuredClipIndexes.has(index)) {
-      return false;
-    }
-    if (reviewedOnly && !reviewedClipIndexes.has(index)) {
       return false;
     }
     return true;
@@ -1460,6 +1619,13 @@ function recentClipPayload(url) {
         returnStaleLiveQueue && liveQueueRequest,
       ),
     );
+  if (injectFreshRecentClip && !liveQueueRequest && offset === 0) {
+    freshRecentClipSequence += 1;
+    clips = [
+      freshRecentClip(freshRecentClipSequence),
+      ...clips.slice(0, Math.max(limit - 1, 0)),
+    ];
+  }
   if (returnStaleLiveQueue && liveQueueRequest) {
     servedStaleLiveQueue = true;
   }
@@ -1481,7 +1647,6 @@ function recentClipPayload(url) {
     clip_count: total,
     filtered_clip_count: filteredTotal,
     featured: featuredOnly,
-    reviewed: reviewedOnly,
     channel_counts: Object.fromEntries(payloadChannels.map((channel) => [channel, filteredTotal])),
     channel_labels: Object.fromEntries(
       payloadChannels.map((channel) => [channel, channel === "14" ? "Vessel Traffic Service" : "Non-traffic"]),
@@ -1489,6 +1654,12 @@ function recentClipPayload(url) {
     limit,
     offset,
     page,
+    next_cursor:
+      offset + clips.length < filteredTotal
+        ? `cursor-${offset + clips.length}`
+        : null,
+    around: around ? "2026-08-15T19:30:00Z" : null,
+    around_timezone: "America/Los_Angeles",
   };
 }
 
@@ -1515,11 +1686,24 @@ function liveQueueRaceClip(sequence) {
   };
 }
 
+function freshRecentClip(sequence) {
+  const startedAt = new Date(Date.now() + sequence * 1000).toISOString();
+  return {
+    id: `fresh-live-${sequence}`,
+    channel: "14",
+    channel_label: "Vessel Traffic Service",
+    started_at: startedAt,
+    ended_at: new Date(Date.parse(startedAt) + 15000).toISOString(),
+    duration_seconds: 15,
+    transcript: `Fresh live clip ${sequence}`,
+    transcript_public: `Fresh live clip ${sequence}`,
+    playback_url: "",
+  };
+}
+
 function recentClip(index, channel = "14", stale = false) {
   const baseTime = stale ? Date.now() - 6 * 60 * 1000 : Date.parse(audioStartedAt);
   const startedAt = new Date(baseTime - index * 60000).toISOString();
-  const reviewed = reviewedClipIndexes.has(index);
-  const displayTranscript = reviewed ? `Smoke clip ${index + 1} reviewed` : `Smoke clip ${index + 1}`;
   return {
     id: `clip-${index + 1}`,
     channel,
@@ -1527,17 +1711,37 @@ function recentClip(index, channel = "14", stale = false) {
     started_at: startedAt,
     ended_at: new Date(Date.parse(startedAt) + 15000).toISOString(),
     duration_seconds: 15,
-    transcript: displayTranscript,
-    transcript_public: displayTranscript,
-    transcript_reviewed: reviewed,
-    include_in_training: reviewed,
-    training_quality: reviewed ? "good" : "unknown",
-    training_split: "auto",
-    training_flags: [],
-    training_reason: reviewed ? "smoke reviewed example" : null,
+    transcript: `Smoke clip ${index + 1}`,
+    transcript_public: `Smoke clip ${index + 1}`,
     featured: featuredClipIndexes.has(index),
     featured_at: featuredClipIndexes.has(index) ? "2026-06-01T12:00:00Z" : null,
     playback_url: "",
+  };
+}
+
+function publishedManifestPayload() {
+  const clips = Array.from({ length: 8 }, (_value, index) => {
+    const clip = recentClip(index, index % 2 === 0 ? "14" : "13");
+    return {
+      ...clip,
+      public_title: `Published ${clip.channel} ${index + 1}`,
+      audio_public_filename: `published-${index + 1}.wav`,
+    };
+  });
+  return {
+    site: {
+      title: "Elliott Bay VHF",
+      subtitle: "Smoke manifest",
+    },
+    stats: {
+      clip_count: clips.length,
+      playable_clip_count: clips.length,
+      channel_counts: { "13": 4, "14": 4 },
+      playable_channel_counts: { "13": 4, "14": 4 },
+      generated_at: "2026-06-01T18:30:00Z",
+    },
+    generated_at: "2026-06-01T18:30:00Z",
+    clips,
   };
 }
 
@@ -1564,60 +1768,6 @@ async function clipFeaturePayload(request) {
     channel: payload.channel || "14",
     started_at: new Date(Date.parse(audioStartedAt) - clipIndex * 60000).toISOString(),
     featured,
-  };
-}
-
-async function transcriptCorrectionPayload(request) {
-  const rawBody = await readRequestBody(request);
-  const payload = JSON.parse(rawBody || "{}");
-  const clipIndex = clipIndexForStartedAt(String(payload.started_at || ""));
-  if (payload.include_in_training !== true || payload.training_quality !== "good") {
-    return {
-      status: "invalid_training_metadata",
-      expected: { include_in_training: true, training_quality: "good" },
-      received: {
-        include_in_training: payload.include_in_training,
-        training_quality: payload.training_quality,
-      },
-    };
-  }
-  if (clipIndex >= 0) {
-    reviewedClipIndexes.add(clipIndex);
-  }
-  return {
-    status: "ok",
-    channel: payload.channel || "14",
-    started_at: payload.started_at || "",
-    original_transcript:
-      clipIndex >= 0 ? `Smoke clip ${clipIndex + 1}` : payload.transcript || "",
-    corrected_transcript: payload.transcript || "",
-    reviewed_by: payload.reviewer || "operator-ui",
-    transcript_reviewed: true,
-    include_in_training: true,
-    training_quality: "good",
-    training_split: payload.training_split || "auto",
-    training_flags: Array.isArray(payload.training_flags) ? payload.training_flags : [],
-    training_reason: payload.training_reason || null,
-  };
-}
-
-async function transcriptCorrectionDeletePayload(request) {
-  const rawBody = await readRequestBody(request);
-  const payload = JSON.parse(rawBody || "{}");
-  const clipIndex = clipIndexForStartedAt(String(payload.started_at || ""));
-  if (clipIndex >= 0) {
-    reviewedClipIndexes.delete(clipIndex);
-  }
-  const transcript = clipIndex >= 0 ? `Smoke clip ${clipIndex + 1}` : "";
-  return {
-    status: "uncorrected",
-    channel: payload.channel || "14",
-    started_at: payload.started_at || "",
-    original_transcript: transcript,
-    corrected_transcript: payload.transcript || "",
-    transcript,
-    transcript_reviewed: false,
-    include_in_training: false,
   };
 }
 
@@ -1666,25 +1816,6 @@ function searchPayload(url) {
   };
 }
 
-function asrFeedbackStatusPayload() {
-  return {
-    status: "ok",
-    reviewed_correction_count: 3,
-    min_corrections: 20,
-    ready_for_training: false,
-    base_model: "openai/whisper-large-v3-turbo",
-    nightly_schedule: "manual only",
-    export_url: "/api/clips/corrections/export",
-    training_status: {
-      status: "skipped",
-      reason: "not enough reviewed transcript corrections",
-      correction_count: 3,
-      min_corrections: 20,
-      generated_at: "2026-06-01T03:20:00Z",
-    },
-  };
-}
-
 function performancePayload() {
   const generatedAt = "2026-06-01T18:30:00Z";
   const history = Array.from({ length: 3 }, (_value, index) => ({
@@ -1712,14 +1843,41 @@ function performancePayload() {
   };
 }
 
+function liveChannelsPayload() {
+  const channels = [
+    ["13", "Bridge-to-bridge", "156.650"],
+    ["14", "VTS / Seattle Traffic", "156.700"],
+    ["66A", "Port Operations", "156.325"],
+    ["67", "Commercial / Bridge", "156.375"],
+    ["68", "Recreational", "156.425"],
+    ["69", "Non-commercial", "156.475"],
+    ["71", "Non-commercial", "156.575"],
+    ["72", "Ship-to-ship", "156.625"],
+    ["73", "Port Operations", "156.675"],
+    ["74", "Port Operations", "156.725"],
+    ["77", "Ship-to-ship", "156.875"],
+    ["78A", "Non-commercial", "156.925"],
+  ];
+  return {
+    defaultChannel: "14",
+    channels: channels.map(([channel, label, frequencyMhz]) => ({
+      channel,
+      label,
+      frequencyMhz,
+      streamPath: `/api/live/${channel}/current.mp3`,
+      statusPath: `/api/live/${channel}/status`,
+    })),
+  };
+}
+
 function lexicalPayload() {
   return {
     status: "ok",
     generated_at: "2026-05-31T20:01:00Z",
-    source_clip_count: 2,
-    channels: { "14": 2 },
+    source_clip_count: 46668,
+    channels: { "06": 8, "14": 2 },
     frequency: {
-      by_channel: { "14": 2 },
+      by_channel: { "06": 8, "14": 2 },
       by_hour_pacific: { "13:00": 2 },
       by_day_pacific: { "2026-05-31": 2 },
     },
@@ -1788,14 +1946,14 @@ async function sendStatic(response, pathname) {
     relativePath === "/" ||
     relativePath === "/clips/" ||
     relativePath === "/clips" ||
-    relativePath === "/reviewed/" ||
-    relativePath === "/reviewed" ||
     relativePath === "/search/" ||
     relativePath === "/search" ||
     relativePath === "/operator/" ||
     relativePath === "/operator" ||
     relativePath === "/performance/" ||
     relativePath === "/performance" ||
+    relativePath === "/ais/" ||
+    relativePath === "/ais" ||
     relativePath === "/analysis/" ||
     relativePath === "/analysis" ||
     relativePath === "/about/" ||
@@ -1873,6 +2031,19 @@ function wavSilence({ sampleRate = 8000, durationSeconds = 0.25 } = {}) {
   buffer.writeUInt16LE(16, 34);
   buffer.write("data", 36);
   buffer.writeUInt32LE(dataSize, 40);
+  return buffer;
+}
+
+function wavTestSignal({ sampleRate = 8000, durationSeconds = 3 } = {}) {
+  const buffer = wavSilence({ sampleRate, durationSeconds });
+  const sampleCount = Math.floor(sampleRate * durationSeconds);
+  for (let index = 0; index < sampleCount; index += 1) {
+    const time = index / sampleRate;
+    const envelope = 0.12 + 0.78 * Math.abs(Math.sin(Math.PI * 1.7 * time));
+    const carrier = Math.sin(2 * Math.PI * 620 * time);
+    const sample = Math.round(32767 * 0.42 * envelope * carrier);
+    buffer.writeInt16LE(sample, 44 + index * 2);
+  }
   return buffer;
 }
 

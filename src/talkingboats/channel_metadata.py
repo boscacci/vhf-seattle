@@ -37,27 +37,20 @@ CHANNEL_METADATA = {
     "78A": ChannelMetadata("78A", "Non-commercial", 156.925),
 }
 VOICE_NET_BALANCED_CHANNELS = (
-    "05A",
-    "06",
-    "09",
-    "10",
-    "13",
     "14",
-    "16",
-    "22A",
-    "65A",
+    "13",
     "66A",
     "67",
-    "68",
-    "69",
-    "71",
-    "72",
-    "73",
-    "74",
     "77",
+    "68",
+    "74",
+    "73",
+    "71",
     "78A",
+    "69",
+    "72",
 )
-PUBLIC_MONITORED_CHANNELS = VOICE_NET_BALANCED_CHANNELS
+PUBLIC_MONITORED_CHANNELS = tuple(CHANNEL_METADATA)
 
 
 def channel_label(channel: str | None) -> str | None:

@@ -8,12 +8,15 @@ StartLimitIntervalSec=0
 Type=simple
 EnvironmentFile=/etc/talkingboats/live-radio.env
 Environment=PYTHONPATH=/opt/talkingboats/app/src
-ExecStart=/usr/bin/python3 -m talkingboats.spool_uploader --spool-root /opt/talkingboats/spool/airband --poll-seconds 20 --min-age-seconds 10 --max-retained-files 300 --delete-after-upload
+ExecStart=/usr/bin/python3 -m talkingboats.spool_uploader --spool-root /opt/talkingboats/spool/airband --poll-seconds 20 --min-age-seconds 10 --min-duration-seconds 1 --max-synchronous-channels 3 --max-files-per-poll 20 --max-retained-files 300 --delete-after-upload
 Restart=always
 RestartSec=10
 Nice=5
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
+MemoryHigh=10%
+MemoryMax=20%
+OOMPolicy=stop
 
 [Install]
 WantedBy=multi-user.target

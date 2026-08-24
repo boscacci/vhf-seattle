@@ -12,10 +12,14 @@ Environment=PYTHONPATH=/opt/talkingboats/app/src
 ExecStart=/opt/talkingboats/bin/talkingboats-profile-capture
 Restart=always
 RestartSec=5
+RuntimeMaxSec=24h
 Nice=5
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
 CPUQuota=85%
+MemoryHigh=30%
+MemoryMax=50%
+OOMPolicy=stop
 
 [Install]
 WantedBy=multi-user.target

@@ -32,14 +32,6 @@ transcribe = [
 mdns = [
     "zeroconf>=0.147,<1",
 ]
-asr-train = [
-    "accelerate>=0.33,<2",
-    "datasets>=2.19,<4",
-    "librosa>=0.10,<1",
-    "soundfile>=0.12,<1",
-    "torch>=2.2,<3",
-    "transformers>=4.45,<5",
-]
 
 [project.scripts]
 talkingboats-api = "talkingboats.api:main"
@@ -58,8 +50,8 @@ talkingboats-upload-spooled-clips = "talkingboats.spool_uploader:main"
 talkingboats-export-public = "talkingboats.publish:main"
 talkingboats-analyze-audio = "talkingboats.audio_analysis:main"
 talkingboats-analyze-transcripts = "talkingboats.lexical_analysis:main"
-talkingboats-train-asr-feedback = "talkingboats.asr_feedback:main"
 talkingboats-backfill-durable-events = "talkingboats.durable_backfill:main"
+talkingboats-backfill-clip-counts = "talkingboats.clip_count_aggregates:main"
 talkingboats-tag-raw-retention = "talkingboats.retention:main"
 talkingboats-clean-noise-transcripts = "talkingboats.transcript_cleanup:main"
 talkingboats-mdns-advertiser = "talkingboats.mdns_advertiser:main"

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import talkingboats.dynamo_clip_store as dynamo_clip_store_module
 from talkingboats.clip_transcriber import ClipQualityMetadata
 from talkingboats.durable_backfill import backfill_clip_read_model
 from talkingboats.dynamo_clip_store import DynamoClipStoreConfig, DynamoUploadedClipStore
@@ -11,7 +12,7 @@ from talkingboats.schemas import ClipPresignRequest
 from talkingboats.transcript_cleanup import cleanup_noise_transcripts
 
 
-def test_dynamo_clip_store_serves_recent_counts_pending_and_corrections() -> None:
+def test_dynamo_clip_store_serves_recent_counts_pending_and_features() -> None:
     table = FakeDynamoTable()
     store = DynamoUploadedClipStore(
         DynamoClipStoreConfig("events", "us-west-2"),
@@ -42,55 +43,6 @@ def test_dynamo_clip_store_serves_recent_counts_pending_and_corrections() -> Non
     assert [clip.transcript for clip in store.recent_transcribed(limit=5)] == [
         "PON PON all stations"
     ]
-    correction = store.correct_transcript(
-        channel="14",
-        started_at="2026-06-01T12:00:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="rob",
-        note="urgency",
-    )
-
-    assert correction.original_transcript == "PON PON all stations"
-    assert store.recent_transcribed(limit=5)[0].transcript == "PAN-PAN, all stations."
-    assert store.recent_transcribed(limit=5)[0].transcript_reviewed is True
-    corrections = store.transcript_corrections(limit=5)
-    assert len(corrections) == 1
-    assert corrections[0]["corrected_transcript"] == "PAN-PAN, all stations."
-    assert corrections[0]["include_in_training"] is True
-    assert corrections[0]["training_quality"] == "good"
-    assert store.transcript_corrections_for_training()[0]["corrected_transcript"] == (
-        "PAN-PAN, all stations."
-    )
-
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-06-01T12:00:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        include_in_training=False,
-    )
-    assert store.transcript_corrections_for_training() == []
-
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-06-01T12:00:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="rob",
-        note="urgency",
-        include_in_training=True,
-        training_quality="excellent",
-        training_split="train",
-        training_flags=[],
-        training_reason="clear urgency proword",
-    )
-    assert store.transcript_corrections(limit=5)[0]["include_in_training"] is True
-    training = store.transcript_corrections_for_training()[0]
-    assert training["corrected_transcript"] == "PAN-PAN, all stations."
-    assert training["include_in_training"] is True
-    assert training["training_quality"] == "excellent"
-    assert training["training_split"] == "train"
-    assert training["training_flags"] == []
-    assert training["training_reason"] == "clear urgency proword"
-
     feature = store.set_clip_featured(
         channel="14",
         started_at="2026-06-01T12:00:00Z",
@@ -113,52 +65,6 @@ def test_dynamo_clip_store_serves_recent_counts_pending_and_corrections() -> Non
 
     assert store.recent_transcribed(limit=5)[0].featured is False
     assert store.recent_transcribed(limit=5, featured_only=True) == []
-
-
-def test_dynamo_clip_store_removes_transcript_correction_from_training() -> None:
-    table = FakeDynamoTable()
-    event_store = CapturingEventStore()
-    store = DynamoUploadedClipStore(
-        DynamoClipStoreConfig("events", "us-west-2"),
-        event_store=event_store,
-        table=table,
-    )
-    key = "raw/channel=14/date=2026-06-01/example.mp3"
-    store.record_presigned_upload(key=key, request=_request(channel="14"))
-    store.mark_transcribed(
-        key,
-        [
-            SimpleNamespace(
-                text="PON PON all stations",
-                started_at="2026-06-01T12:00:00Z",
-                ended_at="2026-06-01T12:00:03Z",
-                relative_start_seconds=0.0,
-                relative_end_seconds=3.0,
-            )
-        ],
-    )
-    store.correct_transcript(
-        channel="14",
-        started_at="2026-06-01T12:00:00Z",
-        corrected_transcript="PAN-PAN, all stations.",
-        reviewer="rob",
-    )
-
-    removed = store.remove_transcript_correction(
-        channel="14",
-        started_at="2026-06-01T12:00:00Z",
-    )
-
-    assert removed.key == key
-    assert removed.original_transcript == "PON PON all stations"
-    assert removed.corrected_transcript == "PAN-PAN, all stations."
-    assert store.transcript_corrections(limit=5) == []
-    assert store.transcript_corrections_for_training() == []
-    assert store.recent_transcribed(limit=5, reviewed_only=True) == []
-    recent = store.recent_transcribed(limit=5)[0]
-    assert recent.transcript == "PON PON all stations"
-    assert recent.transcript_reviewed is False
-    assert event_store.events[-1]["event_type"] == "clip.transcript_correction_removed"
 
 
 def test_backfill_clip_read_model_replays_sqlite_into_dynamo(tmp_path: Path) -> None:
@@ -217,7 +123,12 @@ def test_dynamo_clip_store_paginates_counts_and_stats() -> None:
         )
 
     assert store.transcribed_channel_counts() == {"14": 3}
+    table.query_calls.clear()
     assert store.received_clip_count() == 3
+    assert all(
+        call["ExpressionAttributeValues"][":pk"] != "clips#transcribed"
+        for call in table.query_calls
+    )
     stats = store.stats()
     assert stats["counts"] == {"transcribed": 3}
     assert len(stats["recent"]) == 3
@@ -413,10 +324,7 @@ def test_dynamo_clip_store_cleanup_does_not_skip_rows_after_mutating_pages() -> 
         table=table,
     )
     good_key = "raw/channel=10/date=2026-06-13/good.mp3"
-    noise_keys = [
-        f"raw/channel=10/date=2026-06-13/noise-{index}.mp3"
-        for index in range(3)
-    ]
+    noise_keys = [f"raw/channel=10/date=2026-06-13/noise-{index}.mp3" for index in range(3)]
     for key in [good_key, *noise_keys]:
         store.record_presigned_upload(key=key, request=_request(channel="10"))
     store.mark_transcribed(
@@ -530,6 +438,57 @@ def test_dynamo_clip_store_reads_oldest_transcribed_with_forward_query() -> None
     ]
     assert len(transcribed_queries) == 2
     assert all(call["ScanIndexForward"] is True for call in transcribed_queries)
+
+
+def test_dynamo_clip_store_starts_on_either_side_of_datetime_anchor() -> None:
+    table = FakeDynamoTable()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=table,
+    )
+    for index in range(5):
+        key = f"raw/channel=68/date=2026-06-01/around-{index}.mp3"
+        started_at = datetime(2026, 6, 1, 12, index, tzinfo=UTC)
+        store.record_presigned_upload(
+            key=key,
+            request=_request(channel="68").model_copy(
+                update={
+                    "started_at": started_at,
+                    "ended_at": started_at + timedelta(seconds=1),
+                    "idempotency_key": f"edge-upload-around-{index}",
+                }
+            ),
+        )
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Around clip {index}",
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=1))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+
+    table.query_calls.clear()
+    earlier = store.recent_transcribed(
+        limit=2,
+        starting_at="2026-06-01T12:02:00Z",
+    )
+    later = store.recent_transcribed(
+        limit=2,
+        starting_at="2026-06-01T12:02:00Z",
+        sort="oldest",
+    )
+
+    assert [clip.transcript for clip in earlier] == ["Around clip 2", "Around clip 1"]
+    assert [clip.transcript for clip in later] == ["Around clip 2", "Around clip 3"]
+    assert any("sk <= :sk_bound" in call["KeyConditionExpression"] for call in table.query_calls)
+    assert any("sk >= :sk_bound" in call["KeyConditionExpression"] for call in table.query_calls)
 
 
 def test_dynamo_clip_store_serves_numbered_page_from_cached_index_anchor() -> None:
@@ -663,16 +622,43 @@ def test_dynamo_clip_store_counts_channels_with_projected_cached_global_query() 
     assert len(count_queries) == 2
     assert all(
         call["ProjectionExpression"]
-        == (
-            "pk, sk, #channel, display_transcript, transcript, transcript_reviewed, "
-            "quality_status"
-        )
+        == ("pk, sk, #channel, display_transcript, transcript, quality_status")
         for call in count_queries
     )
     assert all(
-        call["ExpressionAttributeNames"] == {"#channel": "channel"}
-        for call in count_queries
+        call["ExpressionAttributeNames"] == {"#channel": "channel"} for call in count_queries
     )
+
+
+def test_injected_tables_do_not_share_caches_when_object_ids_collide(monkeypatch) -> None:
+    monkeypatch.setattr(dynamo_clip_store_module, "id", lambda _value: 1, raising=False)
+    first_store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=FakeDynamoTable(),
+    )
+    second_store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        table=FakeDynamoTable(),
+    )
+
+    for store, channel in ((first_store, "14"), (second_store, "68")):
+        key = f"raw/channel={channel}/date=2026-06-01/cache-scope.mp3"
+        store.record_presigned_upload(key=key, request=_request(channel=channel))
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Channel {channel} traffic",
+                    started_at="2026-06-01T12:00:00Z",
+                    ended_at="2026-06-01T12:00:01Z",
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+
+    assert first_store.transcribed_channel_counts() == {"14": 1}
+    assert second_store.transcribed_channel_counts() == {"68": 1}
 
 
 def test_dynamo_clip_store_keeps_channel_counts_cached_during_live_writes() -> None:
@@ -822,10 +808,15 @@ class FakeDynamoTable:
         values = kwargs["ExpressionAttributeValues"]
         pk = values[":pk"]
         sk_prefix = values.get(":sk_prefix")
+        sk_bound = values.get(":sk_bound")
+        key_condition = kwargs["KeyConditionExpression"]
         rows = [
             item
             for (item_pk, item_sk), item in self.items.items()
-            if item_pk == pk and (sk_prefix is None or item_sk.startswith(sk_prefix))
+            if item_pk == pk
+            and (sk_prefix is None or item_sk.startswith(sk_prefix))
+            and (sk_bound is None or "sk <= :sk_bound" not in key_condition or item_sk <= sk_bound)
+            and (sk_bound is None or "sk >= :sk_bound" not in key_condition or item_sk >= sk_bound)
         ]
         rows.sort(key=lambda item: item["sk"], reverse=not kwargs.get("ScanIndexForward", True))
         rows = self._after_exclusive_start(rows, kwargs.get("ExclusiveStartKey"))

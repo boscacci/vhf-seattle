@@ -15,6 +15,9 @@ Nice=5
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
 CPUQuota=35%
+MemoryHigh=10%
+MemoryMax=20%
+OOMPolicy=stop
 
 [Install]
 WantedBy=multi-user.target

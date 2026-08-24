@@ -36,13 +36,15 @@ from `dev`, `main`, `codex/*`, or `feature/*`, and allows prod deploys only from
 `main` with a clean worktree. For a deliberate emergency, set
 `TALKINGBOATS_ALLOW_CROSS_ENV_DEPLOY=1` and record why in the operator notes.
 
-Generated public artifacts have a narrower path. The lexical refresh job
-rebuilds `outputs/public-site`, verifies the exact `public_manifest.json` is
-visible on dev, then uses `scripts/deploy_generated_public_assets.sh prod
-outputs/public-site` to promote only `public_manifest.json`, `clips/`, and
-`analysis/` to prod. This keeps public clip/audio/analysis data current from the
-always-on processing host without allowing an archive deploy copy to change the
-production app shell.
+Generated public artifacts have a narrower path. The lightweight public clip
+refresh runs every 15 minutes, rebuilds `outputs/public-site`, verifies the
+exact `public_manifest.json` is visible on dev, then uses
+`scripts/deploy_generated_public_assets.sh prod outputs/public-site` to promote
+only `public_manifest.json`, `clips/`, and the existing `analysis/` artifacts
+to prod. The six-hour lexical refresh shares the same export lock, replaces the
+analysis artifacts, performs the same dev validation, and then promotes. This
+keeps public clip/audio/analysis data current from the always-on processing host
+without allowing an archive deploy copy to change the production app shell.
 
 ## Resource Policy
 
@@ -65,6 +67,20 @@ explicit `Environment` tags. Public buckets stay private. Prod is readable only
 through CloudFront Origin Access Control; dev is served from the Ubuntu micro-computer
 tailnet deployment.
 
+Production clip audio must remain same-origin at `/api/clips/audio`. The public
+read-only proxy resolves the private API's signed redirect server-side, accepts
+only HTTPS AWS S3 targets, strips viewer credentials, forwards only a bounded
+single byte range, caps the buffered clip at 25 MiB, and returns `no-store`.
+Do not add the public hostname to a dev bucket CORS allowlist as a shortcut; that
+would conceal an environment-routing error and weaken the dev/prod boundary.
+
+The current production/private API operational environment still selects the
+dev raw-audio bucket because that bucket contains the active historical corpus.
+This is recorded migration debt, not the intended steady state in the resource
+table above. Move ingest, private API playback, and historical objects to the
+production raw bucket as one reconciled, reversible migration; do not switch
+the API bucket alone or old and newly uploaded clips will fail playback.
+
 Route53 points `dev.seattleboatradio.com` at the Ubuntu micro-computer Tailscale address,
 not at CloudFront. The Ubuntu micro-computer runs the `deploy/optiplex/vhf-dev-proxy`
 front-door container on the tailnet `80/443` addresses. That container owns the
@@ -78,6 +94,14 @@ admin UI on alternate ports, but it must not bind the Ubuntu micro-computer tail
 front door. The public Funnel path uses a separate read-only live proxy
 without tailnet dev routes, so spoofed viewer headers cannot reach write routes.
 Do not reintroduce browser bearer-token auth for the transcript feedback loop.
+
+The dev proxy uses `talkingboats-api-dev.service` on loopback port `8035` and
+loads application code from the working checkout through `PYTHONPATH`. The
+shared production/private API remains on `8034`; do not restart it for a dev
+deploy. Install
+`deploy/systemd/talkingboats-live-radio-proxy-dev.conf.example` as the final
+drop-in for the dev-only proxy so cursor/API changes can be tested without
+changing the public proxy on `8096`.
 
 ## Blackout Recovery
 
@@ -118,6 +142,38 @@ that the spool uploader is running. It reports an unreachable private API but
 does not restart the uploader in a tight loop. Configure that endpoint as a
 stable, resolvable name (or a DHCP reservation); a literal DHCP address must be
 updated whenever the OptiPlex lease changes.
+
+The same health timer treats more than 240 completed multichannel spool files
+within two minutes as an SDR capture flood. It restarts profile capture, emits
+structured restart and recovery events, and applies a five-minute cooldown so
+a bad tuner state cannot overwhelm the uploader without creating a restart
+loop. Override the window, limit, or cooldown with
+`TALKINGBOATS_PI_SPOOL_FLOOD_WINDOW_MINUTES`,
+`TALKINGBOATS_PI_SPOOL_FLOOD_MAX_FILES`, and
+`TALKINGBOATS_PI_SPOOL_FLOOD_COOLDOWN_MINUTES` when receiver traffic is
+materially different.
+
+The spool uploader discards completed clips shorter than one second before
+requesting an upload. These subsecond squelch artifacts cannot produce useful
+transcripts and would otherwise consume both network and transcription
+capacity. Override the threshold with
+`TALKINGBOATS_SPOOL_MIN_DURATION_SECONDS` only after reviewing receiver output.
+Clips whose duration cannot be probed are retained and uploaded.
+
+The uploader also discards a same-second capture batch when more than three
+distinct channels open together. Marine transmissions on independent
+frequencies cannot produce that pattern; it indicates a wideband interference
+burst. Override the limit with
+`TALKINGBOATS_SPOOL_MAX_SYNCHRONOUS_CHANNELS`, or set it to `0` to disable the
+guard while diagnosing the receiver.
+
+Production uploader polls process at most 20 candidates so a noisy backlog
+cannot pin the sequential uploader to one batch for more than a few minutes.
+Each new poll selects the newest stable clips first.
+
+Profile capture also has a 24-hour runtime limit. Because its service uses
+`Restart=always`, systemd reinitializes the SDR once per day instead of leaving
+the tuner and its USB state alive indefinitely.
 
 `talkingboats-mdns-advertiser.service` publishes `optiplex.local` only on the
 OptiPlex LAN interface and re-registers it if DHCP assigns a new address. Keep

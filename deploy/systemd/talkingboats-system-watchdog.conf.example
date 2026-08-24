@@ -1,0 +1,6 @@
+[Manager]
+# Reboot the Pi when PID 1 can no longer service the hardware watchdog. This is
+# intentionally a manager-level safeguard for host hangs that per-service
+# Restart=always and the recurring healthcheck cannot repair.
+RuntimeWatchdogSec=60s
+RebootWatchdogSec=5min

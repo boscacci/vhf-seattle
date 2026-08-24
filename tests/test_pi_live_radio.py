@@ -46,9 +46,9 @@ def test_live_radio_stream_script_requires_generated_source_password() -> None:
 
 
 def test_live_radio_systemd_units_restart_and_stay_lan_scoped() -> None:
-    stream_unit = Path(
-        "deploy/systemd/talkingboats-live-radio-stream.service.example"
-    ).read_text(encoding="utf-8")
+    stream_unit = Path("deploy/systemd/talkingboats-live-radio-stream.service.example").read_text(
+        encoding="utf-8"
+    )
     edge_unit = Path(
         "deploy/systemd/talkingboats-edge-live-radio-stream.service.example"
     ).read_text(encoding="utf-8")
@@ -67,9 +67,13 @@ def test_live_radio_systemd_units_restart_and_stay_lan_scoped() -> None:
     assert "PYTHONPATH=/opt/talkingboats/app/src" in edge_unit
     assert "EnvironmentFile=/etc/talkingboats/live-radio.env" in stream_unit
     assert "talkingboats-profile-capture" in profile_unit
+    assert "RuntimeMaxSec=24h" in profile_unit
     assert "CPUQuota=85%" in profile_unit
     assert "talkingboats.spool_uploader" in uploader_unit
     assert "EnvironmentFile=/etc/talkingboats/live-radio.env" in uploader_unit
+    assert "--min-duration-seconds 1" in uploader_unit
+    assert "--max-synchronous-channels 3" in uploader_unit
+    assert "--max-files-per-poll 20" in uploader_unit
     assert "--max-retained-files 300" in uploader_unit
 
 
@@ -93,9 +97,9 @@ def test_pi_units_do_not_give_up_during_blackout_boot_races() -> None:
 
 def test_pi_installer_installs_blackout_boot_recovery_service() -> None:
     installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
-    recovery_unit = Path(
-        "deploy/systemd/talkingboats-pi-boot-recovery.service.example"
-    ).read_text(encoding="utf-8")
+    recovery_unit = Path("deploy/systemd/talkingboats-pi-boot-recovery.service.example").read_text(
+        encoding="utf-8"
+    )
     recovery_script = Path("deploy/pi/live-radio/talkingboats-pi-boot-recovery").read_text(
         encoding="utf-8"
     )
@@ -122,9 +126,7 @@ def test_pi_recurring_healthcheck_recovers_local_receiver_dependencies() -> None
     timer = Path("deploy/systemd/talkingboats-pi-healthcheck.timer.example").read_text(
         encoding="utf-8"
     )
-    script = Path("deploy/pi/live-radio/talkingboats-pi-healthcheck").read_text(
-        encoding="utf-8"
-    )
+    script = Path("deploy/pi/live-radio/talkingboats-pi-healthcheck").read_text(encoding="utf-8")
 
     assert "ExecStart=/opt/talkingboats/bin/talkingboats-pi-healthcheck" in service
     assert "TimeoutStartSec=2min" in service
@@ -135,6 +137,8 @@ def test_pi_recurring_healthcheck_recovers_local_receiver_dependencies() -> None
     assert "talkingboats-ais-catcher.service" in script
     assert "talkingboats-profile-capture.service" in script
     assert "talkingboats-spool-uploader.service" in script
+    assert "ais_forwarder_configured" in script
+    assert 'ensure_active "talkingboats-ais-forwarder.service"' in script
     assert "127.0.0.1:8100/api/stat.json" in script
     assert "127.0.0.1:8000/status-json.xsl" in script
     assert "talkingboats-pi-healthcheck.timer" in installer
@@ -145,15 +149,25 @@ def test_pi_healthcheck_detects_an_unreachable_private_api_without_a_restart_loo
     service = Path("deploy/systemd/talkingboats-pi-healthcheck.service.example").read_text(
         encoding="utf-8"
     )
-    script = Path("deploy/pi/live-radio/talkingboats-pi-healthcheck").read_text(
-        encoding="utf-8"
-    )
+    script = Path("deploy/pi/live-radio/talkingboats-pi-healthcheck").read_text(encoding="utf-8")
 
     assert "TALKINGBOATS_PRIVATE_API" in script
     assert "private_api_unreachable" in script
     assert "/healthz" in script
     assert "talkingboats-spool-uploader.service" in script
     assert "Restart=on-failure" not in service
+
+
+def test_pi_healthcheck_recovers_an_sdr_clip_flood_without_a_restart_loop() -> None:
+    script = Path("deploy/pi/live-radio/talkingboats-pi-healthcheck").read_text(encoding="utf-8")
+
+    assert "TALKINGBOATS_PI_SPOOL_FLOOD_WINDOW_MINUTES" in script
+    assert "TALKINGBOATS_PI_SPOOL_FLOOD_MAX_FILES" in script
+    assert "TALKINGBOATS_PI_SPOOL_FLOOD_COOLDOWN_MINUTES" in script
+    assert "ensure_capture_rate_healthy" in script
+    assert "spool_flood_" in script
+    assert "spool_flood_recovery_cooldown" in script
+    assert 'systemctl restart "${capture_service}"' in script
 
 
 def test_pi_installer_restarts_source_loaded_services_after_code_copy() -> None:
@@ -182,7 +196,7 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "pcm_source_command=(" in wrapper
     assert "ffmpeg" in wrapper
     assert '"${pcm_source_command[@]}"' in wrapper
-    assert 'sed \'s/^/[ffmpeg-pcm] /' in wrapper
+    assert "sed 's/^/[ffmpeg-pcm] /" in wrapper
     assert "python3 -m talkingboats.edge_capture" in wrapper
     assert "--tee-stdout" in wrapper
     assert "--squelch-stdout" in wrapper
@@ -201,8 +215,8 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert "TALKINGBOATS_EDGE_RECORD_ENABLED" in wrapper
     assert "TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED" in wrapper
     assert "TALKINGBOATS_EDGE_UPLOAD_ENABLED" in wrapper
-    assert "TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER" in wrapper
-    assert "--mp3-audio-filter" in wrapper
+    assert "TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER" not in wrapper
+    assert "--mp3-audio-filter" not in wrapper
     assert "--record-dir" in wrapper
     assert "--record-upload" in wrapper
     assert "--upload" in wrapper
@@ -212,15 +226,12 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
     assert 'append_env_if_missing TALKINGBOATS_LIVE_AUDIO_SQUELCH_ENABLED "true"' in installer
     assert 'append_env_if_missing TALKINGBOATS_LIVE_SQUELCH_LOOKAHEAD_SECONDS "1.0"' in installer
     assert (
-        'append_env_if_missing TALKINGBOATS_LIVE_OUTPUT_FILTER "alimiter=limit=0.55"'
-        in installer
+        'append_env_if_missing TALKINGBOATS_LIVE_OUTPUT_FILTER "alimiter=limit=0.55"' in installer
     )
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_ENABLED "true"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED "false"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_UPLOAD_ENABLED "false"' in installer
-    assert "TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER" in installer
-    assert "acompressor=threshold=0.06" in installer
-    assert "loudnorm=I=-16:LRA=8:TP=-6" in installer
+    assert "TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER" not in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_PRE_ROLL_SECONDS "0"' in installer
     assert 'append_env_if_missing TALKINGBOATS_EDGE_POST_ROLL_SECONDS "0.3"' in installer
     assert "talkingboats-profile-capture.service" in installer
@@ -231,9 +242,7 @@ def test_edge_live_radio_stream_filters_pcm_before_detector_and_upload() -> None
 
 
 def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> None:
-    wrapper = Path("deploy/pi/live-radio/talkingboats-profile-capture").read_text(
-        encoding="utf-8"
-    )
+    wrapper = Path("deploy/pi/live-radio/talkingboats-profile-capture").read_text(encoding="utf-8")
     installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
@@ -262,8 +271,7 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "5000"' in installer
     assert 'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_MIN_CLIP_SECONDS "2.0"' in installer
     assert (
-        'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS "0.4"'
-        in installer
+        'append_env_if_missing TALKINGBOATS_CAPTURE_DEBUG_14_POST_ROLL_SECONDS "0.4"' in installer
     )
     assert (
         'replace_env_if_value TALKINGBOATS_CAPTURE_DEBUG_14_THRESHOLD_RMS "3600" "5000"'
@@ -271,8 +279,7 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     )
     assert (
         'replace_env_if_value TALKINGBOATS_AIS_STATION_NAME "Elliott Bay VHF" '
-        '"Elliott Bay VHF"'
-        in installer
+        '"Elliott Bay VHF"' in installer
     )
     assert (
         'replace_env_if_value TALKINGBOATS_CAPTURE_PROFILE "debug" "voice_net_balanced"'
@@ -288,46 +295,28 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     )
     assert "talkingboats.capture_profiles" in installer
     assert (
-        'squelch_args+=(--squelch-threshold "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD}")'
-        in installer
+        'squelch_args+=(--squelch-threshold "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD}")' in installer
     )
     assert (
-        'squelch_args+=(--squelch-snr-threshold '
-        '"${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD}")'
-        in installer
+        "squelch_args+=(--squelch-snr-threshold "
+        '"${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD}")' in installer
     )
-    assert 'printf \'TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=%q\\n\' "-35"' in installer
-    assert 'printf \'TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=%q\\n\' ""' in installer
-    assert (
-        "printf 'TALKINGBOATS_VOICE_CHANNEL_SQUELCH_THRESHOLDS=%q\\n' \"\""
-        in installer
-    )
-    assert (
-        "printf 'TALKINGBOATS_VOICE_CHANNEL_SQUELCH_SNR_THRESHOLDS=%q\\n' \"\""
-        in installer
-    )
+    assert "printf 'TALKINGBOATS_VOICE_SQUELCH_THRESHOLD=%q\\n' \"-35\"" in installer
+    assert "printf 'TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD=%q\\n' \"\"" in installer
+    assert "printf 'TALKINGBOATS_VOICE_CHANNEL_SQUELCH_THRESHOLDS=%q\\n' \"\"" in installer
+    assert "printf 'TALKINGBOATS_VOICE_CHANNEL_SQUELCH_SNR_THRESHOLDS=%q\\n' \"\"" in installer
     assert 'append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_THRESHOLD "-35"' in installer
     assert 'append_env_if_missing TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD ""' in installer
-    assert (
-        'append_env_if_missing TALKINGBOATS_VOICE_CHANNEL_SQUELCH_THRESHOLDS ""'
-        in installer
-    )
-    assert (
-        'append_env_if_missing TALKINGBOATS_VOICE_CHANNEL_SQUELCH_SNR_THRESHOLDS ""'
-        in installer
-    )
+    assert 'append_env_if_missing TALKINGBOATS_VOICE_CHANNEL_SQUELCH_THRESHOLDS ""' in installer
+    assert 'append_env_if_missing TALKINGBOATS_VOICE_CHANNEL_SQUELCH_SNR_THRESHOLDS ""' in installer
     assert 'squelch_args+=(--channel-squelch-threshold "${spec}")' in installer
     assert 'squelch_args+=(--channel-squelch-snr-threshold "${spec}")' in installer
-    assert (
-        'replace_env_if_value TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD "20" ""'
-        in installer
-    )
+    assert 'replace_env_if_value TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD "20" ""' in installer
     assert "Set only one of TALKINGBOATS_VOICE_SQUELCH_THRESHOLD or" in installer
     assert '--icecast-output "13:/talkingboats-13.mp3:Talking Boats Bridge-to-bridge"' in installer
     assert (
         '--icecast-output "14:${TALKINGBOATS_ICECAST_MOUNT:-/talkingboats-live.mp3}:'
-        'Talking Boats VTS / Seattle Traffic"'
-        in installer
+        'Talking Boats VTS / Seattle Traffic"' in installer
     )
     assert '--icecast-output "68:/talkingboats-68.mp3:Talking Boats Recreational"' in installer
     assert "--icecast-source-password" in installer
@@ -349,9 +338,9 @@ def test_pi_installer_adds_serial_pinned_voice_and_ais_catcher_service() -> None
     profile_unit = Path("deploy/systemd/talkingboats-profile-capture.service.example").read_text(
         encoding="utf-8"
     )
-    ais_catcher_unit = Path(
-        "deploy/systemd/talkingboats-ais-catcher.service.example"
-    ).read_text(encoding="utf-8")
+    ais_catcher_unit = Path("deploy/systemd/talkingboats-ais-catcher.service.example").read_text(
+        encoding="utf-8"
+    )
     ais_catcher_wrapper = Path("deploy/pi/live-radio/talkingboats-ais-catcher").read_text(
         encoding="utf-8"
     )
@@ -397,20 +386,19 @@ def test_pi_installer_adds_serial_pinned_voice_and_ais_catcher_service() -> None
     assert "TALKINGBOATS_AIS_SDR_SERIAL" in ais_catcher_wrapper
     assert "TALKINGBOATS_AIS_DEVICE_INDEX:-1" in ais_catcher_wrapper
     assert '"-d:${TALKINGBOATS_AIS_DEVICE_INDEX:-1}"' in ais_catcher_wrapper
-    assert "-N \"${TALKINGBOATS_AIS_WEB_PORT:-8100}\"" in ais_catcher_wrapper
+    assert '-N "${TALKINGBOATS_AIS_WEB_PORT:-8100}"' in ais_catcher_wrapper
     assert "TALKINGBOATS_AIS_COMMUNITY_FEED" in ais_catcher_wrapper
     assert "TALKINGBOATS_AIS_SHARING_KEY" in ais_catcher_wrapper
     assert "TALKINGBOATS_AIS_STATION_NAME:-Elliott Bay VHF" in ais_catcher_wrapper
-    assert "TALKINGBOATS_AIS_STATION_LINK:-https://robertboscacci.com" in ais_catcher_wrapper
-    assert "station \"${TALKINGBOATS_AIS_STATION_NAME:-Elliott Bay VHF}\"" in ais_catcher_wrapper
+    assert "TALKINGBOATS_AIS_STATION_LINK:-https://seattleboatradio.com" in ais_catcher_wrapper
+    assert 'station "${TALKINGBOATS_AIS_STATION_NAME:-Elliott Bay VHF}"' in ais_catcher_wrapper
     assert (
         "station_link "
-        "\"${TALKINGBOATS_AIS_STATION_LINK:-https://robertboscacci.com}\""
-        in ais_catcher_wrapper
+        '"${TALKINGBOATS_AIS_STATION_LINK:-https://seattleboatradio.com}"' in ais_catcher_wrapper
     )
-    assert "lat \"${TALKINGBOATS_AIS_LAT:-47.6190158}\"" in ais_catcher_wrapper
-    assert "lon \"${TALKINGBOATS_AIS_LON:--122.3595353}\"" in ais_catcher_wrapper
-    assert "share_loc \"${TALKINGBOATS_AIS_SHARE_LOC:-on}\"" in ais_catcher_wrapper
+    assert 'lat "${TALKINGBOATS_AIS_LAT:-47.6190158}"' in ais_catcher_wrapper
+    assert 'lon "${TALKINGBOATS_AIS_LON:--122.3595353}"' in ais_catcher_wrapper
+    assert 'share_loc "${TALKINGBOATS_AIS_SHARE_LOC:-on}"' in ais_catcher_wrapper
     assert "TALKINGBOATS_AIS_FRIENDS_UDP_PORT must be numeric" in ais_catcher_wrapper
     assert (
         'ais_friends_args=(-u "${ais_friends_host}" "${TALKINGBOATS_AIS_FRIENDS_UDP_PORT}")'
@@ -437,9 +425,7 @@ def test_pi_installer_adds_cloud_hls_and_ais_forwarder_as_gated_relays() -> None
     hls_wrapper = Path("deploy/pi/live-radio/talkingboats-live-hls-relay").read_text(
         encoding="utf-8"
     )
-    env_example = Path("deploy/pi/talkingboats-capture.env.example").read_text(
-        encoding="utf-8"
-    )
+    env_example = Path("deploy/pi/talkingboats-capture.env.example").read_text(encoding="utf-8")
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
     assert "talkingboats-live-hls-relay" in installer
@@ -462,6 +448,11 @@ def test_pi_installer_adds_cloud_hls_and_ais_forwarder_as_gated_relays() -> None
     assert (
         'if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" && '
         '-n "${TALKINGBOATS_AIS_INGEST_TOKEN:-}" ]]; then'
+        in Path("deploy/pi/live-radio/talkingboats-ais-catcher").read_text(encoding="utf-8")
+    )
+    assert (
+        'http_args=(-H "http://${forwarder_host}:${forwarder_port}/" '
+        'interval "${TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS:-1}" response off)'
         in Path("deploy/pi/live-radio/talkingboats-ais-catcher").read_text(encoding="utf-8")
     )
     assert 'talkingboats-forward-ais = "talkingboats.ais_forwarder:main"' in pyproject
@@ -500,8 +491,7 @@ def test_pi_installer_streams_every_balanced_voice_net_channel_to_icecast() -> N
     assert '"05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A"' in installer
     assert (
         'channels_csv="${TALKINGBOATS_CLOUD_HLS_CHANNELS:-'
-        '05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A}"'
-        in hls_wrapper
+        '05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A}"' in hls_wrapper
     )
     for channel in expected_channels:
         mount_channel = channel.lower()
@@ -514,8 +504,7 @@ def test_pi_installer_streams_every_balanced_voice_net_channel_to_icecast() -> N
         assert f"<mount-name>{mount}</mount-name>" in installer
         if channel != "14":
             assert (
-                f'{channel}) printf \'%s\\n\' "/talkingboats-{mount_channel}.mp3" ;;'
-                in hls_wrapper
+                f"{channel}) printf '%s\\n' \"/talkingboats-{mount_channel}.mp3\" ;;" in hls_wrapper
             )
 
 
@@ -541,26 +530,48 @@ def test_live_radio_audio_filter_is_flagged_and_default_on() -> None:
     assert "TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ=16000" in readme
     assert "TALKINGBOATS_TRANSCRIBE_BEAM_SIZE=5" in readme
     assert "TALKINGBOATS_TRANSCRIBE_HOTWORDS" in readme
-    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true" in readme
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" not in readme
     assert "dynaudnorm" not in readme
 
 
-def test_uploaded_clip_transcriber_defaults_to_edge_preprocessed_mp3s() -> None:
+def test_multichannel_capture_uses_ranked_busy_channels_and_buffered_boundaries() -> None:
+    from talkingboats.capture_profiles import CAPTURE_PROFILES, render_rtlsdr_airband_config
+
+    profile = CAPTURE_PROFILES["voice_net_balanced"]
+    assert [channel.channel for channel in profile.channels] == [
+        "14",
+        "13",
+        "66A",
+        "67",
+        "77",
+        "68",
+        "74",
+        "73",
+        "71",
+        "78A",
+        "69",
+        "72",
+    ]
+    rendered = render_rtlsdr_airband_config(profile, output_root="/tmp/spool")
+    assert rendered.count("pre_roll_seconds = 0.50;") == 12
+    assert rendered.count("post_roll_seconds = 0.75;") == 12
+    assert rendered.count("attack_confirmation_batches = 2;") == 12
+    assert rendered.count("minimum_active_batches = 3;") == 12
+    assert rendered.count("maximum_transmission_seconds = 45;") == 12
+
+
+def test_rtlsdr_airband_installer_pins_and_applies_repo_patch() -> None:
+    installer = Path("scripts/install_rtlsdr_airband_pi.sh").read_text(encoding="utf-8")
+    assert "RTLSDR_AIRBAND_VERSION:-v5.2.0" in installer
+    assert "rtl-airband-buffered-clips-v5.2.0.patch" in installer
+    assert 'apply --check "${buffered_clip_patch}"' in installer
+
+
+def test_uploaded_clip_transcriber_has_no_second_audio_processing_switch() -> None:
     unit = Path("deploy/systemd/talkingboats-uploaded-clip-transcriber.service.example").read_text(
         encoding="utf-8"
     )
     compose = Path("compose.yaml").read_text(encoding="utf-8")
 
-    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true" in unit
-    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" in compose
-
-
-def test_uploaded_clip_transcriber_service_uses_capacity_tested_base_model() -> None:
-    unit = Path("deploy/systemd/talkingboats-uploaded-clip-transcriber.service.example").read_text(
-        encoding="utf-8"
-    )
-
-    assert "Environment=TALKINGBOATS_TRANSCRIBE_MODEL=base.en" in unit
-    assert "Environment=TALKINGBOATS_TRANSCRIBE_MODEL=turbo" not in unit
-    assert "Environment=TALKINGBOATS_TRANSCRIBE_CPU_THREADS=2" in unit
-    assert "CPUQuota=200%" in unit
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" not in unit
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" not in compose

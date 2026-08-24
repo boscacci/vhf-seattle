@@ -19,7 +19,6 @@ from talkingboats.durable_events import (
 )
 from talkingboats.dynamo_clip_store import (
     CLIP_STATE_SK,
-    CORRECTIONS_PK,
     TRANSCRIBED_PK,
     DynamoClipStoreConfig,
     DynamoUploadedClipStore,
@@ -35,7 +34,6 @@ from talkingboats.schemas import ClipPresignRequest
 @dataclass(frozen=True)
 class BackfillSummary:
     clip_count: int
-    correction_count: int
     event_count: int
     read_model_count: int = 0
 
@@ -60,14 +58,10 @@ def backfill_clip_events(
                 status_event,
                 segments=_segment_rows(db_path, key=str(clip["key"])),
             )
-    corrections = _correction_rows(db_path, limit=limit)
-    for correction in corrections:
-        event_count += _record_correction_event(event_store, correction)
     if show_progress and clips:
-        print(f"backfilled {len(clips)} clips and {len(corrections)} corrections", flush=True)
+        print(f"backfilled {len(clips)} clips", flush=True)
     return BackfillSummary(
         clip_count=len(clips),
-        correction_count=len(corrections),
         event_count=event_count,
     )
 
@@ -81,33 +75,17 @@ def backfill_clip_read_model(
 ) -> BackfillSummary:
     clips = _clip_rows(db_path, limit=limit)
     segments_by_clip = _segment_rows_by_clip(db_path)
-    corrections = _correction_rows(db_path, limit=limit)
     read_model_count = 0
-    state_by_key: dict[str, dict[str, object]] = {}
     with clip_store.table.batch_writer(overwrite_by_pkeys=["pk", "sk"]) as batch:
         for index, clip in enumerate(clips, start=1):
             _maybe_print_progress(index, len(clips), show_progress=show_progress)
             key = str(clip["key"])
             state = _state_item_from_clip_row(clip, segments_by_clip.get(key, []))
-            state_by_key[key] = state
             read_model_count += _batch_replace_clip_read_model(batch, state)
-        for correction in corrections:
-            key = str(correction["key"])
-            state = state_by_key.get(key)
-            if state is None:
-                raise LookupError(f"correction references clip outside read-model backfill: {key}")
-            _apply_correction_to_state(state, correction)
-            read_model_count += _batch_replace_clip_read_model(batch, state)
-            _batch_put_item(batch, _correction_item(correction))
-            read_model_count += 1
     if show_progress and clips:
-        print(
-            f"backfilled read model for {len(clips)} clips and {len(corrections)} corrections",
-            flush=True,
-        )
+        print(f"backfilled read model for {len(clips)} clips", flush=True)
     return BackfillSummary(
         clip_count=len(clips),
-        correction_count=len(corrections),
         event_count=0,
         read_model_count=read_model_count,
     )
@@ -166,33 +144,6 @@ def _record_status_event(
         observed_at=_parse_utc(str(clip["started_at"])),
         idempotency_key=f"{key}:{event_type}:{idempotency_seed}",
         payload=payload,
-    )
-    return 1
-
-
-def _record_correction_event(event_store: DurableEventStore, correction: sqlite3.Row) -> int:
-    key = str(correction["key"])
-    correction_event_id = stable_event_id(
-        correction["corrected_transcript"],
-        correction["reviewer"],
-        correction["note"],
-    )
-    event_store.record_clip_event(
-        "clip.transcript_corrected",
-        key=key,
-        observed_at=_parse_utc(str(correction["started_at"])),
-        idempotency_key=f"{key}:clip.transcript_corrected:{correction_event_id}",
-        payload={
-            "channel": correction["channel"],
-            "started_at": correction["started_at"],
-            "ended_at": correction["ended_at"],
-            "duration_seconds": correction["duration_seconds"],
-            "content_type": correction["content_type"],
-            "original_transcript": correction["original_transcript"],
-            "corrected_transcript": correction["corrected_transcript"],
-            "reviewer": correction["reviewer"],
-            "note": correction["note"],
-        },
     )
     return 1
 
@@ -284,33 +235,6 @@ def _segment_rows_by_clip(db_path: Path) -> dict[str, list[dict[str, object]]]:
     return segments
 
 
-def _correction_rows(db_path: Path, *, limit: int | None) -> list[sqlite3.Row]:
-    query = """
-        SELECT
-            uploaded_clips.key,
-            uploaded_clips.channel,
-            uploaded_clips.started_at,
-            uploaded_clips.ended_at,
-            uploaded_clips.duration_seconds,
-            uploaded_clips.content_type,
-            uploaded_clip_transcript_corrections.original_transcript,
-            uploaded_clip_transcript_corrections.corrected_transcript,
-            uploaded_clip_transcript_corrections.reviewer,
-            uploaded_clip_transcript_corrections.note
-        FROM uploaded_clip_transcript_corrections
-        JOIN uploaded_clips
-            ON uploaded_clips.key = uploaded_clip_transcript_corrections.clip_key
-        ORDER BY uploaded_clip_transcript_corrections.updated_at ASC,
-            uploaded_clip_transcript_corrections.id ASC
-    """
-    params: tuple[object, ...] = ()
-    if limit is not None:
-        query += "\nLIMIT ?"
-        params = (limit,)
-    with _connect(db_path) as connection:
-        return list(connection.execute(query, params).fetchall())
-
-
 def _clip_request_from_row(row: sqlite3.Row) -> ClipPresignRequest:
     return ClipPresignRequest(
         channel=row["channel"],
@@ -361,28 +285,9 @@ def _state_item_from_clip_row(
         "quality_reason": row["quality_reason"],
         "quality_flags": json.loads(row["quality_flags"] or "[]"),
         "audio_metrics": json.loads(row["audio_metrics"] or "{}"),
-        "transcript_reviewed": False,
         "segments": segments if status == "transcribed" else [],
         "segment_count": len(segments) if status == "transcribed" else 0,
     }
-
-
-def _apply_correction_to_state(
-    state: dict[str, object],
-    correction: sqlite3.Row,
-) -> None:
-    corrected = " ".join(str(correction["corrected_transcript"]).split())
-    original = correction["original_transcript"] or state.get("transcript")
-    state.update(
-        {
-            "original_transcript": original,
-            "corrected_transcript": corrected,
-            "display_transcript": corrected,
-            "transcript_reviewed": True,
-            "reviewer": correction["reviewer"],
-            "note": correction["note"],
-        }
-    )
 
 
 def _batch_replace_clip_read_model(batch: object, state: dict[str, object]) -> int:
@@ -409,24 +314,6 @@ def _batch_replace_clip_read_model(batch: object, state: dict[str, object]) -> i
         _batch_put_item(batch, _index_item(_channel_transcribed_pk(channel), state))
         item_count += 2
     return item_count
-
-
-def _correction_item(correction: sqlite3.Row) -> dict[str, object]:
-    return {
-        "pk": CORRECTIONS_PK,
-        "sk": f"{correction['started_at']}#{correction['key']}",
-        "entity_type": "clip_correction",
-        "key": correction["key"],
-        "channel": correction["channel"],
-        "started_at": correction["started_at"],
-        "ended_at": correction["ended_at"],
-        "duration_seconds": correction["duration_seconds"],
-        "content_type": correction["content_type"],
-        "original_transcript": correction["original_transcript"],
-        "corrected_transcript": correction["corrected_transcript"],
-        "reviewer": correction["reviewer"],
-        "note": correction["note"],
-    }
 
 
 def _batch_put_item(batch: object, item: dict[str, object]) -> None:
@@ -484,7 +371,7 @@ def main() -> None:
         environment=args.environment,
         required=True,
     )
-    summary = BackfillSummary(clip_count=0, correction_count=0, event_count=0, read_model_count=0)
+    summary = BackfillSummary(clip_count=0, event_count=0, read_model_count=0)
     if args.mode in {"events", "both"}:
         summary = backfill_clip_events(
             db_path=args.db_path,
@@ -508,7 +395,6 @@ def main() -> None:
         )
         summary = BackfillSummary(
             clip_count=max(summary.clip_count, read_model_summary.clip_count),
-            correction_count=max(summary.correction_count, read_model_summary.correction_count),
             event_count=summary.event_count,
             read_model_count=read_model_summary.read_model_count,
         )

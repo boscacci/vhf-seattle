@@ -1,0 +1,20 @@
+[Unit]
+Description=Talking Boats isolated dev API
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/repos/elliott-bay-vhf
+EnvironmentFile=%h/repos/elliott-bay-vhf-live-ais-deploy/.env
+EnvironmentFile=-%h/.config/talkingboats/api.env
+Environment=PYTHONPATH=%h/repos/elliott-bay-vhf/src
+ExecStart=%h/miniforge3/condabin/conda run --no-capture-output -n dell uvicorn talkingboats.api:app --host 127.0.0.1 --port 8035 --workers 1
+Restart=always
+RestartSec=10
+LogRateLimitIntervalSec=60s
+LogRateLimitBurst=1000
+
+[Install]
+WantedBy=default.target

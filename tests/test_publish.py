@@ -14,13 +14,14 @@ from talkingboats.publish import (
     _public_audio_filename,
     export_public_site,
     export_recent_clip_site,
+    recent_clip_snapshot,
     sanitize_public_manifest,
 )
 from talkingboats.schemas import ClipPresignRequest
 from talkingboats.security import assert_public_safe
 
 
-def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
+def test_public_manifest_exports_only_approved_sanitized_fields() -> None:
     private_manifest = {
         "generated_at": "2026-05-20T00:00:00Z",
         "site": {"title": "Talking Boats"},
@@ -33,7 +34,7 @@ def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
                 "public_title": "Public moment",
                 "channel": "68",
                 "started_at": "2026-05-20T19:12:00Z",
-                "transcript_public": "Reviewed summary only.",
+                "transcript_public": "Published summary only.",
                 "audio_public_filename": "approved.mp3",
                 "private_s3_key": "raw/channel=68/date=2026-05-20/secret.mp3",
                 "receiver_id": "rtl-serial",
@@ -46,7 +47,7 @@ def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
                 "public_title": "Do not export",
                 "channel": "14",
                 "started_at": "2026-05-20T20:00:00Z",
-                "transcript_public": "This unreviewed text must not leak.",
+                "transcript_public": "This private text must not leak.",
             },
             {
                 "id": "legacy-wx",
@@ -72,7 +73,7 @@ def test_public_manifest_exports_only_reviewed_sanitized_fields() -> None:
     assert "receiver_id" not in rendered
     assert "private_note" not in rendered
     assert "127.0.0.1" not in rendered
-    assert "unreviewed text" not in rendered
+    assert "private text" not in rendered
 
 
 def test_public_manifest_rejects_presigned_urls() -> None:
@@ -91,6 +92,22 @@ def test_public_manifest_rejects_presigned_urls() -> None:
                 ]
             }
         )
+
+
+def test_recent_clip_snapshot_keeps_stats_but_bounds_cold_start_payload() -> None:
+    manifest = {
+        "generated_at": "2026-07-28T06:00:00Z",
+        "site": {"title": "Elliott Bay VHF"},
+        "stats": {"clip_count": 30, "received_clip_count": 500_000},
+        "clips": [{"id": f"clip-{index}"} for index in range(30)],
+    }
+
+    snapshot = recent_clip_snapshot(manifest)
+
+    assert snapshot["generated_at"] == manifest["generated_at"]
+    assert snapshot["stats"] == manifest["stats"]
+    assert [clip["id"] for clip in snapshot["clips"]] == [f"clip-{index}" for index in range(24)]
+    assert len(manifest["clips"]) == 30
 
 
 def test_public_export_copies_static_site_and_writes_manifest(tmp_path: Path) -> None:
@@ -122,6 +139,8 @@ def test_public_export_copies_static_site_and_writes_manifest(tmp_path: Path) ->
     assert (output_dir / "index.html").exists()
     exported = json.loads((output_dir / "public_manifest.json").read_text(encoding="utf-8"))
     assert exported["clips"][0]["id"] == "approved"
+    snapshot = json.loads((output_dir / "recent_clips.json").read_text(encoding="utf-8"))
+    assert snapshot["clips"] == exported["clips"]
 
 
 def test_public_export_processes_approved_local_audio(tmp_path: Path) -> None:
@@ -438,9 +457,7 @@ def test_recent_clip_export_skips_unpublishable_audio_after_download(tmp_path: P
         limit=10,
     )
 
-    assert [clip["transcript_public"] for clip in manifest["clips"]] == [
-        "Seattle Traffic roger."
-    ]
+    assert [clip["transcript_public"] for clip in manifest["clips"]] == ["Seattle Traffic roger."]
     assert processor.source_bytes == [b"real traffic"]
     assert not any(
         path.name.startswith("20260527T191004Z")
@@ -573,9 +590,7 @@ def test_recent_clip_export_preserves_existing_analysis_artifacts(tmp_path: Path
     assert (output_dir / "analysis" / "lexical.json").read_text(encoding="utf-8") == (
         '{"status":"ok"}\n'
     )
-    assert "topics" in (output_dir / "analysis" / "topic_clusters.html").read_text(
-        encoding="utf-8"
-    )
+    assert "topics" in (output_dir / "analysis" / "topic_clusters.html").read_text(encoding="utf-8")
 
 
 def test_recent_clip_export_reuses_existing_public_audio(tmp_path: Path) -> None:

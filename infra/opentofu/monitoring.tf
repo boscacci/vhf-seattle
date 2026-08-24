@@ -19,6 +19,16 @@ locals {
     ".",
     "-",
   )
+  public_manifest_freshness_alarm_name = replace(
+    "${var.project_name}-${var.resource_site_subdomain}-prod-public-manifest-stale",
+    ".",
+    "-",
+  )
+  ais_freshness_alarm_name = replace(
+    "${var.project_name}-${var.resource_site_subdomain}-prod-ais-stale",
+    ".",
+    "-",
+  )
   clip_freshness_lambda_name = replace(
     "${var.project_name}-${var.resource_site_subdomain}-prod-clip-freshness",
     ".",
@@ -55,9 +65,12 @@ resource "aws_iam_role_policy_attachment" "clip_freshness_monitor_basic_executio
 
 data "aws_iam_policy_document" "clip_freshness_monitor_access" {
   statement {
-    sid       = "ReadPublicManifest"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.public_site.arn}/public_manifest.json"]
+    sid     = "ReadPublicManifest"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.public_site.arn}/public_manifest.json",
+      "${aws_s3_bucket.public_site.arn}/ais/latest.json",
+    ]
   }
 
   statement {
@@ -103,6 +116,7 @@ resource "aws_lambda_function" "clip_freshness_monitor" {
     variables = {
       TALKINGBOATS_MONITOR_BUCKET              = aws_s3_bucket.public_site.bucket
       TALKINGBOATS_MONITOR_KEY                 = "public_manifest.json"
+      TALKINGBOATS_MONITOR_AIS_KEY             = "ais/latest.json"
       TALKINGBOATS_MONITOR_NAMESPACE           = local.clip_freshness_namespace
       TALKINGBOATS_MONITOR_SITE                = local.site_fqdn
       TALKINGBOATS_MONITOR_STALE_AFTER_SECONDS = "3600"
@@ -203,6 +217,12 @@ data "aws_iam_policy_document" "prod_clip_freshness_alerts" {
       variable = "AWS:SourceArn"
       values = [
         "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.clip_freshness_alarm_name}",
+        "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.public_manifest_freshness_alarm_name}",
+        "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.ais_freshness_alarm_name}",
+        "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.clip_count_aggregator_error_alarm_name}",
+        "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.clip_count_aggregator_lag_alarm_name}",
+        "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.clip_count_aggregator_dev_error_alarm_name}",
+        "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.clip_count_aggregator_dev_lag_alarm_name}",
       ]
     }
 
@@ -221,7 +241,8 @@ resource "aws_sns_topic_policy" "prod_clip_freshness_alerts" {
 
 resource "aws_cloudwatch_metric_alarm" "prod_clip_freshness" {
   alarm_name          = local.clip_freshness_alarm_name
-  alarm_description   = "Production seattleboatradio.com has no public clip newer than one hour, or its freshness monitor stopped reporting."
+  alarm_description   = "Diagnostic signal: production seattleboatradio.com has no public clip newer than one hour. Quiet radio traffic can cause this state; operator email is intentionally disabled."
+  actions_enabled     = false
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
@@ -237,12 +258,67 @@ resource "aws_cloudwatch_metric_alarm" "prod_clip_freshness" {
     Site        = local.site_fqdn
   }
 
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "clip-freshness-alarm"
+  })
+
+  depends_on = [aws_sns_topic_policy.prod_clip_freshness_alerts]
+}
+
+resource "aws_cloudwatch_metric_alarm" "prod_public_manifest_freshness" {
+  alarm_name          = local.public_manifest_freshness_alarm_name
+  alarm_description   = "Production public clip publishing has not refreshed public_manifest.json for one hour. Three consecutive breaching samples are required; the AIS alarm covers freshness-monitor heartbeat loss."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  metric_name         = "PublicManifestAgeSeconds"
+  namespace           = local.clip_freshness_namespace
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 3600
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    Environment = "prod"
+    Site        = local.site_fqdn
+  }
+
   alarm_actions = [aws_sns_topic.prod_clip_freshness_alerts.arn]
   ok_actions    = [aws_sns_topic.prod_clip_freshness_alerts.arn]
 
   tags = merge(local.common_tags, {
     Environment = "prod"
-    Role        = "clip-freshness-alarm"
+    Role        = "public-manifest-freshness-alarm"
+  })
+
+  depends_on = [aws_sns_topic_policy.prod_clip_freshness_alerts]
+}
+
+resource "aws_cloudwatch_metric_alarm" "prod_ais_freshness" {
+  alarm_name          = local.ais_freshness_alarm_name
+  alarm_description   = "Production AIS ingest has been stale for at least fifteen minutes, or its freshness monitor stopped reporting for three consecutive samples. Check the Raspberry Pi edge host, AIS-catcher, and outbound relays."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  metric_name         = "LatestAisMessageAgeSeconds"
+  namespace           = local.clip_freshness_namespace
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 900
+  treat_missing_data  = "breaching"
+
+  dimensions = {
+    Environment = "prod"
+    Site        = local.site_fqdn
+  }
+
+  alarm_actions = [aws_sns_topic.prod_clip_freshness_alerts.arn]
+  ok_actions    = [aws_sns_topic.prod_clip_freshness_alerts.arn]
+
+  tags = merge(local.common_tags, {
+    Environment = "prod"
+    Role        = "ais-freshness-alarm"
   })
 
   depends_on = [aws_sns_topic_policy.prod_clip_freshness_alerts]

@@ -1,0 +1,11 @@
+[Unit]
+After=talkingboats-api-dev.service
+Wants=talkingboats-api-dev.service
+
+[Service]
+WorkingDirectory=%h/repos/elliott-bay-vhf
+Environment=PYTHONPATH=%h/repos/elliott-bay-vhf/src
+Environment=TALKINGBOATS_PROXY_PRIVATE_API_URL=http://127.0.0.1:8035
+Environment=TALKINGBOATS_PROXY_STATIC_SHELL_DIR=%h/repos/elliott-bay-vhf/public-site
+ExecStart=
+ExecStart=%h/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-live-radio-proxy --host 172.20.0.1 --port 8095

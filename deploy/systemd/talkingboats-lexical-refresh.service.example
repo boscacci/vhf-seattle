@@ -7,10 +7,10 @@ StartLimitBurst=2
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
-EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env
-ExecStartPre=/bin/bash /home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_lan_address.sh --dns-host dynamodb.us-west-2.amazonaws.com
-ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/refresh_lexical_analysis.sh
+WorkingDirectory=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy
+EnvironmentFile=-%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/.env
+ExecStartPre=/bin/bash %h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/scripts/talkingboats_lan_address.sh --dns-host dynamodb.us-west-2.amazonaws.com
+ExecStart=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/scripts/refresh_lexical_analysis.sh
 Restart=on-failure
 RestartSec=15min
 TimeoutStartSec=2h

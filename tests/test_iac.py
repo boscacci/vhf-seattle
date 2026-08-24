@@ -78,9 +78,9 @@ def test_opentofu_allows_browser_audio_cors_for_raw_audio_buckets() -> None:
         assert 'expose_headers  = ["ETag"]' in block
         assert "max_age_seconds = 3000" in block
     assert '"https://seattleboatradio.com"' in prod_cors
-    assert '"https://vhf.robertboscacci.com"' in prod_cors
     assert '"https://dev.seattleboatradio.com"' in dev_cors
-    assert '"https://vhf-dev.robertboscacci.com"' in dev_cors
+    assert "robertboscacci.com" not in prod_cors
+    assert "robertboscacci.com" not in dev_cors
 
 
 def test_opentofu_keeps_s3_bucket_versioning_suspended() -> None:
@@ -104,8 +104,12 @@ def test_opentofu_has_distinct_dev_and_prod_outputs() -> None:
     outputs_tf = Path("infra/opentofu/outputs.tf").read_text(encoding="utf-8")
     variables_tf = Path("infra/opentofu/variables.tf").read_text(encoding="utf-8")
 
-    assert 'default     = "vhf"' in variables_tf
-    assert 'default     = "vhf-dev"' in variables_tf
+    assert 'variable "site_fqdn"' in variables_tf
+    assert 'default     = "seattleboatradio.com"' in variables_tf
+    assert 'variable "dev_site_fqdn"' in variables_tf
+    assert 'default     = "dev.seattleboatradio.com"' in variables_tf
+    assert 'variable "site_zone_domain"' in variables_tf
+    assert 'variable "dev_site_zone_domain"' in variables_tf
     assert 'default     = "talkingboats"' in variables_tf
     assert 'default     = "dev.talkingboats"' in variables_tf
     assert "var.resource_site_subdomain" in Path("infra/opentofu/main.tf").read_text(
@@ -177,6 +181,41 @@ def test_opentofu_defines_dynamodb_event_tables_for_dev_and_prod() -> None:
     assert 'output "dev_radio_events_table_name"' in outputs_tf
 
 
+def test_opentofu_materializes_clip_counts_from_index_streams_with_separate_identities() -> None:
+    aggregate_tf = Path("infra/opentofu/clip_count_aggregates.tf").read_text(encoding="utf-8")
+    monitoring_tf = Path("infra/opentofu/monitoring.tf").read_text(encoding="utf-8")
+
+    assert 'data "archive_file" "clip_count_aggregator"' in aggregate_tf
+    assert 'filename = "talkingboats/clip_count_aggregates.py"' in aggregate_tf
+    assert 'resource "aws_lambda_function" "clip_count_aggregator_prod"' in aggregate_tf
+    assert 'resource "aws_lambda_function" "clip_count_aggregator_dev"' in aggregate_tf
+    assert 'resource "aws_iam_role" "clip_count_aggregator_prod"' in aggregate_tf
+    assert 'resource "aws_iam_role" "clip_count_aggregator_dev"' in aggregate_tf
+    assert 'resources = [aws_dynamodb_table.radio_events.arn]' in aggregate_tf
+    assert 'resources = [aws_dynamodb_table.dev_radio_events.arn]' in aggregate_tf
+    assert '"dynamodb:ConditionCheckItem"' in aggregate_tf
+    assert 'dynamodb:Scan' not in aggregate_tf
+    assert 'resource "aws_lambda_event_source_mapping" "clip_count_aggregator_prod"' in aggregate_tf
+    assert 'resource "aws_lambda_event_source_mapping" "clip_count_aggregator_dev"' in aggregate_tf
+    assert 'starting_position                  = "LATEST"' in aggregate_tf
+    assert 'function_response_types            = ["ReportBatchItemFailures"]' in aggregate_tf
+    assert 'clip_count_source_index_pks' in aggregate_tf
+    assert (
+        'resource "aws_cloudwatch_metric_alarm" "clip_count_aggregator_prod_errors"'
+        in aggregate_tf
+    )
+    assert 'resource "aws_cloudwatch_metric_alarm" "clip_count_aggregator_prod_lag"' in aggregate_tf
+    assert (
+        'resource "aws_cloudwatch_metric_alarm" "clip_count_aggregator_dev_errors"'
+        in aggregate_tf
+    )
+    assert 'resource "aws_cloudwatch_metric_alarm" "clip_count_aggregator_dev_lag"' in aggregate_tf
+    assert "clip_count_aggregator_error_alarm_name" in monitoring_tf
+    assert "clip_count_aggregator_lag_alarm_name" in monitoring_tf
+    assert "clip_count_aggregator_dev_error_alarm_name" in monitoring_tf
+    assert "clip_count_aggregator_dev_lag_alarm_name" in monitoring_tf
+
+
 def test_public_site_deploy_script_enforces_branch_environment_hygiene() -> None:
     deploy_script = Path("scripts/deploy_public_site.sh").read_text(encoding="utf-8")
 
@@ -242,8 +281,8 @@ def test_cloudfront_routes_prod_read_only_live_api_to_live_origin() -> None:
         "origin_request_policy_id = aws_cloudfront_origin_request_policy.operator_api.id"
         not in main_tf
     )
-    assert "records = var.dev_tailnet_ipv4_addresses" in dev_a_record
-    assert "records = var.dev_tailnet_ipv6_addresses" in dev_aaaa_record
+    assert "records         = var.dev_tailnet_ipv4_addresses" in dev_a_record
+    assert "records         = var.dev_tailnet_ipv6_addresses" in dev_aaaa_record
     assert "alias {" not in dev_a_record
     assert "alias {" not in dev_aaaa_record
 
@@ -291,8 +330,8 @@ def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_ori
     assert "validation {" in ingest_token_sha256
     assert "^[0-9a-f]{64}$" in ingest_token_sha256
     assert "default" not in ingest_token_sha256
-    assert 'variable "ais_live_subdomain"' in variables_tf
-    assert 'default     = "ais-live"' in _variable_block(variables_tf, "ais_live_subdomain")
+    assert 'variable "root_domain"' not in variables_tf
+    assert 'variable "ais_live_subdomain"' not in variables_tf
     assert 'resource "aws_kms_key" "ais_ingest_secret"' in main_tf
     assert 'resource "aws_kms_alias" "ais_ingest_secret"' in main_tf
     assert 'resource "aws_secretsmanager_secret" "ais_ingest_token"' in main_tf
@@ -321,8 +360,11 @@ def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_ori
     assert 'route_key = "$connect"' in main_tf
     assert 'route_key = "$disconnect"' in main_tf
     assert 'route_key = "$default"' in main_tf
-    assert 'resource "aws_apigatewayv2_domain_name" "ais_live"' in main_tf
-    assert 'api_mapping_key = "v1"' in main_tf
+    assert 'resource "aws_apigatewayv2_domain_name" "ais_live"' not in main_tf
+    assert 'resource "aws_apigatewayv2_api_mapping" "ais_websocket"' not in main_tf
+    assert 'resource "aws_acm_certificate" "ais_live"' not in main_tf
+    assert 'resource "aws_route53_record" "ais_live_a"' not in main_tf
+    assert 'resource "aws_route53_record" "ais_live_aaaa"' not in main_tf
     assert 'resource "aws_dynamodb_table" "ais_connections"' in main_tf
     assert 'ttl {' in _resource_block(main_tf, "aws_dynamodb_table", "ais_connections")
     assert 'TALKINGBOATS_AIS_SNAPSHOT_BUCKET' in main_tf
@@ -336,9 +378,17 @@ def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_ori
     )
     assert 'output "ais_http_ingest_url"' in outputs_tf
     assert 'output "ais_websocket_url"' in outputs_tf
+    assert 'output "ais_live_fqdn"' not in outputs_tf
     assert 'output "ais_ingest_secret_name"' in outputs_tf
     assert 'output "ais_ingest_secret_kms_key_arn"' in outputs_tf
-    assert 'wss://${local.ais_live_fqdn}/v1' in outputs_tf
+    assert (
+        '"${aws_apigatewayv2_api.ais_websocket.api_endpoint}/'
+        '${aws_apigatewayv2_stage.ais_websocket.name}"'
+        in outputs_tf
+    )
+    assert "robertboscacci.com" not in main_tf
+    assert "robertboscacci.com" not in variables_tf
+    assert "robertboscacci.com" not in outputs_tf
 
 
 def test_paused_native_mobile_auth_resources_are_not_managed() -> None:

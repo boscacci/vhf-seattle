@@ -9,7 +9,6 @@
 <p align="center">
   <a href="https://seattleboatradio.com">Production site</a> &middot;
   <a href="https://dev.seattleboatradio.com">Dev site</a> &middot;
-  <a href="https://robertboscacci.com/projects/elliott-bay-vhf/">Project post</a> &middot;
   <a href="docs/security-model.md">Security model</a> &middot;
   <a href="docs/deployment-hygiene.md">Deployment hygiene</a>
 </p>
@@ -40,9 +39,10 @@ The public site includes:
 
 - live HLS audio for monitored marine VHF channels;
 - AIS vessel positions bounded to local waters;
-- recent clips, transcripts, search, and Hall of Fame clips;
+- recent clips, Pacific-time datetime navigation, channel filters, transcripts,
+  search, and Hall of Fame clips;
 - transcript language analysis and topic clustering;
-- a dev/operator path for transcript correction and telemetry.
+- a dev/operator path for Hall of Fame curation and telemetry.
 
 Production browsers read only public surfaces. They do not connect directly to
 the Raspberry Pi, Ubuntu micro-computer private API, LAN Icecast URLs, Tailscale/Funnel
@@ -53,7 +53,7 @@ origins, raw S3 objects, DynamoDB, receiver controls, or write-capable routes.
 | Layer | Runs On | Owns |
 | --- | --- | --- |
 | Radio edge | Raspberry Pi + RTL-SDR | VHF voice capture, AIS decode, HLS segment generation, activity detection, clip spooling, bounded local buffers |
-| Home processing | Ubuntu micro-computer | Private API, presigned raw-audio uploads, transcription, transcript corrections, public exports, telemetry |
+| Home processing | Ubuntu micro-computer | Private API, presigned raw-audio uploads, transcription, public exports, telemetry |
 | AWS public edge | S3, CloudFront, DynamoDB, API Gateway/Lambda | Private static origins, public read-only delivery, durable clip state, AIS ingest, TLS, DNS |
 
 The normal path is:
@@ -109,8 +109,9 @@ AIS:
 - A local forwarder sends sanitized-bound input to API Gateway over outbound
   HTTPS.
 - Lambda strips private fields and bounds the public payload to local waters.
-- Public reads use `/ais/latest.json` and
-  `wss://ais-live.robertboscacci.com/v1`.
+- Public reads use `/ais/latest.json`. Optional direct WebSocket subscribers
+  can read the generic AWS endpoint reported by
+  `tofu -chdir=infra/opentofu output -raw ais_websocket_url`.
 
 ## Processing Path
 
@@ -119,14 +120,25 @@ Clip processing:
 - The Pi creates activity clips and sidecar metadata.
 - The Pi asks the Ubuntu micro-computer private API for short-lived presigned upload URLs.
 - Raw audio stays in private S3.
-- DynamoDB stores clip events, transcripts, corrections, and serving read
-  models.
+- DynamoDB stores clip events, transcripts, and serving read models.
 - Audio measurements and Whisper segment confidence produce an automatic clip
   quality assessment. Clearly clipped, static-only, or low-signal clips are
   quarantined from the default public feed while remaining available in the
   dev review lane.
-- The Ubuntu micro-computer runs `faster-whisper`, review/correction workflows, lexical
-  analysis, topic clustering, and public exports.
+- Weak-reception clips with less than 5 dB of speech contrast and less than
+  12% energy in the intelligibility/presence band are quarantined regardless
+  of clip duration. Strongly modulated lower-pitched speech is retained.
+- Clips whose normalized noise floor reaches -24 dBFS or higher are also
+  quarantined, even when their duration or transcript would otherwise pass.
+- A whole-clip Whisper mean log probability of -0.80 or lower is treated as
+  non-intelligible/hallucinated speech and quarantined. This does not trim
+  individual transcript segments, so accepted clips still transcribe the full
+  playable audio.
+- Older records with a persisted quality score below 90 are omitted from the
+  normal feed at read time. They remain available through the explicit
+  `quality=all` API filter without rewriting shared production data.
+- The Ubuntu micro-computer runs `faster-whisper`, lexical analysis, topic
+  clustering, and public exports.
 
 Transcript search keeps the generated vector index in the private API process,
 invalidates it when the generated file changes, and warms it after host recovery
@@ -138,14 +150,20 @@ Default edge audio/transcription settings:
 
 ```bash
 TALKINGBOATS_AUDIO_FILTER_ENABLED=true
-TALKINGBOATS_TRANSCRIBE_MODEL=base.en
+TALKINGBOATS_TRANSCRIBE_MODEL=turbo
 TALKINGBOATS_TRANSCRIBE_CPU_THREADS=2
 TALKINGBOATS_TRANSCRIBE_WORKERS=1
 TALKINGBOATS_TRANSCRIBE_SAMPLE_RATE_HZ=16000
 TALKINGBOATS_TRANSCRIBE_BEAM_SIZE=5
 TALKINGBOATS_TRANSCRIBE_HOTWORDS="Seattle Traffic,VTS,Puget Sound"
-TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true
+TALKINGBOATS_TRANSCRIBE_VAD_FILTER=false
 ```
+
+The saved canonical MP3 is both the playable clip and the ASR input. VAD and
+per-segment confidence deletion are off by default so speech at either playable
+edge remains in the transcript; confidence still contributes to clip quality
+scoring. Receiver capture retains 0.50 seconds before squelch opens and 0.75
+seconds after it closes.
 
 Retention and export:
 
@@ -155,35 +173,13 @@ Retention and export:
   nondisplayable transcript artifacts.
 - Playback controls are shown only when public audio can still be resolved.
 
-## ASR Feedback Loop
+## Speech Recognition
 
-<p align="center">
-  <img
-    src="https://media.robertboscacci.com/photos/elliott-bay-vhf/whisper-fine-tuning.png"
-    alt="Whisper fine-tuning feedback loop diagram for Elliott Bay VHF."
-    width="100%"
-  >
-</p>
-
-Transcript corrections become supervised training examples by default:
-
-- The operator UI saves original/corrected transcript pairs to DynamoDB, marks
-  them for training by default with `good` quality metadata, and still allows a
-  deliberate opt-out for odd clips.
-- On dev, the tailnet-gated `/api/clips/corrections` endpoint lists reviewed
-  corrections with playback-safe `audio_url` values; `/api/clips/corrections/export`
-  remains limited to training-eligible examples.
-- Manual ASR feedback training checks for enough reviewed corrections and skips
-  unchanged datasets by fingerprint.
-- Raw private S3 audio is archived locally and paired with corrected text into
-  training JSONL so later retries do not depend on short-lived raw-object access.
-- Feedback candidates can be fine-tuned, converted to CTranslate2, and evaluated
-  offline. The production clip worker remains pinned to the capacity-tested
-  `base.en` model; candidates cannot silently override that runtime guardrail.
-
-Default guardrails are defined in `src/talkingboats/asr_feedback.py`, including
-the minimum reviewed correction count, base model, fingerprinting, model
-promotion, and transcriber restart behavior.
+The transcriber intentionally uses one inference-only path: the open-source
+Whisper `large-v3-turbo` checkpoint through `faster-whisper` with CPU `int8`.
+The service is capped at two CPU cores and one worker so transcription cannot
+crowd out live audio, the API, or the public proxy. There are no local dataset
+curation or model-building workflows in this repository.
 
 ## Local Setup
 

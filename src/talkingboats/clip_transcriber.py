@@ -16,21 +16,17 @@ from typing import Any, Literal, Protocol
 import boto3
 from botocore.exceptions import ClientError
 
-from talkingboats.asr_training_metadata import (
-    is_training_eligible,
-    normalize_training_flags,
-    normalize_training_quality,
-    normalize_training_split,
-    validate_training_metadata,
-)
 from talkingboats.audio_analysis import AudioAnalysisReport, analyze_audio_file
 from talkingboats.audio_processing import (
-    DEFAULT_SPEECH_AUDIO_FILTER,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ,
     prepared_transcription_audio,
 )
 from talkingboats.clip_quality import (
+    MAX_CLEAR_NOISE_FLOOR_DBFS,
+    MIN_CLEAR_ASR_MEAN_AVG_LOGPROB,
+    MIN_CLEAR_PRESENCE_BAND_RATIO,
+    MIN_CLEAR_SPEECH_CONTRAST_DB,
     AsrQualitySummary,
     ClipQualityAssessment,
     QualityFilter,
@@ -50,17 +46,14 @@ from talkingboats.schemas import ClipPresignRequest
 
 AudioQualityAnalyzer = Any
 
-_DISPLAYED_TRANSCRIPT_SQL = (
-    "COALESCE(uploaded_clip_transcript_corrections.corrected_transcript, "
-    "uploaded_clips.transcript)"
-)
+_DISPLAYED_TRANSCRIPT_SQL = "uploaded_clips.transcript"
 _DISPLAYABLE_TRANSCRIPT_SQL = (
     f"talkingboats_transcript_displayable({_DISPLAYED_TRANSCRIPT_SQL}) = 1"
 )
-DEFAULT_TRANSCRIBE_VAD_FILTER = True
-DEFAULT_TRANSCRIBE_MODEL = "base.en"
+DEFAULT_TRANSCRIBE_VAD_FILTER = False
 DEFAULT_TRANSCRIBE_VAD_MIN_SILENCE_DURATION_MS = 500
 DEFAULT_TRANSCRIBE_VAD_SPEECH_PAD_MS = 400
+DEFAULT_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB: float | None = None
 
 
 class ClipNotAvailable(RuntimeError):
@@ -79,6 +72,7 @@ class UploadedClipRecord:
     ended_at: str | None
     duration_seconds: float | None
     content_type: str
+    audio_profile: str | None
     idempotency_key: str
     status: str
     transcript: str | None
@@ -95,14 +89,8 @@ class RecentTranscribedClip:
     content_type: str
     transcript: str
     segments: list[dict[str, str]]
-    transcript_reviewed: bool = False
     featured: bool = False
     featured_at: str | None = None
-    include_in_training: bool = False
-    training_quality: str = "unknown"
-    training_split: str = "auto"
-    training_flags: tuple[str, ...] = ()
-    training_reason: str | None = None
     quality_status: str = "unknown"
     quality_score: float | None = None
     quality_reason: str | None = None
@@ -122,25 +110,6 @@ class ClipFeature:
     featured_at: str | None
     featured_by: str | None
     note: str | None
-
-
-@dataclass(frozen=True)
-class TranscriptCorrection:
-    key: str
-    channel: str
-    started_at: str
-    ended_at: str | None
-    duration_seconds: float | None
-    content_type: str
-    original_transcript: str
-    corrected_transcript: str
-    reviewer: str | None
-    note: str | None
-    include_in_training: bool = False
-    training_quality: str = "unknown"
-    training_split: str = "auto"
-    training_flags: tuple[str, ...] = ()
-    training_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -196,12 +165,13 @@ class UploadedClipStore:
                     ended_at,
                     duration_seconds,
                     content_type,
+                    audio_profile,
                     idempotency_key,
                     status,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
                 """,
                 (
                     key,
@@ -210,6 +180,7 @@ class UploadedClipStore:
                     _format_utc(request.ended_at) if request.ended_at else None,
                     request.duration_seconds,
                     request.content_type,
+                    request.audio_profile,
                     request.idempotency_key,
                     now,
                     now,
@@ -238,6 +209,7 @@ class UploadedClipStore:
                     ended_at,
                     duration_seconds,
                     content_type,
+                    audio_profile,
                     idempotency_key,
                     status,
                     transcript,
@@ -262,6 +234,7 @@ class UploadedClipStore:
                     ended_at,
                     duration_seconds,
                     content_type,
+                    audio_profile,
                     idempotency_key,
                     status,
                     transcript,
@@ -419,10 +392,10 @@ class UploadedClipStore:
         channels: Iterable[str] | None = None,
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
-        reviewed_only: bool = False,
         quality: QualityFilter = "visible",
         sort: Literal["newest", "oldest"] = "newest",
         page: int | None = None,
+        starting_at: str | None = None,
     ) -> list[RecentTranscribedClip]:
         if limit <= 0:
             raise ValueError("limit must be positive")
@@ -452,8 +425,10 @@ class UploadedClipStore:
             params.extend(excluded_channels)
         if featured_only:
             filters.append("uploaded_clip_features.clip_key IS NOT NULL")
-        if reviewed_only:
-            filters.append("uploaded_clip_transcript_corrections.clip_key IS NOT NULL")
+        if starting_at is not None:
+            comparison = ">=" if sort == "oldest" else "<="
+            filters.append(f"uploaded_clips.started_at {comparison} ?")
+            params.append(starting_at)
         params.extend([limit, offset])
         where_clause = "\n                    AND ".join(filters)
         sort_direction = "ASC" if sort == "oldest" else "DESC"
@@ -474,25 +449,14 @@ class UploadedClipStore:
                     uploaded_clips.ended_at,
                     uploaded_clips.duration_seconds,
                     uploaded_clips.content_type,
-                    COALESCE(
-                        uploaded_clip_transcript_corrections.corrected_transcript,
-                        uploaded_clips.transcript
-                    ) AS displayed_transcript,
-                    uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL,
+                    uploaded_clips.transcript,
                     uploaded_clip_features.featured_at,
-                    uploaded_clip_transcript_corrections.include_in_training,
-                    uploaded_clip_transcript_corrections.training_quality,
-                    uploaded_clip_transcript_corrections.training_split,
-                    uploaded_clip_transcript_corrections.training_flags,
-                    uploaded_clip_transcript_corrections.training_reason,
                     uploaded_clips.quality_status,
                     uploaded_clips.quality_score,
                     uploaded_clips.quality_reason,
                     uploaded_clips.quality_flags,
                     uploaded_clips.audio_metrics
                 FROM uploaded_clips
-                LEFT JOIN uploaded_clip_transcript_corrections
-                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
                 LEFT JOIN uploaded_clip_features
                     ON uploaded_clip_features.clip_key = uploaded_clips.key
                 WHERE {where_clause}
@@ -510,13 +474,7 @@ class UploadedClipStore:
             duration_seconds,
             content_type,
             transcript,
-            transcript_reviewed,
             featured_at,
-            include_in_training,
-            training_quality,
-            training_split,
-            training_flags,
-            training_reason,
             quality_status,
             quality_score,
             quality_reason,
@@ -533,14 +491,8 @@ class UploadedClipStore:
                     content_type=content_type,
                     transcript=transcript,
                     segments=self.segments_for_clip(key),
-                    transcript_reviewed=bool(transcript_reviewed),
                     featured=featured_at is not None,
                     featured_at=featured_at,
-                    include_in_training=bool(include_in_training),
-                    training_quality=normalize_training_quality(training_quality),
-                    training_split=normalize_training_split(training_split),
-                    training_flags=tuple(_parse_training_flags(training_flags)),
-                    training_reason=training_reason,
                     quality_status=normalize_quality_status(quality_status),
                     quality_score=_optional_float(quality_score),
                     quality_reason=quality_reason,
@@ -594,25 +546,14 @@ class UploadedClipStore:
                         uploaded_clips.ended_at,
                         uploaded_clips.duration_seconds,
                         uploaded_clips.content_type,
-                        COALESCE(
-                            uploaded_clip_transcript_corrections.corrected_transcript,
-                            uploaded_clips.transcript
-                        ) AS displayed_transcript,
-                        uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL,
+                        uploaded_clips.transcript,
                         uploaded_clip_features.featured_at,
-                        uploaded_clip_transcript_corrections.include_in_training,
-                        uploaded_clip_transcript_corrections.training_quality,
-                        uploaded_clip_transcript_corrections.training_split,
-                        uploaded_clip_transcript_corrections.training_flags,
-                        uploaded_clip_transcript_corrections.training_reason,
                         uploaded_clips.quality_status,
                         uploaded_clips.quality_score,
                         uploaded_clips.quality_reason,
                         uploaded_clips.quality_flags,
                         uploaded_clips.audio_metrics
                     FROM uploaded_clips
-                    LEFT JOIN uploaded_clip_transcript_corrections
-                        ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
                     LEFT JOIN uploaded_clip_features
                         ON uploaded_clip_features.clip_key = uploaded_clips.key
                     WHERE {where_clause}
@@ -633,13 +574,7 @@ class UploadedClipStore:
                 duration_seconds,
                 content_type,
                 transcript,
-                transcript_reviewed,
                 featured_at,
-                include_in_training,
-                training_quality,
-                training_split,
-                training_flags,
-                training_reason,
                 quality_status,
                 quality_score,
                 quality_reason,
@@ -655,14 +590,8 @@ class UploadedClipStore:
                     content_type=content_type,
                     transcript=transcript,
                     segments=self.segments_for_clip(key),
-                    transcript_reviewed=bool(transcript_reviewed),
                     featured=featured_at is not None,
                     featured_at=featured_at,
-                    include_in_training=bool(include_in_training),
-                    training_quality=normalize_training_quality(training_quality),
-                    training_split=normalize_training_split(training_split),
-                    training_flags=tuple(_parse_training_flags(training_flags)),
-                    training_reason=training_reason,
                     quality_status=normalize_quality_status(quality_status),
                     quality_score=_optional_float(quality_score),
                     quality_reason=quality_reason,
@@ -710,25 +639,14 @@ class UploadedClipStore:
                     uploaded_clips.ended_at,
                     uploaded_clips.duration_seconds,
                     uploaded_clips.content_type,
-                    COALESCE(
-                        uploaded_clip_transcript_corrections.corrected_transcript,
-                        uploaded_clips.transcript
-                    ) AS displayed_transcript,
-                    uploaded_clip_transcript_corrections.corrected_transcript IS NOT NULL,
+                    uploaded_clips.transcript,
                     uploaded_clip_features.featured_at,
-                    uploaded_clip_transcript_corrections.include_in_training,
-                    uploaded_clip_transcript_corrections.training_quality,
-                    uploaded_clip_transcript_corrections.training_split,
-                    uploaded_clip_transcript_corrections.training_flags,
-                    uploaded_clip_transcript_corrections.training_reason,
                     uploaded_clips.quality_status,
                     uploaded_clips.quality_score,
                     uploaded_clips.quality_reason,
                     uploaded_clips.quality_flags,
                     uploaded_clips.audio_metrics
                 FROM uploaded_clips
-                LEFT JOIN uploaded_clip_transcript_corrections
-                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
                 LEFT JOIN uploaded_clip_features
                     ON uploaded_clip_features.clip_key = uploaded_clips.key
                 WHERE {where_clause}
@@ -747,13 +665,7 @@ class UploadedClipStore:
             duration_seconds,
             content_type,
             transcript,
-            transcript_reviewed,
             featured_at,
-            include_in_training,
-            training_quality,
-            training_split,
-            training_flags,
-            training_reason,
             quality_status,
             quality_score,
             quality_reason,
@@ -769,14 +681,8 @@ class UploadedClipStore:
             content_type=content_type,
             transcript=transcript,
             segments=self.segments_for_clip(key),
-            transcript_reviewed=bool(transcript_reviewed),
             featured=featured_at is not None,
             featured_at=featured_at,
-            include_in_training=bool(include_in_training),
-            training_quality=normalize_training_quality(training_quality),
-            training_split=normalize_training_split(training_split),
-            training_flags=tuple(_parse_training_flags(training_flags)),
-            training_reason=training_reason,
             quality_status=normalize_quality_status(quality_status),
             quality_score=_optional_float(quality_score),
             quality_reason=quality_reason,
@@ -874,366 +780,6 @@ class UploadedClipStore:
         )
         return feature
 
-    def correct_transcript(
-        self,
-        *,
-        channel: str,
-        started_at: str,
-        corrected_transcript: str,
-        reviewer: str | None = None,
-        note: str | None = None,
-        include_in_training: bool | None = None,
-        training_quality: str | None = None,
-        training_split: str | None = None,
-        training_flags: Iterable[str] | None = None,
-        training_reason: str | None = None,
-        excluded_channels: tuple[str, ...] = (),
-    ) -> TranscriptCorrection:
-        corrected = " ".join(corrected_transcript.split())
-        if not corrected:
-            raise ValueError("corrected transcript must not be empty")
-        clip = self._raw_transcribed_clip(
-            channel=channel,
-            started_at=started_at,
-            excluded_channels=excluded_channels,
-        )
-        if clip is None:
-            raise LookupError("clip not found")
-        now = _format_utc(datetime.now(UTC))
-        reviewer_text = reviewer.strip() if reviewer else None
-        note_text = note.strip() if note else None
-        with sqlite3.connect(self.path) as connection:
-            existing = connection.execute(
-                """
-                SELECT
-                    original_transcript,
-                    reviewer,
-                    include_in_training,
-                    training_quality,
-                    training_split,
-                    training_flags,
-                    training_reason
-                FROM uploaded_clip_transcript_corrections
-                WHERE clip_key = ?
-                """,
-                (clip.key,),
-            ).fetchone()
-            original_transcript = existing[0] if existing else clip.transcript
-            stored_reviewer = (
-                reviewer_text if reviewer_text is not None else (existing[1] if existing else None)
-            )
-            stored_include = (
-                bool(include_in_training)
-                if include_in_training is not None
-                else bool(existing[2])
-                if existing
-                else True
-            )
-            if training_quality is not None:
-                stored_quality_value = training_quality
-            elif existing and existing[3] != "unknown":
-                stored_quality_value = existing[3]
-            elif stored_include:
-                stored_quality_value = "good"
-            else:
-                stored_quality_value = existing[3] if existing else None
-            stored_quality = normalize_training_quality(stored_quality_value)
-            stored_split_value = (
-                training_split
-                if training_split is not None
-                else (existing[4] if existing else None)
-            )
-            stored_split = normalize_training_split(stored_split_value)
-            stored_flags = normalize_training_flags(
-                training_flags
-                if training_flags is not None
-                else _parse_training_flags(existing[5] if existing else None)
-            )
-            stored_reason = (
-                training_reason.strip()
-                if training_reason is not None and training_reason.strip()
-                else (existing[6] if existing and training_reason is None else None)
-            )
-            validate_training_metadata(
-                include_in_training=stored_include,
-                training_quality=stored_quality,
-                training_flags=stored_flags,
-            )
-            connection.execute(
-                """
-                INSERT INTO uploaded_clip_transcript_corrections (
-                    clip_key,
-                    original_transcript,
-                    corrected_transcript,
-                    reviewer,
-                    note,
-                    include_in_training,
-                    training_quality,
-                    training_split,
-                    training_flags,
-                    training_reason,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(clip_key) DO UPDATE SET
-                    corrected_transcript = excluded.corrected_transcript,
-                    reviewer = excluded.reviewer,
-                    note = excluded.note,
-                    include_in_training = excluded.include_in_training,
-                    training_quality = excluded.training_quality,
-                    training_split = excluded.training_split,
-                    training_flags = excluded.training_flags,
-                    training_reason = excluded.training_reason,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    clip.key,
-                    original_transcript,
-                    corrected,
-                    stored_reviewer,
-                    note_text,
-                    int(stored_include),
-                    stored_quality,
-                    stored_split,
-                    json.dumps(stored_flags, sort_keys=True),
-                    stored_reason,
-                    now,
-                    now,
-                ),
-            )
-        correction = TranscriptCorrection(
-            key=clip.key,
-            channel=clip.channel,
-            started_at=clip.started_at,
-            ended_at=clip.ended_at,
-            duration_seconds=clip.duration_seconds,
-            content_type=clip.content_type,
-            original_transcript=original_transcript,
-            corrected_transcript=corrected,
-            reviewer=stored_reviewer,
-            note=note_text,
-            include_in_training=stored_include,
-            training_quality=stored_quality,
-            training_split=stored_split,
-            training_flags=tuple(stored_flags),
-            training_reason=stored_reason,
-        )
-        correction_event_id = stable_event_id(
-            corrected,
-            stored_reviewer,
-            note_text,
-            stored_include,
-            stored_quality,
-            stored_split,
-            stored_flags,
-            stored_reason,
-        )
-        self.event_store.record_clip_event(
-            "clip.transcript_corrected",
-            key=correction.key,
-            observed_at=_parse_utc(correction.started_at),
-            idempotency_key=(
-                f"{correction.key}:clip.transcript_corrected:{correction_event_id}"
-            ),
-            payload={
-                "channel": correction.channel,
-                "started_at": correction.started_at,
-                "ended_at": correction.ended_at,
-                "duration_seconds": correction.duration_seconds,
-                "content_type": correction.content_type,
-                "original_transcript": correction.original_transcript,
-                "corrected_transcript": correction.corrected_transcript,
-                "reviewer": correction.reviewer,
-                "note": correction.note,
-                "include_in_training": correction.include_in_training,
-                "training_quality": correction.training_quality,
-                "training_split": correction.training_split,
-                "training_flags": list(correction.training_flags),
-                "training_reason": correction.training_reason,
-            },
-        )
-        return correction
-
-    def remove_transcript_correction(
-        self,
-        *,
-        channel: str,
-        started_at: str,
-        excluded_channels: tuple[str, ...] = (),
-    ) -> TranscriptCorrection:
-        clip = self._raw_transcribed_clip(
-            channel=channel,
-            started_at=started_at,
-            excluded_channels=excluded_channels,
-        )
-        if clip is None:
-            raise LookupError("clip not found")
-        with sqlite3.connect(self.path) as connection:
-            existing = connection.execute(
-                """
-                SELECT
-                    original_transcript,
-                    corrected_transcript,
-                    reviewer,
-                    note,
-                    include_in_training,
-                    training_quality,
-                    training_split,
-                    training_flags,
-                    training_reason
-                FROM uploaded_clip_transcript_corrections
-                WHERE clip_key = ?
-                """,
-                (clip.key,),
-            ).fetchone()
-            if existing is None:
-                raise LookupError("transcript correction not found")
-            connection.execute(
-                "DELETE FROM uploaded_clip_transcript_corrections WHERE clip_key = ?",
-                (clip.key,),
-            )
-        (
-            original_transcript,
-            corrected_transcript,
-            reviewer,
-            note,
-            include_in_training,
-            training_quality,
-            training_split,
-            training_flags,
-            training_reason,
-        ) = existing
-        correction = TranscriptCorrection(
-            key=clip.key,
-            channel=clip.channel,
-            started_at=clip.started_at,
-            ended_at=clip.ended_at,
-            duration_seconds=clip.duration_seconds,
-            content_type=clip.content_type,
-            original_transcript=original_transcript,
-            corrected_transcript=corrected_transcript,
-            reviewer=reviewer,
-            note=note,
-            include_in_training=bool(include_in_training),
-            training_quality=normalize_training_quality(training_quality),
-            training_split=normalize_training_split(training_split),
-            training_flags=tuple(_parse_training_flags(training_flags)),
-            training_reason=training_reason,
-        )
-        self.event_store.record_clip_event(
-            "clip.transcript_correction_removed",
-            key=correction.key,
-            observed_at=_parse_utc(correction.started_at),
-            idempotency_key=(
-                f"{correction.key}:clip.transcript_correction_removed:"
-                f"{stable_event_id(correction.corrected_transcript, correction.reviewer)}"
-            ),
-            payload={
-                "channel": correction.channel,
-                "started_at": correction.started_at,
-                "ended_at": correction.ended_at,
-                "duration_seconds": correction.duration_seconds,
-                "content_type": correction.content_type,
-                "original_transcript": correction.original_transcript,
-                "corrected_transcript": correction.corrected_transcript,
-                "reviewer": correction.reviewer,
-                "note": correction.note,
-                "include_in_training": False,
-            },
-        )
-        return correction
-
-    def transcript_corrections(
-        self,
-        *,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[dict[str, object]]:
-        if limit <= 0:
-            raise ValueError("limit must be positive")
-        if offset < 0:
-            raise ValueError("offset must be non-negative")
-        with sqlite3.connect(self.path) as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    uploaded_clips.key,
-                    uploaded_clips.channel,
-                    uploaded_clips.started_at,
-                    uploaded_clips.ended_at,
-                    uploaded_clips.duration_seconds,
-                    uploaded_clips.content_type,
-                    uploaded_clip_transcript_corrections.original_transcript,
-                    uploaded_clip_transcript_corrections.corrected_transcript,
-                    uploaded_clip_transcript_corrections.reviewer,
-                    uploaded_clip_transcript_corrections.note,
-                    uploaded_clip_transcript_corrections.include_in_training,
-                    uploaded_clip_transcript_corrections.training_quality,
-                    uploaded_clip_transcript_corrections.training_split,
-                    uploaded_clip_transcript_corrections.training_flags,
-                    uploaded_clip_transcript_corrections.training_reason
-                FROM uploaded_clip_transcript_corrections
-                JOIN uploaded_clips
-                    ON uploaded_clips.key = uploaded_clip_transcript_corrections.clip_key
-                ORDER BY uploaded_clip_transcript_corrections.updated_at DESC,
-                    uploaded_clip_transcript_corrections.id DESC
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
-            ).fetchall()
-        return [_correction_from_sqlite_row(row) for row in rows]
-
-    def transcript_correction_count(self) -> int:
-        with sqlite3.connect(self.path) as connection:
-            row = connection.execute(
-                "SELECT count(*) FROM uploaded_clip_transcript_corrections"
-            ).fetchone()
-        return int(row[0]) if row else 0
-
-    def transcript_corrections_for_training(self) -> list[dict[str, object]]:
-        with sqlite3.connect(self.path) as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    uploaded_clips.key,
-                    uploaded_clips.channel,
-                    uploaded_clips.started_at,
-                    uploaded_clips.ended_at,
-                    uploaded_clips.duration_seconds,
-                    uploaded_clips.content_type,
-                    uploaded_clip_transcript_corrections.original_transcript,
-                    uploaded_clip_transcript_corrections.corrected_transcript,
-                    uploaded_clip_transcript_corrections.reviewer,
-                    uploaded_clip_transcript_corrections.note,
-                    uploaded_clip_transcript_corrections.include_in_training,
-                    uploaded_clip_transcript_corrections.training_quality,
-                    uploaded_clip_transcript_corrections.training_split,
-                    uploaded_clip_transcript_corrections.training_flags,
-                    uploaded_clip_transcript_corrections.training_reason
-                FROM uploaded_clip_transcript_corrections
-                JOIN uploaded_clips
-                    ON uploaded_clips.key = uploaded_clip_transcript_corrections.clip_key
-                WHERE uploaded_clip_transcript_corrections.include_in_training = 1
-                ORDER BY uploaded_clip_transcript_corrections.updated_at DESC,
-                    uploaded_clip_transcript_corrections.id DESC
-                """
-            ).fetchall()
-        corrections = []
-        for row in rows:
-            correction = _correction_from_sqlite_row(row)
-            flags = list(correction["training_flags"])
-            quality = str(correction["training_quality"])
-            if not is_training_eligible(
-                include_in_training=bool(correction["include_in_training"]),
-                training_quality=quality,
-                training_flags=flags,
-            ):
-                continue
-            correction["include_in_training"] = True
-            corrections.append(correction)
-        return corrections
-
     def _raw_transcribed_clip(
         self,
         *,
@@ -1297,7 +843,6 @@ class UploadedClipStore:
         *,
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
-        reviewed_only: bool = False,
         quality: QualityFilter = "visible",
     ) -> dict[str, int]:
         channel_filter = ""
@@ -1311,11 +856,6 @@ class UploadedClipStore:
             if featured_only
             else ""
         )
-        reviewed_filter = (
-            "AND uploaded_clip_transcript_corrections.clip_key IS NOT NULL"
-            if reviewed_only
-            else ""
-        )
         quality = normalize_quality_filter(quality)
         quality_filter = f"AND {_quality_filter_sql('uploaded_clips.quality_status', quality)}"
         with _connect_upload_db(self.path) as connection:
@@ -1324,15 +864,12 @@ class UploadedClipStore:
                 SELECT uploaded_clips.channel, count(*)
                 FROM uploaded_clips
                 {feature_join}
-                LEFT JOIN uploaded_clip_transcript_corrections
-                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
                 WHERE uploaded_clips.status = 'transcribed'
                     AND uploaded_clips.transcript IS NOT NULL
                     AND trim(uploaded_clips.transcript) != ''
                     AND {_DISPLAYABLE_TRANSCRIPT_SQL}
                     {quality_filter}
                     {channel_filter}
-                    {reviewed_filter}
                 GROUP BY uploaded_clips.channel
                 ORDER BY uploaded_clips.channel
                 """,
@@ -1347,7 +884,6 @@ class UploadedClipStore:
         channels: Iterable[str] | None = None,
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
-        reviewed_only: bool = False,
         quality: QualityFilter = "visible",
     ) -> int:
         filters = [
@@ -1373,8 +909,6 @@ class UploadedClipStore:
             if featured_only
             else ""
         )
-        if reviewed_only:
-            filters.append("uploaded_clip_transcript_corrections.clip_key IS NOT NULL")
         where_clause = "\n                    AND ".join(filters)
         with _connect_upload_db(self.path) as connection:
             row = connection.execute(
@@ -1382,8 +916,6 @@ class UploadedClipStore:
                 SELECT count(*)
                 FROM uploaded_clips
                 {feature_join}
-                LEFT JOIN uploaded_clip_transcript_corrections
-                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
                 WHERE {where_clause}
                 """,
                 tuple(params),
@@ -1416,9 +948,6 @@ class UploadedClipStore:
                 LIMIT 20
                 """
             ).fetchall()
-            correction_count = connection.execute(
-                "SELECT count(*) FROM uploaded_clip_transcript_corrections"
-            ).fetchone()[0]
             featured_count = connection.execute(
                 "SELECT count(*) FROM uploaded_clip_features"
             ).fetchone()[0]
@@ -1428,7 +957,6 @@ class UploadedClipStore:
         return {
             "counts": {status: count for status, count in rows},
             "channel_counts": channel_counts,
-            "transcript_correction_count": correction_count,
             "featured_clip_count": featured_count,
             "recent": [
                 {
@@ -1492,6 +1020,7 @@ class UploadedClipStore:
                 "ended_at": record.ended_at,
                 "duration_seconds": record.duration_seconds,
                 "content_type": record.content_type,
+                "audio_profile": record.audio_profile,
                 "idempotency_key": record.idempotency_key,
                 "status": record.status,
                 "error": record.error,
@@ -1511,6 +1040,7 @@ class UploadedClipStore:
                     ended_at TEXT,
                     duration_seconds REAL,
                     content_type TEXT NOT NULL,
+                    audio_profile TEXT,
                     idempotency_key TEXT NOT NULL,
                     status TEXT NOT NULL,
                     transcript TEXT,
@@ -1546,6 +1076,7 @@ class UploadedClipStore:
                 "audio_metrics",
                 "TEXT NOT NULL DEFAULT '{}'",
             )
+            _ensure_column(connection, "uploaded_clips", "audio_profile", "TEXT")
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_uploaded_clips_status_created
@@ -1588,62 +1119,6 @@ class UploadedClipStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_uploaded_clip_segments_clip_key
                 ON uploaded_clip_segments(clip_key)
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS uploaded_clip_transcript_corrections (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    clip_key TEXT NOT NULL UNIQUE,
-                    original_transcript TEXT NOT NULL,
-                    corrected_transcript TEXT NOT NULL,
-                    reviewer TEXT,
-                    note TEXT,
-                    include_in_training INTEGER NOT NULL DEFAULT 0,
-                    training_quality TEXT NOT NULL DEFAULT 'unknown',
-                    training_split TEXT NOT NULL DEFAULT 'auto',
-                    training_flags TEXT NOT NULL DEFAULT '[]',
-                    training_reason TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY(clip_key) REFERENCES uploaded_clips(key)
-                )
-                """
-            )
-            _ensure_column(
-                connection,
-                "uploaded_clip_transcript_corrections",
-                "include_in_training",
-                "INTEGER NOT NULL DEFAULT 0",
-            )
-            _ensure_column(
-                connection,
-                "uploaded_clip_transcript_corrections",
-                "training_quality",
-                "TEXT NOT NULL DEFAULT 'unknown'",
-            )
-            _ensure_column(
-                connection,
-                "uploaded_clip_transcript_corrections",
-                "training_split",
-                "TEXT NOT NULL DEFAULT 'auto'",
-            )
-            _ensure_column(
-                connection,
-                "uploaded_clip_transcript_corrections",
-                "training_flags",
-                "TEXT NOT NULL DEFAULT '[]'",
-            )
-            _ensure_column(
-                connection,
-                "uploaded_clip_transcript_corrections",
-                "training_reason",
-                "TEXT",
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_uploaded_clip_transcript_corrections_updated
-                ON uploaded_clip_transcript_corrections(updated_at DESC, id DESC)
                 """
             )
             connection.execute(
@@ -1694,14 +1169,13 @@ def process_pending_uploads_once(
     retry_errors: bool = False,
     vad_filter: bool = DEFAULT_TRANSCRIBE_VAD_FILTER,
     vad_parameters: dict[str, int] | None = None,
-    min_segment_avg_logprob: float | None = -0.6,
-    audio_filter: str | None = DEFAULT_SPEECH_AUDIO_FILTER,
+    min_segment_avg_logprob: float | None = DEFAULT_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB,
+    audio_filter: str | None = None,
     sample_rate_hz: int = DEFAULT_TRANSCRIBE_SAMPLE_RATE_HZ,
     beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE,
     hotwords: str | None = None,
     ffmpeg_path: str | None = None,
     ffmpeg_runner: Any | None = None,
-    trust_edge_preprocessed_audio: bool = False,
     quality_analysis_enabled: bool = True,
     quality_analyzer: AudioQualityAnalyzer | None = None,
 ) -> ProcessSummary:
@@ -1716,13 +1190,13 @@ def process_pending_uploads_once(
             audio_path = Path(handle.name)
         try:
             clip_reader.download(record.key, audio_path)
+            if audio_filter:
+                raise ValueError(
+                    "transcription audio filters are disabled; upload canonical-v1 clips"
+                )
             prepare_kwargs: dict[str, Any] = {
                 "sample_rate_hz": sample_rate_hz,
-                "audio_filter": _audio_filter_for_record(
-                    record,
-                    audio_filter=audio_filter,
-                    trust_edge_preprocessed_audio=trust_edge_preprocessed_audio,
-                ),
+                "audio_filter": None,
                 "ffmpeg_path": ffmpeg_path,
             }
             if ffmpeg_runner is not None:
@@ -1777,7 +1251,7 @@ def transcribe_audio_file(
     record: UploadedClipRecord,
     vad_filter: bool = DEFAULT_TRANSCRIBE_VAD_FILTER,
     vad_parameters: dict[str, int] | None = None,
-    min_segment_avg_logprob: float | None = -0.6,
+    min_segment_avg_logprob: float | None = DEFAULT_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB,
     beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE,
     hotwords: str | None = None,
 ) -> list[UploadedClipSegment]:
@@ -1800,7 +1274,7 @@ def transcribe_audio_file_with_quality(
     record: UploadedClipRecord,
     vad_filter: bool = DEFAULT_TRANSCRIBE_VAD_FILTER,
     vad_parameters: dict[str, int] | None = None,
-    min_segment_avg_logprob: float | None = -0.6,
+    min_segment_avg_logprob: float | None = DEFAULT_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB,
     beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE,
     hotwords: str | None = None,
 ) -> TranscriptionResult:
@@ -1861,12 +1335,22 @@ def main() -> None:
     parser.add_argument("--aws-region", default=os.getenv("TALKINGBOATS_AWS_REGION", "us-west-2"))
     parser.add_argument(
         "--model-size",
-        default=os.getenv("TALKINGBOATS_TRANSCRIBE_MODEL", DEFAULT_TRANSCRIBE_MODEL),
+        default=os.getenv("TALKINGBOATS_TRANSCRIBE_MODEL", "turbo"),
     )
     parser.add_argument("--device", default=os.getenv("TALKINGBOATS_TRANSCRIBE_DEVICE", "cpu"))
     parser.add_argument(
         "--compute-type",
         default=os.getenv("TALKINGBOATS_TRANSCRIBE_COMPUTE_TYPE", "int8"),
+    )
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=_env_int("TALKINGBOATS_TRANSCRIBE_CPU_THREADS", 2),
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=_env_int("TALKINGBOATS_TRANSCRIBE_WORKERS", 1),
     )
     parser.add_argument("--poll-seconds", type=float, default=30.0)
     parser.add_argument("--limit", type=int, default=5)
@@ -1876,7 +1360,10 @@ def main() -> None:
         "--vad-filter",
         action="store_true",
         default=_env_bool("TALKINGBOATS_TRANSCRIBE_VAD_FILTER", DEFAULT_TRANSCRIBE_VAD_FILTER),
-        help="Enable faster-whisper VAD. On by default to suppress RF-gated static tails.",
+        help=(
+            "Enable faster-whisper VAD. Off by default so ASR covers the entire "
+            "playable clip; enabling it can omit edge speech."
+        ),
     )
     parser.add_argument(
         "--vad-min-silence-duration-ms",
@@ -1897,21 +1384,10 @@ def main() -> None:
     parser.add_argument(
         "--min-segment-avg-logprob",
         type=float,
-        default=_env_float("TALKINGBOATS_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB", -0.6),
+        default=_env_optional_float("TALKINGBOATS_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB"),
         help=(
             "Drop individual Whisper segments below this average log probability. "
-            "Set very low, such as -10, to keep all segments."
-        ),
-    )
-    parser.add_argument("--audio-filter", default=os.getenv("TALKINGBOATS_TRANSCRIBE_AUDIO_FILTER"))
-    parser.add_argument("--no-audio-filter", action="store_true")
-    parser.add_argument(
-        "--trust-edge-preprocessed-audio",
-        action="store_true",
-        default=_env_bool("TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO", False),
-        help=(
-            "Skip Ubuntu micro-computer ffmpeg cleanup for edge-encoded MP3 uploads. "
-            "Use when the Pi already applied the upload speech filter."
+            "Disabled by default so uncertain edge speech remains in the transcript."
         ),
     )
     parser.add_argument(
@@ -1950,6 +1426,10 @@ def main() -> None:
         parser.error("--poll-seconds must be positive")
     if args.sample_rate_hz <= 0:
         parser.error("--sample-rate-hz must be positive")
+    if args.cpu_threads <= 0:
+        parser.error("--cpu-threads must be positive")
+    if args.workers <= 0:
+        parser.error("--workers must be positive")
     if args.beam_size <= 0:
         parser.error("--beam-size must be positive")
     if args.vad_min_silence_duration_ms < 0:
@@ -1972,18 +1452,26 @@ def main() -> None:
         model_size=args.model_size,
         device=args.device,
         compute_type=args.compute_type,
+        cpu_threads=args.cpu_threads,
+        num_workers=args.workers,
     )
 
     _log_event(
         "uploaded_clip_transcriber_start",
+        asr_audio_contract="full_playable_clip",
+        model_size=args.model_size,
+        device=args.device,
+        compute_type=args.compute_type,
+        cpu_threads=args.cpu_threads,
+        workers=args.workers,
+        vad_filter=args.vad_filter,
+        min_segment_avg_logprob=args.min_segment_avg_logprob,
+        **_quality_gate_log_fields(),
         **_transcriber_start_log_fields(
             bucket=args.bucket,
             db_path=args.db_path,
             clip_store_backend=clip_store_backend,
         ),
-    )
-    audio_filter = (
-        None if args.no_audio_filter else (args.audio_filter or DEFAULT_SPEECH_AUDIO_FILTER)
     )
     while True:
         summary = process_pending_uploads_once(
@@ -1998,11 +1486,10 @@ def main() -> None:
                 "speech_pad_ms": args.vad_speech_pad_ms,
             },
             min_segment_avg_logprob=args.min_segment_avg_logprob,
-            audio_filter=audio_filter,
+            audio_filter=None,
             sample_rate_hz=args.sample_rate_hz,
             beam_size=args.beam_size,
             hotwords=args.hotwords,
-            trust_edge_preprocessed_audio=args.trust_edge_preprocessed_audio,
             quality_analysis_enabled=(
                 args.audio_quality_analysis and not args.no_audio_quality_analysis
             ),
@@ -2042,10 +1529,11 @@ def _row_to_record(row: tuple[Any, ...]) -> UploadedClipRecord:
         ended_at=row[3],
         duration_seconds=row[4],
         content_type=row[5],
-        idempotency_key=row[6],
-        status=row[7],
-        transcript=row[8],
-        error=row[9],
+        audio_profile=row[6],
+        idempotency_key=row[7],
+        status=row[8],
+        transcript=row[9],
+        error=row[10],
     )
 
 
@@ -2066,6 +1554,15 @@ def _transcriber_start_log_fields(
     return fields
 
 
+def _quality_gate_log_fields() -> dict[str, float]:
+    return {
+        "quality_min_asr_mean_avg_logprob": MIN_CLEAR_ASR_MEAN_AVG_LOGPROB,
+        "quality_max_noise_floor_dbfs": MAX_CLEAR_NOISE_FLOOR_DBFS,
+        "quality_min_presence_band_ratio": MIN_CLEAR_PRESENCE_BAND_RATIO,
+        "quality_min_speech_contrast_db": MIN_CLEAR_SPEECH_CONTRAST_DB,
+    }
+
+
 def _ensure_column(
     connection: sqlite3.Connection,
     table_name: str,
@@ -2073,27 +1570,10 @@ def _ensure_column(
     declaration: str,
 ) -> None:
     columns = {
-        str(row[1])
-        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        str(row[1]) for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
     }
     if column_name not in columns:
         connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {declaration}")
-
-
-def _parse_training_flags(value: object) -> list[str]:
-    if value in (None, ""):
-        return []
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return normalize_training_flags([value])
-        if isinstance(parsed, list):
-            return normalize_training_flags([str(item) for item in parsed])
-        return []
-    if isinstance(value, (list, tuple, set)):
-        return normalize_training_flags([str(item) for item in value])
-    return []
 
 
 def _parse_quality_flags(value: object) -> list[str]:
@@ -2148,59 +1628,11 @@ def _quality_filter_sql(column: str, quality: QualityFilter) -> str:
     return f"COALESCE({column}, 'unknown') != 'quarantined'"
 
 
-def _correction_from_sqlite_row(row: tuple[Any, ...]) -> dict[str, object]:
-    (
-        key,
-        channel,
-        started_at,
-        ended_at,
-        duration_seconds,
-        content_type,
-        original_transcript,
-        corrected_transcript,
-        reviewer,
-        note,
-        include_in_training,
-        training_quality,
-        training_split,
-        training_flags,
-        training_reason,
-    ) = row
-    return {
-        "key": key,
-        "channel": channel,
-        "started_at": started_at,
-        "ended_at": ended_at,
-        "duration_seconds": duration_seconds,
-        "content_type": content_type,
-        "original_transcript": original_transcript,
-        "corrected_transcript": corrected_transcript,
-        "reviewer": reviewer,
-        "note": note,
-        "include_in_training": bool(include_in_training),
-        "training_quality": normalize_training_quality(training_quality),
-        "training_split": normalize_training_split(training_split),
-        "training_flags": _parse_training_flags(training_flags),
-        "training_reason": training_reason,
-    }
-
-
 def _default_vad_parameters() -> dict[str, int]:
     return {
         "min_silence_duration_ms": DEFAULT_TRANSCRIBE_VAD_MIN_SILENCE_DURATION_MS,
         "speech_pad_ms": DEFAULT_TRANSCRIBE_VAD_SPEECH_PAD_MS,
     }
-
-
-def _audio_filter_for_record(
-    record: UploadedClipRecord,
-    *,
-    audio_filter: str | None,
-    trust_edge_preprocessed_audio: bool,
-) -> str | None:
-    if trust_edge_preprocessed_audio and record.content_type == "audio/mpeg":
-        return None
-    return audio_filter
 
 
 def _analyze_clip_quality_audio(
@@ -2232,7 +1664,14 @@ def _segment_payload(segment: UploadedClipSegment) -> dict[str, object]:
     }
 
 
-def _load_faster_whisper_model(*, model_size: str, device: str, compute_type: str) -> Any:
+def _load_faster_whisper_model(
+    *,
+    model_size: str,
+    device: str,
+    compute_type: str,
+    cpu_threads: int,
+    num_workers: int,
+) -> Any:
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
@@ -2240,7 +1679,13 @@ def _load_faster_whisper_model(*, model_size: str, device: str, compute_type: st
             "faster-whisper is not installed. Install with: "
             'conda run -n dell python -m pip install -e ".[transcribe]"'
         ) from exc
-    return WhisperModel(model_size, device=device, compute_type=compute_type)
+    return WhisperModel(
+        model_size,
+        device=device,
+        compute_type=compute_type,
+        cpu_threads=cpu_threads,
+        num_workers=num_workers,
+    )
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -2250,9 +1695,11 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def _env_float(name: str, default: float) -> float:
+def _env_optional_float(name: str) -> float | None:
     value = os.getenv(name)
-    return float(value) if value is not None else default
+    if value is None or value.strip().lower() in {"", "none", "off", "disabled"}:
+        return None
+    return float(value)
 
 
 def _env_int(name: str, default: int) -> int:

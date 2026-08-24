@@ -74,7 +74,6 @@ class FakeFeaturedStore:
                 duration_seconds=2.0,
                 content_type="audio/mpeg",
                 transcript="Featured transcript.",
-                transcript_reviewed=False,
                 featured=True,
                 featured_at="2026-05-21T19:12:00Z",
                 segments=[],

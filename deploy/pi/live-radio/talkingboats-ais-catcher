@@ -145,13 +145,13 @@ http_args=()
 if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" && -n "${TALKINGBOATS_AIS_INGEST_TOKEN:-}" ]]; then
   forwarder_host="${TALKINGBOATS_AIS_FORWARDER_HOST:-127.0.0.1}"
   forwarder_port="${TALKINGBOATS_AIS_FORWARDER_PORT:-8110}"
-  http_args=(-H "http://${forwarder_host}:${forwarder_port}/" "${TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS:-1}")
+  http_args=(-H "http://${forwarder_host}:${forwarder_port}/" interval "${TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS:-1}" response off)
 fi
 
 web_args=(
   -N "${TALKINGBOATS_AIS_WEB_PORT:-8100}"
   station "${TALKINGBOATS_AIS_STATION_NAME:-Elliott Bay VHF}"
-  station_link "${TALKINGBOATS_AIS_STATION_LINK:-https://robertboscacci.com}"
+  station_link "${TALKINGBOATS_AIS_STATION_LINK:-https://seattleboatradio.com}"
   lat "${TALKINGBOATS_AIS_LAT:-47.6190158}"
   lon "${TALKINGBOATS_AIS_LON:--122.3595353}"
   share_loc "${TALKINGBOATS_AIS_SHARE_LOC:-on}"

@@ -1,27 +1,33 @@
-const defaultClipPageSize = 6;
-const clipPageSizeOptions = [6, 12, 24];
-const devAppHost = window.location.hostname === "vhf-dev.robertboscacci.com";
-const publicAppHosts = new Set(["vhf.robertboscacci.com", "seattleboatradio.com"]);
+const clipBatchSize = 24;
+const continuousClipPlaybackGapMs = 2000;
+const publicAppHosts = new Set(["seattleboatradio.com"]);
+const devAppHosts = new Set(["dev.seattleboatradio.com"]);
 const publicAppHost = publicAppHosts.has(window.location.hostname);
+const devAppHost = devAppHosts.has(window.location.hostname);
+const generatedAnalysisHost = publicAppHost || devAppHost;
 const localAppHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
 const tailnetHostSuffix = ".tailbea63b.ts.net";
 const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
 const privateAppHost = localAppHost || tailnetAppHost || devAppHost;
+const quarantineClipLaneEnabled = privateAppHost;
+const systemDashboardEnabled = devAppHost || localAppHost || tailnetAppHost;
 const privateApiBaseUrl = "";
 const publicLiveApiTimeoutMs = 8000;
 const clipPlaybackUrl = apiUrl("/api/clips/playback");
 const clipAudioUrl = apiUrl("/api/clips/audio");
 const clipSearchUrl = apiUrl("/api/clips/search");
-const clipCorrectionsUrl = apiUrl("/api/clips/corrections");
 const clipFeaturesUrl = apiUrl("/api/clips/features");
+const clipArchiveUrl = apiUrl("/api/clips/archive");
 const manifestUrl = "/public_manifest.json";
+const recentClipsSnapshotUrl = "/recent_clips.json";
 const lexicalAnalysisUrl = apiUrl("/api/analysis/lexical");
 const lexicalManifestUrl = "/analysis/lexical.json";
 const performanceUrl = apiUrl("/api/live/performance");
-const asrFeedbackStatusUrl = apiUrl("/api/asr-feedback/status");
+const aisReceiverStatusUrl = "/ais-catcher/ships.json";
 const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353&zoom=13&setcoord=false&welcome=false&tab=map";
 const aisCatcherFallbackUrl = "https://aiscatcher.org/";
 const topicClusterFallbackUrl = "/analysis/topic_clusters.html";
+const topicPlotRotationMessageType = "talkingboats-topic-plot-rotation";
 const liveChannelsUrl = apiUrl("/api/live/channels");
 const liveQueueUrl = apiUrl(
   "/api/clips/recent?limit=24&include_playback_url=true&verify_playback_exists=false&include_counts=false",
@@ -93,26 +99,21 @@ const allButTrafficLiveChannel = "all-but-traffic";
 const defaultRealtimeLiveChannel = "14";
 const everythingInitialQueueLimit = 3;
 const everythingCatchUpLabel = "Catching up on latest 3 transmissions";
-const everythingCatchUpMaxAgeMs = 5 * 60 * 1000;
 const trafficChannelIds = new Set(["14"]);
 const hallOfFameRouteSegment = "hall-of-fame";
-const reviewedRouteSegment = "reviewed";
 const languageDashboardEnabled = [
-  "vhf.robertboscacci.com",
   "seattleboatradio.com",
-  "vhf-dev.robertboscacci.com",
+  "dev.seattleboatradio.com",
   "localhost",
   "127.0.0.1",
   "",
 ].includes(
   window.location.hostname,
 );
-const performanceDashboardEnabled = privateAppHost;
+const performanceDashboardEnabled = systemDashboardEnabled;
 const aisDashboardEnabled = true;
 const featureClipWriteEnabled = privateAppHost;
-const analysisTranscriptReviewEnabled = privateAppHost;
-const operatorReviewEnabled =
-  window.location.pathname.startsWith("/operator") && privateAppHost;
+const archiveClipDeleteEnabled = privateAppHost;
 const tabRouteSegments = {
   clips: "clips",
   search: "search",
@@ -125,7 +126,6 @@ const tabRouteSegments = {
 const tabRouteAliases = {
   clips: "clips",
   "hall-of-fame": "clips",
-  reviewed: "clips",
   search: "search",
   live: "live",
   ais: "map",
@@ -150,12 +150,6 @@ const routeMetadata = {
     description:
       "Featured public Elliott Bay marine VHF radio clips selected from the receiver archive.",
     url: `${siteCanonicalOrigin}/hall-of-fame/`,
-  },
-  reviewed: {
-    title: "Reviewed Elliott Bay VHF Clips",
-    description:
-      "Human-reviewed public Elliott Bay marine VHF clip transcripts and audio from the receiver archive.",
-    url: `${siteCanonicalOrigin}/reviewed/`,
   },
   quarantine: {
     title: "Quarantined Elliott Bay VHF Clips",
@@ -198,19 +192,13 @@ const routeMetadata = {
     description: "Dev-only receiver and processing performance telemetry for Elliott Bay VHF.",
     url: `${siteCanonicalOrigin}/performance/`,
   },
-  "asr-review": {
-    title: "Elliott Bay VHF ASR Review Queue",
-    description: "Private operator review queue for Elliott Bay VHF ASR correction and training metadata.",
-    url: `${siteCanonicalOrigin}/operator/`,
-  },
 };
 const liveStatusPollMs = 2000;
 const liveActivityPollMs = 15000;
 const liveQueuePollMs = 5000;
-const clipStatsPollMs = 10000;
-const clipPagePrefetchRadius = 2;
-const clipPageMemoryCacheMaxAgeMs = 120000;
-const clipPageMemoryCacheMaxEntries = 16;
+const liveQueueSeedTimeoutMs = 2500;
+const clipStatsInitialPollMs = 5000;
+const clipStatsPollMs = 15000;
 const clipPlaybackRefreshLeadMs = 45000;
 const performanceRefreshMs = 10000;
 const quietTransmissionDelayMs = 5000;
@@ -279,29 +267,6 @@ const defaultChannelLabels = {
   "77": "Ship-to-ship",
   "78A": "Non-commercial",
 };
-const monitoredAnalysisChannels = ["05A", "06", "09", "10", "13", "14", "16", "22A", "65A", "66A", "67", "68", "69", "71", "72", "73", "74", "77", "78A"];
-const trainingQualityOptions = [
-  ["unknown", "Unknown"],
-  ["excellent", "Excellent"],
-  ["good", "Good"],
-  ["usable", "Usable"],
-  ["poor", "Poor"],
-];
-const trainingSplitOptions = [
-  ["auto", "Auto"],
-  ["train", "Train"],
-  ["validation", "Validation"],
-  ["test", "Test"],
-  ["holdout", "Holdout"],
-];
-const trainingFlagOptions = [
-  ["static_or_no_speech", "Static / no speech"],
-  ["overlap", "Overlapping speakers"],
-  ["truncated_start", "Truncated start"],
-  ["low_snr", "Low SNR"],
-  ["clipped_audio", "Clipped audio"],
-];
-
 function apiUrl(path) {
   return privateApiBaseUrl ? `${privateApiBaseUrl}${path}` : path;
 }
@@ -344,7 +309,9 @@ const clipList = document.querySelector("#clips");
 const clipPagination = document.querySelector("#clip-pagination");
 const clipStatus = document.querySelector("#clip-status");
 const clipDisplayControls = document.querySelector("#clip-display-controls");
-const operatorLabelingLink = document.querySelector("#operator-labeling-link");
+const clipDatetimeForm = document.querySelector("#clip-datetime-form");
+const clipDatetimeInput = document.querySelector("#clip-datetime-input");
+const clearClipDatetimeButton = document.querySelector("#clear-clip-datetime");
 const channelFilter = document.querySelector("#channel-filter");
 const refreshButton = document.querySelector("#refresh-clips");
 const stats = document.querySelector("#stats");
@@ -396,10 +363,6 @@ const performanceStatus = document.querySelector("#performance-status");
 const performanceDashboard = document.querySelector("#performance-dashboard");
 const clipsTitle = document.querySelector("#clips-title");
 
-if (operatorLabelingLink) {
-  operatorLabelingLink.hidden = !privateAppHost || operatorReviewEnabled;
-}
-
 let liveRetryTimer = null;
 let liveStatusTimer = null;
 let liveActivityTimer = null;
@@ -422,23 +385,42 @@ let analyserSource = null;
 let waveformData = null;
 let waveformAnimationId = null;
 let currentClipPlayback = null;
+let continuousClipPlaybackActive = false;
+let continuousClipPlaybackGeneration = 0;
+let continuousClipPlaybackTimer = null;
+let continuousClipPlaybackIndex = -1;
+let continuousClipPlaybackAudio = null;
+let continuousClipPlaybackPhase = "idle";
+let continuousClipPlaybackMessage = "";
+const maxConcurrentClipWaveformLoads = 2;
+const maxClipWaveformAudioBytes = 12 * 1024 * 1024;
+const clipAudioPlayActions = new WeakMap();
+const clipWaveformStates = new WeakMap();
+const clipWaveformLoadQueue = [];
+let activeClipWaveformLoads = 0;
+let clipWaveformObserver = null;
+let clipWaveformResizeObserver = null;
 let quietSince = null;
 let selectedChannels = new Set();
 let selectedChannelPreset = "all";
 let selectedClipPage = 1;
 let selectedClipOffset = 0;
-let selectedClipPageSize = defaultClipPageSize;
+let selectedClipPageSize = clipBatchSize;
 let clipSortDirection = "newest";
+let selectedClipAround = "";
 const initialRouteState = routeStateFromLocation();
 let clipCollectionFilter = initialRouteState.clipCollectionFilter;
 let currentClipPayload = null;
 let currentPageClips = [];
 let currentFilteredTotal = 0;
 let clipRequestSequence = 0;
-const clipPageMemoryCache = new Map();
-const clipPagePrefetches = new Map();
+let clipPayloadAbortController = null;
+let nextClipCursor = null;
+let clipLoadMorePending = false;
+let clipLoadMoreObserver = null;
 let clipStatsTimer = null;
 let clipStatsAbortController = null;
+let globalClipStats = null;
 let lastRenderedClipTotal = null;
 let selectedLiveChannel = everythingLiveChannel;
 let activeTab = initialRouteState.tab;
@@ -456,7 +438,9 @@ let latestSearchPayload = null;
 let latestSearchSuggestions = null;
 let searchSuggestionsLoaded = false;
 let searchRequestSequence = 0;
+let searchAbortController = null;
 let systemMediaControlsEnabled = initialSystemMediaControlsEnabled();
+let liveChannelsLoaded = false;
 let liveChannels = [
   {
     channel: "05A",
@@ -656,23 +640,43 @@ searchQuery?.addEventListener("input", () => {
   }
 });
 
+clipDatetimeForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!clipDatetimeInput?.value) {
+    clipDatetimeInput?.reportValidity();
+    return;
+  }
+  selectedClipAround = clipDatetimeInput.value;
+  clipSortDirection = "newest";
+  resetClipPagination();
+  updateClipDatetimeNavigator();
+  loadAndRender({ useCachedPayload: false, includeCounts: false });
+});
+
+clearClipDatetimeButton?.addEventListener("click", () => {
+  selectedClipAround = "";
+  clipSortDirection = "newest";
+  clipDatetimeInput.value = "";
+  resetClipPagination();
+  updateClipDatetimeNavigator();
+  loadAndRender({ useCachedPayload: false, includeCounts: false });
+});
+
 channelFilter.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target : null;
   const action = target?.closest(".channel-filter-action");
   if (!action || !channelFilter.contains(action)) {
     return;
   }
-  let includeCounts = true;
   if (action.dataset.preset === "all-but-traffic") {
     selectAllButTrafficChannels(action.dataset.channels || "");
     selectedChannelPreset = "all-but-traffic";
-    includeCounts = false;
   } else {
     selectedChannels.clear();
     selectedChannelPreset = "all";
   }
   resetClipPagination();
-  loadAndRender({ includeCounts });
+  loadAndRender({ includeCounts: false });
 });
 
 channelFilter.addEventListener("change", (event) => {
@@ -773,25 +777,45 @@ liveAudio.addEventListener("ended", () => {
 
 async function loadAndRender({
   useCachedPayload = true,
-  scrollToClipsAfterRender = false,
-  includeCounts = true,
+  includeCounts = false,
 } = {}) {
   const requestId = ++clipRequestSequence;
   const requestUrl = clipRequestUrl(selectedClipPage, { includeCounts });
-  const cachedPayload = useCachedPayload && !publicAppHost
-    ? prefetchedClipPagePayload(requestUrl) || loadCachedRecentClipPayload(requestUrl)
-    : null;
+  clipPayloadAbortController?.abort();
+  const requestAbortController = new AbortController();
+  clipPayloadAbortController = requestAbortController;
+  const livePayloadPromise = loadClipPayload(requestUrl, {
+    allowFallback: !selectedClipAround,
+    signal: requestAbortController.signal,
+  });
+  const cachedPayload = useCachedPayload ? loadCachedRecentClipPayload(requestUrl) : null;
   if (cachedPayload) {
     currentClipPayload = includeCounts ? cachedPayload : payloadWithRetainedClipStats(cachedPayload, currentClipPayload);
     renderSite(currentClipPayload);
     clipList.setAttribute("aria-busy", "true");
     clipStatus.textContent = `${clipStatus.textContent} · refreshing`;
+  } else if (useCachedPayload && shouldLoadPublishedManifestFirst()) {
+    renderClipLoadingState();
+    await renderPublishedClipsWhileRefreshing(requestId);
   } else if (!currentClipPayload || !currentPageClips.length) {
     renderClipLoadingState();
   } else {
     renderClipPagePendingState();
   }
-  let payload = await loadClipPayload(requestUrl);
+  let payload;
+  try {
+    payload = await livePayloadPromise;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      return;
+    }
+    renderClipLoadFailure(error);
+    return;
+  } finally {
+    if (clipPayloadAbortController === requestAbortController) {
+      clipPayloadAbortController = null;
+    }
+  }
   if (requestId !== clipRequestSequence) {
     return;
   }
@@ -800,23 +824,97 @@ async function loadAndRender({
   }
   currentClipPayload = payload;
   renderSite(payload);
-  if (scrollToClipsAfterRender) {
-    scrollClipListToTopForPagination();
-  }
   if (payload.source === "live") {
-    storeClipPageMemoryPayload(requestUrl, payload);
     storeRecentClipPayload(requestUrl, payload);
-    prefetchNeighborClipPages(payload);
   }
 }
 
-async function loadClipPayload(requestUrl = clipRequestUrl(), { allowFallback = true } = {}) {
+function shouldLoadPublishedManifestFirst() {
+  return (
+    currentClipPayload === null &&
+    clipCollectionFilter === "recent" &&
+    clipSortDirection === "newest" &&
+    selectedClipPage === 1 &&
+    selectedChannels.size === 0 &&
+    selectedChannelPreset === "all" &&
+    !selectedClipAround
+  );
+}
+
+async function renderPublishedClipsWhileRefreshing(requestId) {
+  const publishedPayload = await loadPublishedManifest();
+  if (
+    requestId !== clipRequestSequence ||
+    currentClipPayload !== null ||
+    !(publishedPayload.clips || []).length
+  ) {
+    return false;
+  }
+  currentClipPayload = publishedPayload;
+  renderSite(currentClipPayload);
+  clipList.setAttribute("aria-busy", "true");
+  clipStatus.textContent = `${clipStatus.textContent} · refreshing`;
+  return true;
+}
+
+async function loadMoreClips() {
+  if (
+    clipLoadMorePending ||
+    !nextClipCursor ||
+    !currentClipPayload ||
+    currentClipPayload.source !== "live"
+  ) {
+    return;
+  }
+  clipLoadMorePending = true;
+  renderClipPagination(currentFilteredTotal, { pending: true });
+  const requestId = clipRequestSequence;
+  const cursor = nextClipCursor;
+  const requestUrl = clipRequestUrl(1, { includeCounts: false, cursor });
+  try {
+    const payload = await loadClipPayload(requestUrl, { allowFallback: false });
+    if (requestId !== clipRequestSequence || cursor !== nextClipCursor) {
+      return;
+    }
+    const existingIds = new Set(
+      (currentClipPayload.clips || []).map((clip) => clipDomId(clip)),
+    );
+    const appended = (payload.clips || []).filter(
+      (clip) => !existingIds.has(clipDomId(clip)),
+    );
+    currentClipPayload = payloadWithRetainedClipStats(
+      {
+        ...payload,
+        clips: [...(currentClipPayload.clips || []), ...appended],
+      },
+      currentClipPayload,
+    );
+    renderSite(currentClipPayload);
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      renderClipPagination(currentFilteredTotal, { loadError: true });
+    }
+  } finally {
+    clipLoadMorePending = false;
+  }
+}
+
+async function loadClipPayload(requestUrl = clipRequestUrl(), { allowFallback = true, signal = null } = {}) {
   try {
     const payload = await fetchJsonWithTimeout(requestUrl, {
       timeoutMs: publicAppHost ? publicLiveApiTimeoutMs : 0,
+      signal,
     });
-    return normalizeLivePayload(payload);
+    const normalizedPayload = normalizeLivePayload(payload);
+    const requestedAround = new URL(requestUrl, window.location.href).searchParams.has("around");
+    if (requestedAround && !normalizedPayload.around) {
+      throw new Error("clip API does not support datetime navigation");
+    }
+    return normalizedPayload;
   } catch (error) {
+    if (error.name === "AbortError") {
+      throw error;
+    }
     if (!allowFallback) {
       throw error;
     }
@@ -824,8 +922,14 @@ async function loadClipPayload(requestUrl = clipRequestUrl(), { allowFallback = 
   }
 }
 
-async function fetchJsonWithTimeout(url, { timeoutMs } = {}) {
+async function fetchJsonWithTimeout(url, { timeoutMs, signal = null } = {}) {
   const controller = new AbortController();
+  const abortFromParent = () => controller.abort();
+  if (signal?.aborted) {
+    controller.abort();
+  } else if (signal) {
+    signal.addEventListener("abort", abortFromParent, { once: true });
+  }
   const timeoutId =
     Number(timeoutMs) > 0
       ? window.setTimeout(() => controller.abort(), timeoutMs)
@@ -840,16 +944,18 @@ async function fetchJsonWithTimeout(url, { timeoutMs } = {}) {
     if (timeoutId) {
       window.clearTimeout(timeoutId);
     }
+    if (signal) {
+      signal.removeEventListener("abort", abortFromParent);
+    }
   }
 }
 
 function renderSearchControls() {
   renderSegmentedSearchControl(searchRecencyControl, "Recency", searchRecencyOptions, selectedSearchRecency, (value) => {
     selectedSearchRecency = value;
+    renderSearchControls();
     if (searchQuery?.value.trim()) {
       performClipSearch();
-    } else {
-      renderSearchControls();
     }
   });
   renderSegmentedSearchControl(
@@ -859,10 +965,9 @@ function renderSearchControls() {
     String(selectedSearchLimit),
     (value) => {
       selectedSearchLimit = Number(value);
+      renderSearchControls();
       if (searchQuery?.value.trim()) {
         performClipSearch();
-      } else {
-        renderSearchControls();
       }
     },
   );
@@ -1046,10 +1151,16 @@ async function performClipSearch() {
   }
   const query = searchQuery.value.trim();
   if (!query) {
+    searchAbortController?.abort();
+    searchAbortController = null;
+    searchRequestSequence += 1;
     searchStatus.textContent = "Enter a search string";
     renderEmptySearchState();
     return;
   }
+  searchAbortController?.abort();
+  const requestAbortController = new AbortController();
+  searchAbortController = requestAbortController;
   const requestId = ++searchRequestSequence;
   searchStatus.textContent = "Searching clips...";
   if (searchSuggestions) {
@@ -1063,7 +1174,10 @@ async function performClipSearch() {
       limit: String(selectedSearchLimit),
       recency: selectedSearchRecency,
     });
-    const response = await fetch(`${clipSearchUrl}?${params.toString()}`, { cache: "no-store" });
+    const response = await fetch(`${clipSearchUrl}?${params.toString()}`, {
+      cache: "no-store",
+      signal: requestAbortController.signal,
+    });
     if (!response.ok) {
       const error = new Error(`clip search HTTP ${response.status}`);
       error.status = response.status;
@@ -1076,6 +1190,9 @@ async function performClipSearch() {
     latestSearchPayload = payload;
     renderSearchResults(payload);
   } catch (error) {
+    if (error.name === "AbortError") {
+      return;
+    }
     if (requestId !== searchRequestSequence) {
       return;
     }
@@ -1086,6 +1203,10 @@ async function performClipSearch() {
     if (searchSuggestions) {
       searchSuggestions.hidden = false;
       renderSearchSuggestions(latestSearchSuggestions || fallbackSearchSuggestionGroups);
+    }
+  } finally {
+    if (searchAbortController === requestAbortController) {
+      searchAbortController = null;
     }
   }
 }
@@ -1149,10 +1270,6 @@ function renderSearchResultCard(result) {
   };
   const article = renderClipCard(clip);
   article.classList.add("search-result-card");
-  const player = renderExamplePlayer(clip);
-  if (player) {
-    article.append(player);
-  }
   const score = renderPill(`${Math.round(Number(result.score || 0) * 100)}% match`);
   score.classList.add("search-score-pill");
   article.querySelector(".clip-meta")?.append(score);
@@ -1186,7 +1303,21 @@ function renderClipLoadingState() {
   }
   clipList.setAttribute("aria-busy", "true");
   clipList.replaceChildren(...renderClipPlaceholders());
-  clipStatus.textContent = "Loading recent clips...";
+  clipStatus.textContent = selectedClipAround
+    ? "Loading clips by date and time..."
+    : "Loading recent clips...";
+}
+
+function renderClipLoadFailure(_error) {
+  clipList.setAttribute("aria-busy", "false");
+  const empty = document.createElement("div");
+  empty.className = "empty";
+  empty.textContent = selectedClipAround
+    ? "Clips for that date and time are temporarily unavailable. Try again."
+    : "Recent clips are temporarily unavailable. Try again.";
+  clipList.replaceChildren(empty);
+  clipStatus.textContent = "Clip loading failed";
+  renderClipPagination(0);
 }
 
 function renderClipPagePendingState() {
@@ -1281,6 +1412,9 @@ function normalizeCachedRecentClipPayload(payload) {
   }
   return {
     source: "live",
+    next_cursor: typeof payload.next_cursor === "string" ? payload.next_cursor : null,
+    around: payload.around || null,
+    around_timezone: payload.around_timezone || null,
     site: fallbackManifest.site,
     stats: payload.stats || {},
     generated_at: payload.generated_at || null,
@@ -1293,7 +1427,6 @@ function normalizeCachedRecentClipPayload(payload) {
       ended_at: clip.ended_at,
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript_public || clip.transcript || "",
-      transcript_reviewed: Boolean(clip.transcript_reviewed),
       quality_status: clip.quality_status || "unknown",
       quality_score: clip.quality_score ?? null,
       quality_reason: clip.quality_reason || "",
@@ -1345,29 +1478,35 @@ function startClipStatsPolling() {
     clearTimeout(clipStatsTimer);
     clipStatsTimer = null;
   }
-  pollClipStats();
+  scheduleClipStatsPolling(clipStatsInitialPollMs);
 }
 
-function scheduleClipStatsPolling() {
+function scheduleClipStatsPolling(delayMs = clipStatsPollMs) {
   if (clipStatsTimer) {
     clearTimeout(clipStatsTimer);
   }
-  clipStatsTimer = setTimeout(pollClipStats, clipStatsPollMs);
+  clipStatsTimer = setTimeout(pollClipStats, delayMs);
 }
 
 async function pollClipStats() {
   clipStatsAbortController?.abort();
   clipStatsAbortController = new AbortController();
   try {
-    const response = await fetch(apiUrl("/api/clips/recent?limit=1"), {
-      cache: "no-store",
-      signal: clipStatsAbortController.signal,
-    });
+    const response = await fetch(
+      apiUrl(
+        "/api/clips/recent?limit=1&include_playback_url=false&" +
+          "verify_playback_exists=false&include_counts=false",
+      ),
+      {
+        cache: "no-store",
+        signal: clipStatsAbortController.signal,
+      },
+    );
     if (!response.ok) {
       throw new Error(`clip stats HTTP ${response.status}`);
     }
     const payload = normalizeLivePayload(await response.json());
-    mergeLiveClipStats(payload);
+    mergeLiveClipStats(payloadWithRetainedClipStats(payload, currentClipPayload));
   } catch (error) {
     if (error.name !== "AbortError") {
       // The main clip payload still has a published-manifest fallback.
@@ -1378,11 +1517,12 @@ async function pollClipStats() {
 }
 
 function mergeLiveClipStats(payload) {
+  rememberGlobalClipStats(payload);
   let addedClipCount = 0;
   if (!currentClipPayload || currentClipPayload.source !== "live") {
     currentClipPayload = payload;
     addedClipCount = payload.clips?.length || 0;
-  } else {
+  } else if (clipCollectionFilter === "recent" && selectedChannels.size === 0) {
     currentClipPayload = {
       ...currentClipPayload,
       stats: {
@@ -1415,29 +1555,29 @@ function mergeLiveClipStats(payload) {
   renderStats(currentClipPayload || payload, currentPageClips.length ? currentPageClips : payload.clips || []);
 }
 
-function clipRequestUrl(page = selectedClipPage, { includeCounts = true } = {}) {
-  const pageNumber = Math.max(1, Math.floor(Number(page) || 1));
+function clipRequestUrl(_page = 1, { includeCounts = true, cursor = null } = {}) {
   const params = [
-    `limit=${selectedClipPageSize}`,
-    `page=${pageNumber}`,
-    "include_playback_url=true",
+    `limit=${clipBatchSize}`,
+    "include_playback_url=false",
     "verify_playback_exists=false",
   ];
+  if (cursor) {
+    params.push(`cursor=${encodeURIComponent(cursor)}`);
+  }
   if (!includeCounts) {
     params.push("include_counts=false");
   }
-  const clipReviewedFilter = clipCollectionFilter === "reviewed";
   if (clipCollectionFilter === "featured") {
     params.push("featured=true");
-  }
-  if (clipReviewedFilter) {
-    params.push("reviewed=true");
   }
   if (clipCollectionFilter === "quarantined") {
     params.push("quality=quarantined");
   }
   if (clipSortDirection === "oldest") {
     params.push("sort=oldest");
+  }
+  if (selectedClipAround) {
+    params.push(`around=${encodeURIComponent(selectedClipAround)}`);
   }
   const excludedChannels = clipExcludedChannelValues();
   if (excludedChannels.length) {
@@ -1449,98 +1589,28 @@ function clipRequestUrl(page = selectedClipPage, { includeCounts = true } = {}) 
   return apiUrl(`/api/clips/recent?${params.join("&")}`);
 }
 
-function prefetchNeighborClipPages(payload) {
-  if (!payload || payload.source !== "live" || !currentFilteredTotal) {
-    return;
-  }
-  const baseOffset = clipOffset();
-  const pageSize = selectedClipPageSize;
-  const totalClips = currentFilteredTotal;
-  scheduleClipPagePrefetch(() => {
-    for (let pageDelta = -clipPagePrefetchRadius; pageDelta <= clipPagePrefetchRadius; pageDelta += 1) {
-      if (pageDelta === 0) {
-        continue;
-      }
-      prefetchClipPageAtOffset(baseOffset + pageDelta * pageSize, totalClips);
-    }
-  });
-}
-
-function scheduleClipPagePrefetch(callback) {
-  if (typeof window.requestIdleCallback === "function") {
-    window.requestIdleCallback(callback, { timeout: 1500 });
-    return;
-  }
-  window.setTimeout(callback, 100);
-}
-
-async function prefetchClipPageAtOffset(offset, totalClips = currentFilteredTotal) {
-  const targetOffset = Math.max(0, Math.floor(Number(offset) || 0));
-  const targetPage = Math.floor(targetOffset / selectedClipPageSize) + 1;
-  if (targetPage === selectedClipPage || targetOffset >= totalClips) {
-    return;
-  }
-  const requestUrl = clipRequestUrl(targetPage, { includeCounts: false });
-  if (prefetchedClipPagePayload(requestUrl) || clipPagePrefetches.has(requestUrl)) {
-    return;
-  }
-  const prefetch = loadClipPayload(requestUrl, { allowFallback: false })
-    .then((payload) => {
-      if (payload.source !== "live") {
-        return;
-      }
-      storeClipPageMemoryPayload(requestUrl, payload);
-      storeRecentClipPayload(requestUrl, payload);
-    })
-    .catch(() => {
-      // Main page loads keep the published-manifest fallback; speculative fetches stay quiet.
-    })
-    .finally(() => {
-      clipPagePrefetches.delete(requestUrl);
-    });
-  clipPagePrefetches.set(requestUrl, prefetch);
-}
-
-function prefetchedClipPagePayload(requestUrl) {
-  const cached = clipPageMemoryCache.get(requestUrl);
-  if (!cached) {
-    return null;
-  }
-  if (Date.now() - cached.cached_at_ms > clipPageMemoryCacheMaxAgeMs) {
-    clipPageMemoryCache.delete(requestUrl);
-    return null;
-  }
-  return cached.payload;
-}
-
-function storeClipPageMemoryPayload(requestUrl, payload) {
-  clipPageMemoryCache.delete(requestUrl);
-  clipPageMemoryCache.set(requestUrl, {
-    cached_at_ms: Date.now(),
-    payload,
-  });
-  while (clipPageMemoryCache.size > clipPageMemoryCacheMaxEntries) {
-    const oldestKey = clipPageMemoryCache.keys().next().value;
-    if (!oldestKey) {
-      return;
-    }
-    clipPageMemoryCache.delete(oldestKey);
-  }
-}
-
 async function loadPublishedManifest() {
-  try {
-    const response = await fetch(manifestUrl, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`manifest HTTP ${response.status}`);
+  for (const publishedUrl of [recentClipsSnapshotUrl, manifestUrl]) {
+    try {
+      const response = await fetch(publishedUrl, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`manifest HTTP ${response.status}`);
+      }
+      return normalizePublishedManifest(await response.json());
+    } catch {
+      // Try the full manifest when the compact snapshot has not been generated yet.
     }
-    return normalizePublishedManifest(await response.json());
-  } catch {
-    return normalizePublishedManifest(fallbackManifest);
   }
+  return normalizePublishedManifest(fallbackManifest);
 }
 
 async function loadLanguagePayload() {
+  if (generatedAnalysisHost) {
+    const payload = await loadPublishedLanguagePayload();
+    if (payload?.status !== "missing") {
+      return payload;
+    }
+  }
   try {
     const response = await fetch(lexicalAnalysisUrl, { cache: "no-store" });
     if (!response.ok) {
@@ -1608,6 +1678,9 @@ function normalizeLivePayload(payload) {
   );
   return {
     source: "live",
+    next_cursor: typeof payload.next_cursor === "string" ? payload.next_cursor : null,
+    around: payload.around || null,
+    around_timezone: payload.around_timezone || null,
     site: fallbackManifest.site,
     stats: {
       clip_count: Number(
@@ -1629,6 +1702,7 @@ function normalizeLivePayload(payload) {
       page: payloadPage,
       channel_counts: payload.channel_counts || countBy(clips, (clip) => clip.channel || "?"),
       playable_channel_counts: playableChannelCounts,
+      counts_deferred: Boolean(payload.counts_deferred ?? payload.stats?.counts_deferred),
       channel_labels: payload.channel_labels || {},
     },
     generated_at: new Date().toISOString(),
@@ -1641,12 +1715,6 @@ function normalizeLivePayload(payload) {
       ended_at: clip.ended_at,
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript || "",
-      transcript_reviewed: Boolean(clip.transcript_reviewed),
-      include_in_training: Boolean(clip.include_in_training),
-      training_quality: clip.training_quality || "unknown",
-      training_split: clip.training_split || "auto",
-      training_flags: Array.isArray(clip.training_flags) ? clip.training_flags : [],
-      training_reason: clip.training_reason || "",
       quality_status: clip.quality_status || "unknown",
       quality_score: clip.quality_score ?? null,
       quality_reason: clip.quality_reason || "",
@@ -1681,12 +1749,6 @@ function normalizePublishedManifest(payload) {
       ended_at: clip.ended_at,
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript_public || clip.transcript || "",
-      transcript_reviewed: Boolean(clip.transcript_reviewed),
-      include_in_training: Boolean(clip.include_in_training),
-      training_quality: clip.training_quality || "unknown",
-      training_split: clip.training_split || "auto",
-      training_flags: Array.isArray(clip.training_flags) ? clip.training_flags : [],
-      training_reason: clip.training_reason || "",
       quality_status: clip.quality_status || "unknown",
       quality_score: clip.quality_score ?? null,
       quality_reason: clip.quality_reason || "",
@@ -1701,6 +1763,8 @@ function normalizePublishedManifest(payload) {
 
 function renderSite(payload) {
   const clips = payload.clips || [];
+  nextClipCursor = payload.source === "live" ? payload.next_cursor || null : null;
+  rememberGlobalClipStats(payload);
   currentChannelLabels = channelLabelsForPayload(payload);
   document.title = payload.site?.title || fallbackManifest.site.title;
   document.querySelector("#site-title").textContent = payload.site?.title || fallbackManifest.site.title;
@@ -1723,6 +1787,7 @@ function renderSite(payload) {
 
 function renderClipSummaryOnly(payload) {
   const clips = payload.clips || [];
+  rememberGlobalClipStats(payload);
   renderClipHeading();
   const filteredClips = filterClipsByChannel(clips);
   const pageClips = payload.source === "live" ? filteredClips : paginateClips(filteredClips);
@@ -1752,15 +1817,18 @@ function renderStats(payload, clips) {
   if (!stats) {
     return;
   }
+  const payloadStatsForHeader =
+    payload.stats?.counts_deferred || payload.stats?.featured ? null : payload.stats || {};
+  const headerStats = globalClipStats || payloadStatsForHeader;
   const channelCounts =
-    payload.stats?.playable_channel_counts ||
-    payload.stats?.channel_counts ||
+    headerStats?.playable_channel_counts ||
+    headerStats?.channel_counts ||
     countBy(clips, (clip) => clip.channel || "?");
-  const channelTotal = Object.keys(channelCounts).length;
-  const clipTotal = totalPlayableClips(payload, clips);
+  const channelTotal = headerStats ? Object.keys(channelCounts).length : null;
+  const clipTotal = headerStats ? totalPlayableClips({ ...payload, stats: headerStats }, clips) : null;
   const latestStartedAt =
-    payload.stats?.latest_playable_started_at || payload.stats?.latest_started_at || clips[0]?.started_at;
-  const latest = latestStartedAt ? shortTime(latestStartedAt) : "None";
+    headerStats?.latest_playable_started_at || headerStats?.latest_started_at || clips[0]?.started_at;
+  const latest = latestStartedAt ? shortTime(latestStartedAt) : headerStats ? "None" : null;
   const statItems = [
     ["Playable clips", clipTotal],
     ["Received", totalReceivedClips(payload)],
@@ -1784,11 +1852,52 @@ function renderStats(payload, clips) {
       return item;
     }),
   );
-  lastRenderedClipTotal = Number(clipTotal);
+  if (clipTotal !== null) {
+    lastRenderedClipTotal = Number(clipTotal);
+  }
+}
+
+function rememberGlobalClipStats(payload) {
+  if (!payload?.stats || payload.stats.counts_deferred || payload.stats.featured) {
+    return;
+  }
+  const clips = payload.clips || [];
+  const channelCounts =
+    payload.stats.playable_channel_counts ||
+    payload.stats.channel_counts ||
+    countBy(clips, (clip) => clip.channel || "?");
+  globalClipStats = {
+    ...payload.stats,
+    clip_count: Number(
+      payload.stats.clip_count ??
+        totalAvailableClipsFromCounts(payload.stats.channel_counts) ??
+        clips.length,
+    ),
+    playable_clip_count: Number(
+      payload.stats.playable_clip_count ??
+        payload.stats.clip_count ??
+        totalAvailableClipsFromCounts(payload.stats.playable_channel_counts) ??
+        totalAvailableClipsFromCounts(payload.stats.channel_counts) ??
+        clips.length,
+    ),
+    channel_counts: {
+      ...(payload.stats.channel_counts || channelCounts || {}),
+    },
+    playable_channel_counts: {
+      ...(payload.stats.playable_channel_counts || channelCounts || {}),
+    },
+    latest_started_at: payload.stats.latest_started_at || clips[0]?.started_at || null,
+    latest_playable_started_at:
+      payload.stats.latest_playable_started_at || payload.stats.latest_started_at || clips[0]?.started_at || null,
+    counts_deferred: false,
+  };
 }
 
 function formatStatValue(label, value) {
   if (label === "Playable clips" || label === "Received" || label === "Analyzed" || label === "Channels") {
+    if (value === null || value === undefined) {
+      return "Loading";
+    }
     return Number(value).toLocaleString();
   }
   return String(value);
@@ -1880,6 +1989,14 @@ function renderClipDisplayControls() {
     return;
   }
   clipDisplayControls.replaceChildren(...renderClipDisplayControlSet());
+  updateClipDatetimeNavigator();
+}
+
+function updateClipDatetimeNavigator() {
+  if (clearClipDatetimeButton) {
+    clearClipDatetimeButton.hidden = !selectedClipAround;
+  }
+  clipDatetimeForm?.classList.toggle("is-active", Boolean(selectedClipAround));
 }
 
 function renderClipHeading() {
@@ -1893,9 +2010,6 @@ function clipCollectionTitle() {
   if (clipCollectionFilter === "featured") {
     return "Hall of Fame";
   }
-  if (clipCollectionFilter === "reviewed") {
-    return "Reviewed Clips";
-  }
   if (clipCollectionFilter === "quarantined") {
     return "Quarantined Clips";
   }
@@ -1903,7 +2017,7 @@ function clipCollectionTitle() {
 }
 
 function renderClipDisplayControlSet() {
-  const featuredControl = segmentedControl("Show clips", [
+  const collectionControls = [
     {
       label: "Recent",
       active: clipCollectionFilter === "recent",
@@ -1917,20 +2031,9 @@ function renderClipDisplayControlSet() {
         loadAndRender();
       },
     },
-    {
-      label: "Reviewed",
-      active: clipCollectionFilter === "reviewed",
-      onClick: () => {
-        if (clipCollectionFilter === "reviewed") {
-          return;
-        }
-        clipCollectionFilter = "reviewed";
-        resetClipPagination();
-        updateTabRoute("clips");
-        loadAndRender();
-      },
-    },
-    {
+  ];
+  if (quarantineClipLaneEnabled) {
+    collectionControls.push({
       label: "Quarantine",
       active: clipCollectionFilter === "quarantined",
       onClick: () => {
@@ -1942,37 +2045,25 @@ function renderClipDisplayControlSet() {
         updateTabRoute("clips");
         loadAndRender();
       },
+    });
+  }
+  collectionControls.push({
+    label: "Hall of fame",
+    active: clipCollectionFilter === "featured",
+    onClick: () => {
+      if (clipCollectionFilter === "featured") {
+        return;
+      }
+      clipCollectionFilter = "featured";
+      resetClipPagination();
+      updateTabRoute("clips");
+      loadAndRender();
     },
+  });
+  const featuredControl = segmentedControl("Show clips", collectionControls);
+  const sortControl = segmentedControl(selectedClipAround ? "Browse from time" : "Flip page order", [
     {
-      label: "Hall of fame",
-      active: clipCollectionFilter === "featured",
-      onClick: () => {
-        if (clipCollectionFilter === "featured") {
-          return;
-        }
-        clipCollectionFilter = "featured";
-        resetClipPagination();
-        updateTabRoute("clips");
-        loadAndRender();
-      },
-    },
-  ]);
-  const pageSizeControl = segmentedControl(
-    "Clips per page",
-    clipPageSizeOptions.map((pageSize) => ({
-      label: String(pageSize),
-      active: selectedClipPageSize === pageSize,
-      onClick: () => {
-        if (!setClipPageSize(pageSize)) {
-          return;
-        }
-        loadAndRender({ useCachedPayload: false, includeCounts: false });
-      },
-    })),
-  );
-  const sortControl = segmentedControl("Flip page order", [
-    {
-      label: "Newest",
+      label: selectedClipAround ? "Earlier" : "Newest",
       active: clipSortDirection === "newest",
       onClick: () => {
         if (clipSortDirection === "newest") {
@@ -1984,7 +2075,7 @@ function renderClipDisplayControlSet() {
       },
     },
     {
-      label: "Oldest",
+      label: selectedClipAround ? "Later" : "Oldest",
       active: clipSortDirection === "oldest",
       onClick: () => {
         if (clipSortDirection === "oldest") {
@@ -1996,25 +2087,19 @@ function renderClipDisplayControlSet() {
       },
     },
   ]);
-  return [featuredControl, pageSizeControl, sortControl];
-}
-
-function setClipPageSize(pageSize) {
-  const nextPageSize = Number(pageSize);
-  if (!clipPageSizeOptions.includes(nextPageSize) || selectedClipPageSize === nextPageSize) {
-    return false;
+  const controls = [featuredControl, sortControl];
+  if (clipCollectionFilter === "recent") {
+    controls.push(renderContinuousClipPlaybackControl());
   }
-  const firstVisibleClipOffset = clipOffset();
-  selectedClipPageSize = nextPageSize;
-  const firstVisibleClipPage = Math.floor(firstVisibleClipOffset / selectedClipPageSize) + 1;
-  selectedClipPage = firstVisibleClipPage;
-  selectedClipOffset = (firstVisibleClipPage - 1) * selectedClipPageSize;
-  return true;
+  return controls;
 }
 
 function resetClipPagination() {
+  stopContinuousClipPlayback();
   selectedClipOffset = 0;
   selectedClipPage = 1;
+  nextClipCursor = null;
+  clipLoadMorePending = false;
 }
 
 function segmentedControl(labelText, options) {
@@ -2039,6 +2124,233 @@ function segmentedControl(labelText, options) {
   }
   wrapper.append(label, controls);
   return wrapper;
+}
+
+function renderContinuousClipPlaybackControl() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "clip-control-group clip-play-all-control";
+  const label = document.createElement("span");
+  label.className = "clip-control-label";
+  label.textContent = "Continuous play";
+  const actions = document.createElement("div");
+  actions.className = "clip-play-all-actions";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "clip-play-all-button";
+  button.addEventListener("click", toggleContinuousClipPlayback);
+  const status = document.createElement("span");
+  status.className = "clip-play-all-status";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  actions.append(button, status);
+  wrapper.append(label, actions);
+  updateContinuousClipPlaybackControl({ button, status });
+  return wrapper;
+}
+
+function updateContinuousClipPlaybackControl(elements = {}) {
+  const button = elements.button || clipDisplayControls?.querySelector(".clip-play-all-button");
+  const status = elements.status || clipDisplayControls?.querySelector(".clip-play-all-status");
+  const clipCount = continuousClipAudios().length;
+  if (button) {
+    button.classList.toggle("is-active", continuousClipPlaybackActive);
+    button.setAttribute("aria-pressed", String(continuousClipPlaybackActive));
+    button.disabled = !continuousClipPlaybackActive && clipCount === 0;
+    if (continuousClipPlaybackActive) {
+      button.setAttribute("aria-label", "Stop continuous clip playback");
+      button.textContent = "■ Stop";
+    } else {
+      button.setAttribute("aria-label", "Play all recent clips");
+      button.textContent = "▶ Play all";
+    }
+  }
+  if (status) {
+    status.textContent = continuousClipPlaybackStatusText(clipCount);
+  }
+}
+
+function continuousClipPlaybackStatusText(clipCount) {
+  if (continuousClipPlaybackActive) {
+    if (continuousClipPlaybackPhase === "waiting") {
+      return "Next clip in 2 seconds";
+    }
+    if (continuousClipPlaybackPhase === "loading") {
+      return "Loading more clips…";
+    }
+    if (continuousClipPlaybackIndex >= 0) {
+      return `Playing ${continuousClipPlaybackIndex + 1} of ${clipCount} loaded clips`;
+    }
+  }
+  if (continuousClipPlaybackMessage) {
+    return continuousClipPlaybackMessage;
+  }
+  const noun = clipCount === 1 ? "clip" : "clips";
+  return `Loops ${clipCount} loaded ${noun} · 2s between clips`;
+}
+
+function continuousClipAudios() {
+  if (!clipList) {
+    return [];
+  }
+  return [...clipList.querySelectorAll(".clip-card .example-player audio")].filter(
+    (audio) => audio instanceof HTMLAudioElement,
+  );
+}
+
+function toggleContinuousClipPlayback() {
+  if (continuousClipPlaybackActive) {
+    stopContinuousClipPlayback();
+    return;
+  }
+  startContinuousClipPlayback();
+}
+
+async function startContinuousClipPlayback() {
+  const audios = continuousClipAudios();
+  if (!audios.length) {
+    continuousClipPlaybackMessage = "No playable Recent clips are loaded.";
+    updateContinuousClipPlaybackControl();
+    return;
+  }
+  stopCurrentClipPlayback();
+  closeLiveAudioStream();
+  continuousClipPlaybackActive = true;
+  continuousClipPlaybackGeneration += 1;
+  continuousClipPlaybackIndex = -1;
+  continuousClipPlaybackPhase = "starting";
+  continuousClipPlaybackMessage = "";
+  const generation = continuousClipPlaybackGeneration;
+  updateContinuousClipPlaybackControl();
+  await playContinuousClipAt(0, generation);
+}
+
+async function playContinuousClipAt(index, generation) {
+  if (!continuousClipPlaybackActive || generation !== continuousClipPlaybackGeneration) {
+    return;
+  }
+  const audios = continuousClipAudios();
+  const audio = audios[index];
+  if (!audio) {
+    stopContinuousClipPlayback({ message: "No playable Recent clips are loaded." });
+    return;
+  }
+  continuousClipPlaybackIndex = index;
+  continuousClipPlaybackAudio = audio;
+  continuousClipPlaybackPhase = "starting";
+  markContinuousClipPlaybackCard(audio);
+  updateContinuousClipPlaybackControl();
+  const playAction = clipAudioPlayActions.get(audio);
+  const started = playAction ? await playAction() : await playAudioElement(audio);
+  const playbackStillCurrent =
+    continuousClipPlaybackActive &&
+    generation === continuousClipPlaybackGeneration &&
+    continuousClipPlaybackAudio === audio;
+  if (!started || !playbackStillCurrent) {
+    if (started && !audio.paused) {
+      audio.pause();
+    }
+    if (continuousClipPlaybackActive && generation === continuousClipPlaybackGeneration) {
+      stopContinuousClipPlayback({
+        stopAudio: false,
+        message: "Playback needs another tap to continue.",
+      });
+    }
+    return;
+  }
+  continuousClipPlaybackPhase = "playing";
+  updateContinuousClipPlaybackControl();
+  const onFinished = () => {
+    audio.removeEventListener("ended", onFinished);
+    audio.removeEventListener("error", onFinished);
+    if (
+      continuousClipPlaybackActive &&
+      generation === continuousClipPlaybackGeneration &&
+      continuousClipPlaybackAudio === audio
+    ) {
+      scheduleNextContinuousClip(audio, generation);
+    }
+  };
+  audio.addEventListener("ended", onFinished, { once: true });
+  audio.addEventListener("error", onFinished, { once: true });
+}
+
+async function playAudioElement(audio) {
+  try {
+    await audio.play();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function scheduleNextContinuousClip(completedAudio, generation) {
+  if (!continuousClipPlaybackActive || generation !== continuousClipPlaybackGeneration) {
+    return;
+  }
+  continuousClipPlaybackPhase = "waiting";
+  updateContinuousClipPlaybackControl();
+  continuousClipPlaybackTimer = window.setTimeout(
+    () => {
+      continuousClipPlaybackTimer = null;
+      advanceContinuousClipPlayback(completedAudio, generation);
+    },
+    continuousClipPlaybackGapMs,
+  );
+}
+
+async function advanceContinuousClipPlayback(completedAudio, generation) {
+  if (!continuousClipPlaybackActive || generation !== continuousClipPlaybackGeneration) {
+    return;
+  }
+  let audios = continuousClipAudios();
+  const completedIndex = audios.indexOf(completedAudio);
+  let nextIndex = completedIndex >= 0 ? completedIndex + 1 : continuousClipPlaybackIndex + 1;
+  if (nextIndex >= audios.length && nextClipCursor) {
+    continuousClipPlaybackPhase = "loading";
+    updateContinuousClipPlaybackControl();
+    await loadMoreClips();
+    if (!continuousClipPlaybackActive || generation !== continuousClipPlaybackGeneration) {
+      return;
+    }
+    audios = continuousClipAudios();
+    const refreshedCompletedIndex = audios.indexOf(completedAudio);
+    nextIndex = refreshedCompletedIndex >= 0 ? refreshedCompletedIndex + 1 : nextIndex;
+  }
+  if (nextIndex >= audios.length) {
+    nextIndex = 0;
+  }
+  await playContinuousClipAt(nextIndex, generation);
+}
+
+function stopContinuousClipPlayback({ stopAudio = true, message = "" } = {}) {
+  const audio = continuousClipPlaybackAudio;
+  continuousClipPlaybackActive = false;
+  continuousClipPlaybackGeneration += 1;
+  if (continuousClipPlaybackTimer) {
+    window.clearTimeout(continuousClipPlaybackTimer);
+    continuousClipPlaybackTimer = null;
+  }
+  continuousClipPlaybackAudio = null;
+  continuousClipPlaybackIndex = -1;
+  continuousClipPlaybackPhase = "idle";
+  continuousClipPlaybackMessage = message;
+  markContinuousClipPlaybackCard(null);
+  if (stopAudio && audio && !audio.paused) {
+    audio.pause();
+    try {
+      audio.currentTime = 0;
+    } catch {
+      // Metadata may not be available for a failed playback attempt.
+    }
+  }
+  updateContinuousClipPlaybackControl();
+}
+
+function markContinuousClipPlaybackCard(audio) {
+  clipList?.querySelectorAll(".clip-card.is-continuous-playing").forEach((card) => {
+    card.classList.remove("is-continuous-playing");
+  });
+  audio?.closest(".clip-card")?.classList.add("is-continuous-playing");
 }
 
 function channelFilterOption(channel, count) {
@@ -2129,8 +2441,6 @@ function filterClipsByChannel(clips) {
   let visibleClips = clips;
   if (clipCollectionFilter === "featured") {
     visibleClips = visibleClips.filter((clip) => clip.featured);
-  } else if (clipCollectionFilter === "reviewed") {
-    visibleClips = visibleClips.filter((clip) => clip.transcript_reviewed);
   } else if (clipCollectionFilter === "quarantined") {
     visibleClips = visibleClips.filter((clip) => clip.quality_status === "quarantined");
   }
@@ -2169,24 +2479,29 @@ function renderClips(clips) {
         selectedChannels.size === 0
           ? "No Hall of Fame clips yet."
           : "No Hall of Fame clips for the selected channels.";
-    } else if (clipCollectionFilter === "reviewed") {
-      empty.textContent =
-        selectedChannels.size === 0
-          ? "No reviewed clips yet."
-          : "No reviewed clips for the selected channels.";
     } else if (clipCollectionFilter === "quarantined") {
       empty.textContent =
         selectedChannels.size === 0
           ? "No quarantined clips yet."
           : "No quarantined clips for the selected channels.";
     } else {
-      empty.textContent =
-        selectedChannels.size === 0
+      empty.textContent = selectedClipAround
+        ? `No playable clips were found ${clipSortDirection === "oldest" ? "at or after" : "at or before"} that time.`
+        : selectedChannels.size === 0
           ? "No playable clips are available yet."
           : "No playable clips are available for the selected channels.";
     }
     clipList.replaceChildren(empty);
+    if (continuousClipPlaybackActive || clipCollectionFilter === "recent") {
+      stopContinuousClipPlayback({ message: "No playable Recent clips are loaded." });
+    }
     return;
+  }
+  if (
+    !continuousClipPlaybackActive &&
+    continuousClipPlaybackMessage === "No playable Recent clips are loaded."
+  ) {
+    continuousClipPlaybackMessage = "";
   }
   const existingCards = new Map(
     [...clipList.querySelectorAll(".clip-card[data-clip-id]")].map((card) => [
@@ -2205,60 +2520,37 @@ function renderClips(clips) {
       return renderClipCard(clip);
     }),
   );
+  if (continuousClipPlaybackActive && continuousClipPlaybackAudio && !continuousClipPlaybackAudio.isConnected) {
+    stopContinuousClipPlayback({ message: "The clip list changed. Press Play all to restart." });
+    return;
+  }
+  updateContinuousClipPlaybackControl();
 }
 
-function renderClipPagination(totalClips, { pending = false } = {}) {
+function renderClipPagination(_totalClips, { pending = false, loadError = false } = {}) {
   if (!clipPagination) {
     return;
   }
-  const totalPages = Math.max(1, Math.ceil(totalClips / selectedClipPageSize));
-  if (totalClips <= selectedClipPageSize) {
+  clipLoadMoreObserver?.disconnect();
+  clipLoadMoreObserver = null;
+  if (!nextClipCursor && !pending && !loadError) {
     clipPagination.hidden = true;
     clipPagination.replaceChildren();
     return;
   }
-  clampClipOffset(totalClips);
-  syncClipPageFromOffset();
-  const pageStatus = document.createElement("span");
-  pageStatus.className = "clip-page-status";
-  pageStatus.textContent = pending
-    ? `Loading page ${selectedClipPage} of ${totalPages}...`
-    : `Page ${selectedClipPage} of ${totalPages}`;
-  const pageList = document.createElement("div");
-  pageList.className = "pagination-pages";
-  pageList.setAttribute("aria-label", "Clip pages");
-  for (const item of clipPaginationItems(selectedClipPage, totalPages)) {
-    pageList.append(item === "ellipsis" ? paginationEllipsis() : paginationPageButton(item));
-  }
-  const actions = document.createElement("div");
-  actions.className = "pagination-actions";
-  const actionButtons = [];
-  if (clipOffset() > 0) {
-    actionButtons.push(
-      paginationButton(
-        clipSortDirection === "oldest" ? "Oldest" : "Newest",
-        false,
-        () => goToClipOffset(0),
-        {
-          ariaLabel: clipSortDirection === "oldest" ? "Oldest page" : "Newest page",
-        },
-      ),
-      paginationButton("Previous", false, () => goToClipOffset(clipOffset() - selectedClipPageSize)),
-    );
-  }
-  if (clipOffset() + selectedClipPageSize < totalClips) {
-    actionButtons.push(
-      paginationButton("Next", false, () => goToClipOffset(clipOffset() + selectedClipPageSize)),
-      clipSortDirection === "oldest"
-        ? paginationButton("Newest", false, goToNewestClipPage, {
-            ariaLabel: "Newest page",
-          })
-        : paginationButton("Oldest", false, goToOldestClipPage, {
-            ariaLabel: "Oldest page",
-          }),
-    );
-  }
-  actions.append(...actionButtons);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "pagination-button clip-load-more-button";
+  button.textContent = pending
+    ? "Loading 24 more…"
+    : loadError
+      ? "Retry loading 24 more"
+      : "Load 24 more";
+  button.disabled = pending || !nextClipCursor;
+  button.addEventListener("click", loadMoreClips);
+  const sentinel = document.createElement("div");
+  sentinel.className = "clip-load-more-sentinel";
+  sentinel.setAttribute("aria-hidden", "true");
   clipPagination.hidden = false;
   clipPagination.classList.toggle("is-pending", pending);
   if (pending) {
@@ -2266,144 +2558,22 @@ function renderClipPagination(totalClips, { pending = false } = {}) {
   } else {
     clipPagination.removeAttribute("aria-busy");
   }
-  clipPagination.replaceChildren(pageStatus, pageList, actions);
-}
-
-function clipPaginationItems(currentPage, totalPages) {
-  const maxPageButtons = 5;
-  if (totalPages <= maxPageButtons) {
-    return Array.from({ length: totalPages }, (_value, index) => index + 1);
+  clipPagination.replaceChildren(button, sentinel);
+  if (
+    nextClipCursor &&
+    !pending &&
+    "IntersectionObserver" in window
+  ) {
+    clipLoadMoreObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadMoreClips();
+        }
+      },
+      { rootMargin: "600px 0px" },
+    );
+    clipLoadMoreObserver.observe(sentinel);
   }
-  const halfWindow = Math.floor(maxPageButtons / 2);
-  let startPage = currentPage - halfWindow;
-  let endPage = currentPage + halfWindow;
-  if (startPage < 1) {
-    endPage += 1 - startPage;
-    startPage = 1;
-  }
-  if (endPage > totalPages) {
-    startPage -= endPage - totalPages;
-    endPage = totalPages;
-  }
-  startPage = Math.max(1, startPage);
-  endPage = Math.min(totalPages, endPage);
-  const pages = Array.from({ length: endPage - startPage + 1 }, (_value, index) => startPage + index);
-  const items = [];
-  if (startPage > 1) {
-    items.push("ellipsis");
-  }
-  for (const page of pages) {
-    items.push(page);
-  }
-  if (endPage < totalPages) {
-    items.push("ellipsis");
-  }
-  return items;
-}
-
-function syncClipPageFromOffset() {
-  selectedClipPage = Math.floor(clipOffset() / selectedClipPageSize) + 1;
-}
-
-function clampClipOffset(totalClips) {
-  const totalPages = Math.max(1, Math.ceil(totalClips / selectedClipPageSize));
-  const maxOffset = (totalPages - 1) * selectedClipPageSize;
-  selectedClipOffset = Math.min(Math.max(clipOffset(), 0), maxOffset);
-}
-
-function paginationPageButton(pageNumber) {
-  const button = paginationButton(String(pageNumber), selectedClipPage === pageNumber, () => {
-    goToClipPage(pageNumber);
-  });
-  button.classList.add("pagination-page-button");
-  button.disabled = false;
-  button.setAttribute("aria-label", `Page ${pageNumber}`);
-  if (selectedClipPage === pageNumber) {
-    button.setAttribute("aria-current", "page");
-  }
-  return button;
-}
-
-function paginationEllipsis() {
-  const ellipsis = document.createElement("span");
-  ellipsis.className = "pagination-ellipsis";
-  ellipsis.setAttribute("aria-hidden", "true");
-  ellipsis.textContent = "…";
-  return ellipsis;
-}
-
-function goToClipPage(pageNumber) {
-  const nextPage = Math.max(1, Math.floor(Number(pageNumber) || 1));
-  const nextOffset = (nextPage - 1) * selectedClipPageSize;
-  if (nextOffset === clipOffset()) {
-    return;
-  }
-  selectedClipPage = nextPage;
-  selectedClipOffset = nextOffset;
-  renderClipPagePendingState();
-  loadAndRender({ useCachedPayload: false, scrollToClipsAfterRender: true, includeCounts: false });
-}
-
-function goToOldestClipPage() {
-  clipSortDirection = "oldest";
-  selectedClipOffset = 0;
-  selectedClipPage = 1;
-  renderClipPagePendingState();
-  loadAndRender({ useCachedPayload: false, scrollToClipsAfterRender: true, includeCounts: false });
-}
-
-function goToNewestClipPage() {
-  clipSortDirection = "newest";
-  selectedClipOffset = 0;
-  selectedClipPage = 1;
-  renderClipPagePendingState();
-  loadAndRender({ useCachedPayload: false, scrollToClipsAfterRender: true, includeCounts: false });
-}
-
-function goToClipOffset(offset) {
-  const nextOffset = Math.max(0, Math.floor(Number(offset) || 0));
-  if (nextOffset === clipOffset()) {
-    return;
-  }
-  selectedClipOffset = nextOffset;
-  syncClipPageFromOffset();
-  renderClipPagePendingState();
-  loadAndRender({ useCachedPayload: false, scrollToClipsAfterRender: true, includeCounts: false });
-}
-
-function scrollClipListToTopForPagination() {
-  if (!clipList) {
-    return;
-  }
-  window.requestAnimationFrame(() => {
-    const top = clipList.getBoundingClientRect().top + window.scrollY - clipListScrollOffset();
-    window.scrollTo({ top: Math.max(0, top), behavior: "auto" });
-  });
-}
-
-function clipListScrollOffset() {
-  const tabs = document.querySelector(".tabs");
-  if (!(tabs instanceof HTMLElement)) {
-    return 0;
-  }
-  const tabsStyle = window.getComputedStyle(tabs);
-  if (tabsStyle.position !== "sticky" && tabsStyle.position !== "fixed") {
-    return 0;
-  }
-  return Math.ceil(tabs.getBoundingClientRect().height + 8);
-}
-
-function paginationButton(label, disabled, onClick, { ariaLabel = "" } = {}) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "pagination-button";
-  button.disabled = disabled;
-  button.textContent = label;
-  if (ariaLabel) {
-    button.setAttribute("aria-label", ariaLabel);
-  }
-  button.addEventListener("click", onClick);
-  return button;
 }
 
 function renderClipCard(clip) {
@@ -2412,7 +2582,7 @@ function renderClipCard(clip) {
   article.dataset.clipId = clipDomId(clip);
   article.dataset.clipSignature = clipRenderSignature(clip);
   const canWriteClipFeature = featureClipWriteEnabled && canReviewClip(clip);
-  const canEditClipTranscript = operatorReviewEnabled && canReviewClip(clip);
+  const canDeleteArchivedClip = archiveClipDeleteEnabled && canReviewClip(clip);
 
   const meta = document.createElement("div");
   meta.className = "clip-meta";
@@ -2423,10 +2593,6 @@ function renderClipCard(clip) {
   if (clip.quality_status === "quarantined") {
     meta.append(renderQualityPill(clip));
     article.classList.add("is-quarantined");
-  }
-  if (clip.transcript_reviewed) {
-    meta.append(renderReviewedPill());
-    article.classList.add("is-reviewed");
   }
   if (clip.featured) {
     meta.append(renderFeaturedPill());
@@ -2447,8 +2613,8 @@ function renderClipCard(clip) {
   if (audioUrl) {
     article.append(renderExamplePlayer(clip));
   }
-  if (canEditClipTranscript) {
-    article.append(renderTranscriptCorrectionForm(clip, transcript, article));
+  if (canDeleteArchivedClip) {
+    article.append(renderArchiveDeleteControl(clip, article));
   }
   return article;
 }
@@ -2466,341 +2632,90 @@ function clipRenderSignature(clip) {
     clip.ended_at || "",
     clip.duration_seconds || "",
     clip.transcript_public || "",
-    clip.transcript_reviewed ? "reviewed" : "unreviewed",
-    clip.include_in_training === false ? "excluded-training" : "included-training",
-    clip.training_quality || "",
-    clip.training_split || "",
-    Array.isArray(clip.training_flags) ? clip.training_flags.join(",") : "",
-    clip.training_reason || "",
     clip.quality_status || "unknown",
     clip.quality_score ?? "",
     clip.quality_reason || "",
     Array.isArray(clip.quality_flags) ? clip.quality_flags.join(",") : "",
     clip.featured ? "featured" : "standard",
     clip.featured_at || "",
-    clip.playback_url || clip.audio_url
-      ? "has-live-audio"
-      : clip.audio_public_filename
-        ? "has-static-audio"
-        : "no-audio",
+    clipAudioSourceKind(clip),
     featureClipWriteEnabled && canReviewClip(clip) ? "feature-writable" : "feature-read-only",
-    operatorReviewEnabled && canReviewClip(clip) ? "reviewable" : "read-only",
+    archiveClipDeleteEnabled && canReviewClip(clip) ? "archive-delete-writable" : "archive-delete-read-only",
   ].join("\u001f");
+}
+
+function clipAudioSourceKind(clip) {
+  if (clip?.playback_url) {
+    return "has-live-audio";
+  }
+  if (clip?.audio_public_filename) {
+    return "has-static-audio";
+  }
+  if (clipAudioRequestUrl(clip)) {
+    return "has-proxied-audio";
+  }
+  return "no-audio";
 }
 
 function canReviewClip(clip) {
   return Boolean(clip?.channel && clip?.started_at && clip?.transcript_public !== undefined);
 }
 
-function renderTranscriptCorrectionForm(clip, transcriptElement, article) {
-  const details = document.createElement("details");
-  details.className = "transcript-correction";
-
-  const summary = document.createElement("summary");
-  summary.textContent = clip.transcript_reviewed ? "Edit correction" : "Fix transcript";
-
-  const form = document.createElement("form");
-  form.className = "transcript-correction-form";
-
-  const label = document.createElement("label");
-  label.className = "transcript-correction-label";
-  label.textContent = "Corrected transcript";
-
-  const textarea = document.createElement("textarea");
-  textarea.value = clip.transcript_public || "";
-  textarea.rows = 4;
-  textarea.maxLength = 8000;
-  textarea.required = true;
-  textarea.autocapitalize = "sentences";
-  textarea.spellcheck = true;
-  label.append(textarea);
-
-  const trainingMetadata = renderTranscriptTrainingMetadata(clip);
-
-  const actions = document.createElement("div");
-  actions.className = "transcript-correction-actions";
-  const save = document.createElement("button");
-  save.type = "submit";
-  save.textContent = "Save correction";
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.className = "remove-correction-button";
-  remove.textContent = "Remove correction";
-  remove.hidden = !clip.transcript_reviewed;
+function renderArchiveDeleteControl(clip, article) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "archive-delete-control";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "archive-delete-button";
+  button.textContent = "Delete clip forever";
   const status = document.createElement("span");
-  status.className = "transcript-correction-status";
+  status.className = "archive-delete-status";
   status.setAttribute("role", "status");
-  actions.append(save, remove, status);
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await saveTranscriptCorrection(clip, textarea.value, {
-      status,
-      save,
-      transcriptElement,
-      article,
-      summary,
-      trainingMetadata,
-      remove,
-    });
+  button.addEventListener("click", async () => {
+    await deleteArchivedClip(clip, { button, status, article });
   });
-
-  remove.addEventListener("click", async () => {
-    await deleteTranscriptCorrection(clip, {
-      status,
-      save,
-      remove,
-      textarea,
-      transcriptElement,
-      article,
-      summary,
-      trainingMetadata,
-    });
-  });
-
-  form.append(label, trainingMetadata.fieldset, actions);
-  details.append(summary, form);
-  return details;
+  wrapper.append(button, status);
+  return wrapper;
 }
 
-function renderTranscriptTrainingMetadata(clip) {
-  const fieldset = document.createElement("fieldset");
-  fieldset.className = "training-metadata";
-  const isQuarantined = clip.quality_status === "quarantined";
-
-  const legend = document.createElement("legend");
-  legend.textContent = "Training example";
-
-  const includeLabel = document.createElement("label");
-  includeLabel.className = "training-metadata-toggle";
-  const include = document.createElement("input");
-  include.type = "checkbox";
-  include.name = "include_in_training";
-  include.checked = clip.transcript_reviewed
-    ? clip.include_in_training !== false
-    : !isQuarantined;
-  includeLabel.append(include, document.createTextNode("Include in training"));
-
-  const grid = document.createElement("div");
-  grid.className = "training-metadata-grid";
-
-  const quality = renderSelectControl({
-    name: "training_quality",
-    label: "Quality",
-    options: trainingQualityOptions,
-    value: clip.transcript_reviewed ? clip.training_quality || "good" : isQuarantined ? "poor" : "good",
-  });
-  const split = renderSelectControl({
-    name: "training_split",
-    label: "Split",
-    options: trainingSplitOptions,
-    value: clip.training_split || "auto",
-  });
-  grid.append(quality.label, split.label);
-
-  const flags = document.createElement("div");
-  flags.className = "training-flags";
-  const selectedFlags = new Set(Array.isArray(clip.training_flags) ? clip.training_flags : []);
-  if (!clip.transcript_reviewed && isQuarantined && Array.isArray(clip.quality_flags)) {
-    for (const flag of clip.quality_flags) {
-      selectedFlags.add(flag);
-    }
-  }
-  for (const [value, labelText] of trainingFlagOptions) {
-    const flagLabel = document.createElement("label");
-    const flag = document.createElement("input");
-    flag.type = "checkbox";
-    flag.name = "training_flags";
-    flag.value = value;
-    flag.checked = selectedFlags.has(value);
-    flagLabel.append(flag, document.createTextNode(labelText));
-    flags.append(flagLabel);
-  }
-
-  const reasonLabel = document.createElement("label");
-  reasonLabel.className = "training-reason";
-  reasonLabel.textContent = "Reason";
-  const reason = document.createElement("textarea");
-  reason.name = "training_reason";
-  reason.rows = 2;
-  reason.maxLength = 1000;
-  reason.value = clip.training_reason || "";
-  reasonLabel.append(reason);
-
-  fieldset.append(legend, includeLabel, grid, flags, reasonLabel);
-  return {
-    fieldset,
-    include,
-    quality: quality.select,
-    split: split.select,
-    flags,
-    reason,
-  };
-}
-
-function renderSelectControl({ name, label, options, value }) {
-  const wrapper = document.createElement("label");
-  wrapper.className = "training-select";
-  wrapper.textContent = label;
-  const select = document.createElement("select");
-  select.name = name;
-  for (const [optionValue, optionLabel] of options) {
-    const option = document.createElement("option");
-    option.value = optionValue;
-    option.textContent = optionLabel;
-    option.selected = optionValue === value;
-    select.append(option);
-  }
-  wrapper.append(select);
-  return { label: wrapper, select };
-}
-
-function readTranscriptTrainingMetadata(trainingMetadata) {
-  return {
-    include_in_training: trainingMetadata.include.checked,
-    training_quality: trainingMetadata.quality.value,
-    training_split: trainingMetadata.split.value,
-    training_flags: Array.from(
-      trainingMetadata.flags.querySelectorAll("input[name='training_flags']:checked"),
-    ).map((input) => input.value),
-    training_reason: trainingMetadata.reason.value.trim() || null,
-  };
-}
-
-async function saveTranscriptCorrection(clip, transcript, controls) {
-  const { status, save, remove, transcriptElement, article, summary, trainingMetadata } = controls;
-  const corrected = transcript.trim();
-  if (!corrected) {
-    status.textContent = "Transcript cannot be empty.";
+async function deleteArchivedClip(clip, controls) {
+  const { button, status, article } = controls;
+  const typed = window.prompt("Type DELETE to permanently delete this clip from the archive.");
+  if (typed !== "DELETE") {
+    status.textContent = "Delete cancelled.";
     return;
   }
-  save.disabled = true;
-  status.textContent = "Saving...";
+  button.disabled = true;
+  status.textContent = "Deleting...";
   try {
-    const metadata = readTranscriptTrainingMetadata(trainingMetadata);
-    const response = await postTranscriptCorrection(clip, corrected, metadata);
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        status.textContent = "Open the operator page over Tailscale to save corrections.";
-        return;
-      }
-      throw new Error(`correction HTTP ${response.status}`);
-    }
-    const body = await response.json();
-    clip.transcript_public = body.corrected_transcript || corrected;
-    clip.transcript_reviewed = true;
-    clip.include_in_training = Boolean(body.include_in_training);
-    clip.training_quality = body.training_quality || "unknown";
-    clip.training_split = body.training_split || "auto";
-    clip.training_flags = Array.isArray(body.training_flags) ? body.training_flags : [];
-    clip.training_reason = body.training_reason || "";
-    transcriptElement.textContent = clip.transcript_public;
-    updateReviewedClipCard(article, true);
-    summary.textContent = "Edit correction";
-    if (remove) {
-      remove.hidden = false;
-    }
-    status.textContent = clip.include_in_training
-      ? "Saved for manual fine tuning."
-      : "Correction saved.";
-  } catch (error) {
-    console.error(error);
-    status.textContent = "Correction was not saved.";
-  } finally {
-    save.disabled = false;
-  }
-}
-
-function postTranscriptCorrection(clip, transcript, metadata) {
-  return fetch(clipCorrectionsUrl, {
-    method: "POST",
-    credentials: "include",
-    headers: operatorWriteHeaders(),
-    body: JSON.stringify({
-      channel: clip.channel,
-      started_at: clip.started_at,
-      transcript,
-      reviewer: "operator-ui",
-      include_in_training: metadata.include_in_training,
-      training_quality: metadata.training_quality,
-      training_split: metadata.training_split,
-      training_flags: metadata.training_flags,
-      training_reason: metadata.training_reason,
-    }),
-  });
-}
-
-async function deleteTranscriptCorrection(clip, controls) {
-  const { status, save, remove, textarea, transcriptElement, article, summary, trainingMetadata } = controls;
-  if (!clip.transcript_reviewed) {
-    status.textContent = "No correction to remove.";
-    return;
-  }
-  if (!window.confirm("Remove this corrected transcript and exclude it from training?")) {
-    return;
-  }
-  save.disabled = true;
-  remove.disabled = true;
-  status.textContent = "Removing...";
-  try {
-    const response = await fetch(clipCorrectionsUrl, {
+    const response = await fetch(clipArchiveUrl, {
       method: "DELETE",
       credentials: "include",
       headers: operatorWriteHeaders(),
       body: JSON.stringify({
         channel: clip.channel,
         started_at: clip.started_at,
+        confirm: "DELETE",
+        deleted_by: "operator-ui",
+        reason: "operator requested archive purge",
       }),
     });
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
-        status.textContent = "Open the operator page over Tailscale to remove corrections.";
+        status.textContent = "Open the operator page over Tailscale to delete archive clips.";
         return;
       }
-      throw new Error(`correction delete HTTP ${response.status}`);
+      throw new Error(`archive delete HTTP ${response.status}`);
     }
-    const body = await response.json();
-    clip.transcript_public = body.transcript || body.original_transcript || "";
-    clip.transcript_reviewed = false;
-    clip.include_in_training = false;
-    clip.training_quality = "unknown";
-    clip.training_split = "auto";
-    clip.training_flags = [];
-    clip.training_reason = "";
-    transcriptElement.textContent = clip.transcript_public;
-    textarea.value = clip.transcript_public;
-    resetTranscriptTrainingMetadata(trainingMetadata, clip);
-    updateReviewedClipCard(article, false);
-    summary.textContent = "Fix transcript";
-    remove.hidden = true;
-    status.textContent = "Correction removed.";
-    if (clipCollectionFilter === "reviewed") {
-      loadAndRender({ useCachedPayload: false });
-    }
+    article.remove();
+    status.textContent = "Clip deleted.";
+    loadAndRender({ useCachedPayload: false }).catch((error) => console.error(error));
   } catch (error) {
     console.error(error);
-    status.textContent = "Correction was not removed.";
+    status.textContent = "Clip was not deleted.";
   } finally {
-    save.disabled = false;
-    remove.disabled = false;
+    button.disabled = false;
   }
-}
-
-function resetTranscriptTrainingMetadata(trainingMetadata, clip) {
-  const isQuarantined = clip.quality_status === "quarantined";
-  trainingMetadata.include.checked = !isQuarantined;
-  trainingMetadata.quality.value = isQuarantined ? "poor" : "good";
-  trainingMetadata.split.value = "auto";
-  for (const flag of trainingMetadata.flags.querySelectorAll("input[name='training_flags']")) {
-    flag.checked = isQuarantined && Array.isArray(clip.quality_flags) && clip.quality_flags.includes(flag.value);
-  }
-  trainingMetadata.reason.value = "";
-}
-
-function renderReviewedPill() {
-  const reviewed = renderPill("Reviewed");
-  reviewed.classList.add("reviewed-pill");
-  return reviewed;
 }
 
 function renderQualityPill(clip) {
@@ -2814,27 +2729,6 @@ function formatQualityReason(reason) {
   return String(reason || "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-function updateReviewedClipCard(article, reviewed) {
-  article.classList.toggle("is-reviewed", reviewed);
-  const meta = article.querySelector(".clip-meta");
-  const existingPill = meta?.querySelector(".reviewed-pill");
-  if (reviewed && !existingPill) {
-    const featureAction = meta?.querySelector(".feature-clip-button");
-    const featuredPill = meta?.querySelector(".featured-pill");
-    const pill = renderReviewedPill();
-    if (featuredPill) {
-      meta.insertBefore(pill, featuredPill);
-    } else if (featureAction) {
-      meta.insertBefore(pill, featureAction);
-    } else {
-      meta?.append(pill);
-    }
-  }
-  if (!reviewed && existingPill) {
-    existingPill.remove();
-  }
 }
 
 function renderFeaturedPill() {
@@ -2954,6 +2848,7 @@ function renderChannelPill(channel) {
 }
 
 async function loadLiveChannels() {
+  let loadedFromLiveApi = false;
   try {
     const response = await fetch(liveChannelsUrl, { cache: "no-store" });
     if (!response.ok) {
@@ -2965,6 +2860,7 @@ async function loadLiveChannels() {
       throw new Error("live channels unavailable");
     }
     liveChannels = channels;
+    loadedFromLiveApi = true;
     if (
       selectedLiveChannel !== everythingLiveChannel &&
       payload.defaultChannel &&
@@ -2975,6 +2871,7 @@ async function loadLiveChannels() {
   } catch {
     liveChannels = normalizeLiveChannels(liveChannels);
   }
+  liveChannelsLoaded = loadedFromLiveApi;
   for (const channel of liveChannels) {
     currentChannelLabels[channel.channel] = channel.label;
   }
@@ -2983,6 +2880,9 @@ async function loadLiveChannels() {
   if (liveAudio.src && !isQueuedLiveMode()) {
     liveAudio.src = liveStreamUrl();
     liveAudio.load();
+  }
+  if (languagePayloadLoaded && latestLanguagePayload) {
+    renderLanguageDashboard(latestLanguagePayload);
   }
 }
 
@@ -3108,13 +3008,6 @@ function findLiveChannel(channel) {
   return { channel, label: defaultChannelLabels[channel] || "", frequencyMhz: "" };
 }
 
-function defaultRealtimeLiveChannelId() {
-  if (liveChannels.some((channel) => channel.channel === defaultRealtimeLiveChannel)) {
-    return defaultRealtimeLiveChannel;
-  }
-  return liveChannels[0]?.channel || defaultRealtimeLiveChannel;
-}
-
 function isEverythingLiveMode() {
   return selectedLiveChannel === everythingLiveChannel;
 }
@@ -3146,13 +3039,10 @@ function routeStateFromLocation() {
 
 function collectionFilterFromRoute(routeName, url) {
   const normalizedRouteName = String(routeName).toLowerCase();
-  if (normalizedRouteName === reviewedRouteSegment || url.searchParams.get("reviewed") === "true") {
-    return "reviewed";
-  }
   if (normalizedRouteName === hallOfFameRouteSegment || url.searchParams.get("featured") === "true") {
     return "featured";
   }
-  if (url.searchParams.get("quality") === "quarantined") {
+  if (quarantineClipLaneEnabled && url.searchParams.get("quality") === "quarantined") {
     return "quarantined";
   }
   return "recent";
@@ -3178,12 +3068,13 @@ function tabRouteUrl(name) {
   if (name === "clips" && clipCollectionFilter === "featured") {
     routeSegment = hallOfFameRouteSegment;
   }
-  if (name === "clips" && clipCollectionFilter === "reviewed") {
-    routeSegment = reviewedRouteSegment;
-  }
   url.pathname = `/${routeSegment}/`;
   url.search = "";
-  if (name === "clips" && clipCollectionFilter === "quarantined") {
+  if (
+    quarantineClipLaneEnabled &&
+    name === "clips" &&
+    clipCollectionFilter === "quarantined"
+  ) {
     url.searchParams.set("quality", "quarantined");
   }
   url.hash = "";
@@ -3206,9 +3097,6 @@ function routeMetadataForTab(name) {
   const normalized = normalizeTabName(name);
   if (normalized === "clips" && clipCollectionFilter === "featured") {
     return routeMetadata[hallOfFameRouteSegment];
-  }
-  if (normalized === "clips" && clipCollectionFilter === "reviewed") {
-    return routeMetadata[reviewedRouteSegment];
   }
   if (normalized === "clips" && clipCollectionFilter === "quarantined") {
     return routeMetadata.quarantine;
@@ -3280,6 +3168,9 @@ function activateTab(
   name = enabledTabName(normalizeTabName(name));
   const previousTab = activeTab;
   const shouldScrollToTab = scrollToTab && previousTab !== name;
+  if (previousTab === "clips" && name !== "clips") {
+    stopContinuousClipPlayback();
+  }
   activeTab = name;
   tabs.forEach((tab) => {
     tab.classList.toggle("is-active", tab.dataset.tab === name);
@@ -3304,8 +3195,14 @@ function activateTab(
   } else {
     suspendLiveView();
   }
-  if (name === "language" && !languagePayloadLoaded) {
-    loadAndRenderLanguage();
+  if (name === "language") {
+    if (!languagePayloadLoaded) {
+      loadAndRenderLanguage();
+    } else {
+      startTopicPlotRotation();
+    }
+  } else {
+    stopTopicPlotRotation();
   }
   if (name === "search") {
     renderSearchControls();
@@ -3365,13 +3262,11 @@ async function loadAndRenderMap({ showLoading = true } = {}) {
 }
 
 async function probeAisCatcherViewer() {
-  const response = await fetch(aisCatcherFrameUrl, {
-    method: "HEAD",
-    cache: "no-store",
-  });
+  const response = await fetch(aisReceiverStatusUrl, { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(`AIS-catcher viewer returned ${response.status}`);
+    throw new Error(`AIS receiver returned ${response.status}`);
   }
+  await response.json();
 }
 
 function renderAisCatcherFrame() {
@@ -3407,6 +3302,7 @@ function renderAisCatcherUnavailable() {
 }
 
 function renderLanguageDashboard(payload) {
+  stopTopicPlotRotation();
   const status = payload?.status || "missing";
   if (status === "missing") {
     languageStatus.textContent = "No analysis cache yet";
@@ -3418,13 +3314,15 @@ function renderLanguageDashboard(payload) {
   const frequency = payload.frequency || {};
   const terms = payload.terms || {};
   const topics = payload.topics || {};
-  const channelCounts = channelCountsWithMonitoredChannels(payload.channels || frequency.by_channel || {});
+  const channelCounts = channelCountsForListenableChannels(
+    payload.channels || frequency.by_channel || {},
+  );
   const cards = document.createElement("div");
   cards.className = "language-grid";
   cards.append(
     languageCard(
       "Analyzed transcripts",
-      String(payload.source_clip_count || 0),
+      Number(payload.source_clip_count || 0).toLocaleString("en-US"),
       "Intelligible transcript records; audio may age out",
     ),
     languageCard(
@@ -3475,6 +3373,9 @@ function renderLanguageDashboard(payload) {
   topicFrameShell.className = "topic-frame-shell";
   topicFrame.addEventListener("load", () => {
     hideUnavailableTopicFrame(topicFrame, topicFrameShell);
+    if (activeTab === "language" && !topicFrameShell.hidden) {
+      sendTopicPlotRotation(topicFrame, true);
+    }
   });
   topicFrameShell.append(topicFrame);
   topicPanel.append(topicFrameShell, topicList(nonOutlierTopics(topics.items || [])));
@@ -3487,6 +3388,24 @@ function renderLanguageDashboard(payload) {
   const referencePanel = referenceIndex(payload.education || []);
 
   lexicalAnalysis.replaceChildren(cards, channelPanel, topicPanel, wordsPanel, entityPanel, educationPanel, referencePanel);
+}
+
+function sendTopicPlotRotation(topicFrame, enabled) {
+  if (!(topicFrame instanceof HTMLIFrameElement) || !topicFrame.contentWindow) {
+    return;
+  }
+  topicFrame.contentWindow.postMessage(
+    { type: topicPlotRotationMessageType, enabled },
+    window.location.origin,
+  );
+}
+
+function startTopicPlotRotation() {
+  sendTopicPlotRotation(lexicalAnalysis?.querySelector(".topic-frame"), true);
+}
+
+function stopTopicPlotRotation() {
+  sendTopicPlotRotation(lexicalAnalysis?.querySelector(".topic-frame"), false);
 }
 
 function hideUnavailableTopicFrame(topicFrame, topicFrameShell) {
@@ -3511,18 +3430,6 @@ function hideUnavailableTopicFrame(topicFrame, topicFrameShell) {
   topicFrameShell.setAttribute("aria-hidden", "true");
 }
 
-function compactModelName(value) {
-  const text = String(value || "openai/whisper-large-v3-turbo");
-  return text.split("/").pop() || text;
-}
-
-function trainingStatusSummary(status) {
-  if (!status?.status) {
-    return "No runs";
-  }
-  return String(status.status);
-}
-
 async function loadAndRenderPerformance({ showLoading = true } = {}) {
   if (!performanceStatus || !performanceDashboard) {
     return;
@@ -3531,19 +3438,24 @@ async function loadAndRenderPerformance({ showLoading = true } = {}) {
     performanceStatus.textContent = "Loading performance...";
   }
   try {
-    const [performanceResult, asrFeedbackResult] = await Promise.allSettled([
+    const [performanceResult, aisReceiverResult, liveChannelsResult] = await Promise.allSettled([
       loadPerformanceStatus(),
-      loadAsrFeedbackStatus(),
+      loadAisReceiverStatus(),
+      loadLiveChannelsStatus(),
     ]);
     if (performanceResult.status !== "fulfilled") {
       throw performanceResult.reason;
     }
     const payload = {
       ...performanceResult.value,
-      asrFeedback:
-        asrFeedbackResult.status === "fulfilled"
-          ? asrFeedbackResult.value
-          : asrFeedbackLoadUnavailable(asrFeedbackResult.reason),
+      aisReceiver:
+        aisReceiverResult.status === "fulfilled"
+          ? aisReceiverResult.value
+          : systemKpiLoadUnavailable("AIS receiver", aisReceiverResult.reason),
+      liveChannels:
+        liveChannelsResult.status === "fulfilled"
+          ? liveChannelsResult.value
+          : systemKpiLoadUnavailable("Live channels", liveChannelsResult.reason),
     };
     performancePayloadLoaded = true;
     latestPerformancePayload = payload;
@@ -3562,40 +3474,41 @@ async function loadPerformanceStatus() {
   return response.json();
 }
 
-async function loadAsrFeedbackStatus() {
-  const response = await fetch(asrFeedbackStatusUrl, {
-    cache: "no-store",
-    credentials: "include",
-    headers: operatorWriteHeaders(),
-  });
-  if (response.status === 403) {
-    return asrFeedbackAccessUnavailable(response.status);
-  }
+async function loadAisReceiverStatus() {
+  const response = await fetch(aisReceiverStatusUrl, { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(`asr feedback HTTP ${response.status}`);
+    throw new Error(`AIS receiver HTTP ${response.status}`);
   }
-  return response.json();
-}
-
-function asrFeedbackAccessUnavailable(reason = "") {
+  const payload = await response.json();
+  const ships = Array.isArray(payload.ships) ? payload.ships : [];
+  const count = Number(payload.count);
+  const vesselCount = Number.isFinite(count) ? count : ships.length;
   return {
-    status: "restricted",
-    reason: String(reason || "tailnet operator access required"),
-    training_status: {
-      status: "restricted",
-      reason: "Open the tailnet/private app to inspect ASR training examples",
-    },
+    status: vesselCount > 0 ? "ok" : "watch",
+    vesselCount,
+    station: payload.station || null,
   };
 }
 
-function asrFeedbackLoadUnavailable(reason = "") {
+async function loadLiveChannelsStatus() {
+  const response = await fetch(liveChannelsUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`live channels HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  const channels = Array.isArray(payload.channels) ? payload.channels : [];
   return {
-    status: "unavailable",
-    reason: String(reason || "ASR feedback status did not load"),
-    training_status: {
-      status: "unavailable",
-      reason: "ASR feedback status did not load",
-    },
+    status: channels.length > 0 ? "ok" : "watch",
+    channelCount: channels.length,
+    defaultChannel: payload.defaultChannel || "",
+  };
+}
+
+function systemKpiLoadUnavailable(label, reason = "") {
+  return {
+    status: "unknown",
+    label,
+    reason: String(reason || `${label} did not load`),
   };
 }
 
@@ -3630,86 +3543,93 @@ function renderPerformanceDashboard(payload) {
     return;
   }
   const rangeControl = performanceRangeControl();
-  const speechTrainingPanel = renderSpeechTrainingPanel(payload.asrFeedback);
+  const systemKpis = renderSystemKpiPanel(payload, hosts);
   const hostGrid = document.createElement("div");
   hostGrid.className = "performance-host-grid";
   hostGrid.append(...hosts.map((host, index) => performanceHostPanel(host, index)));
-  performanceDashboard.replaceChildren(rangeControl, speechTrainingPanel, hostGrid);
+  performanceDashboard.replaceChildren(rangeControl, systemKpis, hostGrid);
 }
 
-function renderSpeechTrainingPanel(payload) {
+function renderSystemKpiPanel(payload, hosts) {
   const panel = document.createElement("section");
-  panel.className = "speech-training-panel";
+  panel.className = "system-kpi-panel";
   const title = document.createElement("h3");
-  title.textContent = "Speech training";
-  const cards = document.createElement("div");
-  cards.className = "performance-grid speech-training-grid";
-  if (!payload || payload.status === "restricted" || payload.status === "unavailable") {
-    const isRestricted = payload?.status === "restricted";
-    cards.append(
-      performanceCard(
-        "Training examples",
-        isRestricted ? "Tailnet only" : "Unavailable",
-        isRestricted
-          ? "Open the tailnet/private app to inspect ASR training examples"
-          : "ASR feedback status did not load",
-        isRestricted ? "watch" : "unknown",
-      ),
-      performanceCard(
-        "Last ASR run",
-        isRestricted ? "Tailnet only" : "Unavailable",
-        isRestricted ? "ASR feedback status is restricted" : "Latest batch status did not load",
-        isRestricted ? "watch" : "unknown",
-      ),
-    );
-    panel.append(title, cards);
-    return panel;
-  }
-
-  const correctionCount = Number(payload.training_example_count ?? payload.reviewed_correction_count ?? 0);
-  const minCorrections = Number(payload.min_corrections || 20);
-  const hasEnoughCorrections = correctionCount >= minCorrections;
-  const hasNewCorrections = payload.new_corrections_since_last_train !== false;
-  const ready = Boolean(payload.ready_for_training);
-  const needed = Math.max(0, minCorrections - correctionCount);
-  const trainingStatus = payload.training_status || null;
-  cards.append(
-    performanceCard(
-      "Training examples",
-      correctionCount.toLocaleString(),
-      trainingReadinessCaption({ ready, hasEnoughCorrections, hasNewCorrections, needed }),
-      ready ? "ok" : "watch",
+  title.textContent = "System KPIs";
+  const grid = document.createElement("div");
+  grid.className = "system-kpi-grid";
+  const liveChannels = payload.liveChannels || {};
+  const aisReceiver = payload.aisReceiver || {};
+  const piHost = piPerformanceHost(hosts);
+  grid.append(
+    systemKpiCard(
+      "Live API",
+      statusLabel(payload.status || "unknown"),
+      payload.generatedAt
+        ? `Telemetry updated ${formatPerformanceDateTime(payload.generatedAt)}`
+        : "Telemetry endpoint responded",
+      payload.status || "unknown",
     ),
-    performanceCard("Base ASR model", compactModelName(payload.base_model), "Whisper checkpoint", "ok"),
-    performanceCard(
-      "Last ASR run",
-      trainingStatusSummary(trainingStatus),
-      trainingStatusCaption(trainingStatus),
-      trainingStatus?.status === "failed" ? "high" : "ok",
+    systemKpiCard(
+      "Live channels",
+      Number.isFinite(Number(liveChannels.channelCount))
+        ? formatCountNoun(Number(liveChannels.channelCount), "channel", "channels")
+        : "Unknown",
+      liveChannels.defaultChannel ? `Default VHF ${liveChannels.defaultChannel}` : "Channel API status",
+      liveChannels.status || "unknown",
+    ),
+    systemKpiCard(
+      "AIS receiver",
+      Number.isFinite(Number(aisReceiver.vesselCount))
+        ? formatCountNoun(Number(aisReceiver.vesselCount), "vessel", "vessels")
+        : "Unknown",
+      aisReceiver.station ? "AIS-catcher station is responding" : "AIS-catcher station status",
+      aisReceiver.status || "unknown",
+    ),
+    systemKpiCard(
+      "AISFriends",
+      "External UDP",
+      "Edge feed is validated by receiver health checks, not browser fetches",
+      aisReceiver.status === "ok" ? "ok" : "unknown",
+    ),
+    systemKpiCard(
+      "Pi telemetry",
+      statusLabel(piHost?.status || "unknown"),
+      piTelemetryCaption(piHost),
+      piHost?.status || "unknown",
+    ),
+    systemKpiCard(
+      "Prod guard",
+      systemDashboardEnabled ? "Dev only" : "Disabled",
+      "System stats stay hidden on production and the API returns 404 there",
+      systemDashboardEnabled ? "ok" : "unknown",
     ),
   );
-  panel.append(title, cards);
+  panel.append(title, grid);
   return panel;
 }
 
-function trainingReadinessCaption({ ready, hasEnoughCorrections, hasNewCorrections, needed }) {
-  if (ready) {
-    return "Ready for manual fine tuning";
-  }
-  if (hasEnoughCorrections && !hasNewCorrections) {
-    return "No new labels since last trained run";
-  }
-  return `${needed} more curated ${needed === 1 ? "clip" : "clips"} needed`;
+function systemKpiCard(label, value, caption, status) {
+  const card = performanceCard(label, value, caption, status);
+  card.classList.add("system-kpi-card");
+  return card;
 }
 
-function trainingStatusCaption(status) {
-  if (status?.generated_at) {
-    return `Updated ${formatPerformanceDateTime(status.generated_at)}`;
+function piPerformanceHost(hosts) {
+  return (hosts || []).find((host, index) => hostRole(host, index) === fallbackDecoderHostLabel) || null;
+}
+
+function piTelemetryCaption(host) {
+  if (!host) {
+    return "Pi host is not present in this snapshot";
   }
-  if (status?.reason) {
-    return String(status.reason);
+  const thermal = host.thermal?.temperatureC;
+  if (Number.isFinite(Number(thermal))) {
+    return `Thermals ${formatMetricChartValue(Number(thermal), " C")}`;
   }
-  return "Latest batch status";
+  if (host.reachable === false) {
+    return "Pi telemetry read failed";
+  }
+  return "Pi telemetry snapshot received";
 }
 
 function performanceHosts(payload) {
@@ -4200,13 +4120,28 @@ function formatCountNoun(count, singular, plural) {
   return `${value.toLocaleString()} ${value === 1 ? singular : plural}`;
 }
 
-function channelCountsWithMonitoredChannels(channelCounts) {
-  const merged = {};
-  for (const channel of monitoredAnalysisChannels) {
-    merged[channel] = 0;
+function listenableAnalysisChannelIds() {
+  if (!liveChannelsLoaded) {
+    return new Set();
   }
-  for (const [channel, count] of Object.entries(channelCounts || {})) {
-    merged[channel] = Number(count || 0);
+  return new Set(
+    liveChannels
+      .filter((channel) => channel.streamPath)
+      .map((channel) => String(channel.channel || "").toUpperCase())
+      .filter(Boolean),
+  );
+}
+
+function channelCountsForListenableChannels(channelCounts) {
+  const normalizedCounts = Object.fromEntries(
+    Object.entries(channelCounts || {}).map(([channel, count]) => [
+      String(channel || "").toUpperCase(),
+      Number(count || 0),
+    ]),
+  );
+  const merged = {};
+  for (const channel of listenableAnalysisChannelIds()) {
+    merged[channel] = normalizedCounts[channel] || 0;
   }
   return merged;
 }
@@ -4265,11 +4200,6 @@ function entityList(entities) {
       if (player) {
         item.append(player);
       }
-      const reviewExample = analysisReviewClip(displayedExample);
-      const correction = renderAnalysisExampleCorrection(reviewExample, quote, item);
-      if (correction) {
-        item.append(correction);
-      }
       return item;
     }),
   );
@@ -4291,23 +4221,93 @@ function renderExamplePlayer(example) {
   player.className = "example-player";
 
   const audio = document.createElement("audio");
-  audio.controls = true;
+  audio.controls = false;
   audio.preload = "none";
   audio.src = audioUrl;
   audio.setAttribute("controlslist", "nodownload noplaybackrate noremoteplayback");
   audio.setAttribute("disableremoteplayback", "");
   audio.setAttribute("x-webkit-airplay", "deny");
 
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "clip-play-button";
+  button.setAttribute("aria-label", "Play clip");
+
+  const progressControls = document.createElement("div");
+  progressControls.className = "clip-progress-controls";
+  const progress = document.createElement("input");
+  progress.type = "range";
+  progress.className = "clip-progress-input";
+  progress.min = "0";
+  progress.max = String(Math.max(1, Number(example.duration_seconds) || 0));
+  progress.step = "0.01";
+  progress.value = "0";
+  progress.setAttribute("aria-label", "Clip playback position");
+  const waveformShell = document.createElement("div");
+  waveformShell.className = "clip-waveform-shell";
+  const waveformCanvas = document.createElement("canvas");
+  waveformCanvas.className = "clip-waveform-canvas";
+  waveformCanvas.setAttribute("aria-hidden", "true");
+  waveformShell.append(waveformCanvas, progress);
   const time = document.createElement("span");
   time.className = "example-player-time";
-  time.textContent = formatPlaybackTime(example.duration_seconds, { unknownLabel: unknownPlaybackTimeLabel });
+  progressControls.append(waveformShell, time);
+  observeClipWaveform(waveformCanvas, audioUrl);
+  updateClipPlaybackProgress(audio, progress, time, example.duration_seconds);
+
+  setClipPlayButtonState(button, audio.paused);
+  const playAudio = async () => {
+    prioritizeClipWaveform(waveformCanvas);
+    try {
+      await audio.play();
+      return true;
+    } catch {
+      await refreshClipAudioPlayback(example, audio, time, { force: true });
+      try {
+        await audio.play();
+        return true;
+      } catch {
+        setClipPlayButtonState(button, true);
+        time.textContent = "Tap to retry";
+        return false;
+      }
+    }
+  };
+  clipAudioPlayActions.set(audio, playAudio);
+  button.addEventListener("click", async () => {
+    if (continuousClipPlaybackActive) {
+      stopContinuousClipPlayback({ stopAudio: false });
+    }
+    if (!audio.paused) {
+      audio.pause();
+      return;
+    }
+    await playAudio();
+  });
 
   audio.addEventListener("loadedmetadata", () => {
-    if (Number.isFinite(audio.duration)) {
-      time.textContent = formatPlaybackTime(audio.duration, { unknownLabel: time.textContent });
+    updateClipPlaybackProgress(audio, progress, time, example.duration_seconds);
+  });
+  audio.addEventListener("durationchange", () => {
+    updateClipPlaybackProgress(audio, progress, time, example.duration_seconds);
+  });
+  audio.addEventListener("timeupdate", () => {
+    updateClipPlaybackProgress(audio, progress, time, example.duration_seconds);
+  });
+  progress.addEventListener("input", () => {
+    const nextTime = Number(progress.value);
+    if (!Number.isFinite(nextTime)) {
+      return;
     }
+    try {
+      audio.currentTime = nextTime;
+    } catch {
+      return;
+    }
+    updateClipPlaybackProgress(audio, progress, time, example.duration_seconds);
   });
   audio.addEventListener("play", () => {
+    setClipPlayButtonState(button, audio.paused);
     stopOtherAudio(audio);
     currentClipPlayback = audio;
     clearBrowserMediaSession();
@@ -4317,39 +4317,284 @@ function renderExamplePlayer(example) {
     refreshClipAudioPlayback(example, audio, time, { force: true });
   });
   audio.addEventListener("pause", () => {
+    setClipPlayButtonState(button, audio.paused);
     if (currentClipPlayback === audio) {
       currentClipPlayback = null;
     }
   });
   audio.addEventListener("ended", () => {
+    setClipPlayButtonState(button, true);
+    updateClipPlaybackProgress(audio, progress, time, example.duration_seconds);
     if (currentClipPlayback === audio) {
       currentClipPlayback = null;
     }
   });
 
-  player.append(audio, time);
+  player.append(button, audio, progressControls);
   return player;
 }
 
-function analysisReviewClip(example) {
-  return {
-    ...example,
-    transcript_public: example?.transcript_public ?? example?.text ?? "",
-    transcript_reviewed: Boolean(example?.transcript_reviewed),
-  };
+function ensureClipWaveformObservers() {
+  if (!clipWaveformObserver && "IntersectionObserver" in window) {
+    clipWaveformObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) {
+            continue;
+          }
+          clipWaveformObserver.unobserve(entry.target);
+          queueClipWaveform(entry.target);
+        }
+      },
+      { rootMargin: "200px 0px" },
+    );
+  }
+  if (!clipWaveformResizeObserver && "ResizeObserver" in window) {
+    clipWaveformResizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const state = clipWaveformStates.get(entry.target);
+        if (state?.peaks) {
+          drawClipWaveform(entry.target, state.progressPercent);
+        }
+      }
+    });
+  }
 }
 
-function renderAnalysisExampleCorrection(example, transcriptElement, article) {
-  if (analysisTranscriptReviewEnabled && canReviewClip(example)) {
-    const details = renderTranscriptCorrectionForm(example, transcriptElement, article);
-    details.classList.add("analysis-correction");
-    const summary = details.querySelector("summary");
-    if (summary) {
-      summary.textContent = "Review transcript";
-    }
-    return details;
+function observeClipWaveform(canvas, audioUrl) {
+  ensureClipWaveformObservers();
+  clipWaveformStates.set(canvas, {
+    audioUrl,
+    peaks: null,
+    progressPercent: 0,
+    status: "observed",
+  });
+  canvas.dataset.waveformStatus = "pending";
+  clipWaveformResizeObserver?.observe(canvas);
+  if (clipWaveformObserver) {
+    clipWaveformObserver.observe(canvas);
+  } else {
+    queueClipWaveform(canvas);
   }
-  return null;
+}
+
+function prioritizeClipWaveform(canvas) {
+  const state = clipWaveformStates.get(canvas);
+  if (!state || state.status === "loading" || state.status === "ready") {
+    return;
+  }
+  clipWaveformObserver?.unobserve(canvas);
+  if (state.status === "queued") {
+    const queuedIndex = clipWaveformLoadQueue.indexOf(canvas);
+    if (queuedIndex >= 0) {
+      clipWaveformLoadQueue.splice(queuedIndex, 1);
+    }
+  }
+  state.status = "observed";
+  queueClipWaveform(canvas, { priority: true });
+}
+
+function queueClipWaveform(canvas, { priority = false } = {}) {
+  const state = clipWaveformStates.get(canvas);
+  if (!state || state.status !== "observed") {
+    return;
+  }
+  state.status = "queued";
+  if (priority) {
+    clipWaveformLoadQueue.unshift(canvas);
+  } else {
+    clipWaveformLoadQueue.push(canvas);
+  }
+  drainClipWaveformLoadQueue();
+}
+
+function drainClipWaveformLoadQueue() {
+  while (
+    activeClipWaveformLoads < maxConcurrentClipWaveformLoads
+    && clipWaveformLoadQueue.length
+  ) {
+    const canvas = clipWaveformLoadQueue.shift();
+    const state = clipWaveformStates.get(canvas);
+    if (!state || state.status !== "queued" || !canvas.isConnected) {
+      continue;
+    }
+    activeClipWaveformLoads += 1;
+    loadClipWaveform(canvas, state)
+      .catch(() => {
+        state.status = "unavailable";
+        canvas.dataset.waveformStatus = "unavailable";
+      })
+      .finally(() => {
+        activeClipWaveformLoads -= 1;
+        drainClipWaveformLoadQueue();
+      });
+  }
+}
+
+async function loadClipWaveform(canvas, state) {
+  state.status = "loading";
+  canvas.dataset.waveformStatus = "loading";
+  const response = await fetch(state.audioUrl, {
+    cache: "force-cache",
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    throw new Error(`waveform audio HTTP ${response.status}`);
+  }
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxClipWaveformAudioBytes) {
+    throw new Error("waveform audio exceeds size limit");
+  }
+  const encodedAudio = await response.arrayBuffer();
+  if (encodedAudio.byteLength > maxClipWaveformAudioBytes) {
+    throw new Error("waveform audio exceeds size limit");
+  }
+  const audioBuffer = await decodeClipWaveformAudio(encodedAudio);
+  state.peaks = computeClipWaveformPeaks(audioBuffer);
+  state.status = "ready";
+  canvas.dataset.waveformStatus = "ready";
+  drawClipWaveform(canvas, state.progressPercent);
+}
+
+async function decodeClipWaveformAudio(encodedAudio) {
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) {
+    throw new Error("Web Audio is unavailable");
+  }
+  const decodingContext = new AudioContextConstructor();
+  try {
+    return await decodingContext.decodeAudioData(encodedAudio.slice(0));
+  } finally {
+    decodingContext.close().catch(() => {});
+  }
+}
+
+function computeClipWaveformPeaks(audioBuffer, binCount = 512) {
+  const sampleCount = audioBuffer.length;
+  const channelCount = audioBuffer.numberOfChannels;
+  if (!sampleCount || !channelCount) {
+    return new Float32Array(binCount);
+  }
+  const channels = Array.from(
+    { length: channelCount },
+    (_, channelIndex) => audioBuffer.getChannelData(channelIndex),
+  );
+  const peaks = new Float32Array(binCount);
+  let maximumPeak = 0;
+  for (let binIndex = 0; binIndex < binCount; binIndex += 1) {
+    const start = Math.floor((binIndex * sampleCount) / binCount);
+    const end = Math.max(start + 1, Math.floor(((binIndex + 1) * sampleCount) / binCount));
+    let squareSum = 0;
+    let values = 0;
+    for (const channel of channels) {
+      for (let sampleIndex = start; sampleIndex < end && sampleIndex < sampleCount; sampleIndex += 1) {
+        const sample = channel[sampleIndex];
+        squareSum += sample * sample;
+        values += 1;
+      }
+    }
+    const peak = values ? Math.sqrt(squareSum / values) : 0;
+    peaks[binIndex] = peak;
+    maximumPeak = Math.max(maximumPeak, peak);
+  }
+  if (maximumPeak > 0) {
+    for (let index = 0; index < peaks.length; index += 1) {
+      peaks[index] /= maximumPeak;
+    }
+  }
+  return peaks;
+}
+
+function drawClipWaveform(canvas, progressPercent = 0) {
+  const state = clipWaveformStates.get(canvas);
+  if (!state?.peaks) {
+    return;
+  }
+  state.progressPercent = progressPercent;
+  const bounds = canvas.getBoundingClientRect();
+  if (bounds.width <= 0 || bounds.height <= 0) {
+    return;
+  }
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.max(1, Math.round(bounds.width * pixelRatio));
+  canvas.height = Math.max(1, Math.round(bounds.height * pixelRatio));
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return;
+  }
+  context.scale(pixelRatio, pixelRatio);
+  context.clearRect(0, 0, bounds.width, bounds.height);
+  const rootStyles = getComputedStyle(document.documentElement);
+  const playedColor = rootStyles.getPropertyValue("--teal").trim() || "#40e0bf";
+  const waitingColor = rootStyles.getPropertyValue("--line-strong").trim() || "#36524b";
+  const barCount = Math.min(
+    state.peaks.length,
+    Math.max(24, Math.floor(bounds.width / 4)),
+  );
+  const barStep = bounds.width / barCount;
+  const barWidth = Math.max(1, barStep * 0.56);
+  const centerY = bounds.height / 2;
+  const playedWidth = bounds.width * Math.min(100, Math.max(0, progressPercent)) / 100;
+  for (let barIndex = 0; barIndex < barCount; barIndex += 1) {
+    const peakIndex = Math.min(
+      state.peaks.length - 1,
+      Math.floor((barIndex * state.peaks.length) / barCount),
+    );
+    const amplitude = state.peaks[peakIndex];
+    const barHeight = Math.max(2, amplitude * (bounds.height - 8));
+    const x = barIndex * barStep + (barStep - barWidth) / 2;
+    context.globalAlpha = x <= playedWidth ? 0.95 : 0.72;
+    context.fillStyle = x <= playedWidth ? playedColor : waitingColor;
+    context.fillRect(x, centerY - barHeight / 2, barWidth, barHeight);
+  }
+  context.globalAlpha = 1;
+}
+
+function updateClipPlaybackProgress(audio, progress, time, fallbackDuration) {
+  const metadataDuration = Number(audio.duration);
+  const fallback = Number(fallbackDuration);
+  const duration = Number.isFinite(metadataDuration) && metadataDuration > 0
+    ? metadataDuration
+    : (Number.isFinite(fallback) && fallback > 0 ? fallback : 0);
+  const currentTime = Number.isFinite(Number(audio.currentTime))
+    ? Math.max(0, Number(audio.currentTime))
+    : 0;
+  const rangeMaximum = duration > 0 ? duration : 1;
+  const boundedCurrentTime = Math.min(currentTime, rangeMaximum);
+  const progressPercent = Math.min(100, Math.max(0, (boundedCurrentTime / rangeMaximum) * 100));
+  progress.max = String(rangeMaximum);
+  progress.value = String(boundedCurrentTime);
+  progress.style.setProperty("--clip-progress-percent", `${progressPercent}%`);
+  const waveformCanvas = progress
+    .closest(".clip-waveform-shell")
+    ?.querySelector(".clip-waveform-canvas");
+  if (waveformCanvas instanceof HTMLCanvasElement) {
+    const waveformState = clipWaveformStates.get(waveformCanvas);
+    if (waveformState) {
+      waveformState.progressPercent = progressPercent;
+      drawClipWaveform(waveformCanvas, progressPercent);
+    }
+  }
+  const durationText = formatPlaybackTime(duration, { unknownLabel: unknownPlaybackTimeLabel });
+  time.textContent = `${formatElapsedPlaybackTime(boundedCurrentTime)} / ${durationText}`;
+  progress.setAttribute("aria-valuetext", time.textContent);
+}
+
+function formatElapsedPlaybackTime(seconds) {
+  const value = Number(seconds);
+  const totalSeconds = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${remainingSeconds}`;
+}
+
+function setClipPlayButtonState(button, paused) {
+  const isPaused = Boolean(paused);
+  const label = isPaused ? "Play clip" : "Pause clip";
+  button.dataset.state = isPaused ? "paused" : "playing";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.textContent = isPaused ? "▶" : "❚❚";
 }
 
 function analysisAudioUrlForClip(clip) {
@@ -4357,6 +4602,12 @@ function analysisAudioUrlForClip(clip) {
 }
 
 function stopOtherAudio(currentPlayback) {
+  if (
+    continuousClipPlaybackActive &&
+    currentPlayback !== continuousClipPlaybackAudio
+  ) {
+    stopContinuousClipPlayback();
+  }
   if (currentPlayback !== currentClipPlayback) {
     stopCurrentClipPlayback();
   }
@@ -4366,23 +4617,15 @@ function stopOtherAudio(currentPlayback) {
 }
 
 function stopAllAudio() {
+  stopContinuousClipPlayback();
   stopCurrentClipPlayback();
   closeLiveAudioStream();
 }
 
 function suspendLiveView() {
   stopLiveStatusPolling();
-  stopWaveform();
-  if (shouldPreserveLiveAudioSession()) {
-    if (isQueuedLiveMode() && everythingQueueEnabled) {
-      startLiveActivityPolling();
-    } else {
-      stopLiveActivityPolling();
-    }
-    updateLiveMediaSession("playing");
-    return;
-  }
   stopLiveActivityPolling();
+  stopWaveform();
   closeLiveAudioStream();
 }
 
@@ -4451,11 +4694,6 @@ function renderTopicExamples(topic) {
   const quote = document.createElement("blockquote");
   quote.textContent = example.text || example.transcript_public || "";
   wrapper.append(label, quote);
-  const reviewExample = analysisReviewClip(example);
-  const correction = renderAnalysisExampleCorrection(reviewExample, quote, wrapper);
-  if (correction) {
-    wrapper.append(correction);
-  }
   return wrapper;
 }
 
@@ -4656,7 +4894,7 @@ function channelActivityChart(channels) {
     empty.textContent =
       hideAnalysisTrafficOutlier && hasTrafficOutlier
         ? "Only Seattle Traffic has analyzed clips; show it to view the bar."
-        : "No analyzed transmissions yet";
+        : "No analyzed transmissions on listenable channels yet";
     list.append(empty);
     return list;
   }
@@ -4974,7 +5212,7 @@ function setLivePlayButton(mode) {
 function toggleLivePlayback() {
   if (isQueuedLiveMode()) {
     if (everythingQueueEnabled) {
-      stopEverythingQueue({ clearQueue: false });
+      stopEverythingQueue({ clearQueue: true });
       liveAudio.pause();
       liveAudio.removeAttribute("src");
       liveAudio.load();
@@ -5044,10 +5282,6 @@ async function connectEverythingLive() {
       queueChannel,
     });
     if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
-      return;
-    }
-    if (shouldResumeRealtimeWithoutCatchUp()) {
-      await resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });
       return;
     }
     await startLiveWaveformForPlayback();
@@ -5236,14 +5470,10 @@ async function pollEverythingQueue({
   queueChannel = selectedLiveChannel,
 } = {}) {
   const requestUrl = liveQueueRequestUrl();
-  const response = await fetch(requestUrl, {
-    cache: "no-store",
+  const payload = await loadEverythingQueuePayload(requestUrl, {
     signal,
+    allowPublishedFallback: seedRecent,
   });
-  if (!response.ok) {
-    throw new Error(`everything queue HTTP ${response.status}`);
-  }
-  const payload = await response.json();
   if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
     return;
   }
@@ -5258,6 +5488,20 @@ async function pollEverythingQueue({
   renderEverythingQueuePanel();
   if (playIfIdle && isCurrentLiveQueueSession(queueGeneration, queueChannel) && !currentLiveQueueClip && liveAudio.paused) {
     await playNextEverythingQueueClip({ queueGeneration, queueChannel });
+  }
+}
+
+async function loadEverythingQueuePayload(requestUrl, { signal = null, allowPublishedFallback = false } = {}) {
+  try {
+    return await fetchJsonWithTimeout(requestUrl, {
+      timeoutMs: allowPublishedFallback ? liveQueueSeedTimeoutMs : 0,
+      signal,
+    });
+  } catch (error) {
+    if (!allowPublishedFallback || signal?.aborted) {
+      throw error;
+    }
+    return loadPublishedManifest();
   }
 }
 
@@ -5324,20 +5568,6 @@ function shouldSuppressRealtimeQueueDuringCatchUp() {
   return Boolean(isEverythingLiveMode() && everythingCatchUpHandoffPending);
 }
 
-function shouldResumeRealtimeWithoutCatchUp() {
-  if (!isEverythingLiveMode() || !everythingCatchUpHandoffPending) {
-    return false;
-  }
-  const catchUpClips = [currentLiveQueueClip, ...liveQueue].filter(
-    (clip) => Boolean(clip?.catch_up),
-  );
-  if (!catchUpClips.length) {
-    return true;
-  }
-  const newestCatchUpTime = Math.max(...catchUpClips.map(queueClipRelevantTime));
-  return Date.now() - newestCatchUpTime > everythingCatchUpMaxAgeMs;
-}
-
 function mostRecentEverythingQueueClips(clips, limit) {
   return [...clips]
     .sort((left, right) => queueClipRelevantTime(right) - queueClipRelevantTime(left))
@@ -5356,8 +5586,10 @@ function isEverythingQueueClipAfterStart(clip) {
 }
 
 function normalizeEverythingQueueClip(clip) {
-  const playbackUrl = audioUrlForClip(clip || {});
-  const audioUrl = clipAudioRequestUrl(clip || {}) || playbackUrl;
+  const sourceClip = clip || {};
+  const playbackUrl = audioUrlForClip(sourceClip);
+  const requestUrl = clipAudioRequestUrl(sourceClip);
+  const audioUrl = sourceClip.audio_public_filename ? playbackUrl : requestUrl || playbackUrl;
   const channel = String(clip?.channel || "").toUpperCase();
   if (!audioUrl || !channel || !isQueueClipAllowedForCurrentMode({ channel })) {
     return null;
@@ -5447,22 +5679,19 @@ async function playNextEverythingQueueClip({
   currentLiveQueueClip = nextLiveQueueClipForCurrentMode();
   renderLiveStatus(findLiveChannel(selectedLiveChannel));
   renderEverythingQueuePanel();
-  if (
-    shouldResumeRealtimeInsteadOfPlayingNextClip(currentLiveQueueClip) ||
-    shouldResumeRealtimeWithoutCatchUp()
-  ) {
-    currentLiveQueueClip = null;
-    await resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });
-    return;
+  if (shouldFinishEverythingCatchUpBeforeNextClip(currentLiveQueueClip)) {
+    everythingCatchUpHandoffPending = false;
   }
   if (!currentLiveQueueClip) {
+    clearLiveQueueAudioSource();
     liveStatus.textContent = "Waiting for queued transmission";
     setLivePlayButton("pause");
     drawWaitingFrame({ showWaiting: true });
     updateLiveMediaSession("playing");
     return;
   }
-  const playbackUrl = clipAudioRequestUrl(currentLiveQueueClip) || currentLiveQueueClip.audio_url;
+  const playbackUrl =
+    currentLiveQueueClip.audio_url || currentLiveQueueClip.playback_url || clipAudioRequestUrl(currentLiveQueueClip);
   if (!playbackUrl) {
     currentLiveQueueClip = null;
     liveStatus.textContent = "Skipping queued transmission";
@@ -5515,32 +5744,17 @@ function handleEverythingClipEnded() {
     renderEverythingQueuePanel();
     return;
   }
-  if (shouldResumeRealtimeAfterCatchUp(completedClip)) {
-    resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });
-    return;
+  if (shouldFinishEverythingCatchUpAfterClip(completedClip)) {
+    everythingCatchUpHandoffPending = false;
   }
   playNextEverythingQueueClip({ queueGeneration, queueChannel });
 }
 
-function shouldResumeRealtimeInsteadOfPlayingNextClip(nextClip) {
-  if (!isEverythingLiveMode()) {
-    return false;
-  }
-  if (isStaleEverythingQueueClip(nextClip)) {
-    return true;
-  }
-  return Boolean(everythingCatchUpHandoffPending && (!nextClip || !nextClip.catch_up));
+function shouldFinishEverythingCatchUpBeforeNextClip(nextClip) {
+  return Boolean(isEverythingLiveMode() && everythingCatchUpHandoffPending && (!nextClip || !nextClip.catch_up));
 }
 
-function isStaleEverythingQueueClip(clip) {
-  if (!clip) {
-    return false;
-  }
-  const clipTime = new Date(clip.ended_at || clip.started_at || "").getTime();
-  return !Number.isFinite(clipTime) || Date.now() - clipTime > everythingCatchUpMaxAgeMs;
-}
-
-function shouldResumeRealtimeAfterCatchUp(completedClip) {
+function shouldFinishEverythingCatchUpAfterClip(completedClip) {
   if (!isEverythingLiveMode() || !everythingCatchUpHandoffPending) {
     return false;
   }
@@ -5553,25 +5767,10 @@ function shouldResumeRealtimeAfterCatchUp(completedClip) {
   return !liveQueue.some((clip) => clip.catch_up);
 }
 
-async function resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel } = {}) {
-  if (!isCurrentLiveQueueSession(queueGeneration, queueChannel) || !isEverythingLiveMode()) {
-    return;
-  }
-  stopEverythingQueue({ clearQueue: true });
-  selectedLiveChannel = defaultRealtimeLiveChannelId();
-  lastLiveStatusId = null;
-  renderLiveChannelPicker();
-  renderEverythingQueuePanel();
-  renderLiveStatus(findLiveChannel(selectedLiveChannel));
-  liveStatus.textContent = "Receiving live stream";
+function clearLiveQueueAudioSource() {
   liveAudio.pause();
-  liveAudio.src = withCacheBust(liveStreamUrl());
+  liveAudio.removeAttribute("src");
   liveAudio.load();
-  await connectLive();
-  if (!isQueuedLiveMode() && !liveAudio.paused) {
-    setLivePlayButton("pause");
-    liveStatus.textContent = "Receiving live stream";
-  }
 }
 
 function stopEverythingQueue({ clearQueue = false } = {}) {
@@ -5891,20 +6090,20 @@ function quietWaveformGain(rms) {
 }
 
 function audioUrlForClip(clip) {
-  if (clip.playback_url) {
-    return clip.playback_url;
-  }
-  if (clip.audio_url) {
+  if (clip?.audio_url) {
     return clip.audio_url;
   }
-  if (clip.audio_public_filename) {
+  if (clip?.playback_url) {
+    return clip.playback_url;
+  }
+  if (clip?.audio_public_filename) {
     return `/clips/${encodeURIComponent(clip.audio_public_filename)}`;
   }
-  return "";
+  return clipAudioRequestUrl(clip);
 }
 
 function clipPlaybackRequestUrl(clip) {
-  if (!clip?.playback_url || !clip.channel || !clip.started_at) {
+  if (!clip?.channel || !clip.started_at) {
     return "";
   }
   const params = new URLSearchParams({
@@ -6118,32 +6317,39 @@ function statusText(payload, clips, filteredTotal) {
         ? "No Hall of Fame clips yet"
         : "No Hall of Fame clips for the selected channels yet";
     }
-    if (clipCollectionFilter === "reviewed") {
-      return selectedChannels.size === 0
-        ? "No reviewed clips yet"
-        : "No reviewed clips for the selected channels yet";
-    }
     if (clipCollectionFilter === "quarantined") {
       return selectedChannels.size === 0
         ? "No quarantined clips yet"
         : "No quarantined clips for the selected channels yet";
     }
+    if (payload.around) {
+      const direction = clipSortDirection === "oldest" ? "at or after" : "at or before";
+      return `No clips ${direction} ${formatDateTime(payload.around)}${selectedChannelStatusScope()}`;
+    }
     return selectedChannels.size === 0 ? "No clips yet" : "No clips for the selected channels yet";
   }
   const scopeText = selectedChannelStatusScope();
-  const pageText =
-    clips.length === filteredTotal ? `${clips.length}` : `${clips.length} of ${filteredTotal}`;
+  const countsDeferred = Boolean(payload.stats?.counts_deferred);
+  const pageText = countsDeferred
+    ? clips.length === filteredTotal
+      ? `${clips.length}`
+      : `${clips.length} of at least ${filteredTotal}`
+    : clips.length === filteredTotal
+    ? `${clips.length}`
+    : `${clips.length} of ${filteredTotal}`;
   const clipNoun = filteredTotal === 1 ? "playable clip" : "playable clips";
   const collectionText =
     clipCollectionFilter === "featured"
       ? "featured "
-      : clipCollectionFilter === "reviewed"
-      ? "reviewed "
       : clipCollectionFilter === "quarantined"
       ? "quarantined "
       : "";
   const totalsText = receivedAndAnalyzedStatusText(payload);
   if (payload.source === "live") {
+    if (payload.around) {
+      const direction = clipSortDirection === "oldest" ? "at or after" : "at or before";
+      return `${pageText} ${collectionText}${clipNoun}${scopeText} ${direction} ${formatDateTime(payload.around)}${totalsText} from the live DB`;
+    }
     return `${pageText} ${collectionText}${clipNoun}${scopeText}${totalsText} from the live DB`;
   }
   const generated = payload.generated_at ? ` · exported ${formatDateTime(payload.generated_at)}` : "";
@@ -6164,11 +6370,34 @@ function receivedAndAnalyzedStatusText(payload) {
 }
 
 function filteredClipCount(payload, clips) {
+  if (payload.source === "live" && payload.around) {
+    return clips.length;
+  }
+  if (payload.source === "live" && payload.stats?.counts_deferred && clipCollectionFilter === "recent" && globalClipStats) {
+    if (selectedChannelPreset === "all-but-traffic") {
+      const channelCounts = globalClipStats.playable_channel_counts || globalClipStats.channel_counts;
+      if (channelCounts) {
+        return Object.entries(channelCounts).reduce(
+          (total, [channel, count]) =>
+            total + (trafficChannelIds.has(String(channel).toUpperCase()) ? 0 : Number(count || 0)),
+          0,
+        );
+      }
+    }
+    if (selectedChannels.size) {
+      const channelCounts = globalClipStats.playable_channel_counts || globalClipStats.channel_counts;
+      if (channelCounts) {
+        return selectedChannelValues().reduce((total, channel) => total + Number(channelCounts[channel] || 0), 0);
+      }
+    }
+    return totalPlayableClips({ ...payload, stats: globalClipStats }, clips);
+  }
   if (selectedChannelPreset === "all-but-traffic") {
     const channelCounts = payload.stats?.playable_channel_counts || payload.stats?.channel_counts;
     if (channelCounts) {
       return Object.entries(channelCounts).reduce(
-        (total, [channel, count]) => total + (trafficChannelIds.has(String(channel).toUpperCase()) ? 0 : Number(count || 0)),
+        (total, [channel, count]) =>
+          total + (trafficChannelIds.has(String(channel).toUpperCase()) ? 0 : Number(count || 0)),
         0,
       );
     }
@@ -6179,7 +6408,6 @@ function filteredClipCount(payload, clips) {
   }
   if (
     (clipCollectionFilter === "featured" ||
-      clipCollectionFilter === "reviewed" ||
       clipCollectionFilter === "quarantined") &&
     payload.source !== "live"
   ) {

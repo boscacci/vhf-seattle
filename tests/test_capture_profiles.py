@@ -21,32 +21,25 @@ def test_elliott_bay_profile_monitors_selected_marine_voice_channels() -> None:
     assert [channel.channel for channel in profile.channels] == ["13", "14", "68"]
 
 
-def test_voice_net_balanced_profile_monitors_expanded_lower_block_channels() -> None:
+def test_voice_net_balanced_profile_prioritizes_busy_voice_channels() -> None:
     profile = CAPTURE_PROFILES["voice_net_balanced"]
 
     assert profile.mode == "multichannel"
     assert profile.center_frequency_hz == 156_675_000
     assert profile.sample_rate_hz == 2_560_000
     assert [channel.channel for channel in profile.channels] == [
-        "05A",
-        "06",
-        "09",
-        "10",
-        "13",
         "14",
-        "16",
-        "22A",
-        "65A",
+        "13",
         "66A",
         "67",
-        "68",
-        "69",
-        "71",
-        "72",
-        "73",
-        "74",
         "77",
+        "68",
+        "74",
+        "73",
+        "71",
         "78A",
+        "69",
+        "72",
     ]
 
 
@@ -62,16 +55,15 @@ def test_voice_net_airband_config_pins_device_serial_sample_rate_and_squelch() -
     assert "index = 0;" not in config
     assert "sample_rate = 2560000;" in config
     assert "centerfreq = 156675000;" in config
-    assert config.count('type = "file";') == 19
-    assert config.count("squelch_threshold = -35;") == 19
+    assert config.count('type = "file";') == 12
+    assert config.count("squelch_threshold = -35;") == 12
     assert "squelch_snr_threshold" not in config
-    assert "freq = 156250000;" in config
-    assert "freq = 156275000;" in config
-    assert "freq = 156800000;" in config
-    assert "freq = 157100000;" in config
+    assert "freq = 156650000;" in config
+    assert "freq = 156700000;" in config
+    assert "freq = 156875000;" in config
     assert "freq = 156925000;" in config
-    assert 'label = "vhf-05a";' in config
-    assert 'label = "vhf-65a";' in config
+    assert 'label = "vhf-66a";' in config
+    assert 'label = "vhf-78a";' in config
 
 
 def test_airband_config_rejects_conflicting_squelch_modes() -> None:
@@ -97,16 +89,14 @@ def test_airband_config_supports_per_channel_squelch_overrides() -> None:
         channel_squelch_snr_thresholds={"14": 18.0},
     )
 
-    assert config.count("squelch_threshold = -35;") == 17
+    assert config.count("squelch_threshold = -35;") == 10
     assert (
-        "freq = 156325000;\n      modulation = \"nfm\";\n"
-        "      label = \"vhf-66a\";\n      squelch_threshold = -30;"
-        in config
+        'freq = 156325000;\n      modulation = "nfm";\n'
+        '      label = "vhf-66a";\n      squelch_threshold = -30;' in config
     )
     assert (
-        "freq = 156700000;\n      modulation = \"nfm\";\n"
-        "      label = \"vhf-14\";\n      squelch_snr_threshold = 18;"
-        in config
+        'freq = 156700000;\n      modulation = "nfm";\n'
+        '      label = "vhf-14";\n      squelch_snr_threshold = 18;' in config
     )
 
 
@@ -125,7 +115,7 @@ def test_elliott_bay_airband_config_writes_channel_mp3_spool_outputs() -> None:
     assert 'label = "vhf-13";' in config
     assert 'label = "vhf-14";' in config
     assert 'type = "file";' in config
-    assert 'split_on_transmission = true;' in config
+    assert "split_on_transmission = true;" in config
     assert 'directory = "/opt/talkingboats/spool/airband/68";' in config
     assert 'directory = "/opt/talkingboats/spool/airband/13";' in config
     assert 'directory = "/opt/talkingboats/spool/airband/14";' in config

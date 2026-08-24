@@ -6,13 +6,13 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
-EnvironmentFile=-/home/rob/repos/elliott-bay-vhf-live-ais-deploy/.env
+WorkingDirectory=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy
+EnvironmentFile=-%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/.env
 Environment=TALKINGBOATS_PROXY_PRIVATE_API_READ_TIMEOUT_SECONDS=30
 Environment=TALKINGBOATS_PROXY_CLIP_SEARCH_READ_TIMEOUT_SECONDS=25
 Environment=TALKINGBOATS_PROXY_TAILNET_DEV_ROUTES_ENABLED=false
 Environment=TALKINGBOATS_PROXY_PERFORMANCE_BACKGROUND_ENABLED=false
-ExecStart=/bin/bash -lc 'export TALKINGBOATS_PROXY_PRIVATE_API_URL="http://$$(/bin/bash /home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_lan_address.sh):8034"; exec /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-live-radio-proxy --host 127.0.0.1 --port 8096'
+ExecStart=/bin/bash -lc 'export TALKINGBOATS_PROXY_PRIVATE_API_URL="http://$$(/bin/bash %h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/scripts/talkingboats_lan_address.sh):8034"; exec /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell talkingboats-live-radio-proxy --host 127.0.0.1 --port 8096'
 Restart=always
 RestartSec=10
 

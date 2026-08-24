@@ -1,9 +1,9 @@
 [Unit]
-Description=Renew vhf-dev.robertboscacci.com certificate
+Description=Renew dev.seattleboatradio.com certificate
 After=docker.service network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/docker run --rm -v /home/rob/vhf-dev-letsencrypt:/etc/letsencrypt -v /home/rob/vhf-dev-letsencrypt-lib:/var/lib/letsencrypt -v /home/rob/vhf-dev-letsencrypt-log:/var/log/letsencrypt -v /home/rob/.aws:/root/.aws:ro certbot/dns-route53 renew --dns-route53 --non-interactive
+ExecStart=/usr/bin/docker run --rm -v %h/.local/share/talkingboats/certbot/config:/etc/letsencrypt -v %h/.local/share/talkingboats/certbot/lib:/var/lib/letsencrypt -v %h/.local/state/talkingboats/certbot:/var/log/letsencrypt -v %h/.aws:/root/.aws:ro certbot/dns-route53 renew --dns-route53 --non-interactive
 ExecStartPost=-/usr/bin/docker kill -s HUP vhf-dev-tailnet-proxy

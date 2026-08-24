@@ -23,7 +23,7 @@ def test_tracked_project_files_do_not_refer_to_placeholder_repo_name() -> None:
         if not raw_path:
             continue
         path = Path(raw_path)
-        if path.suffix in {".png", ".jpg", ".jpeg", ".webp", ".ico"}:
+        if not path.exists() or path.suffix in {".png", ".jpg", ".jpeg", ".webp", ".ico"}:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         if any(old_slug in text for old_slug in OLD_REPO_SLUGS):

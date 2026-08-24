@@ -34,13 +34,8 @@ output "ais_http_ingest_url" {
 }
 
 output "ais_websocket_url" {
-  description = "Public AIS websocket URL used by the CloudFront static site."
-  value       = "wss://${local.ais_live_fqdn}/v1"
-}
-
-output "ais_live_fqdn" {
-  description = "Public AIS websocket custom hostname."
-  value       = local.ais_live_fqdn
+  description = "AWS WebSocket endpoint for optional public AIS subscribers."
+  value       = "${aws_apigatewayv2_api.ais_websocket.api_endpoint}/${aws_apigatewayv2_stage.ais_websocket.name}"
 }
 
 output "ais_connections_table_name" {

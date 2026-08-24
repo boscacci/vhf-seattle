@@ -7,6 +7,7 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert "aws s3 sync" in script
     assert "--delete" not in script
     assert '--exclude "public_manifest.json"' in script
+    assert '--exclude "recent_clips.json"' in script
     assert '--exclude "clips/*"' in script
     assert '--exclude "analysis/*"' in script
     for path in (
@@ -34,8 +35,6 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert 'if [[ "${environment}" == "dev" ]]; then' in script
     assert "prod_retired_route_paths" in script
     assert "retired_route_paths" in script
-    assert '"fine-tuning/index.html"' in script
-    assert '"/fine-tuning/*"' in script
     assert "aws s3 rm" in script
     assert "dev_public_site_bucket" in script
     assert "cloudfront create-invalidation" in script
@@ -45,6 +44,10 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert "TALKINGBOATS_DEV_TAILNET_SSH_TARGET:-optiplex" in script
     assert "TALKINGBOATS_DEV_TAILNET_PUBLIC_SITE_DIR" in script
     assert "TALKINGBOATS_SKIP_TAILNET_DEV_SYNC" in script
+    assert "tailnet_sync_target_is_local()" in script
+    assert '[[ "${target}" == "local" ]]' in script
+    assert '"${source_dir}/" "${target_dir}/"' in script
+    assert "ConnectTimeout=10" in script
     assert "rsync -az" in script
     assert "upload_shell_entrypoint" in script
     assert '--key "index.html"' in script
@@ -65,6 +68,7 @@ def test_generated_public_assets_deploy_promotes_manifest_clips_and_analysis_onl
     assert 'tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"' in script
     assert 'cd "${tofu_dir}"' in script
     assert 'aws s3 cp "${site_dir}/public_manifest.json"' in script
+    assert 'aws s3 cp "${site_dir}/recent_clips.json"' in script
     assert 'aws s3 sync "${site_dir}/clips"' in script
     assert 'aws s3 sync "${site_dir}/analysis"' in script
     assert '--include "*.mp3"' in script
@@ -72,10 +76,23 @@ def test_generated_public_assets_deploy_promotes_manifest_clips_and_analysis_onl
     assert '--include "search_index.json"' in script
     assert '--include "topic_clusters.html"' in script
     assert '"/public_manifest.json"' in script
+    assert '"/recent_clips.json"' in script
     assert '"/clips/*"' in script
     assert '"/analysis/*"' in script
     assert "upload_shell_entrypoint" not in script
     assert "index.html" not in script
+
+
+def test_scheduled_generated_asset_deploy_quiets_expected_tofu_fallback_noise() -> None:
+    deploy_script = Path("scripts/deploy_generated_public_assets.sh").read_text(encoding="utf-8")
+    refresh_script = Path("scripts/refresh_public_clips.sh").read_text(encoding="utf-8")
+
+    assert 'TALKINGBOATS_TOFU_OUTPUT_QUIET:-0}" != "1"' in deploy_script
+    assert "fallback_output_raw" in deploy_script
+    assert (
+        "TALKINGBOATS_TOFU_OUTPUT_QUIET=1 scripts/deploy_generated_public_assets.sh"
+        in refresh_script
+    )
 
 
 def test_lexical_refresh_analyzes_transcript_store_after_public_export() -> None:
@@ -85,7 +102,7 @@ def test_lexical_refresh_analyzes_transcript_store_after_public_export() -> None
     analysis_index = script.index("talkingboats-analyze-transcripts")
 
     assert export_index < analysis_index
-    assert "--clip-store-backend \"${clip_store_backend}\"" in script
+    assert '--clip-store-backend "${clip_store_backend}"' in script
     assert "--public-audio-manifest-path" in script
     assert '"${output_dir}/public_manifest.json"' in script
     assert "--public-manifest-path" not in script
@@ -106,7 +123,7 @@ def test_ais_cloud_deploy_stores_raw_token_in_secrets_manager_not_tofu_state() -
     assert "--secret-string" in script
     assert "set -x" not in script
     assert "token=" in script
-    assert "echo \"${token}" not in script
+    assert 'echo "${token}' not in script
 
 
 def test_deploy_scripts_discover_existing_aws_targets_when_tofu_outputs_are_missing() -> None:
@@ -146,6 +163,18 @@ def test_deploy_scripts_force_shell_revalidation() -> None:
         assert '--cache-control "no-store"' in script
 
 
+def test_static_shell_deploy_forces_stylesheet_revalidation() -> None:
+    script = Path("scripts/deploy_static_shell.sh").read_text(encoding="utf-8")
+    entrypoint = script.split("upload_shell_entrypoint() {", maxsplit=1)[1].split(
+        "upload_crawler_assets() {", maxsplit=1
+    )[0]
+
+    assert '--key "assets/styles.css"' in entrypoint
+    assert '--body "${source_dir}/assets/styles.css"' in entrypoint
+    assert '--content-type "text/css"' in entrypoint
+    assert entrypoint.count('--cache-control "no-store"') == 3
+
+
 def test_native_mobile_auth_env_writer_is_removed_while_paused() -> None:
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
 
@@ -178,7 +207,7 @@ def test_docker_orchestration_files_cover_home_processor_services_without_secret
     assert "live-proxy" in compose
     assert "private-api" in compose
     assert "uploaded-clip-transcriber" in compose
-    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" in compose
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" not in compose
     assert "live-transcriber" not in compose
     assert "lexical-refresh" in compose
     assert "profiles" in compose
@@ -186,7 +215,7 @@ def test_docker_orchestration_files_cover_home_processor_services_without_secret
     assert "TALKINGBOATS_CLIP_STORE_BACKEND=dynamodb" in env_example
     assert "TALKINGBOATS_DURABLE_EVENTS_TABLE=" in env_example
     assert "TALKINGBOATS_DURABLE_EVENTS_REQUIRED=true" in env_example
-    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO=true" in env_example
+    assert "TALKINGBOATS_TRANSCRIBE_TRUST_EDGE_PREPROCESSED_AUDIO" not in env_example
     assert "changeme" not in env_example.lower()
     assert "config/optiplex.env" in gitignore
     assert "config/optiplex.env" in dockerignore
@@ -194,20 +223,19 @@ def test_docker_orchestration_files_cover_home_processor_services_without_secret
 
 
 def test_vhf_dev_tailnet_proxy_config_documents_custom_tls_front_door() -> None:
-    compose = Path("deploy/optiplex/vhf-dev-proxy/compose.yaml").read_text(
+    compose = Path("deploy/optiplex/vhf-dev-proxy/compose.yaml").read_text(encoding="utf-8")
+    nginx = Path("deploy/optiplex/vhf-dev-proxy/nginx.conf").read_text(encoding="utf-8")
+    service = Path("deploy/optiplex/vhf-dev-proxy/vhf-dev-cert-renew.service").read_text(
         encoding="utf-8"
     )
-    nginx = Path("deploy/optiplex/vhf-dev-proxy/nginx.conf").read_text(
-        encoding="utf-8"
-    )
-    service = Path(
-        "deploy/optiplex/vhf-dev-proxy/vhf-dev-cert-renew.service"
-    ).read_text(encoding="utf-8")
     docs = Path("docs/deployment-hygiene.md").read_text(encoding="utf-8")
 
     assert "vhf-dev-tailnet-proxy" in compose
     assert "network_mode: host" in compose
-    assert "/home/rob/vhf-dev-letsencrypt:/etc/letsencrypt:ro" in compose
+    assert (
+        "${HOME}/.local/share/talkingboats/certbot/config:/etc/letsencrypt:ro"
+        in compose
+    )
     assert "stream {" in nginx
     assert "ssl_preread_server_name" in nginx
     assert "gotify.robertboscacci.com 127.0.0.1:8444;" in nginx
@@ -216,10 +244,7 @@ def test_vhf_dev_tailnet_proxy_config_documents_custom_tls_front_door() -> None:
     assert "listen [fd7a:115c:a1e0::2601:597]:443;" in nginx
     assert "listen 127.0.0.1:9443 ssl;" in nginx
     assert "server_name dev.seattleboatradio.com;" in nginx
-    assert (
-        "ssl_certificate /etc/letsencrypt/live/dev.seattleboatradio.com/fullchain.pem;"
-        in nginx
-    )
+    assert "ssl_certificate /etc/letsencrypt/live/dev.seattleboatradio.com/fullchain.pem;" in nginx
     assert "proxy_set_header X-TalkingBoats-Tailnet-Dev 1;" in nginx
     assert "proxy_pass http://172.20.0.1:8095;" in nginx
     assert "certbot/dns-route53 renew" in service
@@ -227,3 +252,23 @@ def test_vhf_dev_tailnet_proxy_config_documents_custom_tls_front_door() -> None:
     assert "Pi-hole" in docs
     assert "admin UI on alternate ports" in docs
     assert "must not bind the Ubuntu micro-computer tailnet `80/443`" in docs
+
+
+def test_dev_backend_is_isolated_from_the_shared_production_api() -> None:
+    api_unit = Path("deploy/systemd/talkingboats-api-dev.service.example").read_text(
+        encoding="utf-8"
+    )
+    proxy_drop_in = Path("deploy/systemd/talkingboats-live-radio-proxy-dev.conf.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert "127.0.0.1 --port 8035" in api_unit
+    assert "PYTHONPATH=%h/repos/elliott-bay-vhf/src" in api_unit
+    assert "talkingboats-api.service" not in api_unit
+    assert "talkingboats-api-dev.service" in proxy_drop_in
+    assert "TALKINGBOATS_PROXY_PRIVATE_API_URL=http://127.0.0.1:8035" in proxy_drop_in
+    assert "TALKINGBOATS_PROXY_STATIC_SHELL_DIR=%h/repos/elliott-bay-vhf/public-site" in (
+        proxy_drop_in
+    )
+    assert "PYTHONPATH=%h/repos/elliott-bay-vhf/src" in proxy_drop_in
+    assert "--host 172.20.0.1 --port 8095" in proxy_drop_in

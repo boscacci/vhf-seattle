@@ -54,6 +54,22 @@ Override that allowance with
 or timeout with `TALKINGBOATS_SEARCH_WARM_URL` and
 `TALKINGBOATS_SEARCH_WARM_TIMEOUT_SECONDS`.
 
+The production API intentionally runs one systemd-managed Uvicorn worker. A
+parsed 54,000-clip embedding index plus the sentence-transformer model uses
+about 1.8 GiB in its original parsed form. Two workers consumed about 4 GiB in
+aggregate; both later exited, recreated cold caches, and exposed multi-second
+user-facing searches. No kernel OOM evidence was available, so the exits are
+not attributed to OOM. The compact NumPy runtime uses about 1.2 GiB in one
+systemd-managed worker. Systemd restarts that process if needed, and
+`talkingboats_warm_search.sh` runs as `ExecStartPost` on every start so the
+model and index are ready before the unit is considered active. Search scoring
+runs in a worker thread so ingest and health requests are not held behind the
+CPU-bound query.
+
+Semantic results below a cosine score of `0.35` are suppressed. This prevents a
+short recency window with no meaningful match from being filled with unrelated
+"top N" clips merely because some result must rank first.
+
 ## Pressure Thresholds
 
 The dashboard uses coarse status labels:

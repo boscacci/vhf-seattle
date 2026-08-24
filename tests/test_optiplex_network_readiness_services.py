@@ -12,7 +12,7 @@ def test_optiplex_audio_services_wait_for_lan_and_dns_before_starting() -> None:
     ).read_text(encoding="utf-8")
 
     readiness_command = (
-        "/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/"
+        "%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/scripts/"
         "talkingboats_lan_address.sh"
     )
     assert f"ExecStartPre=/bin/bash {readiness_command}" in api_service

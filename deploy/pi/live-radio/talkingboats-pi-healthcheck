@@ -4,6 +4,12 @@ set -euo pipefail
 probe_timeout_seconds="${TALKINGBOATS_PI_HEALTHCHECK_TIMEOUT_SECONDS:-5}"
 probe_attempts="${TALKINGBOATS_PI_HEALTHCHECK_ATTEMPTS:-2}"
 restart_wait_seconds="${TALKINGBOATS_PI_HEALTHCHECK_RESTART_WAIT_SECONDS:-3}"
+capture_service="talkingboats-profile-capture.service"
+spool_root="${TALKINGBOATS_PI_SPOOL_ROOT:-/opt/talkingboats/spool/airband}"
+spool_flood_window_minutes="${TALKINGBOATS_PI_SPOOL_FLOOD_WINDOW_MINUTES:-2}"
+spool_flood_max_files="${TALKINGBOATS_PI_SPOOL_FLOOD_MAX_FILES:-240}"
+spool_flood_cooldown_minutes="${TALKINGBOATS_PI_SPOOL_FLOOD_COOLDOWN_MINUTES:-5}"
+spool_flood_marker="${TALKINGBOATS_PI_SPOOL_FLOOD_MARKER:-/run/talkingboats/spool-flood-restarted}"
 
 log_event() {
   local event="$1"
@@ -26,6 +32,70 @@ ensure_active() {
   fi
   log_event "talkingboats_pi_health_failed" "${service}" "still_inactive"
   return 1
+}
+
+positive_integer() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+recent_completed_clip_count() {
+  find "${spool_root}" \
+    -type f \
+    -name "*.mp3" \
+    -mmin "-${spool_flood_window_minutes}" \
+    -printf "%p\n" 2>/dev/null |
+    wc -l |
+    tr -d "[:space:]"
+}
+
+spool_flood_recovery_cooldown() {
+  [[ -f "${spool_flood_marker}" ]] &&
+    find "${spool_flood_marker}" \
+      -mmin "-${spool_flood_cooldown_minutes}" \
+      -print \
+      -quit 2>/dev/null |
+      grep -q .
+}
+
+ensure_capture_rate_healthy() {
+  local recent_clip_count
+  local detail
+
+  ensure_active "${capture_service}" || return 1
+  if ! positive_integer "${spool_flood_window_minutes}" ||
+    ! positive_integer "${spool_flood_max_files}" ||
+    ! positive_integer "${spool_flood_cooldown_minutes}"; then
+    log_event "talkingboats_pi_health_failed" "${capture_service}" \
+      "invalid_spool_flood_threshold"
+    return 1
+  fi
+  if [[ ! -d "${spool_root}" ]]; then
+    log_event "talkingboats_pi_health_failed" "${capture_service}" "spool_root_missing"
+    return 1
+  fi
+  if spool_flood_recovery_cooldown; then
+    log_event "talkingboats_pi_health_ok" "${capture_service}" \
+      "spool_flood_recovery_cooldown"
+    return 0
+  fi
+
+  recent_clip_count="$(recent_completed_clip_count)"
+  if [[ "${recent_clip_count}" -le "${spool_flood_max_files}" ]]; then
+    return 0
+  fi
+
+  detail="spool_flood_${recent_clip_count}_files_in_${spool_flood_window_minutes}m"
+  log_event "talkingboats_pi_health_restart" "${capture_service}" "${detail}"
+  systemctl restart "${capture_service}"
+  sleep "${restart_wait_seconds}"
+  if ! systemctl is-active --quiet "${capture_service}"; then
+    log_event "talkingboats_pi_health_failed" "${capture_service}" \
+      "spool_flood_restart_failed"
+    return 1
+  fi
+  install -d -m 0755 "$(dirname "${spool_flood_marker}")"
+  touch "${spool_flood_marker}"
+  log_event "talkingboats_pi_health_recovered" "${capture_service}" "${detail}"
 }
 
 probe_url() {
@@ -56,6 +126,36 @@ private_api_url() {
   esac
   [[ "${private_api}" =~ ^https?:// ]] || return 1
   printf '%s\n' "${private_api%/}"
+}
+
+env_value() {
+  local requested_key="$1"
+  local env_file="${TALKINGBOATS_PI_ENV_FILE:-/etc/talkingboats/live-radio.env}"
+  local key
+  local value
+  local matched_value=""
+
+  [[ -r "${env_file}" ]] || return 1
+  while IFS="=" read -r key value; do
+    if [[ "${key}" == "${requested_key}" ]]; then
+      matched_value="${value}"
+    fi
+  done < "${env_file}"
+  matched_value="${matched_value%$'\r'}"
+  case "${matched_value}" in
+    \"*\") matched_value="${matched_value:1:${#matched_value}-2}" ;;
+    \'*\') matched_value="${matched_value:1:${#matched_value}-2}" ;;
+  esac
+  printf '%s' "${matched_value}"
+}
+
+ais_forwarder_configured() {
+  local ingest_url
+  local ingest_token
+
+  ingest_url="$(env_value TALKINGBOATS_AIS_HTTP_INGEST_URL)"
+  ingest_token="$(env_value TALKINGBOATS_AIS_INGEST_TOKEN)"
+  [[ -n "${ingest_url}" && -n "${ingest_token}" ]]
 }
 
 ensure_private_api_reachable() {
@@ -98,9 +198,12 @@ ensure_active "talkingboats-spool-uploader.service" || failures=$((failures + 1)
 ensure_private_api_reachable || failures=$((failures + 1))
 ensure_http_service "talkingboats-ais-catcher.service" \
   "http://127.0.0.1:8100/api/stat.json?receiver=" || failures=$((failures + 1))
+if ais_forwarder_configured; then
+  ensure_active "talkingboats-ais-forwarder.service" || failures=$((failures + 1))
+fi
 ensure_http_service "icecast2.service" \
   "http://127.0.0.1:8000/status-json.xsl" || failures=$((failures + 1))
-ensure_active "talkingboats-profile-capture.service" || failures=$((failures + 1))
+ensure_capture_rate_healthy || failures=$((failures + 1))
 ensure_http_service "talkingboats-live-radio-web.service" \
   "http://127.0.0.1:8050/current-status.json" || failures=$((failures + 1))
 

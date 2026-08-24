@@ -4,28 +4,28 @@ variable "aws_region" {
   default     = "us-west-2"
 }
 
-variable "root_domain" {
-  description = "Existing Route 53 hosted zone root domain."
+variable "site_fqdn" {
+  description = "Canonical production public site hostname."
   type        = string
-  default     = "robertboscacci.com"
+  default     = "seattleboatradio.com"
 }
 
-variable "site_subdomain" {
-  description = "Subdomain to publish the static site under."
+variable "dev_site_fqdn" {
+  description = "Canonical tailnet-only dev site hostname."
   type        = string
-  default     = "vhf"
+  default     = "dev.seattleboatradio.com"
 }
 
-variable "dev_site_subdomain" {
-  description = "Subdomain to publish the tailnet-only dev site under."
+variable "site_zone_domain" {
+  description = "Route 53 hosted zone domain for the production public site records."
   type        = string
-  default     = "vhf-dev"
+  default     = "seattleboatradio.com"
 }
 
-variable "ais_live_subdomain" {
-  description = "Subdomain for the public AIS websocket API Gateway custom domain."
+variable "dev_site_zone_domain" {
+  description = "Route 53 hosted zone domain for the tailnet-only dev site records."
   type        = string
-  default     = "ais-live"
+  default     = "seattleboatradio.com"
 }
 
 variable "ais_ingest_token_sha256" {

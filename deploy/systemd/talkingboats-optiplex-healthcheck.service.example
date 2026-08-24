@@ -6,6 +6,6 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy
-ExecStart=/home/rob/repos/elliott-bay-vhf-live-ais-deploy/scripts/talkingboats_optiplex_healthcheck.sh
+WorkingDirectory=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy
+ExecStart=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy/scripts/talkingboats_optiplex_healthcheck.sh
 TimeoutStartSec=2min

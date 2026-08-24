@@ -16,15 +16,13 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from talkingboats.clip_quality import is_quality_visible
 from talkingboats.clip_search import build_search_index, skipped_search_index, write_search_index
 from talkingboats.clip_transcriber import is_displayable_transcript
 from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 from talkingboats.security import assert_public_safe
 
-_DISPLAYED_TRANSCRIPT_SQL = (
-    "COALESCE(uploaded_clip_transcript_corrections.corrected_transcript, "
-    "uploaded_clips.transcript)"
-)
+_DISPLAYED_TRANSCRIPT_SQL = "uploaded_clips.transcript"
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
@@ -451,6 +449,14 @@ class TranscriptClip:
     audio_public_filename: str | None = None
 
 
+def _analysis_quality_visible(
+    quality_status: object | None,
+    quality_score: object | None,
+) -> bool:
+    """Keep the analysis corpus aligned with the public Clips visibility policy."""
+    return is_quality_visible(quality_status, quality_score)
+
+
 def generate_lexical_analysis(
     *,
     db_path: Path,
@@ -583,6 +589,11 @@ def load_transcribed_clips_from_store(
             page_size=page_size,
             excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
         ):
+            if not _analysis_quality_visible(
+                getattr(clip, "quality_status", None),
+                getattr(clip, "quality_score", None),
+            ):
+                continue
             clips.append(clip)
             if limit is not None and len(clips) >= limit:
                 break
@@ -591,9 +602,9 @@ def load_transcribed_clips_from_store(
         return
 
     offset = 0
-    remaining = limit
-    while remaining is None or remaining > 0:
-        batch_size = page_size if remaining is None else min(page_size, remaining)
+    clips = []
+    while limit is None or len(clips) < limit:
+        batch_size = page_size
         batch = clip_store.recent_transcribed(
             limit=batch_size,
             offset=offset,
@@ -601,13 +612,20 @@ def load_transcribed_clips_from_store(
         )
         if not batch:
             break
-        for clip in reversed(batch):
-            yield _transcript_clip_from_recent(clip)
+        for clip in batch:
+            if not _analysis_quality_visible(
+                getattr(clip, "quality_status", None),
+                getattr(clip, "quality_score", None),
+            ):
+                continue
+            clips.append(clip)
+            if limit is not None and len(clips) >= limit:
+                break
         offset += len(batch)
-        if remaining is not None:
-            remaining -= len(batch)
         if len(batch) < batch_size:
             break
+    for clip in reversed(clips):
+        yield _transcript_clip_from_recent(clip)
 
 
 def _transcript_clip_from_recent(clip: Any) -> TranscriptClip:
@@ -641,6 +659,11 @@ def load_transcribed_clips_from_public_manifest(
             continue
         channel = str(clip.get("channel") or "?")
         if channel.upper() in PUBLIC_EXCLUDED_CHANNELS:
+            continue
+        if not _analysis_quality_visible(
+            clip.get("quality_status"),
+            clip.get("quality_score"),
+        ):
             continue
         transcript = _public_text(
             str(clip.get("transcript_public") or clip.get("transcript") or "")
@@ -730,7 +753,7 @@ def load_transcribed_clips(
     limit: int | None,
 ) -> Iterable[TranscriptClip]:
     offset = 0
-    remaining = limit
+    emitted = 0
     excluded = ",".join("?" for _ in PUBLIC_EXCLUDED_CHANNELS)
     with sqlite3.connect(db_path) as connection:
         connection.create_function(
@@ -738,8 +761,8 @@ def load_transcribed_clips(
             1,
             _sqlite_transcript_displayable,
         )
-        while remaining is None or remaining > 0:
-            batch_size = page_size if remaining is None else min(page_size, remaining)
+        while limit is None or emitted < limit:
+            batch_size = page_size
             rows = connection.execute(
                 f"""
                 SELECT
@@ -749,10 +772,10 @@ def load_transcribed_clips(
                     uploaded_clips.ended_at,
                     uploaded_clips.duration_seconds,
                     uploaded_clips.content_type,
-                    {_DISPLAYED_TRANSCRIPT_SQL} AS displayed_transcript
+                    {_DISPLAYED_TRANSCRIPT_SQL} AS displayed_transcript,
+                    uploaded_clips.quality_status,
+                    uploaded_clips.quality_score
                 FROM uploaded_clips
-                LEFT JOIN uploaded_clip_transcript_corrections
-                    ON uploaded_clip_transcript_corrections.clip_key = uploaded_clips.key
                 WHERE uploaded_clips.status = 'transcribed'
                     AND uploaded_clips.transcript IS NOT NULL
                     AND trim(uploaded_clips.transcript) != ''
@@ -773,7 +796,11 @@ def load_transcribed_clips(
                 duration_seconds,
                 content_type,
                 transcript,
+                quality_status,
+                quality_score,
             ) in rows:
+                if not _analysis_quality_visible(quality_status, quality_score):
+                    continue
                 yield TranscriptClip(
                     key=str(key),
                     channel=str(channel),
@@ -785,9 +812,12 @@ def load_transcribed_clips(
                     content_type=str(content_type),
                     transcript=_public_text(str(transcript)),
                 )
+                emitted += 1
+                if limit is not None and emitted >= limit:
+                    return
             offset += len(rows)
-            if remaining is not None:
-                remaining -= len(rows)
+            if len(rows) < batch_size:
+                break
 
 
 def _sqlite_transcript_displayable(text: object) -> int:
@@ -1307,6 +1337,25 @@ def _mobile_topic_plot_html(html_text: str) -> str:
 (() => {
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   const fallbackEye = { x: 1.45, y: 1.55, z: 1.05 };
+  const rotationMessageType = "talkingboats-topic-plot-rotation";
+  const rotationFrameIntervalMs = 72;
+  let rotationRequested = false;
+  let rotationController = null;
+
+  function setRotationRequested(enabled) {
+    rotationRequested = enabled === true;
+    rotationController?.setEnabled(rotationRequested);
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.origin !== window.location.origin) {
+      return;
+    }
+    if (event.data?.type !== rotationMessageType) {
+      return;
+    }
+    setRotationRequested(event.data.enabled);
+  });
 
   function waitForPlot() {
     const plot = document.querySelector(".js-plotly-plot")
@@ -1356,6 +1405,13 @@ def _mobile_topic_plot_html(html_text: str) -> str:
     let pinchStart = null;
     let pendingEye = null;
     let animationFrame = 0;
+    let topicRotationFrame = 0;
+    let topicRotationEnabled = false;
+    let topicRotationLastFrameAt = 0;
+    let topicRotationAngle = 0;
+    let topicRotationRadius = 0;
+    let topicRotationZ = 0;
+    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
     function relayoutEye(eye) {
       pendingEye = eye;
@@ -1373,9 +1429,61 @@ def _mobile_topic_plot_html(html_text: str) -> str:
       relayoutEye(scaleEye(cameraEye(plot), multiplier));
     }
 
+    function stopTopicRotation() {
+      topicRotationEnabled = false;
+      topicRotationLastFrameAt = 0;
+      if (topicRotationFrame) {
+        window.cancelAnimationFrame(topicRotationFrame);
+        topicRotationFrame = 0;
+      }
+    }
+
+    function rotateTopic(timestamp) {
+      if (!topicRotationEnabled) {
+        topicRotationFrame = 0;
+        return;
+      }
+      if (
+        !topicRotationLastFrameAt
+        || timestamp - topicRotationLastFrameAt >= rotationFrameIntervalMs
+      ) {
+        const elapsed = topicRotationLastFrameAt
+          ? Math.min(timestamp - topicRotationLastFrameAt, 240)
+          : rotationFrameIntervalMs;
+        topicRotationLastFrameAt = timestamp;
+        topicRotationAngle += elapsed * 0.00012;
+        window.Plotly.relayout(plot, {
+          "scene.camera.eye": {
+            x: topicRotationRadius * Math.cos(topicRotationAngle),
+            y: topicRotationRadius * Math.sin(topicRotationAngle),
+            z: topicRotationZ,
+          },
+        });
+      }
+      topicRotationFrame = window.requestAnimationFrame(rotateTopic);
+    }
+
+    function setTopicRotationEnabled(enabled) {
+      if (!enabled || prefersReducedMotion) {
+        stopTopicRotation();
+        return;
+      }
+      if (topicRotationEnabled) {
+        return;
+      }
+      const eye = cameraEye(plot);
+      topicRotationAngle = Math.atan2(eye.y, eye.x);
+      topicRotationRadius = Math.max(0.42, Math.hypot(eye.x, eye.y));
+      topicRotationZ = eye.z;
+      topicRotationEnabled = true;
+      topicRotationLastFrameAt = 0;
+      topicRotationFrame = window.requestAnimationFrame(rotateTopic);
+    }
+
     plot.addEventListener(
       "touchstart",
       (event) => {
+        setTopicRotationEnabled(false);
         if (event.touches.length !== 2) {
           pinchStart = null;
           return;
@@ -1412,9 +1520,16 @@ def _mobile_topic_plot_html(html_text: str) -> str:
     plot.addEventListener("touchcancel", () => {
       pinchStart = null;
     });
+    plot.addEventListener("pointerdown", () => {
+      setTopicRotationEnabled(false);
+    });
+    plot.addEventListener("wheel", () => {
+      setTopicRotationEnabled(false);
+    }, { passive: true });
 
     document.querySelectorAll("[data-topic-zoom]").forEach((button) => {
       button.addEventListener("click", () => {
+        setTopicRotationEnabled(false);
         const action = button.getAttribute("data-topic-zoom");
         if (action === "reset") {
           window.Plotly.relayout(plot, { "scene.camera": defaultCamera });
@@ -1423,6 +1538,8 @@ def _mobile_topic_plot_html(html_text: str) -> str:
         }
       });
     });
+    rotationController = { setEnabled: setTopicRotationEnabled };
+    setTopicRotationEnabled(rotationRequested);
   }
 
   waitForPlot();

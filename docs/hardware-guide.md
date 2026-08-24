@@ -14,7 +14,7 @@ flowchart LR
   pi["Raspberry Pi edge node<br/>RTLSDR-Airband, AIS-catcher, Icecast, activity clips"]
   lan["Private LAN / Wi-Fi"]
   homebox["Ubuntu micro-computer<br/>API, transcription, export, telemetry"]
-  ddb["DynamoDB<br/>clip metadata, transcripts, corrections"]
+  ddb["DynamoDB<br/>clip metadata and transcripts"]
   s3raw["Private S3 raw audio<br/>unstarred raw/ expires, starred retained"]
   s3site["Private S3 public-site origin"]
   public["CloudFront public app<br/>vhf"]
@@ -66,8 +66,8 @@ antenna -> RTL-SDR -> Raspberry Pi -> private LAN -> Ubuntu micro-computer -> AW
 - **Ubuntu micro-computer processing:** the Ubuntu micro-computer records clip metadata through the
   DynamoDB-backed store, retries pending uploads, transcribes clips, generates
   static exports, and exposes the read-only proxy that CloudFront can call.
-- **Cloud public edge:** DynamoDB stores durable clip metadata, transcripts, and
-  corrections. S3 stores raw private audio and sanitized public-site files.
+- **Cloud public edge:** DynamoDB stores durable clip metadata and transcripts.
+  S3 stores raw private audio and sanitized public-site files.
   Unstarred raw audio expires after 90 days; starred clips are retained.
   CloudFront and Route53 provide the public `vhf` domain with only read-only
   app, clip, status, and live-audio paths. Route53 points `vhf-dev` to the
@@ -172,7 +172,7 @@ Better marine antenna if placement is easy:
   AIS message rate and nearby-vessel freshness after each cable move rather than
   trusting labels. The dev web app embeds the AIS-catcher viewer through the live
   proxy. The Pi wrapper sets the web viewer station identity to
-  `Elliott Bay VHF`, links it to `https://robertboscacci.com`, and shares an
+  `Elliott Bay VHF`, links it to `https://seattleboatradio.com`, and shares an
   approximate Elliott Bay location with the local viewer by default.
 - VHF 68, `156.425 MHz`: Fun Channel for pleasure-craft working traffic.
 - VHF 14, `156.700 MHz`: Super Business Channel for Seattle Traffic / Puget Sound
@@ -184,12 +184,13 @@ Use the hardware for what it is good at:
 
 - **Raspberry Pi:** edge capture, stream continuity, activity gating, short
   rolling buffers, and safe retry queues. Keep memory and CPU bounded.
-- **Ubuntu micro-computer:** Whisper/faster-whisper, S3 interaction, publishing, lexical
-  analysis, realtime telemetry, and public proxying. This is where the `dell`
-  conda environment and long-running services normally live.
+- **Ubuntu micro-computer:** Whisper/faster-whisper CPU inference capped at two
+  cores, S3 interaction, publishing, lexical analysis, realtime telemetry, and
+  public proxying. This is where the `dell` conda environment and long-running
+  services normally live.
 - **MacBook or other laptop:** development, emergency AWS/static-site operations,
   and browser checks. Do not assume it has the Ubuntu micro-computer runtime state.
-- **AWS:** DynamoDB clip/transcript/correction durability, private object
+- **AWS:** DynamoDB clip/transcript durability, private object
   storage, CloudFront, DNS, TLS, and public read-only delivery.
 
 ## Blog/Figma Diagram Notes

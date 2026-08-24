@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from talkingboats.audio_processing import (
-    DEFAULT_EDGE_UPLOAD_AUDIO_FILTER,
-    build_ffmpeg_upload_mp3_command,
+    CANONICAL_AUDIO_PROFILE,
+    process_canonical_clip_audio,
 )
 
 ALLOWED_CHANNELS = (
@@ -277,6 +277,7 @@ class SegmentUploadRequest:
     duration_seconds: float
     content_type: str
     idempotency_key: str
+    audio_profile: str | None = None
 
 
 @dataclass(frozen=True)
@@ -464,9 +465,7 @@ def detect_activity_clips(
         if active_start_index is None:
             if is_active:
                 active_start_index = frame_index - len(pre_roll)
-                active_frames = [
-                    (index, b"\0" * len(data), False) for index, data in pre_roll
-                ]
+                active_frames = [(index, b"\0" * len(data), False) for index, data in pre_roll]
                 active_frames.append((frame_index, frame, True))
                 trailing_silence_frames = 0
             else:
@@ -576,21 +575,20 @@ def encode_mp3_for_upload(
     wav_path: Path,
     *,
     bitrate: str = "64k",
-    audio_filter: str | None = DEFAULT_EDGE_UPLOAD_AUDIO_FILTER,
+    audio_filter: str | None = None,
     ffmpeg_path: str = "ffmpeg",
     runner: Callable[..., object] = subprocess.run,
 ) -> Path:
+    if audio_filter:
+        raise ValueError("custom edge audio filters are disabled; use canonical-v1")
     mp3_path = wav_path.with_suffix(".mp3")
     tmp_mp3 = mp3_path.with_suffix(".tmp.mp3")
-    runner(
-        build_ffmpeg_upload_mp3_command(
-            wav_path,
-            tmp_mp3,
-            bitrate=bitrate,
-            audio_filter=audio_filter,
-            ffmpeg_path=ffmpeg_path,
-        ),
-        check=True,
+    process_canonical_clip_audio(
+        wav_path,
+        tmp_mp3,
+        bitrate=bitrate,
+        ffmpeg_path=ffmpeg_path,
+        runner=runner,
     )
     tmp_mp3.replace(mp3_path)
     return mp3_path
@@ -779,7 +777,6 @@ def main() -> None:
     parser.add_argument("--record-upload-queue-size", type=int, default=4)
     parser.add_argument("--encode-mp3", action="store_true")
     parser.add_argument("--mp3-bitrate", default="64k")
-    parser.add_argument("--mp3-audio-filter", default=DEFAULT_EDGE_UPLOAD_AUDIO_FILTER)
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--api-url", default=os.getenv("TALKINGBOATS_PRIVATE_API"))
     parser.add_argument("--ingest-token", default=os.getenv("TALKINGBOATS_INGEST_TOKEN"))
@@ -792,9 +789,7 @@ def main() -> None:
     if args.upload and (not args.api_url or not args.ingest_token):
         parser.error("--upload requires --api-url/--ingest-token or environment equivalents")
     if args.record_upload and (not args.api_url or not args.ingest_token):
-        parser.error(
-            "--record-upload requires --api-url/--ingest-token or environment equivalents"
-        )
+        parser.error("--record-upload requires --api-url/--ingest-token or environment equivalents")
 
     config = EdgeCaptureConfig(
         channel=args.channel,
@@ -836,9 +831,7 @@ def main() -> None:
             stream_started_at=started_at,
             sample_rate_hz=args.sample_rate_hz,
             segment_seconds=args.record_segment_seconds,
-            retention_seconds=None
-            if args.no_record_retention
-            else args.record_retention_seconds,
+            retention_seconds=None if args.no_record_retention else args.record_retention_seconds,
             on_segment_complete=upload_worker.enqueue if upload_worker else None,
         )
         chunks = record_chunks(chunks, recorder)
@@ -863,9 +856,7 @@ def main() -> None:
         if args.squelch_stdout
         else None,
         upload=args.upload,
-        edge_upload_audio_filter_enabled=_audio_filter_enabled(args.mp3_audio_filter)
-        if args.encode_mp3
-        else None,
+        audio_profile=CANONICAL_AUDIO_PROFILE if args.encode_mp3 else None,
     )
 
     try:
@@ -897,7 +888,6 @@ def main() -> None:
                 upload_path = encode_mp3_for_upload(
                     spooled.audio_path,
                     bitrate=args.mp3_bitrate,
-                    audio_filter=_optional_audio_filter(args.mp3_audio_filter),
                 )
             _log_event(
                 "edge_capture_clip",
@@ -954,6 +944,7 @@ def build_activity_upload_request(clip: EdgeClip, audio_path: Path) -> SegmentUp
             started_at=clip.started_at,
             audio_path=audio_path,
         ),
+        audio_profile=(CANONICAL_AUDIO_PROFILE if audio_path.suffix.lower() == ".mp3" else None),
     )
 
 
@@ -987,19 +978,6 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _optional_audio_filter(value: str | None) -> str | None:
-    if value is None:
-        return None
-    stripped = value.strip()
-    if not stripped or stripped.lower() in {"0", "false", "no", "none", "off", "disabled"}:
-        return None
-    return stripped
-
-
-def _audio_filter_enabled(value: str | None) -> bool:
-    return _optional_audio_filter(value) is not None
-
-
 def _parse_utc(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -1018,6 +996,8 @@ def _default_upload_clip(api_url: str, ingest_token: str, request: Any) -> Any:
     }
     if request.ended_at is not None:
         payload["ended_at"] = _format_utc(request.ended_at)
+    if request.audio_profile is not None:
+        payload["audio_profile"] = request.audio_profile
     presign_request = urllib.request.Request(
         f"{api_url}/api/ingest/clips/presign",
         data=json.dumps(payload).encode("utf-8"),

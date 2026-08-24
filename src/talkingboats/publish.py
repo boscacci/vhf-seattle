@@ -31,6 +31,7 @@ from talkingboats.security import assert_public_safe
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PUBLIC_EXCLUDED_CHANNELS = ("WX",)
+RECENT_CLIP_SNAPSHOT_LIMIT = 24
 ClipAudioProcessor = Callable[[Path, Path], None]
 ClipAudioQualityGate = Callable[[Path], None]
 ProgressReporter = Callable[[int, int], None]
@@ -44,7 +45,6 @@ ALLOWED_CLIP_FIELDS = {
     "started_at",
     "duration_seconds",
     "transcript_public",
-    "transcript_reviewed",
     "featured",
     "featured_at",
     "quality_status",
@@ -95,6 +95,37 @@ ALLOWED_AIS_TRACK_FIELDS = {
 
 class PublicExportError(ValueError):
     pass
+
+
+def recent_clip_snapshot(
+    public_manifest: Mapping[str, Any],
+    *,
+    limit: int = RECENT_CLIP_SNAPSHOT_LIMIT,
+) -> dict[str, Any]:
+    """Return a compact first-paint subset of the safe public manifest."""
+
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+    snapshot = {
+        "generated_at": public_manifest.get("generated_at"),
+        "site": dict(public_manifest.get("site", {})),
+        "stats": dict(public_manifest.get("stats", {})),
+        "clips": [
+            dict(clip)
+            for clip in list(public_manifest.get("clips", []))[:limit]
+            if isinstance(clip, Mapping)
+        ],
+    }
+    assert_public_safe(snapshot)
+    return snapshot
+
+
+def write_recent_clip_snapshot(output_dir: Path, public_manifest: Mapping[str, Any]) -> None:
+    snapshot = recent_clip_snapshot(public_manifest)
+    (output_dir / "recent_clips.json").write_text(
+        json.dumps(snapshot, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def sanitize_public_manifest(private_manifest: Mapping[str, Any]) -> dict[str, Any]:
@@ -164,6 +195,7 @@ def export_public_site(
             json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        write_recent_clip_snapshot(output_dir, public_manifest)
     return public_manifest
 
 
@@ -275,6 +307,7 @@ def export_recent_clip_site(
             json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        write_recent_clip_snapshot(output_dir, public_manifest)
     return public_manifest
 
 
@@ -466,9 +499,7 @@ def _recent_clip_manifest(
 
 def _analyzed_clip_count(clip_store: Any) -> int | None:
     try:
-        return int(
-            clip_store.transcribed_clip_count(excluded_channels=PUBLIC_EXCLUDED_CHANNELS)
-        )
+        return int(clip_store.transcribed_clip_count(excluded_channels=PUBLIC_EXCLUDED_CHANNELS))
     except (AttributeError, RuntimeError, TypeError):
         return None
 
@@ -499,7 +530,6 @@ def _public_clip_from_recent(clip: RecentTranscribedClip) -> dict[str, Any]:
         "ended_at": clip.ended_at,
         "duration_seconds": clip.duration_seconds,
         "transcript_public": clip.transcript,
-        "transcript_reviewed": clip.transcript_reviewed,
         "featured": clip.featured,
         "featured_at": clip.featured_at,
         "quality_status": clip.quality_status,

@@ -9,28 +9,24 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert "limit=${selectedClipPageSize}" in app_js
+    assert "limit=${clipBatchSize}" in app_js
     assert "publicLiveApiTimeoutMs = 8000" in app_js
-    assert "shouldLoadPublishedManifestFirst" not in app_js
-    assert "refreshLiveClipPayloadInBackground" not in app_js
-    assert "useCachedPayload && !publicAppHost" in app_js
+    assert "shouldLoadPublishedManifestFirst" in app_js
+    assert "renderPublishedClipsWhileRefreshing" in app_js
+    assert "useCachedPayload && !publicAppHost" not in app_js
     assert "loadAndRender({ useCachedPayload: false });" in app_js
     assert "recentClipsCacheKeyPrefix" in app_js
-    assert "clipPagePrefetchRadius = 2" in app_js
-    assert "prefetchNeighborClipPages(payload)" in app_js
-    assert "clipPageMemoryCache" in app_js
-    assert "prefetchedClipPagePayload(requestUrl)" in app_js
-    assert "scheduleClipPagePrefetch" in app_js
-    assert "requestIdleCallback" in app_js
-    assert "prefetchClipPageAtOffset" in app_js
-    assert "storeClipPageMemoryPayload(requestUrl, payload)" in app_js
+    assert "clipPagePrefetchRadius" not in app_js
+    assert "prefetchNeighborClipPages" not in app_js
+    assert "clipPageMemoryCache" not in app_js
     assert "renderClipLoadingState" in app_js
     assert "renderClipPlaceholders" in app_js
     assert "loadCachedRecentClipPayload" in app_js
     assert "storeRecentClipPayload" in app_js
     assert "storeRecentClipPayload(requestUrl, payload)" in app_js
     assert "loadClipPayload(requestUrl, { allowFallback: false })" in app_js
-    assert "prefetchClipPageAtOffset(baseOffset + pageDelta * pageSize" in app_js
+    assert "nextClipCursor" in app_js
+    assert "loadMoreClips" in app_js
     assert ".clip-placeholder" in styles_css
     assert "channel-filter" in index_html
     assert "site-links" not in index_html
@@ -51,17 +47,17 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "channel-filter-frequency" in app_js
     assert "channel-filter-action" in app_js
     assert "channels=${encodeURIComponent(channel)}" in app_js
-    assert "defaultClipPageSize = 6" in app_js
+    assert "const clipBatchSize = 24" in app_js
     assert "selectedClipPage" in app_js
-    assert "page=${pageNumber}" in app_js
+    assert "page=${pageNumber}" not in app_js
     assert "renderClipPagination" in app_js
-    assert "clipPaginationItems" in app_js
-    assert "paginationEllipsis" in app_js
-    assert "goToClipPage" in app_js
+    assert "clipPaginationItems" not in app_js
+    assert "paginationEllipsis" not in app_js
+    assert "goToClipPage" not in app_js
     assert "clip-pagination" in index_html
     assert ".clip-pagination" in styles_css
-    assert ".pagination-pages" in styles_css
-    assert ".pagination-ellipsis" in styles_css
+    assert ".pagination-pages" not in styles_css
+    assert ".pagination-ellipsis" not in styles_css
     assert "columns: 2 320px;" not in styles_css
     assert ".clip-list" in styles_css
     assert ".clip-list {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);" in styles_css
@@ -92,44 +88,43 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'const liveChannelsUrl = apiUrl("/api/live/channels");' in app_js
     assert 'const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353' in app_js
     assert 'const aisCatcherFallbackUrl = "https://aiscatcher.org/";' in app_js
-    assert 'const clipCorrectionsUrl = apiUrl("/api/clips/corrections");' in app_js
+    assert "/api/clips/corrections" not in app_js
     assert 'const clipFeaturesUrl = apiUrl("/api/clips/features");' in app_js
     assert 'const hallOfFameRouteSegment = "hall-of-fame";' in app_js
-    assert 'const reviewedRouteSegment = "reviewed";' in app_js
+    assert 'const reviewedRouteSegment = "reviewed";' not in app_js
     assert "function routeStateFromLocation()" in app_js
     assert "clipCollectionFilter:" in app_js
-    assert 'return "reviewed";' in app_js
-    assert (
-        "clipsTitle.textContent = clipCollectionTitle();"
-        in app_js
-    )
-    assert "updateTabRoute(\"clips\"" in app_js
+    assert 'return "reviewed";' not in app_js
+    assert "clipsTitle.textContent = clipCollectionTitle();" in app_js
+    assert 'updateTabRoute("clips"' in app_js
     assert "/api/operator/session" not in app_js
-    assert "operatorReviewEnabled" in app_js
+    assert "operatorReviewEnabled" not in app_js
     assert "featureClipWriteEnabled" in app_js
     assert "const featureClipWriteEnabled = privateAppHost;" in app_js
+    assert "clipReviewControlsEnabled" not in app_js
     assert "fineTuningDashboardEnabled" not in app_js
-    assert 'id="operator-labeling-link"' in index_html
-    assert "Label clips" in index_html
-    assert "operatorLabelingLink" in app_js
-    assert "operatorLabelingLink.hidden = !privateAppHost || operatorReviewEnabled;" in app_js
-    assert ".operator-labeling-link" in styles_css
+    assert 'id="operator-labeling-link"' not in index_html
+    assert "Label clips" not in index_html
+    assert "operatorLabelingLink" not in app_js
+    assert ".operator-labeling-link" not in styles_css
     assert "\n[hidden] {\n  display: none !important;\n}" in styles_css
-    assert 'const asrFeedbackStatusUrl = apiUrl("/api/asr-feedback/status");' in app_js
+    assert "/api/asr-feedback/status" not in app_js
     assert "privateAppHost" in app_js
     assert "devAppHost" in app_js
-    assert 'window.location.pathname.startsWith("/operator")' in app_js
-    assert 'window.location.hostname === "vhf-dev.robertboscacci.com"' in app_js
+    assert "/operator/" not in app_js
+    assert 'const devAppHosts = new Set(["dev.seattleboatradio.com"]);' in app_js
     assert "All but traffic" in app_js
     assert 'const trafficChannelIds = new Set(["14"]);' in app_js
     assert 'allButTrafficAction.dataset.preset = "all-but-traffic";' in app_js
     assert "dsp=warm_voice" not in app_js
     assert "/public_manifest.json" in app_js
+    assert "/recent_clips.json" in app_js
     assert "Elliott Bay VHF" in index_html
     assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml" />' in index_html
     assert "Seattle Marine Radio" not in index_html
-    assert "Clip Review" in index_html
-    assert "Live Monitor" in index_html
+    assert "Clips" in index_html
+    assert "Listen live" in index_html
+    assert "Live Monitor" not in index_html
     assert "Search" in index_html
     assert re.search(
         r'<button[^>]*id="tab-search"[^>]*type="button"[^>]*data-tab="search"',
@@ -175,7 +170,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert ".fine-tuning-button" not in styles_css
     assert ".fine-tuning-status-list" not in styles_css
     assert "languageDashboardEnabled" in app_js
-    assert '"vhf.robertboscacci.com"' in app_js
+    assert '"seattleboatradio.com"' in app_js
     assert '"seattleboatradio.com"' in app_js
     assert "/api/analysis/lexical" in app_js
     assert 'const clipSearchUrl = apiUrl("/api/clips/search");' in app_js
@@ -258,12 +253,19 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "Live delay" in app_js
     assert "behind antenna" in app_js
     assert "performanceRefreshMs = 10000" in app_js
-    assert "clipStatsPollMs = 10000" in app_js
+    assert "clipStatsInitialPollMs = 5000" in app_js
+    assert "clipStatsPollMs = 15000" in app_js
     assert "startClipStatsPolling" in app_js
     assert "pollClipStats" in app_js
     assert "latest_started_at" in app_js
-    assert "payload.stats?.latest_playable_started_at || payload.stats?.latest_started_at" in app_js
-    assert "|| clips[0]?.started_at" in app_js
+    assert (
+        "headerStats?.latest_playable_started_at || "
+        "headerStats?.latest_started_at || clips[0]?.started_at"
+    ) in app_js
+    assert (
+        "payload.stats.latest_playable_started_at || "
+        "payload.stats.latest_started_at || clips[0]?.started_at"
+    ) in app_js
     assert '["Feed",' not in app_js
     assert '"Live DB"' not in app_js
     assert '"Published export"' not in app_js
@@ -278,10 +280,11 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'const clipNoun = filteredTotal === 1 ? "playable clip" : "playable clips";' in app_js
     assert '"Analyzed transcripts"' in app_js
     assert '"Intelligible transcript records; audio may age out"' in app_js
+    assert 'Number(payload.source_clip_count || 0).toLocaleString("en-US")' in app_js
     assert 'languageCard("Transmissions", String(payload.source_clip_count || 0)' not in app_js
     assert "function formatStatValue(label, value)" in app_js
     assert "return Number(value).toLocaleString();" in app_js
-    assert 'description.textContent = formatStatValue(label, value);' in app_js
+    assert "description.textContent = formatStatValue(label, value);" in app_js
     assert "minmax(142px, 1.35fr)" in styles_css
     assert ".stat:nth-child(5)" in styles_css
     assert ".stat:nth-child(3)" not in styles_css
@@ -322,17 +325,12 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert '{ label: "3d", hours: 72 }' in app_js
     assert '{ label: "6h", hours: 6 }' not in app_js
     assert "performance-range-control" in app_js
-    assert "loadAsrFeedbackStatus" in app_js
-    assert "speech-training-panel" in app_js
-    assert "renderSpeechTrainingPanel" in app_js
-    assert "Training examples" in app_js
-    assert "correctionCount.toLocaleString()" in app_js
-    assert "`${correctionCount} / ${minCorrections}`" not in app_js
-    assert "trainingReadinessCaption" in app_js
-    assert "No new labels since last trained run" in app_js
-    assert "Last ASR run" in app_js
-    assert ".speech-training-panel" in styles_css
-    assert ".speech-training-grid" in styles_css
+    assert "loadAsrFeedbackStatus" not in app_js
+    assert "renderSpeechTrainingPanel" not in app_js
+    assert "Training examples" not in app_js
+    assert "trainingReadinessCaption" not in app_js
+    assert ".speech-training-panel" not in styles_css
+    assert ".speech-training-grid" not in styles_css
     assert "cpuUtilizationPercent" in app_js
     assert "memoryUsedPercent" in app_js
     assert "thermalTemperatureC" in app_js
@@ -382,6 +380,8 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'mapStatus.textContent = "Showing AIS-catcher live map";' in app_js
     assert 'id="ais-catcher-unavailable"' in index_html
     assert "probeAisCatcherViewer" in app_js
+    assert "fetch(aisReceiverStatusUrl" in app_js
+    assert 'method: "HEAD"' not in app_js
     assert "renderAisCatcherUnavailable" in app_js
     assert 'mapStatus.textContent = "AIS receiver is temporarily unavailable.";' in app_js
     assert 'aisCatcherFrame.removeAttribute("src");' in app_js
@@ -410,6 +410,18 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "L.tileLayer" not in app_js
 
 
+def test_public_shell_uses_current_shared_asset_cache_key() -> None:
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+
+    style_version = re.search(r'/assets/styles\.css\?v=([^"&]+)', index_html)
+    script_version = re.search(r'/assets/app\.js\?v=([^"&]+)', index_html)
+
+    assert style_version is not None
+    assert script_version is not None
+    assert style_version.group(1) == "20260817-datetime-nav-v1"
+    assert script_version.group(1) == style_version.group(1)
+
+
 def test_public_site_analysis_copy_clarifies_frequency_metrics() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
@@ -419,76 +431,41 @@ def test_public_site_analysis_copy_clarifies_frequency_metrics() -> None:
     assert "Largest non-outlier topic by analyzed clips" in app_js
     assert "Busiest hours" not in app_js
     assert "busiestHoursSummary" not in app_js
-    assert "No analyzed transmissions yet" in app_js
+    assert "No analyzed transmissions on listenable channels yet" in app_js
     assert "activeChannelSummary" in app_js
     assert 'formatCountNoun(vhfCount, "channel", "channels")' in app_js
     assert "VHF channels with at least one analyzed clip" in app_js
-    assert "monitoredAnalysisChannels" in app_js
-    assert "channelCountsWithMonitoredChannels" in app_js
-    assert (
-        '["05A", "06", "09", "10", "13", "14", "16", "22A", "65A", "66A", '
-        '"67", "68", "69", "71", "72", "73", "74", "77", "78A"]'
-        in app_js
-    )
+    assert "function listenableAnalysisChannelIds()" in app_js
+    assert "function channelCountsForListenableChannels(channelCounts)" in app_js
+    assert "channel.streamPath" in app_js
+    assert "channelCountsForListenableChannels(" in app_js
+    assert "payload.channels || frequency.by_channel || {}" in app_js
+    assert "No analyzed transmissions on listenable channels yet" in app_js
     assert "activeAnalyzedChannelCount(channelCounts)" in app_js
     assert "Number(count || 0) > 0" in app_js
     assert ".filter(([, count]) => count > 0)" in app_js
 
 
-def test_public_site_clip_review_page_size_and_sort_controls() -> None:
+def test_public_site_uses_cursor_infinite_scroll_in_fixed_batches() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert "const defaultClipPageSize = 6;" in app_js
-    assert "const clipPageSizeOptions = [6, 12, 24];" in app_js
-    assert "48" not in app_js.partition("const clipPageSizeOptions = [")[2].partition("];")[0]
-    assert "let selectedClipPageSize = defaultClipPageSize;" in app_js
-    assert "let selectedClipOffset = 0;" in app_js
-    assert 'let clipSortDirection = "newest";' in app_js
-    assert "const initialRouteState = routeStateFromLocation();" in app_js
-    assert "let clipCollectionFilter = initialRouteState.clipCollectionFilter;" in app_js
-    assert "limit=${selectedClipPageSize}" in app_js
-    assert "includeCounts = true" in app_js
-    assert 'params.push("include_counts=false");' in app_js
-    assert "payloadWithRetainedClipStats" in app_js
-    assert 'params.push("sort=oldest");' in app_js
-    assert "featured=true" in app_js
-    assert "reviewed=true" in app_js
-    assert 'clipReviewedFilter = clipCollectionFilter === "reviewed";' in app_js
-    assert 'params.push("reviewed=true");' in app_js
-    assert "renderClipDisplayControls()" in app_js
+    assert "const clipBatchSize = 24;" in app_js
+    assert "limit=${clipBatchSize}" in app_js
+    assert "next_cursor" in app_js
+    assert "IntersectionObserver" in app_js
+    assert "Load 24 more" in app_js
+    assert "Clips per page" not in app_js
     assert "renderClipDisplayControlSet()" in app_js
-    assert "function setClipPageSize(pageSize)" in app_js
-    assert "const firstVisibleClipOffset = clipOffset();" in app_js
-    assert (
-        "const firstVisibleClipPage = Math.floor(firstVisibleClipOffset / "
-        "selectedClipPageSize) + 1;"
-        in app_js
-    )
-    assert (
-        "selectedClipOffset = (firstVisibleClipPage - 1) * selectedClipPageSize;"
-        in app_js
-    )
-    assert "function goToClipOffset(offset)" in app_js
-    assert "mobileClipDisplayControls()" not in app_js
-    assert "const insertAfter = Math.min(6, cards.length);" not in app_js
     assert "clipList.replaceChildren(...clips.map(renderClipCard));" not in app_js
     assert "function clipRenderSignature(clip)" in app_js
-    assert "applyClipSortForCurrentPage" in app_js
-    assert 'currentClipPayload?.source !== "live" && clipSortDirection === "oldest"' in app_js
     assert "let currentPageClips = [];" in app_js
-    assert "function renderCurrentClipOrder()" in app_js
     assert 'clipSortDirection = "newest";\n        resetClipPagination();' in app_js
     assert 'clipSortDirection = "oldest";\n        resetClipPagination();' in app_js
-    assert "function goToOldestClipPage()" in app_js
-    assert "function goToNewestClipPage()" in app_js
-    assert "paginationButton(\"Oldest\", false, goToOldestClipPage" in app_js
-    assert "paginationButton(\"Newest\", false, goToNewestClipPage" in app_js
     assert "selectedClipPage = 1;" in app_js
     assert '"Show clips"' in app_js
     assert '"Hall of fame"' in app_js
-    assert '"Reviewed"' in app_js
     assert '"Flip page order"' in app_js
     assert 'id="clip-display-controls"' in index_html
     assert "clip-display-controls" in styles_css
@@ -513,23 +490,53 @@ def test_public_site_channel_selector_closes_on_outside_interaction() -> None:
     assert "menu.open = false;" in app_js
 
 
-def test_public_site_prod_checks_live_api_before_published_manifest_fallback() -> None:
+def test_public_site_can_jump_to_a_pacific_datetime_with_channel_filters() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+    browser_smoke = Path("scripts/browser_smoke.mjs").read_text(encoding="utf-8")
+
+    assert 'id="clip-datetime-form"' in index_html
+    assert 'id="clip-datetime-input"' in index_html
+    assert 'type="datetime-local"' in index_html
+    assert 'id="clear-clip-datetime"' in index_html
+    assert "Pacific time" in index_html
+    assert "clip-datetime-navigator" in styles_css
+    assert "selectedClipAround" in app_js
+    assert 'params.push(`around=${encodeURIComponent(selectedClipAround)}`);' in app_js
+    assert 'if (requestedAround && !normalizedPayload.around)' in app_js
+    assert 'label: selectedClipAround ? "Earlier" : "Newest"' in app_js
+    assert 'label: selectedClipAround ? "Later" : "Oldest"' in app_js
+    assert "selectedClipAround = clipDatetimeInput.value;" in app_js
+    assert "selectedChannels" in app_js
+    assert 'responseUrl.searchParams.get("around") === "2026-08-15T12:30"' in browser_smoke
+    assert 'responseUrl.searchParams.getAll("channels").includes("14")' in browser_smoke
+    assert 'getByRole("button", { name: "Later" })' in browser_smoke
+    assert 'getByRole("button", { name: "Back to latest" })' in browser_smoke
+
+
+def test_public_site_prod_uses_live_api_with_published_manifest_fallback() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
-    assert (
-        'const publicAppHosts = new Set(["vhf.robertboscacci.com", '
-        '"seattleboatradio.com"]);'
-        in app_js
-    )
+    assert 'const publicAppHosts = new Set(["seattleboatradio.com"]);' in app_js
     assert "const publicAppHost = publicAppHosts.has(window.location.hostname);" in app_js
     assert "const privateAppHost = localAppHost || tailnetAppHost || devAppHost;" in app_js
     assert "const publicLiveApiTimeoutMs = 8000;" in app_js
-    assert "function shouldLoadPublishedManifestFirst()" not in app_js
-    assert "refreshLiveClipPayloadInBackground" not in app_js
-    assert "useCachedPayload && !publicAppHost" in app_js
+    assert "function shouldLoadPublishedManifestFirst()" in app_js
+    assert "renderPublishedClipsWhileRefreshing" in app_js
+    assert "useCachedPayload ? loadCachedRecentClipPayload(requestUrl)" in app_js
+    assert "useCachedPayload && !publicAppHost" not in app_js
+    assert "includeCounts = false" in app_js
+    assert '"include_playback_url=false"' in app_js
+    assert '"/api/clips/recent?limit=1&include_playback_url=false&' in app_js
+    assert '"verify_playback_exists=false&include_counts=false"' in app_js
+    assert 'refreshButton?.addEventListener("click"' in app_js
+    assert "loadAndRender({ useCachedPayload: false });" in app_js
+    assert "const livePayloadPromise = loadClipPayload(requestUrl" in app_js
+    assert "payload = await livePayloadPromise;" in app_js
     assert "timeoutMs: publicAppHost ? publicLiveApiTimeoutMs : 0" in app_js
     assert "return loadPublishedManifest();" in app_js
-    assert "function fetchJsonWithTimeout(url, { timeoutMs } = {})" in app_js
+    assert "function fetchJsonWithTimeout(url, { timeoutMs, signal = null } = {})" in app_js
     assert "new AbortController()" in app_js
     assert "window.setTimeout(() => controller.abort(), timeoutMs)" in app_js
 
@@ -559,6 +566,11 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
     assert 'topicFrame.setAttribute("allow", "fullscreen")' in app_js
     assert "hideUnavailableTopicFrame(topicFrame, topicFrameShell)" in app_js
     assert 'topicFrame.addEventListener("load"' in app_js
+    assert "function startTopicPlotRotation()" in app_js
+    assert "function stopTopicPlotRotation()" in app_js
+    assert "talkingboats-topic-plot-rotation" in app_js
+    assert "startTopicPlotRotation();" in app_js
+    assert "stopTopicPlotRotation();" in app_js
     assert "asset not found" in app_js
     assert "renderTopicExamples(topic)" in app_js
     assert "function renderTopicExamples(topic) {" in app_js
@@ -568,7 +580,7 @@ def test_public_site_analysis_topics_hide_outliers_and_explain_clusters() -> Non
         )
     ]
     assert "renderExamplePlayer" not in topic_examples_source
-    assert "renderAnalysisExampleCorrection(reviewExample, quote, wrapper)" in topic_examples_source
+    assert "renderAnalysisExampleCorrection" not in topic_examples_source
     assert ".topic-frame-shell[hidden]" in styles_css
     assert "mobileNlpSummary" not in app_js
     assert "nlpSummaryRows" not in app_js
@@ -618,12 +630,41 @@ def test_public_site_analysis_examples_use_same_origin_clip_audio() -> None:
     assert "return clipAudioRequestUrl(clip) || audioUrlForClip(clip);" in app_js
     assert "const audioUrl = analysisAudioUrlForClip(example);" in app_js
     assert 'const clipAudioUrl = apiUrl("/api/clips/audio");' in app_js
-    assert "renderAnalysisExampleCorrection" in app_js
-    assert "analysisTranscriptReviewEnabled && canReviewClip(example)" in app_js
-    assert "const analysisTranscriptReviewEnabled = privateAppHost;" in app_js
-    assert 'summary.textContent = "Review transcript";' in app_js
-    assert "renderTranscriptCorrectionForm(example, transcriptElement, article)" in app_js
-    assert ".analysis-correction" in styles_css
+    assert "renderAnalysisExampleCorrection" not in app_js
+    assert "analysisTranscriptReviewEnabled" not in app_js
+    assert ".analysis-correction" not in styles_css
+
+
+def test_public_search_result_renders_one_audio_player_per_card() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    search_result_renderer = app_js[
+        app_js.index("function renderSearchResultCard(result)") : app_js.index(
+            "function emptySearchMessage(text)"
+        )
+    ]
+
+    assert "const article = renderClipCard(clip);" in search_result_renderer
+    assert "renderExamplePlayer" not in search_result_renderer
+
+
+def test_public_search_controls_show_the_new_selection_before_refreshing_results() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    controls = app_js[
+        app_js.index("function renderSearchControls()") : app_js.index(
+            "function renderSegmentedSearchControl("
+        )
+    ]
+
+    assert controls.count("renderSearchControls();") == 2
+    assert controls.index("selectedSearchRecency = value;") < controls.index(
+        "renderSearchControls();"
+    ) < controls.index("performClipSearch();")
+    limit_selection = controls.index("selectedSearchLimit = Number(value);")
+    assert (
+        limit_selection
+        < controls.index("renderSearchControls();", limit_selection)
+        < controls.index("performClipSearch();", limit_selection)
+    )
 
 
 def test_public_site_analysis_audio_examples_are_limited_to_entities() -> None:
@@ -646,34 +687,31 @@ def test_public_site_analysis_audio_examples_are_limited_to_entities() -> None:
     ]
 
     assert "renderExamplePlayer(playableExample || {})" in entity_source
-    assert "renderAnalysisExampleCorrection(reviewExample, quote, item)" in entity_source
+    assert "renderAnalysisExampleCorrection" not in entity_source
     assert "renderExamplePlayer" not in topic_source
-    assert "renderAnalysisExampleCorrection(reviewExample, quote, wrapper)" in topic_source
+    assert "renderAnalysisExampleCorrection" not in topic_source
     assert "analysisAudioUrlForClip" not in topic_picker_source
     assert "return examples[0] || null;" in topic_picker_source
 
 
-def test_public_site_mobile_pagination_action_labels_stay_centered() -> None:
+def test_public_site_mobile_load_more_label_stays_centered() -> None:
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
     assert ".pagination-button {\n  display: inline-flex;" in styles_css
     assert "align-items: center;" in styles_css
     assert "justify-content: center;" in styles_css
-    assert ".pagination-actions {\n    display: grid;" in styles_css
-    assert "grid-template-columns: repeat(auto-fit, minmax(min(104px, 100%), 1fr));" in styles_css
-    assert ".pagination-actions .pagination-button {\n    width: 100%;" in styles_css
+    assert ".clip-pagination .pagination-button {" in styles_css
+    assert "width: min(100%, 460px);" in styles_css
 
 
-def test_public_site_clip_pagination_scrolls_on_all_viewports_with_loading_banner() -> None:
+def test_public_site_infinite_scroll_keeps_loading_feedback_without_page_jumps() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert "scrollToClipsAfterRender = false" in app_js
-    assert "scrollToClipsAfterRender: true, includeCounts: false" in app_js
-    assert "scrollClipListToTopForPagination();" in app_js
-    assert "renderClipPagePendingState();\n  scrollClipListToTopForPagination();" not in app_js
-    assert "scrollClipListToTopForMobilePagination" not in app_js
-    assert "shouldScrollClipListAfterMobilePagination" not in app_js
+    assert "scrollToClipsAfterRender" not in app_js
+    assert "scrollClipListToTopForPagination" not in app_js
+    assert "IntersectionObserver" in app_js
+    assert "loadMoreClips" in app_js
     assert "renderClipPageLoadingBanner()" in app_js
     assert "clip-page-loading-banner" in app_js
     assert 'banner.setAttribute("role", "status");' in app_js
@@ -681,7 +719,7 @@ def test_public_site_clip_pagination_scrolls_on_all_viewports_with_loading_banne
     assert "grid-column: 1 / -1;" in styles_css
 
 
-def test_public_site_has_about_tab_linking_project_writeup() -> None:
+def test_public_site_has_about_tab_with_minimal_creator_credit() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
@@ -692,12 +730,18 @@ def test_public_site_has_about_tab_linking_project_writeup() -> None:
     assert 'about: "about"' in app_js
     assert 'about: document.querySelector("#panel-about")' in app_js
     assert "Elliott Bay Marine VHF Monitor" in index_html
-    assert "https://robertboscacci.com/projects/elliott-bay-vhf/" in index_html
+    assert 'class="about-credit"' in index_html
+    assert "Created by" in index_html
+    assert 'href="https://robertboscacci.com/"' in index_html
+    assert "Robert Boscacci" in index_html
+    assert "Read the full project write-up" not in index_html
+    assert 'class="about-link"' not in index_html
+    assert ".about-link" not in styles_css
     assert "Raspberry Pi radio edge" in index_html
     assert "Ubuntu micro-computer" in index_html
     assert "OptiPlex" not in index_html
     assert "Whisper" in index_html
-    assert "Whisper base.en" in index_html
+    assert "large-v3-turbo" in index_html
     assert "CTranslate2/faster-whisper" in index_html
     assert "dAISy-catcher receiver" in index_html
     assert "https://github.com/astuder" in index_html
@@ -705,7 +749,30 @@ def test_public_site_has_about_tab_linking_project_writeup() -> None:
     assert "https://github.com/jvde-github" in index_html
     assert "Jasper" in index_html
     assert ".about-panel" in styles_css
-    assert ".about-link" in styles_css
+
+
+def test_public_site_about_details_use_unboxed_editorial_grid() -> None:
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert re.search(
+        r"\.about-grid\s*\{[^}]*"
+        r"grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);[^}]*"
+        r"align-items: start;[^}]*column-gap: 36px;",
+        styles_css,
+        flags=re.S,
+    )
+    assert re.search(
+        r"\.about-intro\s*\{[^}]*max-width: 920px;[^}]*\}",
+        styles_css,
+        flags=re.S,
+    )
+    assert re.search(
+        r"\.about-card\s*\{[^}]*align-content: start;[^}]*"
+        r"padding: 18px 0;[^}]*border: 0;[^}]*"
+        r"border-top: 1px solid var\(--line\);[^}]*background: transparent;",
+        styles_css,
+        flags=re.S,
+    )
 
 
 def test_public_site_keeps_sonic_wake_off_mainline_shell() -> None:
@@ -754,8 +821,9 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert "playback_url" in app_js
     assert "audio_url" in app_js
     assert "clip.audio_url" in app_js
-    assert "clip.playback_url || clip.audio_url" in app_js
-    assert '"include_playback_url=true"' in app_js
+    assert "audioUrlForClip(clip)" in app_js
+    assert "include_playback_url=true&verify_playback_exists=false&include_counts=false" in app_js
+    assert '"include_playback_url=false"' in app_js
     assert '"verify_playback_exists=false"' in app_js
     assert "audio_public_filename" in app_js
     assert 'const clipPlaybackUrl = apiUrl("/api/clips/playback");' in app_js
@@ -766,39 +834,32 @@ def test_public_site_renders_db_clips_and_static_export_clips() -> None:
     assert "isSignedPlaybackUrl" in app_js
     assert "transcript" in app_js
     assert "transcript_public" in app_js
-    assert "transcript_reviewed" in app_js
+    assert "transcript_reviewed" not in app_js
     assert "featured" in app_js
     assert "renderFeaturedClipAction" in app_js
     assert "saveClipFeature" in app_js
     assert "featureClipWriteEnabled && canReviewClip(clip)" in app_js
-    assert "operatorReviewEnabled && canReviewClip(clip)" in app_js
+    assert "clipReviewControlsEnabled" not in app_js
     assert 'button.textContent = featured ? "★" : "☆";' in app_js
     assert (
         'button.setAttribute("aria-label", featured ? '
-        '"Remove from Hall of Fame" : "Add to Hall of Fame");'
-        in app_js
+        '"Remove from Hall of Fame" : "Add to Hall of Fame");' in app_js
     )
     assert '"Starred"' not in app_js
     assert "Featured" in app_js
-    assert "renderTranscriptCorrectionForm" in app_js
-    assert "saveTranscriptCorrection" in app_js
-    assert "deleteTranscriptCorrection" in app_js
+    assert "renderTranscriptCorrectionForm" not in app_js
+    assert "saveTranscriptCorrection" not in app_js
+    assert "deleteTranscriptCorrection" not in app_js
     assert 'method: "DELETE"' in app_js
-    assert "Remove correction" in app_js
-    assert (
-        'summary.textContent = clip.transcript_reviewed ? "Edit correction" : "Fix transcript";'
-        in app_js
-    )
-    assert 'reviewer: "operator-ui"' in app_js
+    assert "Remove correction" not in app_js
     assert 'credentials: "include"' in app_js
     assert "operatorWriteHeaders()" in app_js
     assert 'headers["X-TalkingBoats-Tailnet-Dev"] = "1";' in app_js
     assert 'headers: { "Content-Type": "application/json" }' not in app_js
     assert "X-TalkingBoats-Operator-Token" not in app_js
-    assert "Saved for manual fine tuning." in app_js
-    assert ".transcript-correction" in styles_css
-    assert ".remove-correction-button" in styles_css
-    assert ".reviewed-pill" in styles_css
+    assert ".transcript-correction" not in styles_css
+    assert ".remove-correction-button" not in styles_css
+    assert ".reviewed-pill" not in styles_css
     assert ".featured-pill" in styles_css
     assert ".feature-clip-button" in styles_css
     assert "width: 30px;" in styles_css
@@ -816,10 +877,7 @@ def test_public_site_uses_same_origin_live_api_urls() -> None:
         "return apiUrl(`/api/live/${encodeURIComponent(selectedLiveChannel)}/current.mp3`);"
         in app_js
     )
-    assert (
-        "return apiUrl(`/api/live/${encodeURIComponent(selectedLiveChannel)}/status`);"
-        in app_js
-    )
+    assert "return apiUrl(`/api/live/${encodeURIComponent(selectedLiveChannel)}/status`);" in app_js
     assert "return withDspProfile(url);" not in app_js
 
 
@@ -836,7 +894,7 @@ def test_public_site_shows_public_ais_tab() -> None:
     assert 'refreshButton?.addEventListener("click"' in app_js
     assert "renderAisCatcherFrame" in app_js
     assert "aisCatcherFallbackUrl" in app_js
-    assert 'aisCatcherFrame.src = aisCatcherFrameUrl;' in app_js
+    assert "aisCatcherFrame.src = aisCatcherFrameUrl;" in app_js
     assert 'aisCatcherFrame.title = "AIS-catcher live map";' in app_js
     assert "if (privateAppHost) {\n    aisCatcherFrame.src = aisCatcherFrameUrl;" not in app_js
     assert re.search(
@@ -851,11 +909,11 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260723-consolidated-v1" type="module"></script>'
+        '<script src="/assets/app.js?v=20260817-datetime-nav-v1" type="module"></script>'
         in index_html
     )
     assert (
-        '<link rel="stylesheet" href="/assets/styles.css?v=20260723-consolidated-v1" />'
+        '<link rel="stylesheet" href="/assets/styles.css?v=20260817-datetime-nav-v1" />'
         in index_html
     )
     assert '<script src="/assets/app.js" type="module"></script>' not in index_html
@@ -899,7 +957,6 @@ def test_public_site_exposes_crawlable_internal_links_and_route_metadata() -> No
     for href in (
         "/clips/",
         "/hall-of-fame/",
-        "/reviewed/",
         "/search/",
         "/live/",
         "/ais/",
@@ -916,8 +973,7 @@ def test_public_site_exposes_crawlable_internal_links_and_route_metadata() -> No
     assert "function updateDocumentMetadata(name)" in app_js
     assert "setCanonicalUrl(metadata.url);" in app_js
     assert "updateDocumentMetadata(name);" in app_js
-    assert 'reviewed: {' in app_js
-    assert 'url: `${siteCanonicalOrigin}/reviewed/`' in app_js
+    assert "reviewed: {" not in app_js
 
 
 def test_public_site_crawler_files_are_complete_and_conservative() -> None:
@@ -952,7 +1008,6 @@ def test_public_site_crawler_files_are_complete_and_conservative() -> None:
         "https://seattleboatradio.com/",
         "https://seattleboatradio.com/clips/",
         "https://seattleboatradio.com/hall-of-fame/",
-        "https://seattleboatradio.com/reviewed/",
         "https://seattleboatradio.com/search/",
         "https://seattleboatradio.com/live/",
         "https://seattleboatradio.com/ais/",
@@ -970,18 +1025,14 @@ def test_public_site_deploys_and_revalidates_crawler_assets() -> None:
         assert '--key "${asset_path}"' in script
         assert "text/plain" in script
         assert "application/xml" in script
-        assert "--cache-control \"no-store\"" in script
-        assert '"reviewed/index.html"' in script
-        assert '"reviewed/"' in script
-        assert '"reviewed"' in script
+        assert '--cache-control "no-store"' in script
+        assert '"reviewed/index.html"' not in script
 
     static_shell = Path("scripts/deploy_static_shell.sh").read_text(encoding="utf-8")
     for invalidation_path in (
         "/robots.txt",
         "/sitemap.xml",
         "/llms.txt",
-        "/reviewed",
-        "/reviewed/*",
     ):
         assert f'"{invalidation_path}"' in static_shell
 
@@ -1004,16 +1055,14 @@ def test_public_site_tabs_have_linkable_routes() -> None:
     assert "applyRouteStateFromLocation()" in app_js
     assert "updateTabRoute(name" in app_js
     assert 'url.searchParams.set("quality", "quarantined")' in app_js
-    assert 'routeMetadata.quarantine' in app_js
+    assert "routeMetadata.quarantine" in app_js
     assert 'window.addEventListener("popstate"' in app_js
     assert (
-        "activateTab(initialRouteState.tab, { replaceRoute: true, updateRoute: false })"
-        in app_js
+        "activateTab(initialRouteState.tab, { replaceRoute: true, updateRoute: false })" in app_js
     )
     for route in (
         "clips",
         "hall-of-fame",
-        "reviewed",
         "search",
         "live",
         "ais",
@@ -1041,8 +1090,8 @@ def test_public_site_tabs_have_linkable_routes() -> None:
         assert 'if [[ "${environment}" == "dev" ]]; then' in script
     assert "retired_route_paths" in deploy_shell
     assert "retired_route_paths" in deploy_full
-    assert '"fine-tuning/index.html"' in deploy_shell
-    assert '"fine-tuning/index.html"' in deploy_full
+    assert '"fine-tuning/index.html"' not in deploy_shell
+    assert '"fine-tuning/index.html"' not in deploy_full
     assert "aws s3api put-object" in deploy_shell
     assert "aws s3api put-object" in deploy_full
 
@@ -1051,14 +1100,13 @@ def test_public_site_user_tab_switch_returns_to_the_tab_landmark() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
 
-    assert 'activateTab(tab.dataset.tab, { scrollToTab: true });' in app_js
+    assert "activateTab(tab.dataset.tab, { scrollToTab: true });" in app_js
     assert "function scrollTabViewToTop()" in app_js
     assert 'id="tab-view-start"' in index_html
     assert 'const tabViewStart = document.querySelector("#tab-view-start");' in app_js
     assert "tabViewStart.offsetTop" in app_js
     assert (
-        'window.scrollTo({ top: Math.max(0, tabViewStart.offsetTop), behavior: "auto" });'
-        in app_js
+        'window.scrollTo({ top: Math.max(0, tabViewStart.offsetTop), behavior: "auto" });' in app_js
     )
 
 
@@ -1095,15 +1143,20 @@ def test_public_site_stops_audio_when_browser_page_is_hidden_or_unloaded() -> No
     assert "closeLiveAudioStream();" in app_js
 
 
-def test_public_site_preserves_opted_in_live_audio_session_across_navigation() -> None:
+def test_public_site_stops_live_audio_when_navigation_leaves_listen_live() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    suspend_live_view = app_js[
+        app_js.index("function suspendLiveView()") : app_js.index(
+            "function shouldPreserveLiveAudioSession()"
+        )
+    ]
 
-    assert "function shouldPreserveLiveAudioSession()" in app_js
-    assert "return Boolean(liveAudio.src && !liveAudio.paused);" in app_js
     assert "suspendLiveView();" in app_js
-    assert "if (shouldPreserveLiveAudioSession())" in app_js
-    assert "System media controls can keep live radio playing" in app_js
-    assert "navigator.mediaSession.playbackState = playbackState" in app_js
+    assert "stopLiveStatusPolling();" in suspend_live_view
+    assert "stopLiveActivityPolling();" in suspend_live_view
+    assert "stopWaveform();" in suspend_live_view
+    assert "closeLiveAudioStream();" in suspend_live_view
+    assert "shouldPreserveLiveAudioSession" not in suspend_live_view
 
 
 def test_public_site_defaults_system_media_controls_on_android() -> None:
@@ -1121,30 +1174,99 @@ def test_public_site_defaults_system_media_controls_on_android() -> None:
     assert 'return operatingSystemNameFromUserAgent(userAgent, platform) === "Android";' in app_js
 
 
-def test_public_site_uses_native_audio_controls_for_clip_playback_and_metadata() -> None:
+def test_public_site_uses_mashable_custom_clip_play_button_and_audio_metadata() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert 'document.createElement("audio")' in app_js
-    assert "audio.controls = true" in app_js
+    assert 'progress.type = "range"' in app_js
+    assert 'progress.className = "clip-progress-input"' in app_js
+    assert 'progress.setAttribute("aria-label", "Clip playback position")' in app_js
+    assert 'waveformCanvas.className = "clip-waveform-canvas"' in app_js
+    assert 'waveformShell.className = "clip-waveform-shell"' in app_js
+    assert "observeClipWaveform(waveformCanvas, audioUrl)" in app_js
+    assert "audio.controls = false" in app_js
     assert 'audio.preload = "none"' in app_js
     assert 'audio.preload = "metadata"' not in app_js
     assert "audio.src = audioUrl" in app_js
+    assert 'button.className = "clip-play-button"' in app_js
+    assert 'button.setAttribute("aria-label", "Play clip")' in app_js
+    assert 'button.addEventListener("click"' in app_js
+    assert "setClipPlayButtonState(button, audio.paused)" in app_js
     assert "refreshClipAudioPlayback(example, audio, time)" in app_js
     assert 'audio.addEventListener("error"' in app_js
     assert 'audio.addEventListener("play"' in app_js
+    assert 'audio.addEventListener("pause"' in app_js
     assert 'audio.addEventListener("loadedmetadata"' in app_js
-    assert "formatPlaybackTime(example.duration_seconds" in app_js
-    assert "decodeAudioData" not in app_js
+    assert 'audio.addEventListener("timeupdate"' in app_js
+    assert 'progress.addEventListener("input"' in app_js
+    assert "updateClipPlaybackProgress(audio, progress, time" in app_js
+    assert "formatPlaybackTime(duration" in app_js
+    assert "const maxConcurrentClipWaveformLoads = 2;" in app_js
+    assert "function ensureClipWaveformObservers()" in app_js
+    assert "function computeClipWaveformPeaks(" in app_js
+    assert "function drawClipWaveform(" in app_js
+    assert "decodeAudioData" in app_js
     assert "function clearBrowserMediaSession()" in app_js
 
 
-def test_public_site_keeps_clip_audio_controls_compact() -> None:
+def test_public_site_loops_recent_clips_with_two_second_inter_clip_pause() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
+    assert "const continuousClipPlaybackGapMs = 2000;" in app_js
+    assert "function renderContinuousClipPlaybackControl()" in app_js
+    assert 'button.setAttribute("aria-label", "Play all recent clips")' in app_js
+    assert 'button.setAttribute("aria-label", "Stop continuous clip playback")' in app_js
+    assert "function scheduleNextContinuousClip(" in app_js
+    assert "continuousClipPlaybackTimer = window.setTimeout(" in app_js
+    assert "continuousClipPlaybackGapMs," in app_js
+    assert "await loadMoreClips();" in app_js
+    assert "nextIndex = 0;" in app_js
+    assert "stopContinuousClipPlayback();" in app_js
+    assert ".clip-play-all-button" in styles_css
+    assert ".clip-card.is-continuous-playing" in styles_css
+
+
+def test_live_slo_finds_sort_controls_by_label_instead_of_row_position() -> None:
+    slo_probe = Path("scripts/live_slo_probe.mjs").read_text(encoding="utf-8")
+
+    assert ".clip-control-group:last-child" not in slo_probe
+    assert 'button.textContent?.trim() === "Oldest"' in slo_probe
+    assert 'button.textContent?.trim() === "Newest"' in slo_probe
+
+
+def test_live_slo_triggers_infinite_scroll_without_racing_the_observer() -> None:
+    slo_probe = Path("scripts/live_slo_probe.mjs").read_text(encoding="utf-8")
+
+    assert 'locator(".clip-load-more-sentinel")' in slo_probe
+    assert 'node.scrollIntoView({ block: "center" });' in slo_probe
+
+
+def test_public_site_uses_mashable_clip_play_button_everywhere() -> None:
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+    player_rule = styles_css.split(".example-player audio {", maxsplit=1)[1].split(
+        "}", maxsplit=1
+    )[0]
+    button_rule = styles_css.split(".clip-play-button {", maxsplit=1)[1].split(
+        "}", maxsplit=1
+    )[0]
+
     assert ".example-player audio" in styles_css
-    assert "width: min(100%, 420px);" in styles_css
-    assert "height: 36px;" in styles_css
-    assert "min-height: 36px;" in styles_css
+    assert "width: 100%;" in styles_css
+    assert "display: none;" in player_rule
+    assert "width: 72px;" in button_rule
+    assert "height: 56px;" in button_rule
+    assert "min-width: 72px;" in button_rule
+    assert "min-height: 56px;" in button_rule
+    assert "font-size: 1.45rem;" in button_rule
+    assert ".clip-progress-controls" in styles_css
+    assert ".clip-waveform-shell" in styles_css
+    assert ".clip-waveform-canvas" in styles_css
+    assert ".clip-progress-input" in styles_css
+    assert "--clip-progress-percent" in styles_css
+    assert ".clip-progress-input::-webkit-slider-thumb" in styles_css
+    assert ".clip-progress-input::-moz-range-thumb" in styles_css
+    assert styles_css.count(".example-player audio {") == 1
     assert "grid-template-columns: minmax(180px, 420px) auto" not in styles_css
 
 
@@ -1175,37 +1297,21 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
     assert ".system-media-toggle" in styles_css
 
 
-def test_public_site_performance_explains_restricted_asr_feedback() -> None:
+def test_public_site_has_no_model_training_surface() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
-    assert (
-        "const response = await fetch(asrFeedbackStatusUrl, {\n"
-        '    cache: "no-store",\n'
-        "    credentials: \"include\",\n"
-        "    headers: operatorWriteHeaders(),\n"
-        "  });"
-    ) in app_js
-    assert "asrFeedbackAccessUnavailable" in app_js
-    assert "asrFeedbackLoadUnavailable" in app_js
-    assert "Tailnet only" in app_js
-    assert "Open the tailnet/private app to inspect ASR training examples" in app_js
-
-
-def test_public_site_transcript_correction_form_collects_training_metadata() -> None:
-    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
-
-    assert "training-metadata" in app_js
-    assert "include_in_training" in app_js
-    assert "training_quality" in app_js
-    assert "training_split" in app_js
-    assert "training_flags" in app_js
-    assert "training_reason" in app_js
-    assert "include.checked = clip.transcript_reviewed" in app_js
-    assert "? clip.include_in_training !== false" in app_js
-    assert ": !isQuarantined;" in app_js
-    assert 'isQuarantined ? "poor" : "good"' in app_js
-    assert "static_or_no_speech" in app_js
-    assert "truncated_start" in app_js
+    for retired_text in (
+        "asrFeedback",
+        "training-metadata",
+        "include_in_training",
+        "transcript_reviewed",
+        "Fix transcript",
+    ):
+        assert retired_text not in app_js
+        assert retired_text not in index_html
+        assert retired_text not in styles_css
 
 
 def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
@@ -1221,10 +1327,11 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert index_html.index('class="live-actions"') < index_html.index('class="tuner-display"')
     assert ".live-header-stack" in styles_css
     assert "const liveQueuePollMs = 5000;" in app_js
+    assert "const liveQueueSeedTimeoutMs = 2500;" in app_js
     assert '"/api/clips/recent?limit=24&' in app_js
     assert "include_playback_url=true&verify_playback_exists=false&include_counts=false" in app_js
     assert "const everythingInitialQueueLimit = 3;" in app_js
-    assert "const everythingCatchUpMaxAgeMs = 5 * 60 * 1000;" in app_js
+    assert "everythingCatchUpMaxAgeMs" not in app_js
     assert "let liveQueue = [];" in app_js
     assert "let currentLiveQueueClip = null;" in app_js
     assert "let everythingQueueEnabled = false;" in app_js
@@ -1237,6 +1344,10 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     assert "isEverythingLiveMode()" in app_js
     assert "renderEverythingQueuePanel" in app_js
     assert "pollEverythingQueue" in app_js
+    assert "loadEverythingQueuePayload" in app_js
+    assert "allowPublishedFallback: seedRecent" in app_js
+    assert "timeoutMs: allowPublishedFallback ? liveQueueSeedTimeoutMs : 0" in app_js
+    assert "return loadPublishedManifest();" in app_js
     assert "enqueueEverythingClips" in app_js
     assert "seedRecent = false" in app_js
     assert "includeBackfill = false" in app_js
@@ -1256,9 +1367,9 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
             "function scheduleLiveReconnect()"
         )
     ]
-    assert connect_everything.index(
-        "await pollEverythingQueue({"
-    ) < connect_everything.index("startLiveWaveformForPlayback();")
+    assert connect_everything.index("await pollEverythingQueue({") < connect_everything.index(
+        "startLiveWaveformForPlayback();"
+    )
     assert (
         "if (isQueuedLiveMode()) {\n"
         "      if (!everythingQueueEnabled) {\n"
@@ -1270,27 +1381,23 @@ def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:
     ) in app_js
     assert "playNextEverythingQueueClip" in app_js
     assert "handleEverythingClipEnded" in app_js
-    assert "shouldResumeRealtimeAfterCatchUp(completedClip)" in app_js
-    assert "shouldResumeRealtimeWithoutCatchUp()" in app_js
+    assert "shouldFinishEverythingCatchUpAfterClip(completedClip)" in app_js
     assert "shouldSuppressRealtimeQueueDuringCatchUp()" in app_js
-    assert "shouldResumeRealtimeInsteadOfPlayingNextClip(currentLiveQueueClip)" in app_js
-    assert "isStaleEverythingQueueClip(nextClip)" in app_js
-    assert re.search(
-        r"shouldResumeRealtimeInsteadOfPlayingNextClip\(currentLiveQueueClip\) \|\|\s+"
-        r"shouldResumeRealtimeWithoutCatchUp\(\)",
-        app_js,
-    )
+    assert "shouldFinishEverythingCatchUpBeforeNextClip(currentLiveQueueClip)" in app_js
     assert (
         "everythingCatchUpHandoffPending = Boolean(isEverythingLiveMode() && shouldCatchUp);"
         in app_js
     )
-    assert "resumeRealtimeLiveAfterCatchUp({ queueGeneration, queueChannel });" in app_js
-    assert "selectedLiveChannel = defaultRealtimeLiveChannelId();" in app_js
-    assert 'liveStatus.textContent = "Receiving live stream";' in app_js
+    assert "resumeRealtimeLiveAfterCatchUp" not in app_js
+    assert "defaultRealtimeLiveChannelId" not in app_js
+    assert "clearLiveQueueAudioSource()" in app_js
+    assert 'liveStatus.textContent = "Waiting for queued transmission";' in app_js
     assert "configureEverythingQueueAudioElement" in app_js
     assert 'liveAudio.crossOrigin = "anonymous"' in app_js
     assert "liveQueue.shift()" in app_js
-    assert "clipAudioRequestUrl(currentLiveQueueClip)" in app_js
+    assert "currentLiveQueueClip.audio_url || currentLiveQueueClip.playback_url" in app_js
+    assert "sourceClip.audio_public_filename ? playbackUrl : requestUrl || playbackUrl" in app_js
+    assert "stopEverythingQueue({ clearQueue: true });" in app_js
     assert 'String(playbackUrl || "").split("?")[0]' in app_js
     assert "Everything" in app_js
     assert "Queued active transmissions across monitored channels" in app_js
@@ -1319,7 +1426,7 @@ def test_public_site_live_audio_uses_compact_primary_channel_selector() -> None:
     assert "excludedQueueChannelsForMode()" in app_js
     assert 'let selectedChannelPreset = "all";' in app_js
     assert 'selectedChannelPreset = "all-but-traffic";' in app_js
-    assert "loadAndRender({ includeCounts });" in app_js
+    assert "loadAndRender({ includeCounts: false });" in app_js
     assert "clipExcludedChannelValues()" in app_js
     assert "exclude_channels=${encodeURIComponent(channel)}" in app_js
     assert 'params.append("exclude_channels", channel);' in app_js
@@ -1353,23 +1460,18 @@ def test_public_site_waveform_amplifies_quiet_real_audio_without_changing_playba
     assert "liveAudio.volume" not in app_js
 
 
-def test_public_site_everything_queue_survives_live_panel_navigation() -> None:
+def test_public_site_stops_everything_queue_when_navigation_leaves_listen_live() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    suspend_live_view = app_js[
+        app_js.index("function suspendLiveView()") : app_js.index(
+            "function shouldPreserveLiveAudioSession()"
+        )
+    ]
 
-    assert (
-        "if (isQueuedLiveMode() && everythingQueueEnabled) {\n    return true;\n  }"
-    ) in app_js
-    assert (
-        "if (isQueuedLiveMode() && everythingQueueEnabled) {\n"
-        "      startLiveActivityPolling();\n"
-        "    } else {\n"
-        "      stopLiveActivityPolling();\n"
-        "    }"
-    ) in app_js
-    assert (
-        "const shouldPollHiddenEverythingQueue = isQueuedLiveMode() && everythingQueueEnabled;"
-    ) in app_js
-    assert "if (panels.live.hidden && !shouldPollHiddenEverythingQueue)" in app_js
+    assert "stopEverythingQueue({ clearQueue: true });" in app_js
+    assert "stopLiveActivityPolling();" in suspend_live_view
+    assert "closeLiveAudioStream();" in suspend_live_view
+    assert "startLiveActivityPolling();" not in suspend_live_view
 
 
 def test_public_site_live_monitor_desktop_layout_prioritizes_waveform() -> None:
@@ -1427,7 +1529,10 @@ def test_public_site_does_not_render_unknown_clip_duration_as_zero() -> None:
 
     assert 'const unknownPlaybackTimeLabel = "—";' in app_js
     assert (
-        "formatPlaybackTime(example.duration_seconds, { unknownLabel: unknownPlaybackTimeLabel })"
+        "updateClipPlaybackProgress(audio, progress, time, example.duration_seconds)"
+    ) in app_js
+    assert (
+        "formatPlaybackTime(duration, { unknownLabel: unknownPlaybackTimeLabel })"
     ) in app_js
     assert "if (!Number.isFinite(value) || value <= 0)" in app_js
     assert "return unknownLabel;" in app_js
@@ -1447,7 +1552,7 @@ def test_public_site_education_reference_cards_use_aligned_grid_layout() -> None
     assert "grid-template-rows: minmax(2.5em, auto) auto;" in styles_css
     assert "justify-self: end;" in styles_css
     assert 'item.className = "education-card education-card-link";' in app_js
-    assert 'item.tabIndex = 0;' in app_js
+    assert "item.tabIndex = 0;" in app_js
     assert 'item.setAttribute("role", "link");' in app_js
     assert "openEducationReference(resource);" in app_js
     assert 'cue.textContent = "Open ->";' in app_js
@@ -1474,25 +1579,28 @@ def test_public_site_analysis_channel_chart_can_hide_traffic_outlier() -> None:
         'button.textContent = hideAnalysisTrafficOutlier ? "Show Seattle Traffic" '
         ': "Hide Seattle Traffic";'
     ) in app_js
-    assert 'entries = entries.filter(([channel]) => !trafficChannelIds.has(channel));' in app_js
+    assert "entries = entries.filter(([channel]) => !trafficChannelIds.has(channel));" in app_js
     assert (
-        'note.textContent = "Seattle Traffic hidden so the other channels can scale up.";'
-        in app_js
+        'note.textContent = "Seattle Traffic hidden so the other channels can scale up.";' in app_js
     )
     assert ".chart-panel-header" in styles_css
     assert ".analysis-chart-toggle" in styles_css
 
 
-def test_public_site_exposes_quarantined_clip_review_lane() -> None:
+def test_public_site_keeps_quarantined_clip_quality_lane_out_of_production() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
     styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
 
+    assert "const quarantineClipLaneEnabled = privateAppHost;" in app_js
+    assert "if (quarantineClipLaneEnabled) {" in app_js
+    assert (
+        'if (quarantineClipLaneEnabled && url.searchParams.get("quality") === "quarantined")'
+        in app_js
+    )
     assert "quality=quarantined" in app_js
     assert '"Quarantined Clips"' in app_js
     assert 'label: "Quarantine"' in app_js
     assert 'clip.quality_status === "quarantined"' in app_js
-    assert 'clip.quality_flags.includes(flag.value)' in app_js
-    assert 'isQuarantined ? "poor" : "good"' in app_js
     assert "renderQualityPill(clip)" in app_js
     assert "quality_status" in app_js
     assert ".pill.quality-pill" in styles_css

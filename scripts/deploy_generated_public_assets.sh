@@ -18,14 +18,18 @@ tofu_output_raw() {
   local output_name="$1"
   local value
   if ! value="$(cd "${tofu_dir}" && tofu output -raw "${output_name}" 2>&1)"; then
-    echo "OpenTofu output '${output_name}' is unavailable in ${tofu_dir}." >&2
-    printf '%s\n' "${value}" >&2
+    if [[ "${TALKINGBOATS_TOFU_OUTPUT_QUIET:-0}" != "1" ]]; then
+      echo "OpenTofu output '${output_name}' is unavailable in ${tofu_dir}." >&2
+      printf '%s\n' "${value}" >&2
+    fi
     return 1
   fi
   if [[ -z "${value}" || "${value}" == *"No outputs found"* ]]; then
-    echo "OpenTofu output '${output_name}' is unavailable in ${tofu_dir}." >&2
-    if [[ -n "${value}" ]]; then
-      printf '%s\n' "${value}" >&2
+    if [[ "${TALKINGBOATS_TOFU_OUTPUT_QUIET:-0}" != "1" ]]; then
+      echo "OpenTofu output '${output_name}' is unavailable in ${tofu_dir}." >&2
+      if [[ -n "${value}" ]]; then
+        printf '%s\n' "${value}" >&2
+      fi
     fi
     return 1
   fi
@@ -138,6 +142,10 @@ if [[ ! -f "${site_dir}/public_manifest.json" ]]; then
   echo "Generated manifest is missing: ${site_dir}/public_manifest.json" >&2
   exit 1
 fi
+if [[ ! -f "${site_dir}/recent_clips.json" ]]; then
+  echo "Generated recent clip snapshot is missing: ${site_dir}/recent_clips.json" >&2
+  exit 1
+fi
 if [[ ! -d "${site_dir}/clips" ]]; then
   echo "Generated clips directory is missing: ${site_dir}/clips" >&2
   exit 1
@@ -155,6 +163,9 @@ echo "Deploying generated public artifacts from ${site_dir} to ${environment}: h
 aws s3 cp "${site_dir}/public_manifest.json" "s3://${bucket}/public_manifest.json" \
   --content-type "application/json" \
   --cache-control "no-store"
+aws s3 cp "${site_dir}/recent_clips.json" "s3://${bucket}/recent_clips.json" \
+  --content-type "application/json" \
+  --cache-control "no-store"
 aws s3 sync "${site_dir}/clips" "s3://${bucket}/clips/" \
   --delete \
   --exclude "*" \
@@ -167,5 +178,5 @@ aws s3 sync "${site_dir}/analysis" "s3://${bucket}/analysis/" \
   --include "topic_clusters.html"
 aws cloudfront create-invalidation \
   --distribution-id "${distribution_id}" \
-  --paths "/public_manifest.json" "/clips/*" "/analysis/*" \
+  --paths "/public_manifest.json" "/recent_clips.json" "/clips/*" "/analysis/*" \
   --output json

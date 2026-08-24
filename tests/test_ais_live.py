@@ -99,6 +99,65 @@ def test_public_ais_snapshot_sanitizes_bounds_and_private_fields() -> None:
     assert "rtl-sdr" not in rendered
 
 
+def test_public_ais_snapshot_accepts_ais_catcher_http_envelope() -> None:
+    snapshot = public_ais_snapshot(
+        {
+            "protocol": "jsonaiscatcher",
+            "stationid": "Elliott Bay VHF",
+            "msgs": [
+                {
+                    "class": "AIS",
+                    "type": 1,
+                    "mmsi": 367123456,
+                    "lat": 47.61,
+                    "lon": -122.35,
+                    "speed": 7.2,
+                    "course": 181.4,
+                    "nmea": ["!AIVDM,private"],
+                }
+            ],
+        },
+        config=AisLiveConfig(
+            station="Elliott Bay VHF",
+            generated_at=datetime(2026, 6, 3, 7, 30, 2, tzinfo=UTC),
+        ),
+    )
+
+    assert snapshot["vessels"] == [
+        {
+            "mmsi": "367123456",
+            "lat": 47.61,
+            "lon": -122.35,
+            "sog": 7.2,
+            "cog": 181.4,
+            "last_seen": "2026-06-03T07:30:02Z",
+        }
+    ]
+    assert "nmea" not in json.dumps(snapshot)
+
+
+def test_public_ais_snapshot_allows_public_numeric_values_starting_with_ten() -> None:
+    snapshot = public_ais_snapshot(
+        {
+            "vessels": [
+                {
+                    "mmsi": "367123456",
+                    "lat": 47.61,
+                    "lon": -122.35,
+                    "sog": 10.2,
+                    "cog": 181.4,
+                }
+            ]
+        },
+        config=AisLiveConfig(
+            station="Elliott Bay VHF",
+            generated_at=datetime(2026, 8, 2, 0, 30, 0, tzinfo=UTC),
+        ),
+    )
+
+    assert snapshot["vessels"][0]["sog"] == 10.2
+
+
 def test_ais_http_ingest_handler_writes_s3_snapshot_and_broadcasts() -> None:
     s3 = FakeS3()
     websocket = FakeWebSocket()

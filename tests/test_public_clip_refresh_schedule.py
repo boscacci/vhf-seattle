@@ -33,7 +33,10 @@ def test_public_clip_refresh_runs_every_fifteen_minutes_with_bounded_resources()
     )
 
     assert "Type=oneshot" in service
-    assert "WorkingDirectory=/home/rob/repos/elliott-bay-vhf-live-ais-deploy" in service
+    assert (
+        "WorkingDirectory=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy"
+        in service
+    )
     assert "scripts/refresh_public_clips.sh" in service
     assert "Restart=on-failure" in service
     assert "TimeoutStartSec=20min" in service

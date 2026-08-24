@@ -37,7 +37,6 @@ record_upload_enabled="${TALKINGBOATS_EDGE_RECORD_UPLOAD_ENABLED:-false}"
 record_upload_queue_size="${TALKINGBOATS_EDGE_RECORD_UPLOAD_QUEUE_SIZE:-4}"
 activity_upload_enabled="${TALKINGBOATS_EDGE_UPLOAD_ENABLED:-false}"
 activity_upload_encode_mp3="${TALKINGBOATS_EDGE_UPLOAD_ENCODE_MP3:-true}"
-activity_upload_audio_filter="${TALKINGBOATS_EDGE_UPLOAD_AUDIO_FILTER:-highpass=f=250,lowpass=f=3200,afftdn=nf=-28,acompressor=threshold=0.06:ratio=3:attack=8:release=180:makeup=4,loudnorm=I=-16:LRA=8:TP=-6}"
 activity_upload_delete_after="${TALKINGBOATS_EDGE_UPLOAD_DELETE_AFTER_UPLOAD:-false}"
 threshold_rms="${TALKINGBOATS_EDGE_THRESHOLD_RMS:-8000}"
 min_clip_seconds="${TALKINGBOATS_EDGE_MIN_CLIP_SECONDS:-1.0}"
@@ -125,7 +124,6 @@ case "${activity_upload_enabled,,}" in
       1|true|yes|on)
         activity_upload_args+=(
           --encode-mp3
-          --mp3-audio-filter "${activity_upload_audio_filter}"
         )
         ;;
       0|false|no|off)

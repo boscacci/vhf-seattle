@@ -6,7 +6,8 @@ import os
 import wave
 from array import array
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+
+import pytest
 
 from talkingboats.edge_capture import (
     ContinuousWavRecorder,
@@ -388,35 +389,46 @@ def test_build_activity_upload_request_sets_idempotency_key(tmp_path) -> None:
     assert request.channel == "14"
     assert request.audio_path == audio_path
     assert request.content_type == "audio/mpeg"
+    assert request.audio_profile == "canonical-v1"
     assert request.idempotency_key.startswith("activity-v1:14:2026-05-24T13:30:00Z:")
 
 
-def test_encode_mp3_for_upload_applies_edge_audio_filter(tmp_path) -> None:
+def test_encode_mp3_for_upload_uses_the_canonical_processor(monkeypatch, tmp_path) -> None:
     wav_path = tmp_path / "activity.wav"
     wav_path.write_bytes(b"RIFFfake wav")
     calls = []
 
-    def fake_run(command, *, check):
-        calls.append((command, check))
-        output = command[-1]
-        tmp_path.joinpath(Path(output).name).write_bytes(b"fake mp3")
+    def fake_process(source_path, output_path, **kwargs):
+        calls.append((source_path, output_path, kwargs))
+        output_path.write_bytes(b"fake mp3")
+
+    monkeypatch.setattr(
+        "talkingboats.edge_capture.process_canonical_clip_audio",
+        fake_process,
+    )
 
     mp3_path = encode_mp3_for_upload(
         wav_path,
         bitrate="80k",
-        audio_filter="highpass=f=250,acompressor=threshold=0.06",
         ffmpeg_path="ffmpeg",
-        runner=fake_run,
     )
 
     assert mp3_path == wav_path.with_suffix(".mp3")
     assert calls
-    command, check = calls[0]
-    assert check is True
-    assert "-af" in command
-    assert command[command.index("-af") + 1] == "highpass=f=250,acompressor=threshold=0.06"
-    assert command[command.index("-b:a") + 1] == "80k"
+    source_path, output_path, kwargs = calls[0]
+    assert source_path == wav_path
+    assert output_path.name.endswith(".tmp.mp3")
+    assert kwargs["bitrate"] == "80k"
+    assert kwargs["ffmpeg_path"] == "ffmpeg"
     assert mp3_path.read_bytes() == b"fake mp3"
+
+
+def test_encode_mp3_for_upload_rejects_custom_processing_chain(tmp_path) -> None:
+    wav_path = tmp_path / "activity.wav"
+    wav_path.write_bytes(b"RIFFfake wav")
+
+    with pytest.raises(ValueError, match="custom edge audio filters are disabled"):
+        encode_mp3_for_upload(wav_path, audio_filter="highpass=f=250")
 
 
 def test_edge_capture_accepts_harbor_channel_metadata() -> None:

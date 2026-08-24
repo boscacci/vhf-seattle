@@ -4,19 +4,18 @@ import os
 import threading
 import time
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, ClassVar, Literal
 
 import boto3
 
-from talkingboats.asr_training_metadata import (
-    is_training_eligible,
-    normalize_training_flags,
-    normalize_training_quality,
-    normalize_training_split,
-    validate_training_metadata,
+from talkingboats.clip_count_aggregates import (
+    CLIP_COUNT_SUMMARY_PK,
+    CLIP_COUNT_SUMMARY_SK,
+    ClipCountAggregateUnavailable,
+    ClipCountSnapshot,
 )
 from talkingboats.clip_quality import (
     ClipQualityAssessment,
@@ -30,7 +29,6 @@ from talkingboats.clip_transcriber import (
     ClipFeature,
     ClipQualityMetadata,
     RecentTranscribedClip,
-    TranscriptCorrection,
     UploadedClipRecord,
     UploadedClipSegment,
     is_displayable_transcript,
@@ -45,7 +43,6 @@ from talkingboats.schemas import ClipPresignRequest
 
 CLIP_STATE_SK = "state"
 TRANSCRIBED_PK = "clips#transcribed"
-CORRECTIONS_PK = "clip_corrections"
 FEATURED_PK = "clips#featured"
 QUALITY_TRANSCRIBED_PREFIX = "clips#transcribed#quality#"
 STATUS_PREFIX = "clip_status#"
@@ -59,7 +56,7 @@ CHANNEL_COUNT_CACHE_TTL_SECONDS = 300.0
 PAGE_ANCHOR_CACHE_TTL_SECONDS = 30.0
 PAGE_ANCHOR_UI_PAGE_SIZES = (6, 12, 24)
 PAGE_ANCHOR_PROJECTION_EXPRESSION = (
-    "pk, sk, #channel, display_transcript, transcript, transcript_reviewed, quality_status"
+    "pk, sk, #channel, display_transcript, transcript, quality_status"
 )
 
 
@@ -68,6 +65,7 @@ class DynamoClipStoreConfig:
     table_name: str
     aws_region: str
     environment: str = "dev"
+    aggregate_counts_enabled: bool = False
 
 
 class DynamoUploadedClipStore:
@@ -92,11 +90,38 @@ class DynamoUploadedClipStore:
             resource = boto3.resource("dynamodb", region_name=config.aws_region)
             table = resource.Table(config.table_name)
         self.table = table
+        self._aggregate_counts_enabled = config.aggregate_counts_enabled
         self._cache_scope = (
             ("injected", object())
             if table_was_injected
             else ("table", config.aws_region, config.table_name, config.environment)
         )
+
+    @property
+    def aggregate_counts_enabled(self) -> bool:
+        """Whether count endpoints must use the stream-maintained snapshot."""
+
+        return self._aggregate_counts_enabled
+
+    def clip_count_snapshot(self) -> ClipCountSnapshot | None:
+        """Return the materialized counters without querying a clip index."""
+
+        if not self.aggregate_counts_enabled:
+            return None
+        response = self.table.get_item(
+            Key={"pk": CLIP_COUNT_SUMMARY_PK, "sk": CLIP_COUNT_SUMMARY_SK},
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        return ClipCountSnapshot.from_item(_from_dynamodb_item(item) if item else None)
+
+    def _require_clip_count_snapshot(self) -> ClipCountSnapshot:
+        snapshot = self.clip_count_snapshot()
+        if snapshot is None:
+            raise ClipCountAggregateUnavailable(
+                "clip count aggregate is enabled but has not completed its backfill"
+            )
+        return snapshot
 
     def record_presigned_upload(self, *, key: str, request: ClipPresignRequest) -> None:
         existing = self._state_item(key)
@@ -112,11 +137,11 @@ class DynamoUploadedClipStore:
             "ended_at": _format_utc(request.ended_at) if request.ended_at else None,
             "duration_seconds": request.duration_seconds,
             "content_type": request.content_type,
+            "audio_profile": request.audio_profile,
             "idempotency_key": request.idempotency_key,
             "status": "pending",
             "transcript": None,
             "error": None,
-            "transcript_reviewed": False,
             "segments": [],
         }
         self._put_state(item, old_status=str(existing.get("status")) if existing else None)
@@ -131,6 +156,7 @@ class DynamoUploadedClipStore:
                 "ended_at": item["ended_at"],
                 "duration_seconds": request.duration_seconds,
                 "content_type": request.content_type,
+                "audio_profile": request.audio_profile,
                 "idempotency_key": request.idempotency_key,
                 "status": "pending",
             },
@@ -186,7 +212,6 @@ class DynamoUploadedClipStore:
                 "display_transcript": "",
                 "error": None,
                 "segments": [],
-                "transcript_reviewed": bool(item.get("transcript_reviewed")),
             }
         )
         self._put_state(item, old_status=old_status)
@@ -219,7 +244,7 @@ class DynamoUploadedClipStore:
             {
                 "status": "transcribed",
                 "transcript": transcript,
-                "display_transcript": item.get("corrected_transcript") or transcript,
+                "display_transcript": transcript,
                 "error": None,
                 "segments": segment_payload,
                 "segment_count": len(segment_payload),
@@ -269,10 +294,10 @@ class DynamoUploadedClipStore:
         channels: Iterable[str] | None = None,
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
-        reviewed_only: bool = False,
         quality: QualityFilter = "visible",
         sort: Literal["newest", "oldest"] = "newest",
         page: int | None = None,
+        starting_at: str | None = None,
     ) -> list[RecentTranscribedClip]:
         if limit <= 0:
             raise ValueError("limit must be positive")
@@ -288,7 +313,9 @@ class DynamoUploadedClipStore:
         pk = (
             _quality_transcribed_pk("quarantined")
             if quality == "quarantined" and not featured_only
-            else FEATURED_PK if featured_only else TRANSCRIBED_PK
+            else FEATURED_PK
+            if featured_only
+            else TRANSCRIBED_PK
         )
         if selected_channels:
             needed = limit + offset
@@ -303,10 +330,10 @@ class DynamoUploadedClipStore:
                     ),
                     scan_forward=scan_forward,
                     page_size=max(needed, 50),
+                    sk_comparison=">=" if scan_forward else "<=",
+                    sk_bound=_starting_at_sk_bound(starting_at, sort),
                 ):
                     if not _is_displayable_index_item(item):
-                        continue
-                    if reviewed_only and not bool(item.get("transcript_reviewed")):
                         continue
                     if not quality_matches_filter(item.get("quality_status"), quality):
                         continue
@@ -325,10 +352,10 @@ class DynamoUploadedClipStore:
                 limit=limit,
                 offset=offset,
                 excluded_channels={excluded.upper() for excluded in excluded_channels},
-                reviewed_only=reviewed_only,
                 quality=quality,
                 sort=sort,
-                page=page,
+                page=page if starting_at is None else None,
+                starting_at=starting_at,
             )
         return [_recent_from_item(item) for item in index_items]
 
@@ -347,7 +374,9 @@ class DynamoUploadedClipStore:
         pk = (
             _quality_transcribed_pk("quarantined")
             if quality == "quarantined" and not featured_only
-            else FEATURED_PK if featured_only else TRANSCRIBED_PK
+            else FEATURED_PK
+            if featured_only
+            else TRANSCRIBED_PK
         )
         for item in self._iter_query_items(
             pk,
@@ -476,302 +505,25 @@ class DynamoUploadedClipStore:
         )
         return feature
 
-    def correct_transcript(
-        self,
-        *,
-        channel: str,
-        started_at: str,
-        corrected_transcript: str,
-        reviewer: str | None = None,
-        note: str | None = None,
-        include_in_training: bool | None = None,
-        training_quality: str | None = None,
-        training_split: str | None = None,
-        training_flags: Iterable[str] | None = None,
-        training_reason: str | None = None,
-        excluded_channels: tuple[str, ...] = (),
-    ) -> TranscriptCorrection:
-        corrected = " ".join(corrected_transcript.split())
-        if not corrected:
-            raise ValueError("corrected transcript must not be empty")
-        clip = self.transcribed_clip_for_public_playback(
-            channel=channel,
-            started_at=started_at,
-            excluded_channels=excluded_channels,
-            quality="all",
-        )
-        if clip is None:
-            raise LookupError("clip not found")
-        item = self._state_item(clip.key)
-        if not item:
-            raise LookupError("clip not found")
-        original = str(item.get("original_transcript") or item.get("transcript") or clip.transcript)
-        reviewer_text = reviewer.strip() if reviewer else item.get("reviewer")
-        note_text = note.strip() if note else None
-        stored_include = (
-            bool(include_in_training)
-            if include_in_training is not None
-            else bool(item.get("include_in_training", True))
-        )
-        if training_quality is not None:
-            stored_quality_value = training_quality
-        elif item.get("training_quality") not in (None, "unknown"):
-            stored_quality_value = item.get("training_quality")
-        elif stored_include:
-            stored_quality_value = "good"
-        else:
-            stored_quality_value = item.get("training_quality")
-        stored_quality = normalize_training_quality(stored_quality_value)
-        stored_split = normalize_training_split(
-            training_split if training_split is not None else item.get("training_split")
-        )
-        stored_flags = normalize_training_flags(
-            training_flags
-            if training_flags is not None
-            else _training_flags(item.get("training_flags"))
-        )
-        stored_reason = (
-            training_reason.strip()
-            if training_reason is not None and training_reason.strip()
-            else (
-                _optional_str(item.get("training_reason"))
-                if training_reason is None
-                else None
-            )
-        )
-        validate_training_metadata(
-            include_in_training=stored_include,
-            training_quality=stored_quality,
-            training_flags=stored_flags,
-        )
-        item.update(
-            {
-                "original_transcript": original,
-                "corrected_transcript": corrected,
-                "display_transcript": corrected,
-                "transcript_reviewed": True,
-                "reviewer": reviewer_text,
-                "note": note_text,
-                "include_in_training": stored_include,
-                "training_quality": stored_quality,
-                "training_split": stored_split,
-                "training_flags": stored_flags,
-                "training_reason": stored_reason,
-            }
-        )
-        self._put_state(item, old_status="transcribed")
-        correction = TranscriptCorrection(
-            key=clip.key,
-            channel=str(item["channel"]),
-            started_at=str(item["started_at"]),
-            ended_at=_optional_str(item.get("ended_at")),
-            duration_seconds=_optional_float(item.get("duration_seconds")),
-            content_type=str(item["content_type"]),
-            original_transcript=original,
-            corrected_transcript=corrected,
-            reviewer=_optional_str(reviewer_text),
-            note=_optional_str(note_text),
-            include_in_training=stored_include,
-            training_quality=stored_quality,
-            training_split=stored_split,
-            training_flags=tuple(stored_flags),
-            training_reason=stored_reason,
-        )
-        correction_item = {
-            "pk": CORRECTIONS_PK,
-            "sk": f"{correction.started_at}#{correction.key}",
-            "entity_type": "clip_correction",
-            **asdict(correction),
-            "training_flags": list(correction.training_flags),
-        }
-        self._put_item(correction_item)
-        correction_event_id = stable_event_id(
-            corrected,
-            reviewer_text,
-            note_text,
-            stored_include,
-            stored_quality,
-            stored_split,
-            stored_flags,
-            stored_reason,
-        )
-        self.event_store.record_clip_event(
-            "clip.transcript_corrected",
-            key=correction.key,
-            observed_at=_parse_utc(correction.started_at),
-            idempotency_key=(
-                f"{correction.key}:clip.transcript_corrected:{correction_event_id}"
-            ),
-            payload={
-                "channel": correction.channel,
-                "started_at": correction.started_at,
-                "ended_at": correction.ended_at,
-                "duration_seconds": correction.duration_seconds,
-                "content_type": correction.content_type,
-                "original_transcript": correction.original_transcript,
-                "corrected_transcript": correction.corrected_transcript,
-                "reviewer": correction.reviewer,
-                "note": correction.note,
-                "include_in_training": correction.include_in_training,
-                "training_quality": correction.training_quality,
-                "training_split": correction.training_split,
-                "training_flags": list(correction.training_flags),
-                "training_reason": correction.training_reason,
-            },
-        )
-        return correction
-
-    def remove_transcript_correction(
-        self,
-        *,
-        channel: str,
-        started_at: str,
-        excluded_channels: tuple[str, ...] = (),
-    ) -> TranscriptCorrection:
-        clip = self.transcribed_clip_for_public_playback(
-            channel=channel,
-            started_at=started_at,
-            excluded_channels=excluded_channels,
-            quality="all",
-        )
-        if clip is None:
-            raise LookupError("clip not found")
-        item = self._state_item(clip.key)
-        if not item:
-            raise LookupError("clip not found")
-        correction_sk = f"{clip.started_at}#{clip.key}"
-        correction_items = self._query_items(
-            CORRECTIONS_PK,
-            sk_prefix=correction_sk,
-            scan_forward=False,
-            limit=1,
-        )
-        correction_item = correction_items[0] if correction_items else {}
-        corrected = _optional_str(
-            item.get("corrected_transcript") or correction_item.get("corrected_transcript")
-        )
-        if not corrected:
-            raise LookupError("transcript correction not found")
-        original = str(
-            item.get("original_transcript")
-            or correction_item.get("original_transcript")
-            or item.get("transcript")
-            or clip.transcript
-        )
-        reviewer = _optional_str(item.get("reviewer") or correction_item.get("reviewer"))
-        note = _optional_str(item.get("note") or correction_item.get("note"))
-        correction = TranscriptCorrection(
-            key=clip.key,
-            channel=str(item["channel"]),
-            started_at=str(item["started_at"]),
-            ended_at=_optional_str(item.get("ended_at")),
-            duration_seconds=_optional_float(item.get("duration_seconds")),
-            content_type=str(item["content_type"]),
-            original_transcript=original,
-            corrected_transcript=corrected,
-            reviewer=reviewer,
-            note=note,
-            include_in_training=bool(
-                item.get("include_in_training")
-                if "include_in_training" in item
-                else correction_item.get("include_in_training")
-            ),
-            training_quality=normalize_training_quality(
-                item.get("training_quality") or correction_item.get("training_quality")
-            ),
-            training_split=normalize_training_split(
-                item.get("training_split") or correction_item.get("training_split")
-            ),
-            training_flags=tuple(
-                _training_flags(item.get("training_flags") or correction_item.get("training_flags"))
-            ),
-            training_reason=_optional_str(
-                item.get("training_reason") or correction_item.get("training_reason")
-            ),
-        )
-        item.pop("original_transcript", None)
-        item.pop("corrected_transcript", None)
-        item["display_transcript"] = item.get("transcript")
-        item["transcript_reviewed"] = False
-        item.pop("reviewer", None)
-        item.pop("note", None)
-        item["include_in_training"] = False
-        item["training_quality"] = "unknown"
-        item["training_split"] = "auto"
-        item["training_flags"] = []
-        item.pop("training_reason", None)
-        self._put_state(item, old_status="transcribed")
-        self._delete_item({"pk": CORRECTIONS_PK, "sk": correction_sk})
-        self.event_store.record_clip_event(
-            "clip.transcript_correction_removed",
-            key=correction.key,
-            observed_at=_parse_utc(correction.started_at),
-            idempotency_key=(
-                f"{correction.key}:clip.transcript_correction_removed:"
-                f"{stable_event_id(correction.corrected_transcript, correction.reviewer)}"
-            ),
-            payload={
-                "channel": correction.channel,
-                "started_at": correction.started_at,
-                "ended_at": correction.ended_at,
-                "duration_seconds": correction.duration_seconds,
-                "content_type": correction.content_type,
-                "original_transcript": correction.original_transcript,
-                "corrected_transcript": correction.corrected_transcript,
-                "reviewer": correction.reviewer,
-                "note": correction.note,
-                "include_in_training": False,
-            },
-        )
-        return correction
-
-    def transcript_corrections(
-        self,
-        *,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[dict[str, object]]:
-        if limit <= 0:
-            raise ValueError("limit must be positive")
-        if offset < 0:
-            raise ValueError("offset must be non-negative")
-        items = self._query_items(CORRECTIONS_PK, scan_forward=False, limit=limit + offset)
-        return [_correction_from_item(item) for item in items[offset:]]
-
-    def transcript_correction_count(self) -> int:
-        return self._query_count(CORRECTIONS_PK)
-
-    def transcript_corrections_for_training(self) -> list[dict[str, object]]:
-        corrections: list[dict[str, object]] = []
-        for item in self._query_items(CORRECTIONS_PK, scan_forward=False):
-            correction = _correction_from_item(item)
-            flags = list(correction["training_flags"])
-            quality = str(correction["training_quality"])
-            if not is_training_eligible(
-                include_in_training=bool(correction["include_in_training"]),
-                training_quality=quality,
-                training_flags=flags,
-            ):
-                continue
-            correction["include_in_training"] = True
-            corrections.append(correction)
-        return corrections
-
     def transcribed_channel_counts(
         self,
         *,
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
-        reviewed_only: bool = False,
         quality: QualityFilter = "visible",
     ) -> dict[str, int]:
         quality = normalize_quality_filter(quality)
+        if self.aggregate_counts_enabled:
+            return self._require_clip_count_snapshot().counts_for(
+                quality=quality,
+                featured_only=featured_only,
+                excluded_channels=excluded_channels,
+            )
         excluded = tuple(sorted({channel.upper() for channel in excluded_channels}))
         cache_key = (
             *self._cache_scope,
             "channel_counts",
             featured_only,
-            reviewed_only,
             quality,
             excluded,
         )
@@ -783,12 +535,13 @@ class DynamoUploadedClipStore:
         pk = (
             _quality_transcribed_pk("quarantined")
             if quality == "quarantined" and not featured_only
-            else FEATURED_PK if featured_only else TRANSCRIBED_PK
+            else FEATURED_PK
+            if featured_only
+            else TRANSCRIBED_PK
         )
         page_anchor_profiles = self._page_anchor_profiles_for_count_scan(excluded)
         page_anchor_sets = {
-            profile: self._empty_page_anchor_sets()
-            for profile in page_anchor_profiles
+            profile: self._empty_page_anchor_sets() for profile in page_anchor_profiles
         }
         page_anchor_seen = {profile: 0 for profile in page_anchor_profiles}
         previous_key: dict[str, str] | None = None
@@ -801,11 +554,12 @@ class DynamoUploadedClipStore:
         ):
             channel = str(item.get("channel") or "?")
             channel_upper = channel.upper()
-            row_is_displayable = _is_displayable_index_item(item) and (
-                not reviewed_only or bool(item.get("transcript_reviewed"))
-            ) and quality_matches_filter(
-                item.get("quality_status"),
-                quality,
+            row_is_displayable = (
+                _is_displayable_index_item(item)
+                and quality_matches_filter(
+                    item.get("quality_status"),
+                    quality,
+                )
             )
             if row_is_displayable and channel_upper not in excluded_set:
                 counts[channel] = counts.get(channel, 0) + 1
@@ -828,7 +582,6 @@ class DynamoUploadedClipStore:
             self._cache_page_anchor_sets(
                 pk=pk,
                 excluded_channels=profile,
-                reviewed_only=reviewed_only,
                 quality=quality,
                 sort="newest",
                 anchors_by_size=anchors_by_size,
@@ -842,17 +595,32 @@ class DynamoUploadedClipStore:
         channels: Iterable[str] | None = None,
         excluded_channels: tuple[str, ...] = (),
         featured_only: bool = False,
-        reviewed_only: bool = False,
         quality: QualityFilter = "visible",
     ) -> int:
         quality = normalize_quality_filter(quality)
         selected_channels = _unique_channels([channel] if channel else channels)
+        if self.aggregate_counts_enabled:
+            return self._require_clip_count_snapshot().transcribed_count(
+                quality=quality,
+                featured_only=featured_only,
+                channels=selected_channels or None,
+                excluded_channels=excluded_channels,
+            )
+        if not featured_only and quality == "visible":
+            cached_counts = self.transcribed_channel_counts()
+            if selected_channels:
+                return sum(cached_counts.get(selected, 0) for selected in selected_channels)
+            excluded = {excluded.upper() for excluded in excluded_channels}
+            return sum(
+                count
+                for selected, count in cached_counts.items()
+                if selected.upper() not in excluded
+            )
         pk_for_channel = _channel_featured_pk if featured_only else _channel_transcribed_pk
         if selected_channels:
             return sum(
                 self._query_displayable_count(
                     pk_for_channel(selected),
-                    reviewed_only=reviewed_only,
                     quality=quality,
                 )
                 for selected in selected_channels
@@ -864,7 +632,6 @@ class DynamoUploadedClipStore:
                 for selected, count in self.transcribed_channel_counts(
                     excluded_channels=tuple(excluded),
                     featured_only=featured_only,
-                    reviewed_only=reviewed_only,
                     quality=quality,
                 ).items()
                 if selected.upper() not in excluded
@@ -872,24 +639,77 @@ class DynamoUploadedClipStore:
         pk = (
             _quality_transcribed_pk("quarantined")
             if quality == "quarantined" and not featured_only
-            else FEATURED_PK if featured_only else TRANSCRIBED_PK
+            else FEATURED_PK
+            if featured_only
+            else TRANSCRIBED_PK
         )
         return self._query_displayable_count(
             pk,
-            reviewed_only=reviewed_only,
             quality=quality,
         )
 
     def non_transcribed_clip_count(self) -> int:
+        if self.aggregate_counts_enabled:
+            return self._require_clip_count_snapshot().non_transcribed_count()
         return sum(
             self._query_count(_status_pk(status))
             for status in ("pending", "processing", "waiting_upload", "error")
         )
 
     def received_clip_count(self) -> int:
+        if self.aggregate_counts_enabled:
+            return self._require_clip_count_snapshot().received_count()
         return self.non_transcribed_clip_count() + self.transcribed_clip_count()
 
+    def clip_backlog_summary(self) -> dict[str, object]:
+        """Return aggregate queue counts plus one bounded oldest-pending lookup."""
+
+        if self.aggregate_counts_enabled:
+            snapshot = self._require_clip_count_snapshot()
+            counts = {
+                status: snapshot.backlog_counts.get(status, 0)
+                for status in ("pending", "processing", "waiting_upload", "error")
+            }
+        else:
+            counts = {
+                status: self._query_count(_status_pk(status))
+                for status in ("pending", "processing", "waiting_upload", "error")
+            }
+        oldest_pending = self._query_items(_status_pk("pending"), scan_forward=True, limit=1)
+        return {
+            "counts": {status: count for status, count in counts.items() if count > 0},
+            "oldest_pending_started_at": (
+                str(oldest_pending[0].get("started_at")) if oldest_pending else None
+            ),
+        }
+
     def stats(self) -> dict[str, Any]:
+        if self.aggregate_counts_enabled:
+            snapshot = self.clip_count_snapshot()
+            if snapshot is None:
+                return {
+                    "counts": {},
+                    "channel_counts": {},
+                    "featured_clip_count": 0,
+                    "recent": [],
+                    "counts_deferred": True,
+                    "backlog": {"counts": {}, "oldest_pending_started_at": None},
+                }
+            channel_counts = snapshot.counts_for(quality="all")
+            return {
+                "counts": snapshot.operator_counts(),
+                "channel_counts": {
+                    channel: {"transcribed": count}
+                    for channel, count in channel_counts.items()
+                },
+                "featured_clip_count": snapshot.transcribed_count(
+                    featured_only=True,
+                    quality="all",
+                ),
+                "recent": [],
+                "aggregate_updated_at": snapshot.updated_at,
+                "backlog": self.clip_backlog_summary(),
+            }
         states = [item for item in self._scan_items() if item.get("entity_type") == "clip_state"]
         counts: dict[str, int] = {}
         channel_counts: dict[str, dict[str, int]] = {}
@@ -910,7 +730,6 @@ class DynamoUploadedClipStore:
         return {
             "counts": dict(sorted(counts.items())),
             "channel_counts": channel_counts,
-            "transcript_correction_count": self._query_count(CORRECTIONS_PK),
             "featured_clip_count": self._query_count(FEATURED_PK),
             "recent": [
                 {
@@ -1042,12 +861,19 @@ class DynamoUploadedClipStore:
         projection_expression: str | None = None,
         expression_attribute_names: dict[str, str] | None = None,
         exclusive_start_key: dict[str, Any] | None = None,
+        sk_comparison: Literal[">=", "<="] | None = None,
+        sk_bound: str | None = None,
     ) -> Iterable[dict[str, Any]]:
         expression = "pk = :pk"
         values: dict[str, Any] = {":pk": pk}
         if sk_prefix is not None:
             expression += " AND begins_with(sk, :sk_prefix)"
             values[":sk_prefix"] = sk_prefix
+        if sk_bound is not None:
+            if sk_comparison not in {">=", "<="}:
+                raise ValueError("sk_comparison is required for a bounded query")
+            expression += f" AND sk {sk_comparison} :sk_bound"
+            values[":sk_bound"] = sk_bound
         kwargs: dict[str, Any] = {
             "KeyConditionExpression": expression,
             "ExpressionAttributeValues": values,
@@ -1102,7 +928,6 @@ class DynamoUploadedClipStore:
         *,
         pk: str,
         excluded_channels: tuple[str, ...],
-        reviewed_only: bool,
         quality: QualityFilter,
         sort: Literal["newest", "oldest"],
         page_size: int,
@@ -1112,7 +937,6 @@ class DynamoUploadedClipStore:
             *self._cache_scope,
             "page_anchors",
             pk,
-            reviewed_only,
             quality,
             sort,
             page_size,
@@ -1143,8 +967,7 @@ class DynamoUploadedClipStore:
         anchors: dict[int, dict[str, Any] | None],
     ) -> None:
         normalized = {
-            page: dict(anchor) if anchor is not None else None
-            for page, anchor in anchors.items()
+            page: dict(anchor) if anchor is not None else None for page, anchor in anchors.items()
         }
         with self._page_anchors_cache_lock:
             self._page_anchors_cache[cache_key] = (time.monotonic(), normalized)
@@ -1154,7 +977,6 @@ class DynamoUploadedClipStore:
         *,
         pk: str,
         excluded_channels: tuple[str, ...],
-        reviewed_only: bool,
         quality: QualityFilter,
         sort: Literal["newest", "oldest"],
         anchors_by_size: dict[int, dict[int, dict[str, str] | None]],
@@ -1164,7 +986,6 @@ class DynamoUploadedClipStore:
                 self._page_anchor_cache_key(
                     pk=pk,
                     excluded_channels=excluded_channels,
-                    reviewed_only=reviewed_only,
                     quality=quality,
                     sort=sort,
                     page_size=page_size,
@@ -1222,7 +1043,6 @@ class DynamoUploadedClipStore:
         self,
         pk: str,
         *,
-        reviewed_only: bool = False,
         quality: QualityFilter = "visible",
     ) -> int:
         quality = normalize_quality_filter(quality)
@@ -1230,7 +1050,6 @@ class DynamoUploadedClipStore:
             1
             for item in self._query_items(pk)
             if _is_displayable_index_item(item)
-            and (not reviewed_only or bool(item.get("transcript_reviewed")))
             and quality_matches_filter(item.get("quality_status"), quality)
         )
 
@@ -1241,10 +1060,10 @@ class DynamoUploadedClipStore:
         limit: int,
         offset: int,
         excluded_channels: set[str],
-        reviewed_only: bool = False,
         quality: QualityFilter = "visible",
         sort: Literal["newest", "oldest"] = "newest",
         page: int | None = None,
+        starting_at: str | None = None,
     ) -> list[dict[str, Any]]:
         quality = normalize_quality_filter(quality)
         if page is not None:
@@ -1253,7 +1072,6 @@ class DynamoUploadedClipStore:
                 limit=limit,
                 page=page,
                 excluded_channels=excluded_channels,
-                reviewed_only=reviewed_only,
                 quality=quality,
                 sort=sort,
             )
@@ -1263,12 +1081,12 @@ class DynamoUploadedClipStore:
             pk,
             scan_forward=sort == "oldest",
             page_size=max(needed, 50),
+            sk_comparison=">=" if sort == "oldest" else "<=",
+            sk_bound=_starting_at_sk_bound(starting_at, sort),
         ):
             if str(row.get("channel") or "").upper() in excluded_channels:
                 continue
             if not _is_displayable_index_item(row):
-                continue
-            if reviewed_only and not bool(row.get("transcript_reviewed")):
                 continue
             if not quality_matches_filter(row.get("quality_status"), quality):
                 continue
@@ -1284,7 +1102,6 @@ class DynamoUploadedClipStore:
         limit: int,
         page: int,
         excluded_channels: set[str],
-        reviewed_only: bool,
         quality: QualityFilter,
         sort: Literal["newest", "oldest"],
     ) -> list[dict[str, Any]]:
@@ -1294,7 +1111,6 @@ class DynamoUploadedClipStore:
             anchors = self._page_anchors_for_query(
                 pk=pk,
                 excluded_channels=excluded,
-                reviewed_only=reviewed_only,
                 quality=quality,
                 sort=sort,
                 page_size=limit,
@@ -1308,7 +1124,6 @@ class DynamoUploadedClipStore:
             limit=limit,
             start_key=start_key,
             excluded_channels=excluded_channels,
-            reviewed_only=reviewed_only,
             quality=quality,
             sort=sort,
         )
@@ -1318,7 +1133,6 @@ class DynamoUploadedClipStore:
         *,
         pk: str,
         excluded_channels: tuple[str, ...],
-        reviewed_only: bool,
         quality: QualityFilter,
         sort: Literal["newest", "oldest"],
         page_size: int,
@@ -1327,7 +1141,6 @@ class DynamoUploadedClipStore:
         cache_key = self._page_anchor_cache_key(
             pk=pk,
             excluded_channels=excluded_channels,
-            reviewed_only=reviewed_only,
             quality=quality,
             sort=sort,
             page_size=page_size,
@@ -1338,7 +1151,6 @@ class DynamoUploadedClipStore:
         anchors = self._build_page_anchors(
             pk=pk,
             excluded_channels=set(excluded_channels),
-            reviewed_only=reviewed_only,
             quality=quality,
             sort=sort,
             page_size=page_size,
@@ -1354,7 +1166,6 @@ class DynamoUploadedClipStore:
         *,
         pk: str,
         excluded_channels: set[str],
-        reviewed_only: bool,
         quality: QualityFilter,
         sort: Literal["newest", "oldest"],
         page_size: int,
@@ -1375,7 +1186,6 @@ class DynamoUploadedClipStore:
             if (
                 channel not in excluded_channels
                 and _is_displayable_index_item(row)
-                and (not reviewed_only or bool(row.get("transcript_reviewed")))
                 and quality_matches_filter(row.get("quality_status"), quality)
             ):
                 displayable_seen += 1
@@ -1395,7 +1205,6 @@ class DynamoUploadedClipStore:
         limit: int,
         start_key: dict[str, Any] | None,
         excluded_channels: set[str],
-        reviewed_only: bool,
         quality: QualityFilter,
         sort: Literal["newest", "oldest"],
     ) -> list[dict[str, Any]]:
@@ -1409,8 +1218,6 @@ class DynamoUploadedClipStore:
             if str(row.get("channel") or "").upper() in excluded_channels:
                 continue
             if not _is_displayable_index_item(row):
-                continue
-            if reviewed_only and not bool(row.get("transcript_reviewed")):
                 continue
             if not quality_matches_filter(row.get("quality_status"), quality):
                 continue
@@ -1457,6 +1264,10 @@ def dynamo_clip_store_from_env(
             table_name=table_name,
             aws_region=aws_region or os.getenv("TALKINGBOATS_AWS_REGION", "us-west-2"),
             environment=os.getenv("TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT", "dev"),
+            aggregate_counts_enabled=_env_bool(
+                "TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED",
+                False,
+            ),
         ),
         event_store=event_store,
     )
@@ -1491,6 +1302,16 @@ def _index_sk(started_at: str, key: str) -> str:
     return f"{started_at}#{key}"
 
 
+def _starting_at_sk_bound(
+    starting_at: str | None,
+    sort: Literal["newest", "oldest"],
+) -> str | None:
+    if starting_at is None:
+        return None
+    suffix = "" if sort == "oldest" else "\uffff"
+    return f"{starting_at}#{suffix}"
+
+
 def _index_item(pk: str, item: dict[str, Any]) -> dict[str, Any]:
     return {
         "pk": pk,
@@ -1516,6 +1337,7 @@ def _record_from_state(item: dict[str, Any]) -> UploadedClipRecord:
         ended_at=_optional_str(item.get("ended_at")),
         duration_seconds=_optional_float(item.get("duration_seconds")),
         content_type=str(item["content_type"]),
+        audio_profile=_optional_str(item.get("audio_profile")),
         idempotency_key=str(item["idempotency_key"]),
         status=str(item["status"]),
         transcript=_optional_str(item.get("transcript")),
@@ -1524,12 +1346,7 @@ def _record_from_state(item: dict[str, Any]) -> UploadedClipRecord:
 
 
 def _recent_from_item(item: dict[str, Any]) -> RecentTranscribedClip:
-    transcript = str(
-        item.get("corrected_transcript")
-        or item.get("display_transcript")
-        or item.get("transcript")
-        or ""
-    )
+    transcript = str(item.get("display_transcript") or item.get("transcript") or "")
     return RecentTranscribedClip(
         key=str(item["key"]),
         channel=str(item["channel"]),
@@ -1546,48 +1363,19 @@ def _recent_from_item(item: dict[str, Any]) -> RecentTranscribedClip:
             }
             for segment in _as_list(item.get("segments"))
         ],
-        transcript_reviewed=bool(item.get("transcript_reviewed")),
         featured=bool(item.get("featured")),
         featured_at=_optional_str(item.get("featured_at")),
-        include_in_training=bool(item.get("include_in_training")),
-        training_quality=normalize_training_quality(item.get("training_quality")),
-        training_split=normalize_training_split(item.get("training_split")),
-        training_flags=tuple(_training_flags(item.get("training_flags"))),
-        training_reason=_optional_str(item.get("training_reason")),
         quality_status=normalize_quality_status(item.get("quality_status")),
         quality_score=_optional_float(item.get("quality_score")),
         quality_reason=_optional_str(item.get("quality_reason")),
-        quality_flags=tuple(_training_flags(item.get("quality_flags"))),
+        quality_flags=tuple(_string_list(item.get("quality_flags"))),
         audio_metrics=_audio_metrics(item.get("audio_metrics")),
     )
 
 
-def _correction_from_item(item: dict[str, Any]) -> dict[str, object]:
-    return {
-        "key": item["key"],
-        "channel": item["channel"],
-        "started_at": item["started_at"],
-        "ended_at": item.get("ended_at"),
-        "duration_seconds": _optional_float(item.get("duration_seconds")),
-        "content_type": item["content_type"],
-        "original_transcript": item["original_transcript"],
-        "corrected_transcript": item["corrected_transcript"],
-        "reviewer": item.get("reviewer"),
-        "note": item.get("note"),
-        "include_in_training": bool(item.get("include_in_training")),
-        "training_quality": normalize_training_quality(item.get("training_quality")),
-        "training_split": normalize_training_split(item.get("training_split")),
-        "training_flags": _training_flags(item.get("training_flags")),
-        "training_reason": item.get("training_reason"),
-    }
-
-
 def _is_displayable_index_item(item: dict[str, Any]) -> bool:
     return is_displayable_transcript(
-        item.get("corrected_transcript")
-        or item.get("display_transcript")
-        or item.get("transcript")
-        or ""
+        item.get("display_transcript") or item.get("transcript") or ""
     )
 
 
@@ -1608,6 +1396,7 @@ def _event_payload(item: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any
         "ended_at": item.get("ended_at"),
         "duration_seconds": item.get("duration_seconds"),
         "content_type": item.get("content_type"),
+        "audio_profile": item.get("audio_profile"),
         "idempotency_key": item.get("idempotency_key"),
         "status": item.get("status"),
         "error": item.get("error"),
@@ -1672,10 +1461,17 @@ def _as_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)]
 
 
-def _training_flags(value: Any) -> list[str]:
+def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return normalize_training_flags(str(item) for item in value)
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _unique_channels(channels: Iterable[str] | None) -> list[str]:
