@@ -152,6 +152,7 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_ICECAST_PORT=%q\n' "8000"
     printf 'TALKINGBOATS_ICECAST_MOUNT=%q\n' "/talkingboats-live.mp3"
     printf 'TALKINGBOATS_ICECAST_NETRC=%q\n' "/etc/talkingboats/icecast.netrc"
+    printf 'TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS=%q\n' "90000"
     printf 'TALKINGBOATS_EDGE_SPOOL_DIR=%q\n' "${spool_root}"
     printf 'TALKINGBOATS_EDGE_RECORD_ENABLED=%q\n' "true"
     printf 'TALKINGBOATS_EDGE_RECORD_DIR=%q\n' "${record_root}"
@@ -325,6 +326,7 @@ append_env_if_missing TALKINGBOATS_AIS_FORWARDER_HOST "127.0.0.1"
 append_env_if_missing TALKINGBOATS_AIS_FORWARDER_PORT "8110"
 append_env_if_missing TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS "1"
 append_env_if_missing TALKINGBOATS_ICECAST_NETRC "/etc/talkingboats/icecast.netrc"
+append_env_if_missing TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS "90000"
 append_env_if_missing TALKINGBOATS_ICECAST_SOURCE_PASSWORD "$(generate_password)"
 append_env_if_missing TALKINGBOATS_ICECAST_RELAY_PASSWORD "$(generate_password)"
 append_env_if_missing TALKINGBOATS_ICECAST_ADMIN_PASSWORD "$(generate_password)"
@@ -349,6 +351,12 @@ set +a
 : "${TALKINGBOATS_ICECAST_SOURCE_PASSWORD:?missing source password}"
 : "${TALKINGBOATS_ICECAST_RELAY_PASSWORD:?missing relay password}"
 : "${TALKINGBOATS_ICECAST_ADMIN_PASSWORD:?missing admin password}"
+
+if [[ ! "${TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]] ||
+  ((TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS <= 86400)); then
+  echo "TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS must exceed the 86400-second capture runtime." >&2
+  exit 2
+fi
 
 if [[ -n "${TALKINGBOATS_VOICE_SQUELCH_THRESHOLD:-}" && -n "${TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD:-}" ]]; then
   echo "Set only one of TALKINGBOATS_VOICE_SQUELCH_THRESHOLD or TALKINGBOATS_VOICE_SQUELCH_SNR_THRESHOLD." >&2
@@ -442,7 +450,7 @@ cat > /etc/icecast2/icecast.xml <<EOF
     <queue-size>524288</queue-size>
     <client-timeout>30</client-timeout>
     <header-timeout>15</header-timeout>
-    <source-timeout>300</source-timeout>
+    <source-timeout>${TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS:-90000}</source-timeout>
     <burst-on-connect>1</burst-on-connect>
     <burst-size>65535</burst-size>
   </limits>
