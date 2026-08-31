@@ -5,6 +5,10 @@ probe_timeout_seconds="${TALKINGBOATS_PI_HEALTHCHECK_TIMEOUT_SECONDS:-5}"
 probe_attempts="${TALKINGBOATS_PI_HEALTHCHECK_ATTEMPTS:-2}"
 restart_wait_seconds="${TALKINGBOATS_PI_HEALTHCHECK_RESTART_WAIT_SECONDS:-3}"
 capture_service="talkingboats-profile-capture.service"
+icecast_status_url="${TALKINGBOATS_PI_ICECAST_STATUS_URL:-http://127.0.0.1:8000/status-json.xsl}"
+icecast_expected_mount="${TALKINGBOATS_PI_ICECAST_EXPECTED_MOUNT:-/talkingboats-live.mp3}"
+icecast_source_probe_attempts="${TALKINGBOATS_PI_ICECAST_SOURCE_PROBE_ATTEMPTS:-2}"
+icecast_source_recovery_attempts="${TALKINGBOATS_PI_ICECAST_SOURCE_RECOVERY_ATTEMPTS:-20}"
 spool_root="${TALKINGBOATS_PI_SPOOL_ROOT:-/opt/talkingboats/spool/airband}"
 spool_flood_window_minutes="${TALKINGBOATS_PI_SPOOL_FLOOD_WINDOW_MINUTES:-2}"
 spool_flood_max_files="${TALKINGBOATS_PI_SPOOL_FLOOD_MAX_FILES:-240}"
@@ -192,7 +196,71 @@ ensure_http_service() {
   return 1
 }
 
+icecast_capture_source_present() {
+  local attempt
+  for attempt in $(seq 1 "${icecast_source_probe_attempts}"); do
+    if curl --fail --silent --show-error --max-time "${probe_timeout_seconds}" \
+      "${icecast_status_url}" |
+      python3 -c '
+import json
+import sys
+from urllib.parse import urlparse
+
+expected_mount = sys.argv[1]
+try:
+    payload = json.load(sys.stdin)
+except (json.JSONDecodeError, AttributeError):
+    raise SystemExit(1) from None
+sources = payload.get("icestats", {}).get("source", [])
+if isinstance(sources, dict):
+    sources = [sources]
+mounts = {
+    urlparse(str(source.get("listenurl", ""))).path
+    for source in sources
+    if isinstance(source, dict)
+}
+raise SystemExit(0 if expected_mount in mounts else 1)
+' "${icecast_expected_mount}"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+ensure_icecast_capture_source() {
+  local attempt
+
+  if ! positive_integer "${icecast_source_probe_attempts}" ||
+    ! positive_integer "${icecast_source_recovery_attempts}"; then
+    log_event "talkingboats_pi_health_failed" "${capture_service}" \
+      "invalid_icecast_source_attempts"
+    return 1
+  fi
+  if icecast_capture_source_present; then
+    return 0
+  fi
+
+  log_event "talkingboats_pi_health_restart" "${capture_service}" \
+    "icecast_source_missing"
+  systemctl restart "${capture_service}"
+  for attempt in $(seq 1 "${icecast_source_recovery_attempts}"); do
+    sleep 1
+    if systemctl is-active --quiet "${capture_service}" &&
+      icecast_capture_source_present; then
+      log_event "talkingboats_pi_health_recovered" "${capture_service}" \
+        "icecast_source_recovered"
+      return 0
+    fi
+  done
+
+  log_event "talkingboats_pi_health_failed" "${capture_service}" \
+    "icecast_source_missing_after_restart"
+  return 1
+}
+
 failures=0
+icecast_http_healthy=false
 
 ensure_active "talkingboats-spool-uploader.service" || failures=$((failures + 1))
 ensure_private_api_reachable || failures=$((failures + 1))
@@ -201,9 +269,15 @@ ensure_http_service "talkingboats-ais-catcher.service" \
 if ais_forwarder_configured; then
   ensure_active "talkingboats-ais-forwarder.service" || failures=$((failures + 1))
 fi
-ensure_http_service "icecast2.service" \
-  "http://127.0.0.1:8000/status-json.xsl" || failures=$((failures + 1))
+if ensure_http_service "icecast2.service" "${icecast_status_url}"; then
+  icecast_http_healthy=true
+else
+  failures=$((failures + 1))
+fi
 ensure_capture_rate_healthy || failures=$((failures + 1))
+if [[ "${icecast_http_healthy}" == "true" ]]; then
+  ensure_icecast_capture_source || failures=$((failures + 1))
+fi
 ensure_http_service "talkingboats-live-radio-web.service" \
   "http://127.0.0.1:8050/current-status.json" || failures=$((failures + 1))
 

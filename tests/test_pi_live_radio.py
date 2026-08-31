@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import os
+import subprocess
 from pathlib import Path
 
 
@@ -170,6 +174,80 @@ def test_pi_healthcheck_recovers_an_sdr_clip_flood_without_a_restart_loop() -> N
     assert 'systemctl restart "${capture_service}"' in script
 
 
+def test_pi_healthcheck_recovers_active_capture_with_missing_icecast_source(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    capture_restarted = tmp_path / "capture-restarted"
+    spool_root = tmp_path / "spool"
+    spool_root.mkdir()
+    env_file = tmp_path / "live-radio.env"
+    env_file.write_text("TALKINGBOATS_PRIVATE_API=http://private.test\n", encoding="utf-8")
+
+    commands = {
+        "curl": f"""#!/usr/bin/env bash
+if [[ " $* " == *" http://icecast.test/status-json.xsl "* ]]; then
+  if [[ -f "{capture_restarted}" ]]; then
+    printf '%s\n' '{{"icestats":{{"source":{{"listenurl":"http://pi.test:8000/talkingboats-live.mp3"}}}}}}'
+  else
+    printf '%s\n' '{{"icestats":{{"source":[]}}}}'
+  fi
+fi
+exit 0
+""",
+        "systemctl": f"""#!/usr/bin/env bash
+if [[ " $* " == *" restart talkingboats-profile-capture.service "* ]]; then
+  touch "{capture_restarted}"
+fi
+exit 0
+""",
+        "sleep": """#!/usr/bin/env bash
+exit 0
+""",
+    }
+    for name, contents in commands.items():
+        executable = bin_dir / name
+        executable.write_text(contents, encoding="utf-8")
+        executable.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", "deploy/pi/live-radio/talkingboats-pi-healthcheck"],
+        cwd=Path(__file__).resolve().parents[1],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "TALKINGBOATS_PI_ENV_FILE": str(env_file),
+            "TALKINGBOATS_PI_ICECAST_STATUS_URL": "http://icecast.test/status-json.xsl",
+            "TALKINGBOATS_PI_SPOOL_ROOT": str(spool_root),
+            "TALKINGBOATS_PI_HEALTHCHECK_ATTEMPTS": "1",
+            "TALKINGBOATS_PI_HEALTHCHECK_RESTART_WAIT_SECONDS": "1",
+        },
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert capture_restarted.exists()
+    assert "icecast_source_missing" in result.stdout
+    assert "icecast_source_recovered" in result.stdout
+
+
+def test_pi_icecast_source_timeout_outlives_the_daily_capture_restart() -> None:
+    installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
+    capture_unit = Path(
+        "deploy/systemd/talkingboats-profile-capture.service.example"
+    ).read_text(encoding="utf-8")
+
+    assert "RuntimeMaxSec=24h" in capture_unit
+    assert 'append_env_if_missing TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS "90000"' in installer
+    assert (
+        "<source-timeout>${TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS:-90000}</source-timeout>"
+        in installer
+    )
+
+
 def test_pi_installer_restarts_source_loaded_services_after_code_copy() -> None:
     installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
 
@@ -322,7 +400,10 @@ def test_profile_capture_wrapper_supports_debug_and_elliott_bay_profiles() -> No
     assert "--icecast-source-password" in installer
     assert "<clients>48</clients>" in installer
     assert "<sources>24</sources>" in installer
-    assert "<source-timeout>300</source-timeout>" in installer
+    assert (
+        "<source-timeout>${TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS:-90000}</source-timeout>"
+        in installer
+    )
     assert "<mount-name>/talkingboats-13.mp3</mount-name>" in installer
     assert "<mount-name>/talkingboats-68.mp3</mount-name>" in installer
     assert (

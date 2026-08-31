@@ -1,0 +1,39 @@
+name: Deploy Pi capture health (break glass)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_break_glass:
+        description: Confirm the explicitly authorized production bypass
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-pi-capture-health
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: inputs.confirm_break_glass == true
+    environment: production-break-glass
+    runs-on: [self-hosted, Linux, X64, optiplex, vhf-seattle]
+    timeout-minutes: 5
+    steps:
+      - name: Check out the exact approved revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify revision identity
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Revalidate the release candidate
+        run: |
+          /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell pytest -q
+          /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell ruff check .
+          bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh
+      - name: Deploy the validated artifact to the Pi
+        env:
+          TALKINGBOATS_RELEASE_COMMIT: ${{ github.sha }}
+        run: scripts/deploy_pi_capture_health.sh

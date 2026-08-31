@@ -96,7 +96,9 @@ runtime services are `icecast2.service`, `talkingboats-live-radio-web.service`,
 starts enabled services again after `network-online.target` and resets any
 failed state from early boot races. If the public latest clip stalls, check the
 Pi first from the Ubuntu micro-computer before chasing CloudFront or browser
-caches.
+caches. The Pi health timer also verifies that the expected live mount remains
+registered with Icecast; quiet sources use a 90,000-second timeout so the
+capture service's scheduled daily restart refreshes them first.
 
 ## Shopping Checklist
 
