@@ -80,6 +80,9 @@ install -m 0755 \
   "${repo_root}/deploy/pi/live-radio/talkingboats-profile-capture" \
   /opt/talkingboats/bin/talkingboats-profile-capture
 install -m 0755 \
+  "${repo_root}/deploy/pi/live-radio/talkingboats-reset-voice-sdr" \
+  /opt/talkingboats/bin/talkingboats-reset-voice-sdr
+install -m 0755 \
   "${repo_root}/deploy/pi/live-radio/talkingboats-ais-catcher" \
   /opt/talkingboats/bin/talkingboats-ais-catcher
 install -m 0755 \

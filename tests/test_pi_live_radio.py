@@ -174,6 +174,149 @@ def test_pi_healthcheck_recovers_an_sdr_clip_flood_without_a_restart_loop() -> N
     assert 'systemctl restart "${capture_service}"' in script
 
 
+def test_profile_capture_resets_only_the_pinned_voice_sdr_before_start() -> None:
+    installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
+    unit = Path("deploy/systemd/talkingboats-profile-capture.service.example").read_text(
+        encoding="utf-8"
+    )
+    reset_script = Path("deploy/pi/live-radio/talkingboats-reset-voice-sdr").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ExecStartPre=/opt/talkingboats/bin/talkingboats-reset-voice-sdr" in unit
+    assert "talkingboats-reset-voice-sdr" in installer
+    assert "TALKINGBOATS_VOICE_SDR_SERIAL" in reset_script
+    assert "TALKINGBOATS_VOICE_SDR_USB_VENDOR_ID" in reset_script
+    assert "TALKINGBOATS_VOICE_SDR_USB_PRODUCT_ID" in reset_script
+    assert "voice_sdr_reset_ambiguous" in reset_script
+    assert "voice_sdr_reset_cooldown" in reset_script
+
+
+def test_voice_sdr_reset_uses_the_exact_serial_and_observes_cooldown(
+    tmp_path: Path,
+) -> None:
+    sysfs_root = tmp_path / "sys" / "bus" / "usb"
+    devices_root = sysfs_root / "devices"
+    driver_root = sysfs_root / "drivers" / "usb"
+    voice_device = devices_root / "1-1.1"
+    ais_device = devices_root / "1-1.2"
+    for device, vendor, product, serial in (
+        (voice_device, "0bda", "2838", "VOICE123"),
+        (ais_device, "2e8a", "0009", "AIS456"),
+    ):
+        device.mkdir(parents=True)
+        (device / "idVendor").write_text(vendor, encoding="utf-8")
+        (device / "idProduct").write_text(product, encoding="utf-8")
+        (device / "serial").write_text(serial, encoding="utf-8")
+    driver_root.mkdir(parents=True)
+    (driver_root / "unbind").touch()
+    (driver_root / "bind").touch()
+    runtime_root = tmp_path / "run"
+
+    env = {
+        **os.environ,
+        "TALKINGBOATS_VOICE_SDR_SERIAL": "VOICE123",
+        "TALKINGBOATS_VOICE_SDR_SYSFS_ROOT": str(devices_root),
+        "TALKINGBOATS_VOICE_SDR_USB_DRIVER_ROOT": str(driver_root),
+        "TALKINGBOATS_VOICE_SDR_RESET_RUNTIME_ROOT": str(runtime_root),
+        "TALKINGBOATS_VOICE_SDR_RESET_SETTLE_SECONDS": "0",
+    }
+    first = subprocess.run(
+        ["bash", "deploy/pi/live-radio/talkingboats-reset-voice-sdr"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    second = subprocess.run(
+        ["bash", "deploy/pi/live-radio/talkingboats-reset-voice-sdr"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert (driver_root / "unbind").read_text(encoding="utf-8") == "1-1.1"
+    assert (driver_root / "bind").read_text(encoding="utf-8") == "1-1.1"
+    assert "voice_sdr_reset_complete" in first.stdout
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "voice_sdr_reset_cooldown" in second.stdout
+
+
+def test_pi_healthcheck_recovers_connected_but_stalled_capture(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    capture_restarted = tmp_path / "capture-restarted"
+    spool_root = tmp_path / "spool"
+    spool_root.mkdir()
+    env_file = tmp_path / "live-radio.env"
+    env_file.write_text("TALKINGBOATS_PRIVATE_API=http://private.test\n", encoding="utf-8")
+    proc_root = tmp_path / "proc"
+    proc_pid = proc_root / "4242"
+    proc_pid.mkdir(parents=True)
+    proc_stat = proc_pid / "stat"
+    proc_stat.write_text(
+        "4242 (rtl_airband) S 1 1 1 0 0 0 0 0 0 0 10 0 0 0 0 0 0\n",
+        encoding="utf-8",
+    )
+
+    commands = {
+        "curl": """#!/usr/bin/env bash
+if [[ " $* " == *" http://icecast.test/status-json.xsl "* ]]; then
+  printf '%s\n' '{"icestats":{"source":{"listenurl":"http://pi.test:8000/talkingboats-live.mp3"}}}'
+fi
+exit 0
+""",
+        "systemctl": f"""#!/usr/bin/env bash
+if [[ " $* " == *" show -p MainPID --value talkingboats-profile-capture.service "* ]]; then
+  printf '4242\n'
+elif [[ " $* " == *" restart talkingboats-profile-capture.service "* ]]; then
+  touch "{capture_restarted}"
+fi
+exit 0
+""",
+        "sleep": f"""#!/usr/bin/env bash
+current=$(awk '{{print $14}}' "{proc_stat}")
+increment=1
+[[ -f "{capture_restarted}" ]] && increment=20
+next=$((current + increment))
+printf '4242 (rtl_airband) S 1 1 1 0 0 0 0 0 0 0 %s 0 0 0 0 0 0\n' "$next" > "{proc_stat}"
+""",
+    }
+    for name, contents in commands.items():
+        executable = bin_dir / name
+        executable.write_text(contents, encoding="utf-8")
+        executable.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", "deploy/pi/live-radio/talkingboats-pi-healthcheck"],
+        cwd=Path(__file__).resolve().parents[1],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "TALKINGBOATS_PI_ENV_FILE": str(env_file),
+            "TALKINGBOATS_PI_ICECAST_STATUS_URL": "http://icecast.test/status-json.xsl",
+            "TALKINGBOATS_PI_SPOOL_ROOT": str(spool_root),
+            "TALKINGBOATS_PI_PROC_ROOT": str(proc_root),
+            "TALKINGBOATS_PI_CAPTURE_PROGRESS_SECONDS": "1",
+            "TALKINGBOATS_PI_CAPTURE_MIN_CPU_TICKS": "10",
+            "TALKINGBOATS_PI_HEALTHCHECK_ATTEMPTS": "1",
+            "TALKINGBOATS_PI_HEALTHCHECK_RESTART_WAIT_SECONDS": "1",
+        },
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert capture_restarted.exists()
+    assert "capture_cpu_stalled" in result.stdout
+    assert "capture_cpu_recovered" in result.stdout
+
+
 def test_pi_healthcheck_recovers_active_capture_with_missing_icecast_source(
     tmp_path: Path,
 ) -> None:
@@ -220,6 +363,7 @@ exit 0
             "TALKINGBOATS_PI_ENV_FILE": str(env_file),
             "TALKINGBOATS_PI_ICECAST_STATUS_URL": "http://icecast.test/status-json.xsl",
             "TALKINGBOATS_PI_SPOOL_ROOT": str(spool_root),
+            "TALKINGBOATS_PI_CAPTURE_PROGRESS_ENABLED": "false",
             "TALKINGBOATS_PI_HEALTHCHECK_ATTEMPTS": "1",
             "TALKINGBOATS_PI_HEALTHCHECK_RESTART_WAIT_SECONDS": "1",
         },

@@ -32,7 +32,7 @@ jobs:
         run: |
           /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell pytest -q
           /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell ruff check .
-          bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh
+          bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck deploy/pi/live-radio/talkingboats-reset-voice-sdr scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh
       - name: Deploy the validated artifact to the Pi
         env:
           TALKINGBOATS_RELEASE_COMMIT: ${{ github.sha }}

@@ -34,4 +34,4 @@ jobs:
       - name: Lint
         run: /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell ruff check .
       - name: Validate deployment scripts
-        run: bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh
+        run: bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck deploy/pi/live-radio/talkingboats-reset-voice-sdr scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh
