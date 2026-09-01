@@ -125,4 +125,9 @@ def test_pi_capture_health_release_updates_only_scoped_runtime(tmp_path: Path) -
     commands = command_log.read_text(encoding="utf-8")
     assert "reload icecast2.service" in commands
     assert "restart talkingboats-profile-capture.service" in commands
+    stop_timer = commands.index("stop talkingboats-pi-healthcheck.timer")
+    restart_capture = commands.index("restart talkingboats-profile-capture.service")
+    start_health = commands.index("start talkingboats-pi-healthcheck.service")
+    start_timer = commands.index("start talkingboats-pi-healthcheck.timer")
+    assert stop_timer < restart_capture < start_health < start_timer
     assert "talkingboats-ais" not in commands

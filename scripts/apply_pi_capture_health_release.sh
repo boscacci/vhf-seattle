@@ -77,8 +77,14 @@ rollback() {
   systemctl daemon-reload || true
   systemctl reload icecast2.service || true
   systemctl restart talkingboats-profile-capture.service || true
+  systemctl reset-failed talkingboats-pi-healthcheck.service || true
+  systemctl start talkingboats-pi-healthcheck.service || true
+  systemctl start talkingboats-pi-healthcheck.timer || true
 }
 trap rollback ERR
+
+systemctl stop talkingboats-pi-healthcheck.timer
+systemctl stop talkingboats-pi-healthcheck.service || true
 
 sed -Ei \
   "s|<source-timeout>[0-9]+</source-timeout>|<source-timeout>${source_timeout_seconds}</source-timeout>|" \
@@ -92,9 +98,12 @@ install -m 0644 "${capture_unit_source}" "${capture_unit_target}"
 systemctl daemon-reload
 systemctl reload icecast2.service
 systemctl restart talkingboats-profile-capture.service
-systemctl restart talkingboats-pi-healthcheck.service
+systemctl reset-failed talkingboats-pi-healthcheck.service
+systemctl start talkingboats-pi-healthcheck.service
+systemctl start talkingboats-pi-healthcheck.timer
 systemctl is-active --quiet icecast2.service
 systemctl is-active --quiet talkingboats-profile-capture.service
+systemctl is-active --quiet talkingboats-pi-healthcheck.timer
 
 install -m 0755 "$0" "${release_dir}/apply_pi_capture_health_release.sh"
 install -m 0755 "${healthcheck_source}" \

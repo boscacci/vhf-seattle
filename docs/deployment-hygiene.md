@@ -167,6 +167,12 @@ progress on the deployed Pi. A 60-second startup grace avoids evaluating the
 process while it is still connecting all 19 Icecast mounts; override it with
 `TALKINGBOATS_PI_CAPTURE_STARTUP_GRACE_SECONDS`.
 
+The scoped Pi release stops the health timer before replacing runtime files and
+restarting capture, runs one healthcheck after capture is up, and then restarts
+the timer. The probe also treats a capture PID change during its sample window
+as a fresh-process observation instead of subtracting unrelated CPU counters.
+Rollback restores the previous files and restarts the old healthcheck and timer.
+
 The spool uploader discards completed clips shorter than one second before
 requesting an upload. These subsecond squelch artifacts cannot produce useful
 transcripts and would otherwise consume both network and transcription
