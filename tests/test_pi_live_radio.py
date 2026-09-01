@@ -262,6 +262,9 @@ def test_pi_healthcheck_recovers_connected_but_stalled_capture(tmp_path: Path) -
         "4242 (rtl_airband) S 1 1 1 0 0 0 0 0 0 0 10 0 0 0 0 0 0\n",
         encoding="utf-8",
     )
+    uptime_path = tmp_path / "uptime"
+    uptime_path.write_text("100.00 50.00\n", encoding="utf-8")
+    fresh_start = tmp_path / "fresh-start"
 
     commands = {
         "curl": """#!/usr/bin/env bash
@@ -273,6 +276,8 @@ exit 0
         "systemctl": f"""#!/usr/bin/env bash
 if [[ " $* " == *" show -p MainPID --value talkingboats-profile-capture.service "* ]]; then
   printf '4242\n'
+elif [[ " $* " == *" ActiveEnterTimestampMonotonic "* ]]; then
+  if [[ -f "{fresh_start}" ]]; then printf '99000000\n'; else printf '0\n'; fi
 elif [[ " $* " == *" restart talkingboats-profile-capture.service "* ]]; then
   touch "{capture_restarted}"
 fi
@@ -301,8 +306,10 @@ printf '4242 (rtl_airband) S 1 1 1 0 0 0 0 0 0 0 %s 0 0 0 0 0 0\n' "$next" > "{p
             "TALKINGBOATS_PI_ICECAST_STATUS_URL": "http://icecast.test/status-json.xsl",
             "TALKINGBOATS_PI_SPOOL_ROOT": str(spool_root),
             "TALKINGBOATS_PI_PROC_ROOT": str(proc_root),
+            "TALKINGBOATS_PI_UPTIME_PATH": str(uptime_path),
             "TALKINGBOATS_PI_CAPTURE_PROGRESS_SECONDS": "1",
             "TALKINGBOATS_PI_CAPTURE_MIN_CPU_TICKS": "10",
+            "TALKINGBOATS_PI_CAPTURE_STARTUP_GRACE_SECONDS": "60",
             "TALKINGBOATS_PI_HEALTHCHECK_ATTEMPTS": "1",
             "TALKINGBOATS_PI_HEALTHCHECK_RESTART_WAIT_SECONDS": "1",
         },
@@ -315,6 +322,38 @@ printf '4242 (rtl_airband) S 1 1 1 0 0 0 0 0 0 0 %s 0 0 0 0 0 0\n' "$next" > "{p
     assert capture_restarted.exists()
     assert "capture_cpu_stalled" in result.stdout
     assert "capture_cpu_recovered" in result.stdout
+
+    capture_restarted.unlink()
+    fresh_start.touch()
+    proc_stat.write_text(
+        "4242 (rtl_airband) S 1 1 1 0 0 0 0 0 0 0 10 0 0 0 0 0 0\n",
+        encoding="utf-8",
+    )
+    startup_result = subprocess.run(
+        ["bash", "deploy/pi/live-radio/talkingboats-pi-healthcheck"],
+        cwd=Path(__file__).resolve().parents[1],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "TALKINGBOATS_PI_ENV_FILE": str(env_file),
+            "TALKINGBOATS_PI_ICECAST_STATUS_URL": "http://icecast.test/status-json.xsl",
+            "TALKINGBOATS_PI_SPOOL_ROOT": str(spool_root),
+            "TALKINGBOATS_PI_PROC_ROOT": str(proc_root),
+            "TALKINGBOATS_PI_UPTIME_PATH": str(uptime_path),
+            "TALKINGBOATS_PI_CAPTURE_PROGRESS_SECONDS": "1",
+            "TALKINGBOATS_PI_CAPTURE_MIN_CPU_TICKS": "10",
+            "TALKINGBOATS_PI_CAPTURE_STARTUP_GRACE_SECONDS": "60",
+            "TALKINGBOATS_PI_HEALTHCHECK_ATTEMPTS": "1",
+            "TALKINGBOATS_PI_HEALTHCHECK_RESTART_WAIT_SECONDS": "1",
+        },
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert startup_result.returncode == 0, startup_result.stdout + startup_result.stderr
+    assert not capture_restarted.exists()
+    assert "capture_progress_startup_grace" in startup_result.stdout
 
 
 def test_pi_healthcheck_recovers_active_capture_with_missing_icecast_source(
