@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+enabled="${TALKINGBOATS_VOICE_SDR_RESET_ENABLED:-true}"
+vendor_id="${TALKINGBOATS_VOICE_SDR_USB_VENDOR_ID:-0bda}"
+product_id="${TALKINGBOATS_VOICE_SDR_USB_PRODUCT_ID:-2838}"
+expected_serial="${TALKINGBOATS_VOICE_SDR_SERIAL:-}"
+cooldown_minutes="${TALKINGBOATS_VOICE_SDR_RESET_COOLDOWN_MINUTES:-5}"
+settle_seconds="${TALKINGBOATS_VOICE_SDR_RESET_SETTLE_SECONDS:-2}"
+sysfs_root="${TALKINGBOATS_VOICE_SDR_SYSFS_ROOT:-/sys/bus/usb/devices}"
+usb_driver_root="${TALKINGBOATS_VOICE_SDR_USB_DRIVER_ROOT:-/sys/bus/usb/drivers/usb}"
+runtime_root="${TALKINGBOATS_VOICE_SDR_RESET_RUNTIME_ROOT:-/run/talkingboats}"
+reset_marker="${runtime_root}/voice-sdr-reset"
+lock_file="${runtime_root}/voice-sdr-reset.lock"
+
+log_event() {
+  local event="$1"
+  local detail="$2"
+  printf 'event=%s service=voice_sdr detail=%s\n' "${event}" "${detail}"
+}
+
+case "${enabled,,}" in
+  false|no|off|0)
+    log_event "voice_sdr_reset_disabled" "configured_off"
+    exit 0
+    ;;
+  true|yes|on|1) ;;
+  *)
+    log_event "voice_sdr_reset_failed" "invalid_enabled_value"
+    exit 2
+    ;;
+esac
+[[ "${vendor_id}" =~ ^[0-9A-Fa-f]{4}$ ]] || {
+  log_event "voice_sdr_reset_failed" "invalid_vendor_id"
+  exit 2
+}
+[[ "${product_id}" =~ ^[0-9A-Fa-f]{4}$ ]] || {
+  log_event "voice_sdr_reset_failed" "invalid_product_id"
+  exit 2
+}
+[[ "${cooldown_minutes}" =~ ^[1-9][0-9]*$ ]] || {
+  log_event "voice_sdr_reset_failed" "invalid_cooldown"
+  exit 2
+}
+[[ "${settle_seconds}" =~ ^[0-9]+$ ]] || {
+  log_event "voice_sdr_reset_failed" "invalid_settle_seconds"
+  exit 2
+}
+
+install -d -m 0755 "${runtime_root}"
+exec 9>"${lock_file}"
+flock 9
+if [[ -f "${reset_marker}" ]] &&
+  find "${reset_marker}" -mmin "-${cooldown_minutes}" -print -quit 2>/dev/null |
+    grep -q .; then
+  log_event "voice_sdr_reset_cooldown" "recent_reset"
+  exit 0
+fi
+
+matches=()
+for device_path in "${sysfs_root}"/*; do
+  [[ -f "${device_path}/idVendor" && -f "${device_path}/idProduct" ]] || continue
+  device_vendor="$(tr '[:upper:]' '[:lower:]' < "${device_path}/idVendor")"
+  device_product="$(tr '[:upper:]' '[:lower:]' < "${device_path}/idProduct")"
+  [[ "${device_vendor}" == "${vendor_id,,}" && "${device_product}" == "${product_id,,}" ]] || continue
+  if [[ -n "${expected_serial}" ]]; then
+    device_serial="$(cat "${device_path}/serial" 2>/dev/null || true)"
+    [[ "${device_serial}" == "${expected_serial}" ]] || continue
+  fi
+  matches+=("${device_path##*/}")
+done
+
+if [[ "${#matches[@]}" -eq 0 ]]; then
+  log_event "voice_sdr_reset_failed" "voice_sdr_not_found"
+  exit 1
+fi
+if [[ "${#matches[@]}" -ne 1 ]]; then
+  log_event "voice_sdr_reset_ambiguous" "matching_devices_${#matches[@]}"
+  exit 1
+fi
+[[ -w "${usb_driver_root}/unbind" && -w "${usb_driver_root}/bind" ]] || {
+  log_event "voice_sdr_reset_failed" "usb_driver_control_unavailable"
+  exit 1
+}
+
+device_key="${matches[0]}"
+printf '%s' "${device_key}" > "${usb_driver_root}/unbind"
+sleep 1
+printf '%s' "${device_key}" > "${usb_driver_root}/bind"
+if ((settle_seconds > 0)); then
+  sleep "${settle_seconds}"
+fi
+[[ -f "${sysfs_root}/${device_key}/idVendor" ]] || {
+  log_event "voice_sdr_reset_failed" "device_did_not_reenumerate"
+  exit 1
+}
+touch "${reset_marker}"
+log_event "voice_sdr_reset_complete" "device_${device_key}"

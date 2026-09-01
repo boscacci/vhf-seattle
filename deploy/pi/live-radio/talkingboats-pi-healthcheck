@@ -14,6 +14,10 @@ spool_flood_window_minutes="${TALKINGBOATS_PI_SPOOL_FLOOD_WINDOW_MINUTES:-2}"
 spool_flood_max_files="${TALKINGBOATS_PI_SPOOL_FLOOD_MAX_FILES:-240}"
 spool_flood_cooldown_minutes="${TALKINGBOATS_PI_SPOOL_FLOOD_COOLDOWN_MINUTES:-5}"
 spool_flood_marker="${TALKINGBOATS_PI_SPOOL_FLOOD_MARKER:-/run/talkingboats/spool-flood-restarted}"
+capture_progress_enabled="${TALKINGBOATS_PI_CAPTURE_PROGRESS_ENABLED:-true}"
+capture_progress_seconds="${TALKINGBOATS_PI_CAPTURE_PROGRESS_SECONDS:-5}"
+capture_min_cpu_ticks="${TALKINGBOATS_PI_CAPTURE_MIN_CPU_TICKS:-10}"
+proc_root="${TALKINGBOATS_PI_PROC_ROOT:-/proc}"
 
 log_event() {
   local event="$1"
@@ -100,6 +104,71 @@ ensure_capture_rate_healthy() {
   install -d -m 0755 "$(dirname "${spool_flood_marker}")"
   touch "${spool_flood_marker}"
   log_event "talkingboats_pi_health_recovered" "${capture_service}" "${detail}"
+}
+
+capture_cpu_ticks() {
+  local capture_pid
+  local stat_path
+
+  capture_pid="$(systemctl show -p MainPID --value "${capture_service}")"
+  [[ "${capture_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+  stat_path="${proc_root}/${capture_pid}/stat"
+  [[ -r "${stat_path}" ]] || return 1
+  awk '{print $14 + $15}' "${stat_path}"
+}
+
+capture_cpu_delta() {
+  local before
+  local after
+
+  before="$(capture_cpu_ticks)" || return 1
+  sleep "${capture_progress_seconds}"
+  after="$(capture_cpu_ticks)" || return 1
+  printf '%s\n' "$((after - before))"
+}
+
+ensure_capture_progress_healthy() {
+  local cpu_delta
+
+  case "${capture_progress_enabled,,}" in
+    false|no|off|0) return 0 ;;
+    true|yes|on|1) ;;
+    *)
+      log_event "talkingboats_pi_health_failed" "${capture_service}" \
+        "invalid_capture_progress_enabled"
+      return 1
+      ;;
+  esac
+  if ! positive_integer "${capture_progress_seconds}" ||
+    ! positive_integer "${capture_min_cpu_ticks}"; then
+    log_event "talkingboats_pi_health_failed" "${capture_service}" \
+      "invalid_capture_progress_threshold"
+    return 1
+  fi
+
+  ensure_active "${capture_service}" || return 1
+  cpu_delta="$(capture_cpu_delta)" || cpu_delta=0
+  if [[ "${cpu_delta}" -ge "${capture_min_cpu_ticks}" ]]; then
+    return 0
+  fi
+
+  log_event "talkingboats_pi_health_restart" "${capture_service}" \
+    "capture_cpu_stalled_delta_${cpu_delta}"
+  systemctl restart "${capture_service}"
+  sleep "${restart_wait_seconds}"
+  if ! systemctl is-active --quiet "${capture_service}"; then
+    log_event "talkingboats_pi_health_failed" "${capture_service}" \
+      "capture_cpu_restart_failed"
+    return 1
+  fi
+  cpu_delta="$(capture_cpu_delta)" || cpu_delta=0
+  if [[ "${cpu_delta}" -lt "${capture_min_cpu_ticks}" ]]; then
+    log_event "talkingboats_pi_health_failed" "${capture_service}" \
+      "capture_cpu_stalled_after_restart_delta_${cpu_delta}"
+    return 1
+  fi
+  log_event "talkingboats_pi_health_recovered" "${capture_service}" \
+    "capture_cpu_recovered_delta_${cpu_delta}"
 }
 
 probe_url() {
@@ -275,6 +344,7 @@ else
   failures=$((failures + 1))
 fi
 ensure_capture_rate_healthy || failures=$((failures + 1))
+ensure_capture_progress_healthy || failures=$((failures + 1))
 if [[ "${icecast_http_healthy}" == "true" ]]; then
   ensure_icecast_capture_source || failures=$((failures + 1))
 fi

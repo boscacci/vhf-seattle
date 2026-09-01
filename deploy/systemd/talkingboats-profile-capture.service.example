@@ -9,6 +9,7 @@ StartLimitIntervalSec=0
 Type=simple
 EnvironmentFile=/etc/talkingboats/live-radio.env
 Environment=PYTHONPATH=/opt/talkingboats/app/src
+ExecStartPre=/opt/talkingboats/bin/talkingboats-reset-voice-sdr
 ExecStart=/opt/talkingboats/bin/talkingboats-profile-capture
 Restart=always
 RestartSec=5

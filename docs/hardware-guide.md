@@ -98,7 +98,11 @@ failed state from early boot races. If the public latest clip stalls, check the
 Pi first from the Ubuntu micro-computer before chasing CloudFront or browser
 caches. The Pi health timer also verifies that the expected live mount remains
 registered with Icecast; quiet sources use a 90,000-second timeout so the
-capture service's scheduled daily restart refreshes them first.
+capture service's scheduled daily restart refreshes them first. Every capture
+start resets only the serial-pinned Realtek voice SDR, with a cooldown to avoid
+a reset loop. The health timer also checks that `rtl_airband` CPU counters are
+advancing, which detects a USB radio that remains connected but returns no IQ
+samples while leaving the separate Pico AIS receiver alone.
 
 ## Shopping Checklist
 

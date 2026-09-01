@@ -36,6 +36,8 @@ trap cleanup EXIT
 artifact="${artifact_dir}/pi-capture-health-${release_commit}.tar.gz"
 tar -C "${repo_root}" -czf "${artifact}" \
   deploy/pi/live-radio/talkingboats-pi-healthcheck \
+  deploy/pi/live-radio/talkingboats-reset-voice-sdr \
+  deploy/systemd/talkingboats-profile-capture.service.example \
   deploy/pi/install_live_radio.sh \
   scripts/apply_pi_capture_health_release.sh
 artifact_sha256="$(sha256sum "${artifact}" | awk '{print $1}')"

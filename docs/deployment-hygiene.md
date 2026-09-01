@@ -153,6 +153,18 @@ loop. Override the window, limit, or cooldown with
 `TALKINGBOATS_PI_SPOOL_FLOOD_COOLDOWN_MINUTES` when receiver traffic is
 materially different.
 
+The timer also samples the profile capture process CPU counters for five
+seconds. `rtl_airband` continuously processes IQ samples even when every
+channel is quiet, so fewer than ten CPU ticks indicates a connected-but-stalled
+SDR rather than a quiet harbor. Recovery restarts profile capture and its
+`ExecStartPre` hook unbinds and rebinds only the configured Realtek voice SDR.
+The reset is serial-aware, refuses ambiguous matches, and has a five-minute
+cooldown; it cannot select the separately identified Pico AIS receiver. Tune
+the sampling window or minimum with
+`TALKINGBOATS_PI_CAPTURE_PROGRESS_SECONDS` and
+`TALKINGBOATS_PI_CAPTURE_MIN_CPU_TICKS` only after measuring healthy CPU
+progress on the deployed Pi.
+
 The spool uploader discards completed clips shorter than one second before
 requesting an upload. These subsecond squelch artifacts cannot produce useful
 transcripts and would otherwise consume both network and transcription
