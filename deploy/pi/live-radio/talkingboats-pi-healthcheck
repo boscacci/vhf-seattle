@@ -17,7 +17,9 @@ spool_flood_marker="${TALKINGBOATS_PI_SPOOL_FLOOD_MARKER:-/run/talkingboats/spoo
 capture_progress_enabled="${TALKINGBOATS_PI_CAPTURE_PROGRESS_ENABLED:-true}"
 capture_progress_seconds="${TALKINGBOATS_PI_CAPTURE_PROGRESS_SECONDS:-5}"
 capture_min_cpu_ticks="${TALKINGBOATS_PI_CAPTURE_MIN_CPU_TICKS:-10}"
+capture_startup_grace_seconds="${TALKINGBOATS_PI_CAPTURE_STARTUP_GRACE_SECONDS:-60}"
 proc_root="${TALKINGBOATS_PI_PROC_ROOT:-/proc}"
+uptime_path="${TALKINGBOATS_PI_UPTIME_PATH:-/proc/uptime}"
 
 log_event() {
   local event="$1"
@@ -44,6 +46,10 @@ ensure_active() {
 
 positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+nonnegative_integer() {
+  [[ "$1" =~ ^[0-9]+$ ]]
 }
 
 recent_completed_clip_count() {
@@ -127,6 +133,23 @@ capture_cpu_delta() {
   printf '%s\n' "$((after - before))"
 }
 
+capture_startup_grace_active() {
+  local active_enter_usec
+  local uptime_value
+  local uptime_seconds
+  local active_age_usec
+
+  ((capture_startup_grace_seconds > 0)) || return 1
+  active_enter_usec="$(systemctl show -p ActiveEnterTimestampMonotonic --value \
+    "${capture_service}")"
+  [[ "${active_enter_usec}" =~ ^[0-9]+$ ]] || return 1
+  read -r uptime_value _ < "${uptime_path}" || return 1
+  uptime_seconds="${uptime_value%%.*}"
+  [[ "${uptime_seconds}" =~ ^[0-9]+$ ]] || return 1
+  active_age_usec="$((uptime_seconds * 1000000 - active_enter_usec))"
+  ((active_age_usec >= 0 && active_age_usec < capture_startup_grace_seconds * 1000000))
+}
+
 ensure_capture_progress_healthy() {
   local cpu_delta
 
@@ -140,13 +163,19 @@ ensure_capture_progress_healthy() {
       ;;
   esac
   if ! positive_integer "${capture_progress_seconds}" ||
-    ! positive_integer "${capture_min_cpu_ticks}"; then
+    ! positive_integer "${capture_min_cpu_ticks}" ||
+    ! nonnegative_integer "${capture_startup_grace_seconds}"; then
     log_event "talkingboats_pi_health_failed" "${capture_service}" \
       "invalid_capture_progress_threshold"
     return 1
   fi
 
   ensure_active "${capture_service}" || return 1
+  if capture_startup_grace_active; then
+    log_event "talkingboats_pi_health_ok" "${capture_service}" \
+      "capture_progress_startup_grace"
+    return 0
+  fi
   cpu_delta="$(capture_cpu_delta)" || cpu_delta=0
   if [[ "${cpu_delta}" -ge "${capture_min_cpu_ticks}" ]]; then
     return 0

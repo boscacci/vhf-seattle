@@ -163,7 +163,9 @@ cooldown; it cannot select the separately identified Pico AIS receiver. Tune
 the sampling window or minimum with
 `TALKINGBOATS_PI_CAPTURE_PROGRESS_SECONDS` and
 `TALKINGBOATS_PI_CAPTURE_MIN_CPU_TICKS` only after measuring healthy CPU
-progress on the deployed Pi.
+progress on the deployed Pi. A 60-second startup grace avoids evaluating the
+process while it is still connecting all 19 Icecast mounts; override it with
+`TALKINGBOATS_PI_CAPTURE_STARTUP_GRACE_SECONDS`.
 
 The spool uploader discards completed clips shorter than one second before
 requesting an upload. These subsecond squelch artifacts cannot produce useful
