@@ -28,6 +28,23 @@ def test_break_glass_workflow_deploys_the_checked_out_commit() -> None:
     assert "TALKINGBOATS_RELEASE_COMMIT" in workflow
 
 
+def test_static_shell_break_glass_deploys_main_and_smokes_real_production_ais() -> None:
+    workflow = Path(".github/workflows/deploy-static-shell-break-glass.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "workflow_dispatch:" in workflow
+    assert "confirm_break_glass" in workflow
+    assert "production-break-glass" in workflow
+    assert 'git merge-base --is-ancestor "${GITHUB_SHA}" origin/main' in workflow
+    assert 'git switch -C main "${GITHUB_SHA}"' in workflow
+    assert "conda run --no-capture-output -n dell pytest -q" in workflow
+    assert "npm ci --ignore-scripts" in workflow
+    assert "scripts/deploy_static_shell.sh prod public-site" in workflow
+    assert "TALKINGBOATS_AIS_SMOKE_BASE_URL: https://seattleboatradio.com" in workflow
+    assert "npm run smoke:ais" in workflow
+
+
 def test_pi_capture_health_deploy_is_scoped_and_records_release_identity() -> None:
     deploy = Path("scripts/deploy_pi_capture_health.sh").read_text(encoding="utf-8")
     apply_release = Path("scripts/apply_pi_capture_health_release.sh").read_text(

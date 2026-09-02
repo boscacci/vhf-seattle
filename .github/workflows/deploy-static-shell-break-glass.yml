@@ -1,0 +1,50 @@
+name: Deploy production static shell (break glass)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_break_glass:
+        description: Confirm the explicitly authorized production bypass
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-static-shell
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: inputs.confirm_break_glass == true
+    environment: production-break-glass
+    runs-on: [self-hosted, Linux, X64, optiplex, vhf-seattle]
+    timeout-minutes: 5
+    steps:
+      - name: Check out the exact approved revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the revision is protected main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+          test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
+          git switch -C main "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Install browser smoke dependencies
+        run: npm ci --ignore-scripts
+      - name: Revalidate the release candidate
+        run: |
+          /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell pytest -q
+          /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell ruff check .
+          node --check scripts/ais_browser_smoke.mjs
+          bash -n scripts/deploy_static_shell.sh
+      - name: Deploy the checked-in production shell
+        run: scripts/deploy_static_shell.sh prod public-site
+      - name: Prove real production AIS vessels render
+        env:
+          TALKINGBOATS_AIS_SMOKE_BASE_URL: https://seattleboatradio.com
+        run: npm run smoke:ais
