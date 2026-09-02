@@ -40,6 +40,10 @@ def test_static_shell_break_glass_deploys_main_and_smokes_real_production_ais() 
     assert 'git switch -C main "${GITHUB_SHA}"' in workflow
     assert "conda run --no-capture-output -n dell pytest -q" in workflow
     assert "npm ci --ignore-scripts" in workflow
+    assert 'echo "/home/rob/.local/bin" >> "${GITHUB_PATH}"' in workflow
+    assert 'echo "/snap/aws-cli/current/bin" >> "${GITHUB_PATH}"' in workflow
+    assert "/home/rob/.local/bin/tofu version" in workflow
+    assert "/snap/aws-cli/current/bin/aws --version" in workflow
     assert "scripts/deploy_static_shell.sh prod public-site" in workflow
     assert "TALKINGBOATS_AIS_SMOKE_BASE_URL: https://seattleboatradio.com" in workflow
     assert "npm run smoke:ais" in workflow

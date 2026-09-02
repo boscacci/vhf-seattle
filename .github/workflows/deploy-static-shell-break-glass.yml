@@ -35,9 +35,17 @@ jobs:
           git switch -C main "${GITHUB_SHA}"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 22
+      - name: Provision runner deployment tools
+        run: |
+          test -x /home/rob/.local/bin/tofu
+          test -x /snap/aws-cli/current/bin/aws
+          /home/rob/.local/bin/tofu version
+          /snap/aws-cli/current/bin/aws --version
+          echo "/home/rob/.local/bin" >> "${GITHUB_PATH}"
+          echo "/snap/aws-cli/current/bin" >> "${GITHUB_PATH}"
       - name: Install browser smoke dependencies
         run: npm ci --ignore-scripts
       - name: Revalidate the release candidate
