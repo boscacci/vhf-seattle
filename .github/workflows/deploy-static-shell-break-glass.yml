@@ -34,6 +34,11 @@ jobs:
           test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
           git switch -C main "${GITHUB_SHA}"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
       - name: Install browser smoke dependencies
         run: npm ci --ignore-scripts
       - name: Revalidate the release candidate
