@@ -418,7 +418,7 @@ def test_public_shell_uses_current_shared_asset_cache_key() -> None:
 
     assert style_version is not None
     assert script_version is not None
-    assert style_version.group(1) == "20260817-datetime-nav-v1"
+    assert style_version.group(1) == "20260902-ais-prod-v1"
     assert script_version.group(1) == style_version.group(1)
 
 
@@ -909,11 +909,11 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260817-datetime-nav-v1" type="module"></script>'
+        '<script src="/assets/app.js?v=20260902-ais-prod-v1" type="module"></script>'
         in index_html
     )
     assert (
-        '<link rel="stylesheet" href="/assets/styles.css?v=20260817-datetime-nav-v1" />'
+        '<link rel="stylesheet" href="/assets/styles.css?v=20260902-ais-prod-v1" />'
         in index_html
     )
     assert '<script src="/assets/app.js" type="module"></script>' not in index_html
@@ -1240,6 +1240,23 @@ def test_live_slo_triggers_infinite_scroll_without_racing_the_observer() -> None
 
     assert 'locator(".clip-load-more-sentinel")' in slo_probe
     assert 'node.scrollIntoView({ block: "center" });' in slo_probe
+
+
+def test_production_ais_smoke_requires_rendered_vessels_inside_the_iframe() -> None:
+    smoke = Path("scripts/ais_browser_smoke.mjs").read_text(encoding="utf-8")
+    package = Path("package.json").read_text(encoding="utf-8")
+
+    assert '"smoke:ais": "node scripts/ais_browser_smoke.mjs"' in package
+    assert 'page.goto(`${baseUrl}/ais/' in smoke
+    assert 'frameLocator("#ais-catcher-frame")' in smoke
+    assert "document.title.match" in smoke
+    assert "vesselCount" in smoke
+    assert "vesselCount < 1" in smoke
+    assert "mapCanvasCount < 1" in smoke
+    assert '"desktop"' in smoke
+    assert '"mobile"' in smoke
+    assert "isMobile: true" in smoke
+    assert "process.exitCode = 1" in smoke
 
 
 def test_public_site_uses_mashable_clip_play_button_everywhere() -> None:

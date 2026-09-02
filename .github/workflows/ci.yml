@@ -29,9 +29,15 @@ jobs:
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
       - name: Test
         run: /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell pytest -q
       - name: Lint
         run: /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell ruff check .
       - name: Validate deployment scripts
-        run: bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck deploy/pi/live-radio/talkingboats-reset-voice-sdr scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh
+        run: |
+          bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck deploy/pi/live-radio/talkingboats-reset-voice-sdr scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh scripts/deploy_static_shell.sh
+          node --check scripts/ais_browser_smoke.mjs

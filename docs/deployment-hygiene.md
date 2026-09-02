@@ -216,6 +216,12 @@ Before prod deploy:
 - Run the relevant tests again from `main`.
 - Deploy with `scripts/deploy_public_site.sh prod outputs/public-site`.
 - Smoke `https://seattleboatradio.com`.
+- When the checked-in shell changes, update the shared `app.js` and
+  `styles.css` cache key together, deploy with `scripts/deploy_static_shell.sh
+  prod public-site`, and run `TALKINGBOATS_AIS_SMOKE_BASE_URL=https://seattleboatradio.com
+  npm run smoke:ais`. The AIS smoke is not satisfied by a healthy JSON feed; it
+  requires Chromium to observe at least one vessel and a rendered map canvas
+  inside the production iframe.
 
 Before generated artifact promotion:
 

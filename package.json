@@ -5,6 +5,7 @@
     "browser:install:chromium": "playwright install chromium",
     "browser:open:dev": "playwright open --browser=chromium https://dev.seattleboatradio.com/analysis/",
     "smoke:browser": "node scripts/browser_smoke.mjs",
+    "smoke:ais": "node scripts/ais_browser_smoke.mjs",
     "smoke:search": "node scripts/search_smoke.mjs",
     "slo:dev": "node scripts/live_slo_probe.mjs",
     "lint:md": "markdownlint-cli2 README.md \"docs/**/*.md\" infra/opentofu/README.md"
