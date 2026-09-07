@@ -66,6 +66,7 @@ ALLOWED_STATS_FIELDS = {
     "clip_count",
     "received_clip_count",
     "analyzed_clip_count",
+    "queue_status_counts",
 }
 
 ALLOWED_VESSEL_FIELDS = {
@@ -220,6 +221,7 @@ def export_recent_clip_site(
         clip_store = UploadedClipStore(clip_db_path)
     analyzed_clip_count = _analyzed_clip_count(clip_store)
     received_clip_count = _received_clip_count(clip_store, fallback=analyzed_clip_count)
+    queue_status_counts = _queue_status_counts(clip_store)
     with (
         _preserved_output_subdir(output_dir, "analysis") as preserved_analysis,
         _preserved_output_subdir(output_dir, "clips") as preserved_clips,
@@ -293,6 +295,7 @@ def export_recent_clip_site(
             publishable_clips,
             received_clip_count=received_clip_count,
             analyzed_clip_count=analyzed_clip_count,
+            queue_status_counts=queue_status_counts,
         )
         (output_dir / "public_manifest.json").write_text(
             json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
@@ -484,6 +487,7 @@ def _recent_clip_manifest(
     *,
     received_clip_count: int | None = None,
     analyzed_clip_count: int | None = None,
+    queue_status_counts: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     generated_at = _format_utc(datetime.now(UTC))
     channel_counts: dict[str, int] = {}
@@ -512,6 +516,12 @@ def _recent_clip_manifest(
         public_manifest["stats"]["received_clip_count"] = received_clip_count
     if analyzed_clip_count is not None:
         public_manifest["stats"]["analyzed_clip_count"] = analyzed_clip_count
+    if queue_status_counts is not None:
+        allowed_statuses = ("pending", "processing", "waiting_upload", "error")
+        public_manifest["stats"]["queue_status_counts"] = {
+            status: max(0, int(queue_status_counts.get(status, 0)))
+            for status in allowed_statuses
+        }
     assert_public_safe(public_manifest)
     return public_manifest
 
@@ -536,6 +546,20 @@ def _received_clip_count(clip_store: Any, *, fallback: int | None) -> int | None
     if not isinstance(counts, Mapping):
         return fallback
     return sum(int(count or 0) for count in counts.values())
+
+
+def _queue_status_counts(clip_store: Any) -> dict[str, int] | None:
+    try:
+        summary = clip_store.clip_backlog_summary()
+    except (AttributeError, RuntimeError, TypeError):
+        return None
+    counts = summary.get("counts", {})
+    if not isinstance(counts, Mapping):
+        return None
+    return {
+        status: max(0, int(counts.get(status, 0)))
+        for status in ("pending", "processing", "waiting_upload", "error")
+    }
 
 
 def _public_clip_from_recent(clip: RecentTranscribedClip) -> dict[str, Any]:

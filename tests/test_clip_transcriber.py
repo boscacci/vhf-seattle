@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from talkingboats.clip_transcriber import (
     ClipNotAvailable,
@@ -239,6 +241,7 @@ def test_uploaded_clip_transcriber_leaves_missing_objects_retryable(tmp_path) ->
         clip_reader=MissingClipReader(),
         model=FakeSpeechModel(),
         limit=10,
+        now=datetime(2026, 5, 24, 21, 0, 30, tzinfo=UTC),
     )
 
     clip = store.get_clip(key)
@@ -246,6 +249,62 @@ def test_uploaded_clip_transcriber_leaves_missing_objects_retryable(tmp_path) ->
     assert clip is not None
     assert clip.status == "waiting_upload"
     assert "not available" in (clip.error or "")
+
+
+def test_uploaded_clip_transcriber_expires_stale_missing_uploads(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=68/date=2026-05-24/20260524T210000Z-stale.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request())
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=MissingClipReader(),
+        model=FakeSpeechModel(),
+        limit=10,
+        waiting_upload_max_age_seconds=3600,
+        now=datetime(2026, 5, 24, 22, 0, tzinfo=UTC),
+    )
+
+    clip = store.get_clip(key)
+    assert summary.failed == 1
+    assert summary.waiting_upload == 0
+    assert clip is not None
+    assert clip.status == "error"
+    assert "did not appear within 3600 seconds" in (clip.error or "")
+
+
+def test_uploaded_clip_transcriber_keeps_recent_missing_upload_retryable(tmp_path) -> None:
+    db_path = tmp_path / "radio.sqlite3"
+    store = UploadedClipStore(db_path)
+    key = "raw/channel=68/date=2026-05-24/20260524T210000Z-recent.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request())
+
+    summary = process_pending_uploads_once(
+        store=store,
+        clip_reader=MissingClipReader(),
+        model=FakeSpeechModel(),
+        limit=10,
+        waiting_upload_max_age_seconds=3600,
+        now=datetime(2026, 5, 24, 21, 59, 59, tzinfo=UTC),
+    )
+
+    clip = store.get_clip(key)
+    assert summary.failed == 0
+    assert summary.waiting_upload == 1
+    assert clip is not None
+    assert clip.status == "waiting_upload"
+
+
+def test_uploaded_clip_transcriber_rejects_nonpositive_upload_wait_limit(tmp_path) -> None:
+    with pytest.raises(ValueError, match="waiting_upload_max_age_seconds must be positive"):
+        process_pending_uploads_once(
+            store=UploadedClipStore(tmp_path / "radio.sqlite3"),
+            clip_reader=MissingClipReader(),
+            model=FakeSpeechModel(),
+            limit=10,
+            waiting_upload_max_age_seconds=0,
+        )
 
 
 def test_uploaded_clip_transcriber_marks_low_confidence_segments_empty(tmp_path) -> None:
