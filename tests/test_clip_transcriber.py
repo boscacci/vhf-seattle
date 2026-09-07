@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from talkingboats.clip_transcriber import (
+    DEFAULT_TRANSCRIBE_MODEL,
     ClipNotAvailable,
     ClipQualityMetadata,
     ProcessSummary,
@@ -71,6 +72,10 @@ def test_faster_whisper_model_is_limited_to_two_cpu_threads(monkeypatch) -> None
         "cpu_threads": 2,
         "num_workers": 1,
     }
+
+
+def test_uploaded_clip_transcriber_defaults_to_capacity_safe_model() -> None:
+    assert DEFAULT_TRANSCRIBE_MODEL == "base.en"
 
 
 def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:

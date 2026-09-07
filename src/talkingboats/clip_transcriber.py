@@ -51,6 +51,7 @@ _DISPLAYABLE_TRANSCRIPT_SQL = (
     f"talkingboats_transcript_displayable({_DISPLAYED_TRANSCRIPT_SQL}) = 1"
 )
 DEFAULT_TRANSCRIBE_VAD_FILTER = False
+DEFAULT_TRANSCRIBE_MODEL = "base.en"
 DEFAULT_TRANSCRIBE_VAD_MIN_SILENCE_DURATION_MS = 500
 DEFAULT_TRANSCRIBE_VAD_SPEECH_PAD_MS = 400
 DEFAULT_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB: float | None = None
@@ -1353,7 +1354,7 @@ def main() -> None:
     parser.add_argument("--aws-region", default=os.getenv("TALKINGBOATS_AWS_REGION", "us-west-2"))
     parser.add_argument(
         "--model-size",
-        default=os.getenv("TALKINGBOATS_TRANSCRIBE_MODEL", "turbo"),
+        default=os.getenv("TALKINGBOATS_TRANSCRIBE_MODEL", DEFAULT_TRANSCRIBE_MODEL),
     )
     parser.add_argument("--device", default=os.getenv("TALKINGBOATS_TRANSCRIBE_DEVICE", "cpu"))
     parser.add_argument(
