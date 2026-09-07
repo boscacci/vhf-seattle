@@ -25,11 +25,15 @@ def test_performance_release_promotes_dev_tested_artifact_after_one_approval() -
         encoding="utf-8"
     )
 
-    assert '"v*.*.*"' in workflow
-    assert '[[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "release_tag:" in workflow
+    assert "validate-release:" in workflow
+    assert "needs: validate-release" in workflow
+    assert 'test "${GITHUB_REF}" = "refs/heads/main"' in workflow
+    assert '[[ "${RELEASE_TAG}" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in workflow
     assert "environment: production" in workflow
     assert "production-break-glass" not in workflow
-    assert 'test "$(git cat-file -t "${GITHUB_REF_NAME}")" = "tag"' in workflow
+    assert 'test "$(git cat-file -t "${RELEASE_TAG}")" = "tag"' in workflow
     assert "release-candidates/performance/${GITHUB_SHA}" in workflow
     assert "performance-release.sha256" in workflow
     assert "apply_optiplex_performance_release.sh\" prod" in workflow
