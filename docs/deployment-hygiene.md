@@ -77,6 +77,13 @@ single byte range, caps the buffered clip at 25 MiB, and returns `no-store`.
 Do not add the public hostname to a dev bucket CORS allowlist as a shortcut; that
 would conceal an environment-routing error and weaken the dev/prod boundary.
 
+The one-hour `prod-public-clips-stale` alarm is a diagnostic for quiet-radio
+periods and intentionally has notification actions disabled. The separate
+two-hour `prod-public-manifest-stale` alarm remains actionable and detects a
+failed hourly publisher. Reconcile drift in those action settings through the
+approval-gated `reconcile-production-alerts.yml` workflow; its saved OpenTofu
+plan must contain only `aws_cloudwatch_metric_alarm.prod_clip_freshness`.
+
 The current production/private API operational environment still selects the
 dev raw-audio bucket because that bucket contains the active historical corpus.
 This is recorded migration debt, not the intended steady state in the resource

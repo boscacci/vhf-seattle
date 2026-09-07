@@ -1,0 +1,99 @@
+name: Reconcile production alert actions
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_production_alert_reconciliation:
+        description: Confirm the scoped production alert reconciliation
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-alert-reconciliation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: inputs.confirm_production_alert_reconciliation == true
+    environment: production
+    runs-on: [self-hosted, Linux, X64, optiplex, vhf-seattle]
+    timeout-minutes: 5
+    steps:
+      - name: Check out the exact approved revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the revision is protected main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+          test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
+          git switch -C main "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Provision runner deployment tools
+        run: |
+          test -x /home/rob/.local/bin/tofu
+          test -x /snap/aws-cli/current/bin/aws
+          /home/rob/.local/bin/tofu version
+          /snap/aws-cli/current/bin/aws --version
+          echo "/home/rob/.local/bin" >> "${GITHUB_PATH}"
+          echo "/snap/aws-cli/current/bin" >> "${GITHUB_PATH}"
+      - name: Prepare the required sensitive digest
+        env:
+          AWS_PAGER: ""
+        run: |
+          set +x
+          ais_secret_value="$(aws secretsmanager get-secret-value \
+            --secret-id talkingboats-talkingboats-ais-ingest-token \
+            --query SecretString \
+            --output text)"
+          test -n "${ais_secret_value}"
+          test "${ais_secret_value}" != "None"
+          ais_secret_digest="$(printf '%s' "${ais_secret_value}" | sha256sum | awk '{print $1}')"
+          unset ais_secret_value
+          echo "::add-mask::${ais_secret_digest}"
+          printf 'TF_VAR_ais_ingest_token_sha256=%s\n' "${ais_secret_digest}" >> "${GITHUB_ENV}"
+      - name: Plan and prove the scoped change
+        env:
+          AWS_PAGER: ""
+        run: |
+          tofu -chdir=infra/opentofu init -input=false
+          tofu -chdir=infra/opentofu plan \
+            -input=false \
+            -lock-timeout=30s \
+            -target=aws_cloudwatch_metric_alarm.prod_clip_freshness \
+            -out="${RUNNER_TEMP}/prod-clip-alert.tfplan"
+          tofu -chdir=infra/opentofu show -json \
+            "${RUNNER_TEMP}/prod-clip-alert.tfplan" > \
+            "${RUNNER_TEMP}/prod-clip-alert.tfplan.json"
+          jq -e '
+            ([.resource_changes[]? |
+              select(.change.actions != ["no-op"]) |
+              .address] as $changed |
+              ($changed == [] or $changed ==
+                ["aws_cloudwatch_metric_alarm.prod_clip_freshness"]))
+              and
+              ([.resource_changes[]? |
+                select(.address == "aws_cloudwatch_metric_alarm.prod_clip_freshness")][0]
+                .change.after.actions_enabled == false)
+          ' "${RUNNER_TEMP}/prod-clip-alert.tfplan.json"
+      - name: Apply the inspected plan
+        run: |
+          tofu -chdir=infra/opentofu apply -input=false \
+            "${RUNNER_TEMP}/prod-clip-alert.tfplan"
+      - name: Verify only the diagnostic alert is silent
+        env:
+          AWS_PAGER: ""
+        run: |
+          test "$(aws cloudwatch describe-alarms \
+            --alarm-names talkingboats-talkingboats-prod-public-clips-stale \
+            --query 'MetricAlarms[0].ActionsEnabled' \
+            --output text)" = "False"
+          test "$(aws cloudwatch describe-alarms \
+            --alarm-names talkingboats-talkingboats-prod-public-manifest-stale \
+            --query 'MetricAlarms[0].ActionsEnabled' \
+            --output text)" = "True"
