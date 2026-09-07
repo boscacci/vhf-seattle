@@ -25,20 +25,15 @@ def test_vhf_dev_proxy_has_user_systemd_boot_service() -> None:
     assert "WantedBy=default.target" in service
 
 
-def test_vhf_dev_proxy_nginx_tracks_shared_tailnet_sni_front_door() -> None:
+def test_vhf_tls_backend_does_not_compete_with_shared_sni_router() -> None:
     nginx_conf = (PROXY_DIR / "nginx.conf").read_text(encoding="utf-8")
 
-    assert "stream {" in nginx_conf
-    assert "ssl_preread_server_name" in nginx_conf
-    assert "pi.hole 127.0.0.1:9444;" in nginx_conf
-    assert "dev.seattleboatradio.com 127.0.0.1:9443;" in nginx_conf
-    assert "gotify.robertboscacci.com 127.0.0.1:8444;" in nginx_conf
-    assert "laundry.robertboscacci.com 127.0.0.1:8444;" in nginx_conf
-    assert "default 127.0.0.1:9444;" in nginx_conf
-    assert "listen 100.124.5.39:443;" in nginx_conf
-    assert "listen [fd7a:115c:a1e0::2601:597]:443;" in nginx_conf
+    assert "stream {" not in nginx_conf
+    assert "listen 100.124.5.39:443;" not in nginx_conf
+    assert "listen [fd7a:115c:a1e0::2601:597]:443;" not in nginx_conf
+    assert "127.0.0.1:9444" not in nginx_conf
     assert "listen 127.0.0.1:9443 ssl;" in nginx_conf
-    assert "listen 127.0.0.1:9444 ssl default_server;" in nginx_conf
+    assert "listen 127.0.0.1:9447 ssl default_server;" in nginx_conf
     assert "server_name pi.hole;" in nginx_conf
     assert "ssl_certificate /etc/nginx/pihole/tls.pem;" in nginx_conf
     assert "proxy_pass http://127.0.0.1:8082;" in nginx_conf

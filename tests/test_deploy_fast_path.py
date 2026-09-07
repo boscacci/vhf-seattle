@@ -236,12 +236,10 @@ def test_vhf_dev_tailnet_proxy_config_documents_custom_tls_front_door() -> None:
         "${HOME}/.local/share/talkingboats/certbot/config:/etc/letsencrypt:ro"
         in compose
     )
-    assert "stream {" in nginx
-    assert "ssl_preread_server_name" in nginx
-    assert "gotify.robertboscacci.com 127.0.0.1:8444;" in nginx
-    assert "laundry.robertboscacci.com 127.0.0.1:8444;" in nginx
-    assert "listen 100.124.5.39:443;" in nginx
-    assert "listen [fd7a:115c:a1e0::2601:597]:443;" in nginx
+    assert "stream {" not in nginx
+    assert "listen 100.124.5.39:443;" not in nginx
+    assert "listen [fd7a:115c:a1e0::2601:597]:443;" not in nginx
+    assert "127.0.0.1:9444" not in nginx
     assert "listen 127.0.0.1:9443 ssl;" in nginx
     assert "server_name dev.seattleboatradio.com;" in nginx
     assert "ssl_certificate /etc/letsencrypt/live/dev.seattleboatradio.com/fullchain.pem;" in nginx
