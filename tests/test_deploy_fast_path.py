@@ -43,6 +43,23 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert '--cache-control "no-store"' in script
 
 
+def test_public_deploy_scripts_publish_performance_route_but_keep_operator_private() -> None:
+    for script_path in (
+        "scripts/deploy_static_shell.sh",
+        "scripts/deploy_public_site.sh",
+    ):
+        script = Path(script_path).read_text(encoding="utf-8")
+        route_indexes = script.split("route_index_paths=(", 1)[1].split(")", 1)[0]
+        dev_only_indexes = script.split("dev_only_route_index_paths=(", 1)[1].split(")", 1)[0]
+        prod_retired = script.split("prod_retired_route_paths=(", 1)[1].split(")", 1)[0]
+
+        assert '"performance/index.html"' in route_indexes
+        assert '"performance/index.html"' not in dev_only_indexes
+        assert '"performance/index.html"' not in prod_retired
+        assert '"operator/index.html"' in dev_only_indexes
+        assert '"operator/index.html"' in prod_retired
+
+
 def test_full_public_deploy_supports_external_tofu_state_dir() -> None:
     script = Path("scripts/deploy_public_site.sh").read_text(encoding="utf-8")
 

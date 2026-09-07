@@ -302,6 +302,7 @@ route_index_paths=(
   "ais/index.html"
   "map/index.html"
   "analysis/index.html"
+  "performance/index.html"
   "about/index.html"
 )
 route_direct_paths=(
@@ -319,24 +320,20 @@ route_direct_paths=(
   "map"
   "analysis/"
   "analysis"
+  "performance/"
+  "performance"
   "about/"
   "about"
 )
 dev_only_route_index_paths=(
-  "performance/index.html"
   "operator/index.html"
 )
 dev_only_route_direct_paths=(
-  "performance/"
-  "performance"
   "operator/"
   "operator"
 )
 retired_route_paths=()
 prod_retired_route_paths=(
-  "performance/index.html"
-  "performance/"
-  "performance"
   "operator/index.html"
   "operator/"
   "operator"
