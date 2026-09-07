@@ -268,7 +268,7 @@ resource "aws_cloudwatch_metric_alarm" "prod_clip_freshness" {
 
 resource "aws_cloudwatch_metric_alarm" "prod_public_manifest_freshness" {
   alarm_name          = local.public_manifest_freshness_alarm_name
-  alarm_description   = "Production public clip publishing has not refreshed public_manifest.json for seven hours. Three consecutive breaching samples are required; the AIS alarm covers freshness-monitor heartbeat loss."
+  alarm_description   = "Production public clip publishing has not refreshed public_manifest.json for two hours. Three consecutive breaching samples are required; the AIS alarm covers freshness-monitor heartbeat loss."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 3
   datapoints_to_alarm = 3
@@ -276,7 +276,7 @@ resource "aws_cloudwatch_metric_alarm" "prod_public_manifest_freshness" {
   namespace           = local.clip_freshness_namespace
   period              = 300
   statistic           = "Maximum"
-  threshold           = 25200
+  threshold           = 7200
   treat_missing_data  = "notBreaching"
 
   dimensions = {
