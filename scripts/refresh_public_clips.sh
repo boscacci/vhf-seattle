@@ -17,6 +17,8 @@ raw_bucket="${TALKINGBOATS_RAW_BUCKET:-}"
 tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
 dev_generated_asset_url="${TALKINGBOATS_DEV_GENERATED_ASSET_URL:-https://dev.seattleboatradio.com/public_manifest.json}"
 max_read_capacity_units="${TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1600}"
+operations_cache="${TALKINGBOATS_OPERATIONS_CACHE_PATH:-outputs/public-operations-cache.json}"
+operations_max_age_seconds="${TALKINGBOATS_OPERATIONS_MAX_AGE_SECONDS:-86400}"
 
 usage() {
   cat <<'EOF'
@@ -38,6 +40,8 @@ Environment overrides:
   TALKINGBOATS_DEV_GENERATED_ASSET_URL         Dev manifest validation URL
   TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS DynamoDB read ceiling per export
   TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED   Use materialized clip counts; defaults to true
+  TALKINGBOATS_OPERATIONS_CACHE_PATH           Cached public-safe AWS operations snapshot
+  TALKINGBOATS_OPERATIONS_MAX_AGE_SECONDS      Snapshot refresh interval; defaults to daily
 EOF
 }
 
@@ -100,6 +104,12 @@ export TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED="${TALKINGBOATS_CLIP_COUNT_AGG
   --site-source public-site \
   --output-dir "${output_dir}" \
   --limit "${export_limit}"
+"${conda_bin}" run --no-capture-output -n "${conda_env}" \
+  python src/talkingboats/aws_operations_snapshot.py \
+  --manifest "${output_dir}/public_manifest.json" \
+  --cache "${operations_cache}" \
+  --output "${output_dir}/operations.json" \
+  --max-age-seconds "${operations_max_age_seconds}"
 
 verify_dev_generated_assets
 echo "event=talkingboats_public_clip_refresh_promoting environment=prod"

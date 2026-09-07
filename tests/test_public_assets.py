@@ -923,8 +923,8 @@ def test_public_site_has_indexable_default_metadata_and_json_ld() -> None:
     index_html = Path("public-site/index.html").read_text(encoding="utf-8")
 
     assert (
-        '<meta name="description" content="Live Elliott Bay marine VHF radio audio, '
-        "recent receiver clips, transcript search, AIS vessel map, and channel analysis"
+        '<meta name="description" content="Elliott Bay marine VHF receiver clips, '
+        "transcript search, AIS vessel map, channel analysis, and public system performance"
         in index_html
     )
     assert '<meta name="robots" content="index,follow,max-image-preview:large" />' in index_html
@@ -958,9 +958,9 @@ def test_public_site_exposes_crawlable_internal_links_and_route_metadata() -> No
         "/clips/",
         "/hall-of-fame/",
         "/search/",
-        "/live/",
         "/ais/",
         "/analysis/",
+        "/performance/",
         "/about/",
     ):
         assert f'href="{href}"' in index_html
@@ -1009,12 +1009,12 @@ def test_public_site_crawler_files_are_complete_and_conservative() -> None:
         "https://seattleboatradio.com/clips/",
         "https://seattleboatradio.com/hall-of-fame/",
         "https://seattleboatradio.com/search/",
-        "https://seattleboatradio.com/live/",
         "https://seattleboatradio.com/ais/",
         "https://seattleboatradio.com/analysis/",
+        "https://seattleboatradio.com/performance/",
         "https://seattleboatradio.com/about/",
     ]
-    assert "performance" not in sitemap
+    assert "live/" not in sitemap
     assert "operator" not in sitemap
 
 

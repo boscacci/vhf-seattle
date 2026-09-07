@@ -23,6 +23,7 @@ const recentClipsSnapshotUrl = "/recent_clips.json";
 const lexicalAnalysisUrl = apiUrl("/api/analysis/lexical");
 const lexicalManifestUrl = "/analysis/lexical.json";
 const performanceUrl = apiUrl("/api/live/performance");
+const operationsUrl = "/operations.json";
 const aisReceiverStatusUrl = "/ais-catcher/ships.json";
 const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353&zoom=13&setcoord=false&welcome=false&tab=map";
 const aisCatcherFallbackUrl = "https://aiscatcher.org/";
@@ -110,7 +111,8 @@ const languageDashboardEnabled = [
 ].includes(
   window.location.hostname,
 );
-const performanceDashboardEnabled = systemDashboardEnabled;
+const liveDashboardEnabled = systemDashboardEnabled;
+const performanceDashboardEnabled = true;
 const aisDashboardEnabled = true;
 const featureClipWriteEnabled = privateAppHost;
 const archiveClipDeleteEnabled = privateAppHost;
@@ -137,7 +139,7 @@ const tabRouteAliases = {
 };
 const siteCanonicalOrigin = "https://seattleboatradio.com";
 const defaultSiteDescription =
-  "Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis.";
+  "Elliott Bay marine VHF receiver clips, transcript search, AIS vessel map, channel analysis, and public system performance.";
 const routeMetadata = {
   clips: {
     title: "Recent Elliott Bay VHF Clips",
@@ -189,7 +191,7 @@ const routeMetadata = {
   },
   performance: {
     title: "Elliott Bay VHF Performance",
-    description: "Dev-only receiver and processing performance telemetry for Elliott Bay VHF.",
+    description: "Public-safe receiver, processing, AWS workload, and budget telemetry for Elliott Bay VHF.",
     url: `${siteCanonicalOrigin}/performance/`,
   },
 };
@@ -319,6 +321,7 @@ const tabs = [...document.querySelectorAll(".tab")];
 const tabViewStart = document.querySelector("#tab-view-start");
 const languageTab = document.querySelector("#tab-language");
 const performanceTab = document.querySelector("#tab-performance");
+const liveTab = document.querySelector("#tab-live");
 const mapTab = document.querySelector("#tab-map");
 const searchStatus = document.querySelector("#clip-search-status");
 const searchForm = document.querySelector("#clip-search-form");
@@ -583,6 +586,9 @@ if (languageTab) {
 }
 if (performanceTab) {
   performanceTab.hidden = !performanceDashboardEnabled;
+}
+if (liveTab) {
+  liveTab.hidden = !liveDashboardEnabled;
 }
 if (mapTab) {
   mapTab.hidden = !aisDashboardEnabled;
@@ -3149,6 +3155,9 @@ function setCanonicalUrl(url) {
 }
 
 function enabledTabName(name) {
+  if (name === "live" && !liveDashboardEnabled) {
+    return "clips";
+  }
   if (name === "language" && !languageDashboardEnabled) {
     return "clips";
   }
@@ -3438,16 +3447,20 @@ async function loadAndRenderPerformance({ showLoading = true } = {}) {
     performanceStatus.textContent = "Loading performance...";
   }
   try {
-    const [performanceResult, aisReceiverResult, liveChannelsResult] = await Promise.allSettled([
-      loadPerformanceStatus(),
-      loadAisReceiverStatus(),
-      loadLiveChannelsStatus(),
-    ]);
+    const [performanceResult, operationsResult, aisReceiverResult, liveChannelsResult] =
+      await Promise.allSettled([
+        loadPerformanceStatus(),
+        loadOperationsStatus(),
+        loadAisReceiverStatus(),
+        loadLiveChannelsStatus(),
+      ]);
     if (performanceResult.status !== "fulfilled") {
       throw performanceResult.reason;
     }
     const payload = {
       ...performanceResult.value,
+      operations:
+        operationsResult.status === "fulfilled" ? operationsResult.value : null,
       aisReceiver:
         aisReceiverResult.status === "fulfilled"
           ? aisReceiverResult.value
@@ -3470,6 +3483,14 @@ async function loadPerformanceStatus() {
   const response = await fetch(performanceUrl, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`performance HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function loadOperationsStatus() {
+  const response = await fetch(operationsUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`operations HTTP ${response.status}`);
   }
   return response.json();
 }
@@ -3543,11 +3564,115 @@ function renderPerformanceDashboard(payload) {
     return;
   }
   const rangeControl = performanceRangeControl();
+  const cloudOperations = renderCloudOperationsPanel(payload.operations);
   const systemKpis = renderSystemKpiPanel(payload, hosts);
   const hostGrid = document.createElement("div");
   hostGrid.className = "performance-host-grid";
   hostGrid.append(...hosts.map((host, index) => performanceHostPanel(host, index)));
-  performanceDashboard.replaceChildren(rangeControl, systemKpis, hostGrid);
+  performanceDashboard.replaceChildren(cloudOperations, rangeControl, systemKpis, hostGrid);
+}
+
+function renderCloudOperationsPanel(operations) {
+  const panel = document.createElement("section");
+  panel.className = "system-kpi-panel cloud-operations-panel";
+  const title = document.createElement("h3");
+  title.textContent = "Cloud workload and budget";
+  const grid = document.createElement("div");
+  grid.className = "system-kpi-grid";
+  if (!operations) {
+    grid.append(
+      systemKpiCard(
+        "AWS metrics",
+        "Unavailable",
+        "The last daily snapshot could not be loaded",
+        "unknown",
+      ),
+    );
+    panel.append(title, grid);
+    return panel;
+  }
+  const budget = operations.budget || {};
+  const lambda = operations.lambda || {};
+  const dynamodb = operations.dynamodb || {};
+  const transcription = operations.transcription || {};
+  const window = operations.window || {};
+  const windowCaption = `${window.start || "?"} through ${window.end || "?"} UTC`;
+  const lambdaBreakdown = Array.isArray(lambda.functions)
+    ? lambda.functions
+        .filter((item) => Number(item.invocations) > 0)
+        .map((item) => `${item.label}: ${formatCompactCount(item.invocations)}`)
+        .join(" · ")
+    : "Invocation detail unavailable";
+  const databaseBreakdown = Array.isArray(dynamodb.tables)
+    ? dynamodb.tables
+        .filter((item) => Number(item.readCapacityUnits) + Number(item.writeCapacityUnits) > 0)
+        .map(
+          (item) =>
+            `${item.label}: ${formatCompactCount(item.readCapacityUnits)} reads / ${formatCompactCount(item.writeCapacityUnits)} writes`,
+        )
+        .join(" · ")
+    : windowCaption;
+  grid.append(
+    systemKpiCard(
+      "Monthly AWS spend",
+      formatUsd(budget.monthToDateUsd),
+      `${formatPercent(budget.usedPercent)} of the ${formatUsd(budget.limitUsd)} budget${budget.estimated ? " · estimated" : ""}`,
+      Number(budget.usedPercent) >= 100 ? "high" : Number(budget.usedPercent) >= 80 ? "watch" : "ok",
+    ),
+    systemKpiCard(
+      "Lambda invocations",
+      formatCompactCount(lambda.invocations),
+      `${windowCaption} · ${lambdaBreakdown}`,
+      "ok",
+    ),
+    systemKpiCard(
+      "DynamoDB reads",
+      formatCompactCount(dynamodb.readCapacityUnits),
+      `Consumed capacity units · ${windowCaption} · ${databaseBreakdown}`,
+      "ok",
+    ),
+    systemKpiCard(
+      "DynamoDB writes",
+      formatCompactCount(dynamodb.writeCapacityUnits),
+      `Consumed capacity units · ${windowCaption} · ${databaseBreakdown}`,
+      "ok",
+    ),
+    systemKpiCard(
+      "Transcribed clips",
+      formatCompactCount(transcription.analyzedClips),
+      `${formatPercent(transcription.completionPercent)} of ${formatCompactCount(transcription.receivedClips)} received`,
+      Number(transcription.pendingClips) > 1000 ? "watch" : "ok",
+    ),
+    systemKpiCard(
+      "Transcription backlog",
+      formatCompactCount(transcription.pendingClips),
+      `${formatCompactCount(transcription.publishedClips)} recent clips in the public snapshot`,
+      Number(transcription.pendingClips) > 1000 ? "watch" : "ok",
+    ),
+  );
+  panel.append(title, grid);
+  return panel;
+}
+
+function formatCompactCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "Unknown";
+  }
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(number);
+}
+
+function formatUsd(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `$${number.toFixed(2)}` : "Unknown";
+}
+
+function formatPercent(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${number.toFixed(1)}%` : "Unknown";
 }
 
 function renderSystemKpiPanel(payload, hosts) {
@@ -3599,9 +3724,9 @@ function renderSystemKpiPanel(payload, hosts) {
     ),
     systemKpiCard(
       "Prod guard",
-      systemDashboardEnabled ? "Dev only" : "Disabled",
-      "System stats stay hidden on production and the API returns 404 there",
-      systemDashboardEnabled ? "ok" : "unknown",
+      "Public safe",
+      "Host telemetry excludes names, addresses, paths, services, and credentials",
+      "ok",
     ),
   );
   panel.append(title, grid);

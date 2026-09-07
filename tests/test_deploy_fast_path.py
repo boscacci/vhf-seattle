@@ -8,6 +8,7 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert "--delete" not in script
     assert '--exclude "public_manifest.json"' in script
     assert '--exclude "recent_clips.json"' in script
+    assert '--exclude "operations.json"' in script
     assert '--exclude "clips/*"' in script
     assert '--exclude "analysis/*"' in script
     for path in (
@@ -69,6 +70,7 @@ def test_generated_public_assets_deploy_promotes_manifest_clips_and_analysis_onl
     assert 'cd "${tofu_dir}"' in script
     assert 'aws s3 cp "${site_dir}/public_manifest.json"' in script
     assert 'aws s3 cp "${site_dir}/recent_clips.json"' in script
+    assert 'aws s3 cp "${site_dir}/operations.json"' in script
     assert 'aws s3 sync "${site_dir}/clips"' in script
     assert 'aws s3 sync "${site_dir}/analysis"' in script
     assert '--include "*.mp3"' in script

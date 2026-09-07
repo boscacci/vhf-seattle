@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Elliott Bay VHF</title>
-    <meta name="description" content="Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis." />
+    <meta name="description" content="Elliott Bay marine VHF receiver clips, transcript search, AIS vessel map, channel analysis, and public system performance." />
     <meta name="robots" content="index,follow,max-image-preview:large" />
     <meta name="application-name" content="Elliott Bay VHF" />
     <meta name="theme-color" content="#07110f" />
@@ -16,14 +16,14 @@
     <meta property="og:title" content="Elliott Bay VHF" />
     <meta
       property="og:description"
-      content="Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis."
+      content="Elliott Bay marine VHF receiver clips, transcript search, AIS vessel map, channel analysis, and public system performance."
     />
     <meta property="og:url" content="https://seattleboatradio.com/" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Elliott Bay VHF" />
     <meta
       name="twitter:description"
-      content="Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis."
+      content="Elliott Bay marine VHF receiver clips, transcript search, AIS vessel map, channel analysis, and public system performance."
     />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/assets/styles.css?v=20260902-ais-prod-v1" />
@@ -36,7 +36,7 @@
             "@id": "https://seattleboatradio.com/#website",
             "name": "Elliott Bay VHF",
             "url": "https://seattleboatradio.com/",
-            "description": "Live Elliott Bay marine VHF radio audio, recent receiver clips, transcript search, AIS vessel map, and channel analysis.",
+            "description": "Elliott Bay marine VHF receiver clips, transcript search, AIS vessel map, channel analysis, and public system performance.",
             "inLanguage": "en-US",
             "isAccessibleForFree": true,
             "keywords": [
@@ -54,7 +54,7 @@
             "url": "https://seattleboatradio.com/",
             "applicationCategory": "MultimediaApplication",
             "operatingSystem": "Web",
-            "description": "Browser app for live Elliott Bay marine VHF monitoring, public clip review, transcript search, AIS map viewing, and channel analysis.",
+            "description": "Browser app for Elliott Bay marine VHF clip review, transcript search, AIS map viewing, channel analysis, and public system performance.",
             "isAccessibleForFree": true
           },
           {
@@ -81,7 +81,7 @@
         <div class="hero-copy">
           <p class="eyebrow">Elliott Bay VHF</p>
           <h1 id="site-title">Elliott Bay VHF</h1>
-          <p id="site-subtitle">Live Elliott Bay marine VHF audio and recent receiver clips.</p>
+          <p id="site-subtitle">Recent Elliott Bay marine VHF clips, transcripts, AIS, and system performance.</p>
         </div>
       </header>
 
@@ -106,6 +106,7 @@
           role="tab"
           aria-selected="false"
           aria-controls="panel-live"
+          hidden
         >
           Listen live
         </button>
@@ -173,9 +174,9 @@
         <a href="/clips/">Recent clips</a>
         <a href="/hall-of-fame/">Hall of Fame</a>
         <a href="/search/">Transcript search</a>
-        <a href="/live/">Live audio</a>
         <a href="/ais/">Vessel map</a>
         <a href="/analysis/">Analysis</a>
+        <a href="/performance/">Performance</a>
         <a href="/about/">About</a>
       </nav>
       <section
@@ -393,7 +394,7 @@
             <p>
               This site is the public face of a home-lab marine VHF monitor for Elliott Bay. A Raspberry Pi radio edge
               listens to nearby voice channels and AIS vessel reports, an Ubuntu micro-computer processes activity
-              clips and transcripts, and AWS serves the public app, live audio, searchable clips, Hall of Fame
+              clips and transcripts, and AWS serves the public app, searchable clips, Hall of Fame
               audio, vessel positions, and channel analysis.
             </p>
             <p class="about-credit">
@@ -429,7 +430,7 @@
             <section class="about-card">
               <h3>Public App</h3>
               <p>
-                The browser experience focuses on live monitoring, clip review, semantic search, AIS maps,
+                The browser experience focuses on clip review, semantic search, AIS maps, public system performance,
                 and analysis views that make receiver traffic easier to explore.
               </p>
             </section>

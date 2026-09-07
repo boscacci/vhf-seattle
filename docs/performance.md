@@ -1,15 +1,20 @@
 # Performance Monitoring
 
-The private dev app exposes a **Performance** tab at
-`https://dev.seattleboatradio.com`. It is intentionally dev-only and reachable
-only from the tailnet. The tab reads `/api/live/performance`, which the live
-radio proxy serves only for configured dev hostnames or the tailnet dev reverse
-proxy path.
+The public and dev apps expose a **Performance** tab. It reads the sanitized
+`/api/live/performance` host telemetry and the daily `/operations.json` AWS
+snapshot. The public live-radio player remains hidden; Icecast and receiver
+services continue running for capture and private diagnostics.
 
 The payload is public-safe by design. It includes Ubuntu micro-computer
 live-proxy telemetry and Raspberry Pi edge-radio telemetry, but it does not include LAN addresses,
 tailnet hostnames, service names, process lists, environment variables, private
 stream URLs, command lines, logs, tokens, cookies, or local filesystem paths.
+
+The daily operations snapshot adds seven complete UTC days of Lambda
+invocations and DynamoDB consumed read/write capacity, month-to-date AWS spend
+against the $35 budget, and materialized clip/transcription totals. The hourly
+publisher reuses the cached snapshot for 24 hours, limiting Cost Explorer API
+queries while keeping the public page current enough for budget monitoring.
 The browser refreshes the Performance tab every 10 seconds while it is open, and
 the tab's Refresh button forces a new snapshot. The proxy also samples telemetry
 server-side every 5 seconds, so the chart history is available even if nobody has

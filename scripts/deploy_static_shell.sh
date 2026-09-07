@@ -383,6 +383,7 @@ invalidate_paths=(
 sync_excludes=(
   --exclude "public_manifest.json"
   --exclude "recent_clips.json"
+  --exclude "operations.json"
   --exclude "clips/*"
   --exclude "analysis/*"
   --exclude "live/current.m3u8"

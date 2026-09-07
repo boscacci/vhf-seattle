@@ -13,7 +13,7 @@ Public artifacts must not contain:
 - receiver IDs;
 - internal/private network URLs;
 - AWS account IDs or access key material;
-- private live-radio stream URLs.
+- private live-radio stream URLs or production stream endpoints.
 
 ## Compute Boundary
 
@@ -30,7 +30,7 @@ The trusted compute boundary is intentionally local-first:
   metadata and transcripts. CloudFront exposes only
   sanitized static assets plus narrow read-only live/API routes.
 - **Public browser:** untrusted. It can read published clips, recent public clip
-  metadata, current status, and live audio, but it cannot retune the receiver,
+  metadata, current status, and sanitized performance telemetry, but it cannot retune the receiver,
   request arbitrary LAN URLs, presign uploads, or access private transcripts.
 
 Doing useful work on the Pi and Ubuntu micro-computer is the point of the system. Security
@@ -40,19 +40,19 @@ read-only public routes, not from pushing all computation into a cloud service.
 ## Read-Only Clip Console
 
 The clip console is public without a manual token. The same `public-site/` UI
-reads recent transcripts, short-lived playback URLs, live status, and the current
-read-only live audio stream. It must not expose write endpoints, retune controls,
+reads recent transcripts, short-lived playback URLs, and public-safe status and
+performance snapshots. It must not expose live stream endpoints, write endpoints, retune controls,
 raw ingest presigning, private network URLs, or arbitrary internal proxying.
 Playback URLs are intentionally short-lived. Browser code should refresh those
 URLs through the public clip playback refresh route instead of embedding raw
 object keys or depending on stale presigned links.
 
-The performance telemetry endpoint is dev-only and gated by configured dev
-hostnames or the tailnet dev reverse proxy path. Its public-safe response is a
-whitelist of coarse CPU, memory, disk, and thermal health for the Ubuntu
+The performance telemetry endpoint is public. Its response is a whitelist of
+coarse CPU, memory, disk, and thermal health for the Ubuntu
 micro-computer proxy and Raspberry Pi receiver. It must not expose LAN addresses, tailnet hostnames,
 service names, process lists, environment variables, internal URLs, tokens, or
-arbitrary collector fields.
+arbitrary collector fields. The daily operations JSON similarly exposes only
+aggregate billing, capacity, invocation, and transcription counts.
 
 ## Private Boundary
 
