@@ -1125,7 +1125,8 @@ def _live_status_payload(preset: ChannelPreset) -> dict[str, object]:
 def _reject_public_live_audio(request: Request) -> None:
     host = request.headers.get("host", "")
     hostname = host.rsplit("@", 1)[-1].split(":", 1)[0].lower()
-    if hostname in PUBLIC_SITE_HOSTS:
+    environment = request.headers.get("x-talkingboats-environment", "").lower()
+    if hostname in PUBLIC_SITE_HOSTS or environment == "prod":
         raise HTTPException(status_code=404, detail="public live audio is disabled")
 
 

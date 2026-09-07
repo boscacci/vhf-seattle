@@ -313,7 +313,8 @@ def test_dev_cloudfront_does_not_proxy_private_api_routes() -> None:
 
     assert 'name  = "X-TalkingBoats-Environment"' not in dev_distribution
     assert 'value = "dev"' not in dev_distribution
-    assert "X-TalkingBoats-Environment" not in prod_distribution
+    assert 'name  = "X-TalkingBoats-Environment"' in prod_distribution
+    assert 'value = "prod"' in prod_distribution
 
 
 def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_origin() -> None:
