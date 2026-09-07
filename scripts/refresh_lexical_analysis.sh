@@ -55,6 +55,7 @@ Environment overrides:
   TALKINGBOATS_LEXICAL_STATE_DIR        Persistent stage-checkpoint directory
   TALKINGBOATS_LEXICAL_MAX_READ_CAPACITY_UNITS DynamoDB read ceiling per analysis scan
   TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS DynamoDB read ceiling per export
+  TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED Use materialized clip counts; defaults to true
   TALKINGBOATS_LEXICAL_RAW_BUCKET_OUTPUT OpenTofu output name for raw bucket
   TALKINGBOATS_RAW_BUCKET               Raw bucket override; skips OpenTofu output lookup
   TALKINGBOATS_SEARCH_WARM_URL          Private read-only search URL used to warm the refreshed index
@@ -159,6 +160,7 @@ if [[ -z "${raw_bucket}" ]]; then
 fi
 
 export TALKINGBOATS_CLIP_STORE_BACKEND="${clip_store_backend}"
+export TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED="${TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED:-true}"
 if [[ ! -f "${export_complete_marker}" ]]; then
   echo "Rebuilding public export from ${clip_store_backend}"
   export TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${public_export_max_read_capacity_units}"

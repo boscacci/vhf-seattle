@@ -37,6 +37,7 @@ Environment overrides:
   TALKINGBOATS_TOFU_DIR                        OpenTofu directory
   TALKINGBOATS_DEV_GENERATED_ASSET_URL         Dev manifest validation URL
   TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS DynamoDB read ceiling per export
+  TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED   Use materialized clip counts; defaults to true
 EOF
 }
 
@@ -91,6 +92,7 @@ fi
 echo "event=talkingboats_public_clip_refresh_started environment=dev"
 export TALKINGBOATS_CLIP_STORE_BACKEND="${clip_store_backend}"
 export TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${max_read_capacity_units}"
+export TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED="${TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED:-true}"
 "${conda_bin}" run --no-capture-output -n "${conda_env}" \
   talkingboats-export-public \
   --clip-store-backend "${clip_store_backend}" \
