@@ -363,7 +363,34 @@ def test_dynamo_store_reads_oldest_pending_with_one_bounded_query() -> None:
         "counts": {"pending": 1},
         "oldest_pending_started_at": "2026-08-03T12:00:00Z",
     }
-    assert table.query_pks == ["clip_status#pending"]
+    assert table.query_pks == [
+        "clip_status#pending",
+        "clip_status#processing",
+        "clip_status#waiting_upload",
+        "clip_status#pending",
+    ]
+
+
+def test_dynamo_store_reads_active_queue_exactly_when_aggregate_is_stale() -> None:
+    table = FakeDynamoTable()
+    summary = clip_count_summary_item()
+    summary["backlog_counts"] = {"processing": 1, "error": 481}
+    table.put_item(Item=summary)
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2", aggregate_counts_enabled=True),
+        table=table,
+    )
+
+    assert store.clip_backlog_summary() == {
+        "counts": {"error": 481},
+        "oldest_pending_started_at": None,
+    }
+    assert table.query_pks == [
+        "clip_status#pending",
+        "clip_status#processing",
+        "clip_status#waiting_upload",
+        "clip_status#pending",
+    ]
 
 
 def _index_item(
@@ -454,6 +481,8 @@ class FakeDynamoTable:
             rows = [item for item in rows if (str(item["pk"]), str(item["sk"])) > start]
         limit = int(kwargs.get("Limit", len(rows)))
         page = rows[:limit]
+        if kwargs.get("Select") == "COUNT":
+            return {"Count": len(page)}
         result: dict[str, object] = {"Items": page}
         if len(rows) > len(page):
             result["LastEvaluatedKey"] = _key(page[-1])
