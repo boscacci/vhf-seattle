@@ -11,21 +11,8 @@ def test_static_shell_deploy_preserves_generated_public_assets() -> None:
     assert '--exclude "operations.json"' in script
     assert '--exclude "clips/*"' in script
     assert '--exclude "analysis/*"' in script
-    for path in (
-        '"/"',
-        '"/index.html"',
-        '"/assets/*"',
-        '"/favicon.svg"',
-        '"/clips/*"',
-        '"/hall-of-fame/*"',
-        '"/live/*"',
-        '"/ais/*"',
-        '"/analysis/index.html"',
-        '"/about/*"',
-        '"/performance/*"',
-        '"/operator/*"',
-    ):
-        assert path in script
+    assert 'invalidate_paths=("/*")' in script
+    assert '"/assets/*"' not in script
     assert "dev_only_route_index_paths" in script
     assert '"hall-of-fame/index.html"' in script
     assert '"hall-of-fame/"' in script
