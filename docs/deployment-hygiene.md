@@ -83,9 +83,11 @@ the API bucket alone or old and newly uploaded clips will fail playback.
 
 Route53 points `dev.seattleboatradio.com` at the Ubuntu micro-computer Tailscale address,
 not at CloudFront. The Ubuntu micro-computer runs the `deploy/optiplex/vhf-dev-proxy`
-front-door container on the tailnet `80/443` addresses. That container owns the
-shared Tailnet TLS front door: SNI routes Gotify and Laundry traffic to local Caddy,
-while `dev.seattleboatradio.com` terminates on local `9443`, redirects HTTP to
+backend container on tailnet HTTP port `80` and loopback TLS ports `9443/9447`.
+The shared TLS front door is maintained in `rc/optiplex/front-door`: Tailscale
+TCP `443` forwards to its loopback SNI listener on `9444`. This container must
+never bind those two shared TLS ports. Pi-hole's legacy TLS backend uses
+`9447`; `dev.seattleboatradio.com` terminates on local `9443`, redirects HTTP to
 HTTPS, and injects `X-TalkingBoats-Tailnet-Dev: 1` before write-capable operator
 requests reach the dev live proxy on `172.20.0.1:8095`. Keep
 `vhf-dev-proxy.service` enabled in the lingered `rob` user manager so the container
