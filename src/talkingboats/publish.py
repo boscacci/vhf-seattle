@@ -151,7 +151,7 @@ def sanitize_public_manifest(private_manifest: Mapping[str, Any]) -> dict[str, A
             "title": private_manifest.get("site", {}).get("title", "Elliott Bay VHF"),
             "subtitle": private_manifest.get("site", {}).get(
                 "subtitle",
-                "Live Elliott Bay marine VHF audio and recent receiver clips.",
+                "Recent Elliott Bay marine VHF clips, transcripts, AIS, and system performance.",
             ),
         },
         "stats": stats,
@@ -479,7 +479,10 @@ def _recent_clip_manifest(
         "generated_at": generated_at,
         "site": {
             "title": "Elliott Bay VHF",
-            "subtitle": "Live Elliott Bay marine VHF audio and recent receiver clips.",
+            "subtitle": (
+                "Recent Elliott Bay marine VHF clips, transcripts, AIS, "
+                "and system performance."
+            ),
         },
         "stats": {
             "generated_at": generated_at,
