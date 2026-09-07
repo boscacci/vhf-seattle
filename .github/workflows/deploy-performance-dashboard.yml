@@ -1,9 +1,12 @@
 name: Deploy performance dashboard release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Annotated release tag selecting the dev-tested main commit
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,24 +16,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy-production:
-    environment: production
+  validate-release:
     runs-on: [self-hosted, Linux, X64, optiplex, vhf-seattle]
     timeout-minutes: 5
+    outputs:
+      artifact_path: ${{ steps.artifact.outputs.artifact_path }}
+      artifact_sha256: ${{ steps.artifact.outputs.artifact_sha256 }}
     steps:
-      - name: Check out the exact tagged revision
+      - name: Check out the protected revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.sha }}
       - name: Verify the immutable tag and protected revision
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          git fetch --no-tags origin main
+          test "${GITHUB_REF}" = "refs/heads/main"
+          git fetch --tags origin main
           test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
-          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          test "$(git cat-file -t "${GITHUB_REF_NAME}")" = "tag"
-          test "$(git rev-list -n 1 "${GITHUB_REF_NAME}")" = "${GITHUB_SHA}"
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git cat-file -t "${RELEASE_TAG}")" = "tag"
+          test "$(git rev-list -n 1 "${RELEASE_TAG}")" = "${GITHUB_SHA}"
           git switch -C main "${GITHUB_SHA}"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
       - name: Resolve the dev-tested artifact
@@ -44,6 +52,24 @@ jobs:
           test "$(sha256sum "${artifact_path}" | awk '{print $1}')" = "${artifact_sha256}"
           echo "artifact_path=${artifact_path}" >> "${GITHUB_OUTPUT}"
           echo "artifact_sha256=${artifact_sha256}" >> "${GITHUB_OUTPUT}"
+
+  deploy-production:
+    needs: validate-release
+    environment: production
+    runs-on: [self-hosted, Linux, X64, optiplex, vhf-seattle]
+    timeout-minutes: 5
+    steps:
+      - name: Check out the exact approved revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify approved revision identity
+        run: |
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
+          git switch -C main "${GITHUB_SHA}"
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
@@ -58,11 +84,11 @@ jobs:
       - name: Promote the exact dev-tested backend
         env:
           TALKINGBOATS_RELEASE_COMMIT: ${{ github.sha }}
-          TALKINGBOATS_RELEASE_SHA256: ${{ steps.artifact.outputs.artifact_sha256 }}
+          TALKINGBOATS_RELEASE_SHA256: ${{ needs.validate-release.outputs.artifact_sha256 }}
         run: |
           release_root="$(mktemp -d)"
           trap 'rm -rf "${release_root}"' EXIT
-          tar -xzf "${{ steps.artifact.outputs.artifact_path }}" -C "${release_root}"
+          tar -xzf "${{ needs.validate-release.outputs.artifact_path }}" -C "${release_root}"
           "${release_root}/scripts/apply_optiplex_performance_release.sh" prod "${release_root}"
           scripts/deploy_static_shell.sh prod "${release_root}/public-site"
       - name: Smoke the real production performance view

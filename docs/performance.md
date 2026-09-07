@@ -186,7 +186,9 @@ state. Restart or re-enable that unit before changing proxy settings.
 Each accepted `main` commit is packaged under its Git SHA, deployed to the dev
 proxy, and checked with the desktop/mobile performance smoke. After a human
 checks `https://dev.seattleboatradio.com/performance/`, create an annotated patch
-tag on that exact commit. The tag workflow resolves the already dev-tested
-artifact by commit and digest, then waits for the single `production`
-environment approval before updating the public proxy and static shell. Do not
-approve production merely because the performance tab reports healthy.
+tag on that exact commit and dispatch the performance release workflow from
+protected `main` with that tag. The workflow verifies that the tag selects the
+current main commit, resolves the already dev-tested artifact by commit and
+digest, then waits for the single `production` environment approval before
+updating the public proxy and static shell. Do not approve production merely
+because the performance tab reports healthy.
