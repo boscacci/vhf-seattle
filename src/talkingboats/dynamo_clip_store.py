@@ -700,14 +700,17 @@ class DynamoUploadedClipStore:
         return self.non_transcribed_clip_count() + self.transcribed_clip_count()
 
     def clip_backlog_summary(self) -> dict[str, object]:
-        """Return aggregate queue counts plus one bounded oldest-pending lookup."""
+        """Return exact active queue counts plus one bounded oldest-pending lookup."""
 
         if self.aggregate_counts_enabled:
             snapshot = self._require_clip_count_snapshot()
-            counts = {
-                status: snapshot.backlog_counts.get(status, 0)
-                for status in ("pending", "processing", "waiting_upload", "error")
-            }
+            counts = {"error": snapshot.backlog_counts.get("error", 0)}
+            counts.update(
+                {
+                    status: self._query_count(_status_pk(status))
+                    for status in ("pending", "processing", "waiting_upload")
+                }
+            )
         else:
             counts = {
                 status: self._query_count(_status_pk(status))
