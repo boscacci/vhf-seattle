@@ -1,10 +1,10 @@
 [Unit]
-Description=Refresh Elliott Bay VHF public clips every fifteen minutes
+Description=Refresh Elliott Bay VHF public clips every six hours
 
 [Timer]
 OnBootSec=5min
 OnStartupSec=5min
-OnUnitActiveSec=15min
+OnUnitActiveSec=6h
 RandomizedDelaySec=30s
 Persistent=true
 Unit=talkingboats-public-clip-refresh.service

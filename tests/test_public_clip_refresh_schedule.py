@@ -24,7 +24,7 @@ def test_public_clip_refresh_exports_validates_dev_then_promotes_prod() -> None:
     )
 
 
-def test_public_clip_refresh_runs_every_fifteen_minutes_with_bounded_resources() -> None:
+def test_public_clip_refresh_runs_every_six_hours_with_bounded_resources() -> None:
     service = Path("deploy/systemd/talkingboats-public-clip-refresh.service.example").read_text(
         encoding="utf-8"
     )
@@ -44,7 +44,9 @@ def test_public_clip_refresh_runs_every_fifteen_minutes_with_bounded_resources()
     assert "CPUQuota=75%" in service
     assert "CPUWeight=10" in service
     assert "OnBootSec=5min" in timer
-    assert "OnUnitActiveSec=15min" in timer
+    assert "every six hours" in timer
+    assert "OnUnitActiveSec=6h" in timer
+    assert "OnUnitActiveSec=15min" not in timer
     assert "RandomizedDelaySec=30s" in timer
     assert "Persistent=true" in timer
     assert "Unit=talkingboats-public-clip-refresh.service" in timer

@@ -5,6 +5,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
+import talkingboats.ais_live as ais_live
 from talkingboats.ais_live import (
     AisLiveConfig,
     ais_http_ingest_handler,
@@ -276,3 +277,20 @@ def test_ais_websocket_handler_tracks_connections_and_ignores_viewer_messages() 
     assert json.loads(ignored["body"])["status"] == "ignored"
     assert ais_websocket_handler(disconnect, None, table=table)["statusCode"] == 200
     assert table.items == {}
+
+
+def test_ais_handlers_reuse_dynamodb_table_across_warm_invocations(monkeypatch) -> None:
+    table = FakeConnectionsTable()
+    created = []
+
+    def create_table(table_name: str):
+        created.append(table_name)
+        return table
+
+    ais_live._dynamodb_table.cache_clear()
+    monkeypatch.setattr(ais_live, "_create_dynamodb_table", create_table)
+
+    assert ais_live._dynamodb_table("connections") is table
+    assert ais_live._dynamodb_table("connections") is table
+    assert created == ["connections"]
+    ais_live._dynamodb_table.cache_clear()

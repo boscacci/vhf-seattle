@@ -211,7 +211,7 @@ resource "aws_dynamodb_table" "radio_events" {
   }
 
   server_side_encryption {
-    enabled = true
+    enabled = false
   }
 
   tags = merge(local.common_tags, {
@@ -236,7 +236,7 @@ resource "aws_dynamodb_table" "ais_connections" {
   }
 
   server_side_encryption {
-    enabled = true
+    enabled = false
   }
 
   tags = merge(local.common_tags, {
@@ -905,7 +905,7 @@ resource "aws_dynamodb_table" "dev_radio_events" {
   }
 
   server_side_encryption {
-    enabled = true
+    enabled = false
   }
 
   tags = merge(local.common_tags, {

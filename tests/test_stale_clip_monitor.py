@@ -297,7 +297,7 @@ def test_opentofu_keeps_quiet_radio_visible_without_email_and_pages_on_pipeline_
 
     manifest_alarm = _resource_block(monitoring_tf, "prod_public_manifest_freshness")
     assert 'metric_name         = "PublicManifestAgeSeconds"' in manifest_alarm
-    assert "threshold           = 3600" in manifest_alarm
+    assert "threshold           = 25200" in manifest_alarm
     assert "evaluation_periods  = 3" in manifest_alarm
     assert "datapoints_to_alarm = 3" in manifest_alarm
     assert 'treat_missing_data  = "notBreaching"' in manifest_alarm

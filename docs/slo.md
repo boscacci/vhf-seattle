@@ -9,11 +9,11 @@ to run against Dev after every deploy and before promoting to prod.
   but it does not page. Publishable speech depends on real radio traffic, so
   content age alone is not a reliable service-health signal.
 - `talkingboats-public-clip-refresh.timer` publishes a dev-validated export
-  every 15 minutes.
+  every six hours.
 - The independent AWS monitor samples the newest clip, manifest generation,
   and AIS generation timestamps every five minutes.
 - Operator email is reserved for actionable pipeline health: the public
-  manifest must remain less than one hour old for three consecutive samples,
+  manifest must remain less than seven hours old for three consecutive samples,
   while the AIS heartbeat must remain less than 15 minutes old for three
   consecutive samples. Missing monitor data is handled by the AIS alarm.
 - During diagnosis, inspect both the manifest `generated_at` heartbeat and the

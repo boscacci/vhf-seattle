@@ -60,7 +60,7 @@ def test_lexical_refresh_lock_is_released_after_process_termination() -> None:
     assert 'mkdir "${lock_dir}"' not in script
 
 
-def test_lexical_refresh_systemd_timer_runs_every_six_hours() -> None:
+def test_lexical_refresh_systemd_timer_runs_daily() -> None:
     service = Path(
         "deploy/systemd/talkingboats-lexical-refresh.service.example"
     ).read_text(encoding="utf-8")
@@ -90,6 +90,8 @@ def test_lexical_refresh_systemd_timer_runs_every_six_hours() -> None:
     assert "CPUQuota=150%" in service
     assert "CPUWeight=20" in service
     assert "OnBootSec=15min" in timer
-    assert "OnUnitActiveSec=6h" in timer
+    assert "daily" in timer
+    assert "OnUnitActiveSec=24h" in timer
+    assert "OnUnitActiveSec=6h" not in timer
     assert "Persistent=true" in timer
     assert "Unit=talkingboats-lexical-refresh.service" in timer

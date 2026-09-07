@@ -759,7 +759,7 @@ def test_pi_installer_adds_cloud_hls_and_ais_forwarder_as_gated_relays() -> None
     )
     assert (
         'http_args=(-H "http://${forwarder_host}:${forwarder_port}/" '
-        'interval "${TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS:-1}" response off)'
+        'interval "${TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS:-60}" response off)'
         in Path("deploy/pi/live-radio/talkingboats-ais-catcher").read_text(encoding="utf-8")
     )
     assert 'talkingboats-forward-ais = "talkingboats.ais_forwarder:main"' in pyproject
