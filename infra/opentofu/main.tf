@@ -601,11 +601,6 @@ resource "aws_cloudfront_distribution" "site" {
     domain_name = var.live_origin_domain_name
     origin_id   = local.live_origin_id
 
-    custom_header {
-      name  = "X-TalkingBoats-Environment"
-      value = "prod"
-    }
-
     custom_origin_config {
       http_port              = 80
       https_port             = var.live_origin_https_port
@@ -625,12 +620,23 @@ resource "aws_cloudfront_distribution" "site" {
   }
 
   ordered_cache_behavior {
-    path_pattern             = "/api/live/*"
+    path_pattern             = "/api/live/performance"
     target_origin_id         = local.live_origin_id
     viewer_protocol_policy   = "redirect-to-https"
     allowed_methods          = ["GET", "HEAD", "OPTIONS"]
     cached_methods           = ["GET", "HEAD"]
-    compress                 = false
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/live/channels"
+    target_origin_id         = local.live_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
     origin_request_policy_id = aws_cloudfront_origin_request_policy.live_api.id
   }
