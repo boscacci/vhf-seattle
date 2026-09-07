@@ -350,36 +350,7 @@ if [[ "${environment}" == "dev" ]]; then
 else
   retired_route_paths+=( "${prod_retired_route_paths[@]}" )
 fi
-invalidate_paths=(
-  "/"
-  "/index.html"
-  "/assets/*"
-  "/favicon.svg"
-  "/robots.txt"
-  "/sitemap.xml"
-  "/llms.txt"
-  "/clips"
-  "/clips/*"
-  "/hall-of-fame"
-  "/hall-of-fame/*"
-  "/search"
-  "/search/*"
-  "/live"
-  "/live/*"
-  "/ais"
-  "/ais/*"
-  "/map"
-  "/map/*"
-  "/analysis"
-  "/analysis/"
-  "/analysis/index.html"
-  "/about"
-  "/about/*"
-  "/performance"
-  "/performance/*"
-  "/operator"
-  "/operator/*"
-)
+invalidate_paths=("/*")
 sync_excludes=(
   --exclude "public_manifest.json"
   --exclude "recent_clips.json"

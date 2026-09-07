@@ -1029,12 +1029,7 @@ def test_public_site_deploys_and_revalidates_crawler_assets() -> None:
         assert '"reviewed/index.html"' not in script
 
     static_shell = Path("scripts/deploy_static_shell.sh").read_text(encoding="utf-8")
-    for invalidation_path in (
-        "/robots.txt",
-        "/sitemap.xml",
-        "/llms.txt",
-    ):
-        assert f'"{invalidation_path}"' in static_shell
+    assert 'invalidate_paths=("/*")' in static_shell
 
 
 def test_public_site_tabs_have_linkable_routes() -> None:
