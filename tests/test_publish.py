@@ -411,7 +411,7 @@ def test_recent_clip_export_streams_cloud_candidates_without_offset_rescans(
         )
         for index in range(3)
     ]
-    store = FakeStreamingRecentClipStore(clips)
+    store = FakeStreamingRecentClipStore(clips, fail_if_read_past_end=True)
     reader = FakeClipReader(
         {
             clips[0].key: b"first available audio",
@@ -731,8 +731,14 @@ class FakeRecentClipStore:
 
 
 class FakeStreamingRecentClipStore:
-    def __init__(self, clips: list[RecentTranscribedClip]) -> None:
+    def __init__(
+        self,
+        clips: list[RecentTranscribedClip],
+        *,
+        fail_if_read_past_end: bool = False,
+    ) -> None:
         self.clips = clips
+        self.fail_if_read_past_end = fail_if_read_past_end
         self.calls: list[dict[str, object]] = []
 
     def recent_transcribed(self, **_kwargs: object):
@@ -748,6 +754,8 @@ class FakeStreamingRecentClipStore:
             {"page_size": page_size, "excluded_channels": excluded_channels}
         )
         yield from self.clips
+        if self.fail_if_read_past_end:
+            raise AssertionError("exporter read candidates after filling the public quota")
 
 
 class RecordingAudioProcessor:
