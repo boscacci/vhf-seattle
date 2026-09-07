@@ -16,7 +16,7 @@ raw_bucket_output="${TALKINGBOATS_PUBLIC_REFRESH_RAW_BUCKET_OUTPUT:-raw_audio_bu
 raw_bucket="${TALKINGBOATS_RAW_BUCKET:-}"
 tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
 dev_generated_asset_url="${TALKINGBOATS_DEV_GENERATED_ASSET_URL:-https://dev.seattleboatradio.com/public_manifest.json}"
-max_read_capacity_units="${TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1000}"
+max_read_capacity_units="${TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1250}"
 
 usage() {
   cat <<'EOF'

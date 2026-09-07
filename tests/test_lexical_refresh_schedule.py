@@ -103,6 +103,7 @@ def test_lexical_refresh_checkpoints_expensive_stages_and_caps_reads() -> None:
     script = Path("scripts/refresh_lexical_analysis.sh").read_text(encoding="utf-8")
 
     assert "TALKINGBOATS_LEXICAL_MAX_READ_CAPACITY_UNITS:-6000000" in script
+    assert "TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1250" in script
     assert 'TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${max_read_capacity_units}"' in script
     assert (
         'TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED="${TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED:-true}"'

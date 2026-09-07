@@ -55,7 +55,7 @@ or timeout with `TALKINGBOATS_SEARCH_WARM_URL` and
 `TALKINGBOATS_SEARCH_WARM_TIMEOUT_SECONDS`.
 
 The hourly public export reads the materialized aggregate counts and defaults
-to a 1,000 read-capacity-unit ceiling. The weekly lexical scan defaults to
+to a 1,250 read-capacity-unit ceiling. The weekly lexical scan defaults to
 6,000,000 units and records export and analysis stage markers by ISO week.
 Override these safeguards with
 `TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS` and
