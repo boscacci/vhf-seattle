@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -66,6 +67,11 @@ class DynamoClipStoreConfig:
     aws_region: str
     environment: str = "dev"
     aggregate_counts_enabled: bool = False
+    read_capacity_limit: float | None = None
+
+
+class DynamoReadCapacityLimitExceeded(RuntimeError):
+    """Raised when a bounded job exceeds its configured DynamoDB read budget."""
 
 
 class DynamoUploadedClipStore:
@@ -91,6 +97,8 @@ class DynamoUploadedClipStore:
             table = resource.Table(config.table_name)
         self.table = table
         self._aggregate_counts_enabled = config.aggregate_counts_enabled
+        self._consumed_read_capacity = 0.0
+        self._read_query_pages = 0
         self._cache_scope = (
             ("injected", object())
             if table_was_injected
@@ -102,6 +110,36 @@ class DynamoUploadedClipStore:
         """Whether count endpoints must use the stream-maintained snapshot."""
 
         return self._aggregate_counts_enabled
+
+    @property
+    def consumed_read_capacity(self) -> float:
+        return self._consumed_read_capacity
+
+    def _record_read_capacity(self, *, operation: str, response: dict[str, Any]) -> None:
+        consumed = response.get("ConsumedCapacity") or {}
+        units = float(consumed.get("CapacityUnits") or 0.0)
+        self._consumed_read_capacity += units
+        self._read_query_pages += 1
+        print(
+            json.dumps(
+                {
+                    "event": "dynamodb_read_capacity",
+                    "operation": operation,
+                    "page": self._read_query_pages,
+                    "page_capacity_units": units,
+                    "total_capacity_units": round(self._consumed_read_capacity, 3),
+                    "limit_capacity_units": self.config.read_capacity_limit,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        limit = self.config.read_capacity_limit
+        if limit is not None and self._consumed_read_capacity > limit:
+            raise DynamoReadCapacityLimitExceeded(
+                "DynamoDB read capacity limit "
+                f"{limit:g} exceeded after {self._consumed_read_capacity:g} units"
+            )
 
     def clip_count_snapshot(self) -> ClipCountSnapshot | None:
         """Return the materialized counters without querying a clip index."""
@@ -879,6 +917,7 @@ class DynamoUploadedClipStore:
             "ExpressionAttributeValues": values,
             "ScanIndexForward": scan_forward,
             "Limit": page_size,
+            "ReturnConsumedCapacity": "TOTAL",
         }
         if projection_expression is not None:
             kwargs["ProjectionExpression"] = projection_expression
@@ -890,6 +929,7 @@ class DynamoUploadedClipStore:
             if start_key is not None:
                 page_kwargs["ExclusiveStartKey"] = start_key
             response = self.table.query(**page_kwargs)
+            self._record_read_capacity(operation=f"query:{pk}", response=response)
             for item in response.get("Items", []):
                 yield _from_dynamodb_item(item)
             start_key = response.get("LastEvaluatedKey")
@@ -1268,6 +1308,9 @@ def dynamo_clip_store_from_env(
                 "TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED",
                 False,
             ),
+            read_capacity_limit=_optional_positive_float_env(
+                "TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT"
+            ),
         ),
         event_store=event_store,
     )
@@ -1472,6 +1515,16 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _optional_positive_float_env(name: str) -> float | None:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return None
+    parsed = float(value)
+    if parsed <= 0:
+        raise ValueError(f"{name} must be positive")
+    return parsed
 
 
 def _unique_channels(channels: Iterable[str] | None) -> list[str]:

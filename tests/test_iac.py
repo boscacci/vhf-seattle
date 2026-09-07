@@ -334,10 +334,13 @@ def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_ori
     assert 'variable "ais_live_subdomain"' not in variables_tf
     assert 'resource "aws_kms_key" "ais_ingest_secret"' in main_tf
     assert 'resource "aws_kms_alias" "ais_ingest_secret"' in main_tf
+    ais_key = _resource_block(main_tf, "aws_kms_key", "ais_ingest_secret")
+    assert "prevent_destroy = true" in ais_key
+    assert "deletion_window_in_days = 30" in ais_key
     assert 'resource "aws_secretsmanager_secret" "ais_ingest_token"' in main_tf
     assert 'aws_secretsmanager_secret_version' not in main_tf
     ais_secret = _resource_block(main_tf, "aws_secretsmanager_secret", "ais_ingest_token")
-    assert re.search(r"kms_key_id\s+=\s+aws_kms_key\.ais_ingest_secret\.arn", ais_secret)
+    assert 'kms_key_id              = "alias/aws/secretsmanager"' in ais_secret
     assert 'Environment = "prod"' in ais_secret
     assert 'data "archive_file" "ais_lambda"' in main_tf
     assert 'filename = "talkingboats/ais_live.py"' in main_tf
@@ -380,7 +383,7 @@ def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_ori
     assert 'output "ais_websocket_url"' in outputs_tf
     assert 'output "ais_live_fqdn"' not in outputs_tf
     assert 'output "ais_ingest_secret_name"' in outputs_tf
-    assert 'output "ais_ingest_secret_kms_key_arn"' in outputs_tf
+    assert 'output "ais_ingest_secret_kms_key_arn"' not in outputs_tf
     assert (
         '"${aws_apigatewayv2_api.ais_websocket.api_endpoint}/'
         '${aws_apigatewayv2_stage.ais_websocket.name}"'
@@ -389,6 +392,30 @@ def test_opentofu_defines_cloud_ais_ingest_and_public_websocket_without_home_ori
     assert "robertboscacci.com" not in main_tf
     assert "robertboscacci.com" not in variables_tf
     assert "robertboscacci.com" not in outputs_tf
+
+
+def test_opentofu_defines_cost_budget_and_anomaly_alerts() -> None:
+    monitoring_tf = Path("infra/opentofu/monitoring.tf").read_text(encoding="utf-8")
+
+    budget = _resource_block(monitoring_tf, "aws_budgets_budget", "monthly_cost")
+    assert re.search(r'limit_amount\s+=\s+"35"', budget)
+    assert re.search(r'time_period_start\s+=\s+"2026-10-01_00:00"', budget)
+    assert re.search(r"include_tax\s+=\s+true", budget)
+    assert re.search(r"threshold\s+=\s+25", budget)
+    assert re.search(r"threshold\s+=\s+35", budget)
+    assert "subscriber_sns_topic_arns" in budget
+
+    assert 'resource "aws_ce_anomaly_monitor" "services"' in monitoring_tf
+    subscription = _resource_block(
+        monitoring_tf,
+        "aws_ce_anomaly_subscription",
+        "service_alerts",
+    )
+    assert 'key           = "ANOMALY_TOTAL_IMPACT_ABSOLUTE"' in subscription
+    assert 'values        = ["3"]' in subscription
+    assert 'type    = "SNS"' in subscription
+    assert 'identifiers = ["budgets.amazonaws.com"]' in monitoring_tf
+    assert 'identifiers = ["costalerts.amazonaws.com"]' in monitoring_tf
 
 
 def test_paused_native_mobile_auth_resources_are_not_managed() -> None:

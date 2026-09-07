@@ -54,6 +54,13 @@ Override that allowance with
 or timeout with `TALKINGBOATS_SEARCH_WARM_URL` and
 `TALKINGBOATS_SEARCH_WARM_TIMEOUT_SECONDS`.
 
+The hourly public export defaults to a 1,000 read-capacity-unit ceiling. The
+weekly lexical scan defaults to 6,000,000 units and records export and analysis
+stage markers by ISO week. Override these safeguards with
+`TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS` and
+`TALKINGBOATS_LEXICAL_MAX_READ_CAPACITY_UNITS` only after reviewing the emitted
+per-page consumed-capacity events.
+
 The production API intentionally runs one systemd-managed Uvicorn worker. A
 parsed 54,000-clip embedding index plus the sentence-transformer model uses
 about 1.8 GiB in its original parsed form. Two workers consumed about 4 GiB in

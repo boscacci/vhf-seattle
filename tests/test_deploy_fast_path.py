@@ -143,7 +143,8 @@ def test_ais_cloud_deploy_stores_raw_token_in_secrets_manager_not_tofu_state() -
     assert "aws secretsmanager get-secret-value" in script
     assert "aws secretsmanager put-secret-value" in script
     assert "ais_ingest_secret_name" in script
-    assert "ais_ingest_secret_kms_key_arn" in script
+    assert "ais_ingest_secret_kms_key_arn" not in script
+    assert "uses the AWS managed Secrets Manager KMS key" in script
     assert "--secret-string" in script
     assert "set -x" not in script
     assert "token=" in script

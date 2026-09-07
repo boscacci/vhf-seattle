@@ -13,11 +13,19 @@ conda_env="${TALKINGBOATS_LEXICAL_CONDA_ENV:-dell}"
 conda_bin="${TALKINGBOATS_CONDA_BIN:-/home/rob/miniforge3/condabin/conda}"
 lock_file="${TALKINGBOATS_LEXICAL_LOCK_FILE:-outputs/.lexical-refresh.lock}"
 public_export_lock_file="${TALKINGBOATS_PUBLIC_EXPORT_LOCK_FILE:-outputs/.public-export.lock}"
-analysis_work_dir="${output_dir}.analysis-refresh"
+run_id="${TALKINGBOATS_LEXICAL_RUN_ID:-$(date -u +%G-W%V)}"
+state_root="${TALKINGBOATS_LEXICAL_STATE_DIR:-outputs/.lexical-refresh-state}"
+run_state_dir="${state_root}/${run_id}"
+analysis_work_dir="${run_state_dir}/work"
 analysis_manifest_path="${analysis_work_dir}/public_manifest.snapshot.json"
 previous_analysis_dir="${output_dir}.analysis-previous"
+export_complete_marker="${run_state_dir}/export.complete"
+analysis_complete_marker="${run_state_dir}/analysis.complete"
+refresh_complete_marker="${run_state_dir}/refresh.complete"
 page_size="${TALKINGBOATS_LEXICAL_PAGE_SIZE:-500}"
 export_limit="${TALKINGBOATS_LEXICAL_EXPORT_LIMIT:-3000}"
+max_read_capacity_units="${TALKINGBOATS_LEXICAL_MAX_READ_CAPACITY_UNITS:-6000000}"
+public_export_max_read_capacity_units="${TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1000}"
 raw_bucket_output="${TALKINGBOATS_LEXICAL_RAW_BUCKET_OUTPUT:-raw_audio_bucket}"
 raw_bucket="${TALKINGBOATS_RAW_BUCKET:-}"
 tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
@@ -43,6 +51,10 @@ Environment overrides:
   TALKINGBOATS_PUBLIC_EXPORT_LOCK_FILE  Export lock shared with the fast public refresh
   TALKINGBOATS_LEXICAL_PAGE_SIZE        Analysis clip-store page size
   TALKINGBOATS_LEXICAL_EXPORT_LIMIT     Public clip export limit
+  TALKINGBOATS_LEXICAL_RUN_ID           Stable retry identifier; defaults to ISO week
+  TALKINGBOATS_LEXICAL_STATE_DIR        Persistent stage-checkpoint directory
+  TALKINGBOATS_LEXICAL_MAX_READ_CAPACITY_UNITS DynamoDB read ceiling per analysis scan
+  TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS DynamoDB read ceiling per export
   TALKINGBOATS_LEXICAL_RAW_BUCKET_OUTPUT OpenTofu output name for raw bucket
   TALKINGBOATS_RAW_BUCKET               Raw bucket override; skips OpenTofu output lookup
   TALKINGBOATS_SEARCH_WARM_URL          Private read-only search URL used to warm the refreshed index
@@ -83,7 +95,6 @@ verify_dev_generated_assets() {
 }
 
 cleanup() {
-  rm -rf "${analysis_work_dir:-}" 2>/dev/null || true
   if [[ -n "${previous_analysis_dir:-}" && -d "${previous_analysis_dir}" ]]; then
     if [[ ! -d "${output_dir}/analysis" ]]; then
       mv "${previous_analysis_dir}" "${output_dir}/analysis" 2>/dev/null || true
@@ -121,6 +132,15 @@ if [[ "${prod_target_requested}" -eq 1 && "${dev_target_requested}" -ne 1 && "${
   echo "Refusing prod promotion without dev validation. Set TALKINGBOATS_ALLOW_PROD_WITHOUT_DEV=1 only for an emergency." >&2
   exit 2
 fi
+if [[ ! "${run_id}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "${run_id}" == *..* ]]; then
+  echo "Invalid lexical run identifier: ${run_id}" >&2
+  exit 2
+fi
+mkdir -p "${run_state_dir}"
+if [[ -f "${refresh_complete_marker}" ]]; then
+  echo "event=talkingboats_lexical_refresh_skipped reason=week_already_complete run_id=${run_id}"
+  exit 0
+fi
 
 mkdir -p "$(dirname "${lock_file}")"
 exec 9>"${lock_file}"
@@ -133,43 +153,52 @@ exec 8>"${public_export_lock_file}"
 flock 8
 trap cleanup EXIT
 
-mkdir -p "${output_dir}"
+mkdir -p "${output_dir}" "${analysis_work_dir}"
 if [[ -z "${raw_bucket}" ]]; then
   raw_bucket="$(cd "${tofu_dir}" && tofu output -raw "${raw_bucket_output}")"
 fi
 
-echo "Rebuilding public export from ${clip_store_backend}"
 export TALKINGBOATS_CLIP_STORE_BACKEND="${clip_store_backend}"
-"${conda_bin}" run --no-capture-output -n "${conda_env}" \
-  talkingboats-export-public \
-  --clip-store-backend "${clip_store_backend}" \
-  --raw-bucket "${raw_bucket}" \
-  --site-source public-site \
-  --output-dir "${output_dir}" \
-  --limit "${export_limit}"
-
-rm -rf "${analysis_work_dir}" "${previous_analysis_dir}"
-mkdir -p "${analysis_work_dir}"
-cp "${output_dir}/public_manifest.json" "${analysis_manifest_path}"
+if [[ ! -f "${export_complete_marker}" ]]; then
+  echo "Rebuilding public export from ${clip_store_backend}"
+  export TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${public_export_max_read_capacity_units}"
+  "${conda_bin}" run --no-capture-output -n "${conda_env}" \
+    talkingboats-export-public \
+    --clip-store-backend "${clip_store_backend}" \
+    --raw-bucket "${raw_bucket}" \
+    --site-source public-site \
+    --output-dir "${output_dir}" \
+    --limit "${export_limit}"
+  cp "${output_dir}/public_manifest.json" "${analysis_manifest_path}"
+  touch "${export_complete_marker}"
+else
+  echo "event=talkingboats_lexical_stage_resumed stage=export run_id=${run_id}"
+fi
 flock -u 8
 
-echo "Refreshing lexical analysis from transcript store into ${analysis_work_dir}"
-"${conda_bin}" run --no-capture-output -n "${conda_env}" \
-  talkingboats-analyze-transcripts \
-  --clip-store-backend "${clip_store_backend}" \
-  --public-audio-manifest-path "${analysis_manifest_path}" \
-  --output-dir "${analysis_work_dir}" \
-  --page-size "${page_size}"
+if [[ ! -f "${analysis_complete_marker}" ]]; then
+  echo "Refreshing lexical analysis from transcript store into ${analysis_work_dir}"
+  export TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${max_read_capacity_units}"
+  "${conda_bin}" run --no-capture-output -n "${conda_env}" \
+    talkingboats-analyze-transcripts \
+    --clip-store-backend "${clip_store_backend}" \
+    --public-audio-manifest-path "${analysis_manifest_path}" \
+    --output-dir "${analysis_work_dir}" \
+    --page-size "${page_size}"
+  touch "${analysis_complete_marker}"
+else
+  echo "event=talkingboats_lexical_stage_resumed stage=analysis run_id=${run_id}"
+fi
 flock 8
 if [[ ! -d "${analysis_work_dir}/analysis" ]]; then
   echo "Lexical analysis did not produce ${analysis_work_dir}/analysis" >&2
   exit 1
 fi
 if [[ -d "${output_dir}/analysis" ]]; then
+  rm -rf "${previous_analysis_dir}"
   mv "${output_dir}/analysis" "${previous_analysis_dir}"
 fi
-mv "${analysis_work_dir}/analysis" "${output_dir}/analysis"
-rm -rf "${analysis_work_dir}" "${previous_analysis_dir}"
+cp -a "${analysis_work_dir}/analysis" "${output_dir}/analysis"
 
 echo "Warming refreshed public transcript search"
 search_warm_url="$(resolve_search_warm_url)"
@@ -188,4 +217,6 @@ for deploy_env in ${deploy_envs}; do
   esac
 done
 flock -u 8
+touch "${refresh_complete_marker}"
+rm -rf "${analysis_work_dir}" "${previous_analysis_dir}"
 echo "Refresh complete"

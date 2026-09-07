@@ -142,7 +142,10 @@ Clip processing:
 
 Transcript search keeps the generated vector index in the private API process,
 invalidates it when the generated file changes, and warms it after host recovery
-and each lexical refresh. Normal API reads retain their short timeout; search has
+and each weekly lexical refresh. Public clips are exported and published every
+hour. Both export paths enforce DynamoDB read-capacity ceilings, and the weekly
+analysis keeps stage checkpoints so a safe retry reuses completed work. Normal
+API reads retain their short timeout; search has
 a separate cold-start allowance controlled by
 `TALKINGBOATS_PROXY_CLIP_SEARCH_READ_TIMEOUT_SECONDS`.
 
@@ -247,10 +250,11 @@ scripts/deploy_public_site.sh dev outputs/public-site
 scripts/deploy_public_site.sh prod outputs/public-site
 ```
 
-The scheduled lexical refresh rebuilds generated public artifacts, full-deploys
-the dev export, and promotes only `public_manifest.json`, `clips/`, and
-`analysis/` to prod so the public clips stay current without bypassing the
-main-branch guard for shell changes.
+The hourly clip refresh rebuilds the generated public export, verifies it on
+dev, and promotes only generated assets. The weekly lexical refresh replaces
+the analysis artifacts through the same dev-first path. Production promotion is
+limited to `public_manifest.json`, `clips/`, and `analysis/`, so scheduled jobs
+cannot bypass the main-branch guard for shell changes.
 
 ## Useful Docs
 

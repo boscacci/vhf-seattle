@@ -247,8 +247,12 @@ resource "aws_dynamodb_table" "ais_connections" {
 
 resource "aws_kms_key" "ais_ingest_secret" {
   description             = "Encrypt the Talking Boats AIS ingest token in Secrets Manager"
-  deletion_window_in_days = 7
+  deletion_window_in_days = 30
   enable_key_rotation     = true
+
+  lifecycle {
+    prevent_destroy = true
+  }
 
   tags = merge(local.common_tags, {
     Environment = "prod"
@@ -264,8 +268,8 @@ resource "aws_kms_alias" "ais_ingest_secret" {
 resource "aws_secretsmanager_secret" "ais_ingest_token" {
   name                    = local.ais_ingest_secret_name
   description             = "Raw AIS ingest token for the Raspberry Pi forwarder"
-  kms_key_id              = aws_kms_key.ais_ingest_secret.arn
-  recovery_window_in_days = 7
+  kms_key_id              = "alias/aws/secretsmanager"
+  recovery_window_in_days = 30
 
   tags = merge(local.common_tags, {
     Environment = "prod"
