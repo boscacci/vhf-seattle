@@ -9,7 +9,6 @@ import sys
 import tempfile
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from itertools import islice
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -306,14 +305,11 @@ def export_recent_clip_site(
 def _recent_candidate_batches(clip_store: Any, *, batch_size: int):
     stream_candidates = getattr(clip_store, "iter_recent_transcribed", None)
     if callable(stream_candidates):
-        candidates = iter(
-            stream_candidates(
-                page_size=batch_size,
-                excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
-            )
-        )
-        while batch := list(islice(candidates, batch_size)):
-            yield batch
+        for candidate in stream_candidates(
+            page_size=batch_size,
+            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+        ):
+            yield [candidate]
         return
 
     candidate_offset = 0
