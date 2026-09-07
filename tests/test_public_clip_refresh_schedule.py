@@ -44,7 +44,7 @@ def test_public_clip_refresh_runs_hourly_with_bounded_resources() -> None:
     assert "Nice=15" in service
     assert "CPUQuota=75%" in service
     assert "CPUWeight=10" in service
-    assert "TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1250" in script
+    assert "TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1600" in script
     assert 'TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${max_read_capacity_units}"' in script
     assert (
         'TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED="${TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED:-true}"'
