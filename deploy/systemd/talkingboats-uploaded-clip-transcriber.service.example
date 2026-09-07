@@ -8,7 +8,7 @@ StartLimitIntervalSec=0
 Type=simple
 WorkingDirectory=%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy
 EnvironmentFile=/home/rob/.config/talkingboats/api.env
-Environment=TALKINGBOATS_TRANSCRIBE_MODEL=turbo
+Environment=TALKINGBOATS_TRANSCRIBE_MODEL=base.en
 Environment=TALKINGBOATS_TRANSCRIBE_DEVICE=cpu
 Environment=TALKINGBOATS_TRANSCRIBE_COMPUTE_TYPE=int8
 Environment=TALKINGBOATS_TRANSCRIBE_CPU_THREADS=2
