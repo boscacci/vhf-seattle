@@ -71,7 +71,10 @@ verify_dev_generated_assets() {
   local cache_bust
   local_generated_at="$(manifest_generated_at "${output_dir}/public_manifest.json")"
   cache_bust="$(date +%s)"
-  remote_generated_at="$(curl --fail --silent --show-error --max-time 30 "${dev_generated_asset_url}?cache-bust=${cache_bust}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["generated_at"])')"
+  remote_generated_at="$(curl --fail --silent --show-error --max-time 30 \
+    --retry 3 --retry-all-errors --retry-delay 5 \
+    "${dev_generated_asset_url}?cache-bust=${cache_bust}" \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["generated_at"])')"
   if [[ "${remote_generated_at}" != "${local_generated_at}" ]]; then
     echo "Dev generated manifest is stale: expected ${local_generated_at}, got ${remote_generated_at}" >&2
     return 1

@@ -43,6 +43,7 @@ def test_lexical_refresh_script_regenerates_exports_and_promotes_generated_prod_
     assert "for deploy_env in ${deploy_envs}; do" in script
     assert "verify_dev_generated_assets" in script
     assert "TALKINGBOATS_DEV_GENERATED_ASSET_URL" in script
+    assert "--retry 3 --retry-all-errors --retry-delay 5" in script
     assert "Refusing prod promotion without dev validation" in script
     assert "scripts/deploy_generated_public_assets.sh \"prod\" \"${output_dir}\"" in script
     assert "TALKINGBOATS_SEARCH_WARM_URL" in script
