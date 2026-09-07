@@ -601,6 +601,11 @@ resource "aws_cloudfront_distribution" "site" {
     domain_name = var.live_origin_domain_name
     origin_id   = local.live_origin_id
 
+    custom_header {
+      name  = "X-TalkingBoats-Environment"
+      value = "prod"
+    }
+
     custom_origin_config {
       http_port              = 80
       https_port             = var.live_origin_https_port

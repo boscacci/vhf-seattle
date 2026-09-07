@@ -1220,6 +1220,21 @@ def test_public_hostname_cannot_open_live_audio_stream() -> None:
     assert response.status_code == 404
 
 
+def test_prod_cloudfront_origin_cannot_open_live_audio_stream() -> None:
+    response = _run(
+        _asgi_get(
+            create_app(ProxySettings()),
+            "/api/live/current.mp3",
+            headers={
+                "Host": "optiplex.tailbea63b.ts.net",
+                "X-TalkingBoats-Environment": "prod",
+            },
+        )
+    )
+
+    assert response.status_code == 404
+
+
 def test_proxy_static_shell_routes_include_search_tab() -> None:
     app = create_app(ProxySettings())
 
