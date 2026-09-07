@@ -75,12 +75,36 @@ def test_generated_public_assets_deploy_promotes_manifest_clips_and_analysis_onl
     assert '--include "lexical.json"' in script
     assert '--include "search_index.json"' in script
     assert '--include "topic_clusters.html"' in script
-    assert '"/public_manifest.json"' in script
-    assert '"/recent_clips.json"' in script
-    assert '"/clips/*"' in script
-    assert '"/analysis/*"' in script
+    assert '"/*"' in script
+    assert "--invalidation-batch" in script
+    assert '"CallerReference"' in script
+    assert "release_id" in script
+    assert "aws s3api head-object" in script
+    assert "talkingboats_generated_deploy_skipped" in script
+    assert '"/public_manifest.json" "/recent_clips.json"' not in script
     assert "upload_shell_entrypoint" not in script
     assert "index.html" not in script
+
+
+def test_generated_asset_release_marker_skips_unchanged_uploads() -> None:
+    script = Path("scripts/deploy_generated_public_assets.sh").read_text(encoding="utf-8")
+
+    unchanged_check = script.index('if [[ "${deployed_release_id}" == "${release_id}" ]]')
+    skip_event = script.index("event=talkingboats_generated_deploy_skipped")
+    upload = script.index('aws s3 sync "${site_dir}/clips"', unchanged_check)
+    commit_marker = script.index('--metadata "talkingboats-release-id=${release_id}"')
+
+    assert unchanged_check < skip_event < upload < commit_marker
+
+
+def test_generated_asset_invalidation_retry_reuses_release_identifier() -> None:
+    script = Path("scripts/deploy_generated_public_assets.sh").read_text(encoding="utf-8")
+
+    assert 'caller_reference="talkingboats-generated-${environment}-${release_id}"' in script
+    assert '{"Paths":{"Quantity":1,"Items":["/*"]},"CallerReference":"%s"}' in script
+    assert script.rindex("invalidate_release") > script.index(
+        'if [[ "${deployed_release_id}" == "${release_id}" ]]'
+    )
 
 
 def test_scheduled_generated_asset_deploy_quiets_expected_tofu_fallback_noise() -> None:

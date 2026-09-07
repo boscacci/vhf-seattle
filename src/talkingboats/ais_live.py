@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from typing import Any
 
 from talkingboats.ais_history import VESSEL_TYPES
@@ -324,10 +325,15 @@ def _boto3_client(name: str, **kwargs: Any) -> Any:
     return boto3.client(name, **kwargs)
 
 
-def _dynamodb_table(table_name: str) -> Any:
+def _create_dynamodb_table(table_name: str) -> Any:
     import boto3
 
     return boto3.resource("dynamodb").Table(table_name)
+
+
+@cache
+def _dynamodb_table(table_name: str) -> Any:
+    return _create_dynamodb_table(table_name)
 
 
 def _connection_ids_from_table(env: Mapping[str, str]) -> list[str]:

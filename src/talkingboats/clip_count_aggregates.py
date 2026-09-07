@@ -20,6 +20,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import cache
 from typing import Any, Literal
 
 import boto3
@@ -47,6 +48,16 @@ CHANNEL_COUNTER_ROOTS = {
 }
 COUNTER_ROOTS = ("backlog_counts", *CHANNEL_COUNTER_ROOTS.values())
 QualityFilter = Literal["visible", "quarantined", "all"]
+
+
+def _create_dynamodb_handles(table_name: str, aws_region: str) -> tuple[Any, Any]:
+    resource = boto3.resource("dynamodb", region_name=aws_region)
+    return resource.Table(table_name), boto3.client("dynamodb", region_name=aws_region)
+
+
+@cache
+def _cached_dynamodb_handles(table_name: str, aws_region: str) -> tuple[Any, Any]:
+    return _create_dynamodb_handles(table_name, aws_region)
 
 
 class ClipCountAggregateUnavailable(RuntimeError):
@@ -535,6 +546,8 @@ def lambda_handler(
     settings = os.environ if env is None else env
     table_name = _required_env(settings, "TALKINGBOATS_CLIP_COUNT_TABLE")
     aws_region = settings.get("AWS_REGION") or settings.get("TALKINGBOATS_AWS_REGION", "us-west-2")
+    if table is None and client is None:
+        table, client = _cached_dynamodb_handles(table_name, aws_region)
     aggregator = DynamoClipCountAggregator(
         table_name=table_name,
         aws_region=aws_region,

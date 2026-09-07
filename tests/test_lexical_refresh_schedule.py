@@ -43,6 +43,7 @@ def test_lexical_refresh_script_regenerates_exports_and_promotes_generated_prod_
     assert "for deploy_env in ${deploy_envs}; do" in script
     assert "verify_dev_generated_assets" in script
     assert "TALKINGBOATS_DEV_GENERATED_ASSET_URL" in script
+    assert "--retry 3 --retry-all-errors --retry-delay 5" in script
     assert "Refusing prod promotion without dev validation" in script
     assert "scripts/deploy_generated_public_assets.sh \"prod\" \"${output_dir}\"" in script
     assert "TALKINGBOATS_SEARCH_WARM_URL" in script
@@ -60,7 +61,7 @@ def test_lexical_refresh_lock_is_released_after_process_termination() -> None:
     assert 'mkdir "${lock_dir}"' not in script
 
 
-def test_lexical_refresh_systemd_timer_runs_every_six_hours() -> None:
+def test_lexical_refresh_systemd_timer_runs_daily() -> None:
     service = Path(
         "deploy/systemd/talkingboats-lexical-refresh.service.example"
     ).read_text(encoding="utf-8")
@@ -90,6 +91,8 @@ def test_lexical_refresh_systemd_timer_runs_every_six_hours() -> None:
     assert "CPUQuota=150%" in service
     assert "CPUWeight=20" in service
     assert "OnBootSec=15min" in timer
-    assert "OnUnitActiveSec=6h" in timer
+    assert "daily" in timer
+    assert "OnUnitActiveSec=24h" in timer
+    assert "OnUnitActiveSec=6h" not in timer
     assert "Persistent=true" in timer
     assert "Unit=talkingboats-lexical-refresh.service" in timer

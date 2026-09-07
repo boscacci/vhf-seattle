@@ -145,7 +145,7 @@ http_args=()
 if [[ -n "${TALKINGBOATS_AIS_HTTP_INGEST_URL:-}" && -n "${TALKINGBOATS_AIS_INGEST_TOKEN:-}" ]]; then
   forwarder_host="${TALKINGBOATS_AIS_FORWARDER_HOST:-127.0.0.1}"
   forwarder_port="${TALKINGBOATS_AIS_FORWARDER_PORT:-8110}"
-  http_args=(-H "http://${forwarder_host}:${forwarder_port}/" interval "${TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS:-1}" response off)
+  http_args=(-H "http://${forwarder_host}:${forwarder_port}/" interval "${TALKINGBOATS_AIS_HTTP_INTERVAL_SECONDS:-60}" response off)
 fi
 
 web_args=(

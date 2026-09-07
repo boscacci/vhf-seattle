@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from boto3.dynamodb.types import TypeDeserializer
 
+import talkingboats.clip_count_aggregates as clip_count_aggregates
 from talkingboats.clip_count_aggregates import (
     DynamoClipCountAggregator,
     backfill_clip_count_aggregates,
@@ -218,6 +219,26 @@ def test_stream_reconciles_current_index_state_when_an_old_record_arrives_late()
     assert snapshot is not None
     assert snapshot.counts_for() == {}
     assert snapshot.counts_for(quality="quarantined") == {"14": 1}
+
+
+def test_stream_handler_reuses_dynamodb_handles_across_warm_invocations(monkeypatch) -> None:
+    table = FakeDynamoTable()
+    client = FakeDynamoClient(table)
+    created = []
+
+    def create_handles(table_name: str, aws_region: str):
+        created.append((table_name, aws_region))
+        return table, client
+
+    clip_count_aggregates._cached_dynamodb_handles.cache_clear()
+    monkeypatch.setattr(clip_count_aggregates, "_create_dynamodb_handles", create_handles)
+    event = {"Records": []}
+    env = {"TALKINGBOATS_CLIP_COUNT_TABLE": "events", "AWS_REGION": "us-west-2"}
+
+    assert lambda_handler(event, object(), env=env) == {"batchItemFailures": []}
+    assert lambda_handler(event, object(), env=env) == {"batchItemFailures": []}
+    assert created == [("events", "us-west-2")]
+    clip_count_aggregates._cached_dynamodb_handles.cache_clear()
 
 
 def test_backfill_queries_only_the_serving_indexes() -> None:

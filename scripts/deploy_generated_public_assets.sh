@@ -112,6 +112,36 @@ deploy_output_raw() {
   fallback_output_raw "${output_name}"
 }
 
+artifact_release_id() {
+  (
+    cd "${site_dir}"
+    {
+      sha256sum public_manifest.json recent_clips.json
+      find clips -type f -name '*.mp3' -print0 |
+        LC_ALL=C sort -z |
+        xargs -0 -r sha256sum
+      find analysis -type f \
+        \( -name lexical.json -o -name search_index.json -o -name topic_clusters.html \) \
+        -print0 |
+        LC_ALL=C sort -z |
+        xargs -0 -r sha256sum
+    } | sha256sum | awk '{print $1}'
+  )
+}
+
+invalidate_release() {
+  local caller_reference
+  local invalidation_batch
+  caller_reference="talkingboats-generated-${environment}-${release_id}"
+  invalidation_batch="$(printf \
+    '{"Paths":{"Quantity":1,"Items":["/*"]},"CallerReference":"%s"}' \
+    "${caller_reference}")"
+  aws cloudfront create-invalidation \
+    --distribution-id "${distribution_id}" \
+    --invalidation-batch "${invalidation_batch}" \
+    --output json
+}
+
 if [[ $# -lt 1 || $# -gt 2 ]]; then
   usage >&2
   exit 2
@@ -158,25 +188,43 @@ fi
 bucket="$(deploy_output_raw "${bucket_output}")"
 distribution_id="$(deploy_output_raw "${distribution_output}")"
 fqdn="$(deploy_output_raw "${fqdn_output}")"
+release_id="$(artifact_release_id)"
+deployed_release_id="$(
+  aws s3api head-object \
+    --bucket "${bucket}" \
+    --key public_manifest.json \
+    --query 'Metadata."talkingboats-release-id"' \
+    --output text 2>/dev/null || true
+)"
 
 echo "Deploying generated public artifacts from ${site_dir} to ${environment}: https://${fqdn}"
-aws s3 cp "${site_dir}/public_manifest.json" "s3://${bucket}/public_manifest.json" \
-  --content-type "application/json" \
-  --cache-control "no-store"
-aws s3 cp "${site_dir}/recent_clips.json" "s3://${bucket}/recent_clips.json" \
-  --content-type "application/json" \
-  --cache-control "no-store"
-aws s3 sync "${site_dir}/clips" "s3://${bucket}/clips/" \
-  --delete \
-  --exclude "*" \
-  --include "*.mp3"
-aws s3 sync "${site_dir}/analysis" "s3://${bucket}/analysis/" \
-  --delete \
-  --exclude "*" \
-  --include "lexical.json" \
-  --include "search_index.json" \
-  --include "topic_clusters.html"
-aws cloudfront create-invalidation \
-  --distribution-id "${distribution_id}" \
-  --paths "/public_manifest.json" "/recent_clips.json" "/clips/*" "/analysis/*" \
-  --output json
+if [[ "${deployed_release_id}" == "${release_id}" ]]; then
+  printf \
+    'event=talkingboats_generated_deploy_skipped environment=%s release_id=%s reason=unchanged\n' \
+    "${environment}" \
+    "${release_id}"
+else
+  aws s3 sync "${site_dir}/clips" "s3://${bucket}/clips/" \
+    --delete \
+    --exclude "*" \
+    --include "*.mp3"
+  aws s3 sync "${site_dir}/analysis" "s3://${bucket}/analysis/" \
+    --delete \
+    --exclude "*" \
+    --include "lexical.json" \
+    --include "search_index.json" \
+    --include "topic_clusters.html"
+  aws s3 cp "${site_dir}/recent_clips.json" "s3://${bucket}/recent_clips.json" \
+    --content-type "application/json" \
+    --cache-control "no-store"
+  # Upload the manifest last so its release metadata is a commit marker for
+  # all preceding generated artifacts.
+  aws s3 cp "${site_dir}/public_manifest.json" "s3://${bucket}/public_manifest.json" \
+    --content-type "application/json" \
+    --cache-control "no-store" \
+    --metadata "talkingboats-release-id=${release_id}"
+fi
+
+# Retrying an unchanged release reuses this CallerReference. CloudFront then
+# returns the existing invalidation instead of billing another path.
+invalidate_release
