@@ -91,6 +91,38 @@ class SpooledAudioClip:
 
 
 @dataclass(frozen=True)
+class SpooledClipGroup:
+    members: tuple[SpooledAudioClip, ...]
+
+    @property
+    def channel(self) -> Channel:
+        return self.members[0].channel
+
+    @property
+    def started_at(self) -> datetime:
+        return self.members[0].started_at
+
+    @property
+    def ended_at(self) -> datetime | None:
+        return self.members[-1].ended_at
+
+    @property
+    def duration_seconds(self) -> float | None:
+        if self.ended_at is None:
+            return None
+        return round((self.ended_at - self.started_at).total_seconds(), 3)
+
+    @property
+    def idempotency_key(self) -> str:
+        if len(self.members) == 1:
+            return self.members[0].idempotency_key
+        digest = hashlib.sha256(
+            "\n".join(member.idempotency_key for member in self.members).encode("utf-8")
+        ).hexdigest()
+        return f"spool-merge-v1:{self.channel}:{_format_utc(self.started_at)}:{digest}"
+
+
+@dataclass(frozen=True)
 class UploadResult:
     bucket: str
     key: str
@@ -191,6 +223,98 @@ def discover_completed_audio_files(
             )
         )
     return sorted(clips, key=lambda clip: clip.started_at, reverse=True)
+
+
+def group_completed_audio_clips(
+    clips: list[SpooledAudioClip],
+    *,
+    merge_gap_seconds: float,
+    max_duration_seconds: float,
+) -> list[SpooledClipGroup]:
+    if merge_gap_seconds < 0:
+        raise ValueError("merge_gap_seconds must not be negative")
+    if max_duration_seconds <= 0:
+        raise ValueError("max_duration_seconds must be positive")
+    groups: list[SpooledClipGroup] = []
+    by_channel: dict[Channel, list[SpooledAudioClip]] = {}
+    for clip in clips:
+        by_channel.setdefault(clip.channel, []).append(clip)
+    for channel_clips in by_channel.values():
+        current: list[SpooledAudioClip] = []
+        for clip in sorted(channel_clips, key=lambda item: item.started_at):
+            if not current:
+                current = [clip]
+                continue
+            previous_end = current[-1].ended_at
+            candidate_end = clip.ended_at
+            gap = (
+                (clip.started_at - previous_end).total_seconds()
+                if previous_end is not None
+                else None
+            )
+            span = (
+                (candidate_end - current[0].started_at).total_seconds()
+                if candidate_end is not None
+                else None
+            )
+            if (
+                gap is not None
+                and 0 <= gap <= merge_gap_seconds
+                and span is not None
+                and span <= max_duration_seconds
+            ):
+                current.append(clip)
+                continue
+            groups.append(SpooledClipGroup(tuple(current)))
+            current = [clip]
+        if current:
+            groups.append(SpooledClipGroup(tuple(current)))
+    return sorted(groups, key=lambda group: group.started_at)
+
+
+def discover_pending_audio_starts(
+    *,
+    spool_root: Path,
+    now: datetime,
+    min_age_seconds: float,
+    stat_func=None,
+) -> dict[Channel, list[datetime]]:
+    stat_func = stat_func or (lambda path: path.stat())
+    pending: dict[Channel, list[datetime]] = {}
+    if not spool_root.exists():
+        return pending
+    for audio_path in spool_root.rglob("*"):
+        if not audio_path.is_file() or audio_path.suffix.lower() not in CONTENT_TYPES:
+            continue
+        stat = stat_func(audio_path)
+        modified_at = datetime.fromtimestamp(stat.st_mtime, UTC)
+        if (now - modified_at).total_seconds() >= min_age_seconds:
+            continue
+        try:
+            channel = infer_spool_channel(audio_path)
+        except ValueError:
+            continue
+        metadata = _read_audio_metadata(audio_path)
+        started_at = _metadata_datetime(metadata, "started_at") or _started_at_from_filename(
+            audio_path
+        )
+        if started_at is not None:
+            pending.setdefault(channel, []).append(started_at)
+    return pending
+
+
+def _group_has_pending_followup(
+    group: SpooledClipGroup,
+    pending_starts: dict[Channel, list[datetime]],
+    *,
+    merge_gap_seconds: float,
+) -> bool:
+    if group.ended_at is None:
+        return False
+    return any(
+        0 <= (started_at - group.ended_at).total_seconds() <= merge_gap_seconds
+        for started_at in pending_starts.get(group.channel, [])
+    )
 
 
 def prune_completed_audio_files(
@@ -326,11 +450,17 @@ def process_spool_once(
     duration_probe: DurationProbe | None = None,
     min_duration_seconds: float = 0.0,
     max_synchronous_channels: int = 0,
+    merge_gap_seconds: float = 3.0,
+    merge_max_duration_seconds: float = 60.0,
 ) -> int:
     if min_duration_seconds < 0:
         raise ValueError("min_duration_seconds must not be negative")
     if max_synchronous_channels < 0:
         raise ValueError("max_synchronous_channels must not be negative")
+    if merge_gap_seconds < 0:
+        raise ValueError("merge_gap_seconds must not be negative")
+    if merge_max_duration_seconds <= 0:
+        raise ValueError("merge_max_duration_seconds must be positive")
     uploaded = 0
     now = now or datetime.now(UTC)
     failed_root = failed_root or spool_root.parent / f"{spool_root.name}-failed"
@@ -386,20 +516,41 @@ def process_spool_once(
                 max_synchronous_channels=max_synchronous_channels,
             )
         clips = [clip for clip in clips if clip.audio_path not in burst_paths]
-    for clip in clips:
-        if clip.duration_seconds is not None and clip.duration_seconds < min_duration_seconds:
-            _discard_spooled_clip(clip.audio_path)
+    groups = group_completed_audio_clips(
+        clips,
+        merge_gap_seconds=merge_gap_seconds,
+        max_duration_seconds=merge_max_duration_seconds,
+    )
+    pending_starts = discover_pending_audio_starts(
+        spool_root=spool_root,
+        now=now,
+        min_age_seconds=min_age_seconds,
+        stat_func=stat_func,
+    )
+    groups = [
+        group
+        for group in groups
+        if not _group_has_pending_followup(
+            group,
+            pending_starts,
+            merge_gap_seconds=merge_gap_seconds,
+        )
+    ]
+    for group in sorted(groups, key=lambda item: item.started_at, reverse=True):
+        if group.duration_seconds is not None and group.duration_seconds < min_duration_seconds:
+            for member in group.members:
+                _discard_spooled_clip(member.audio_path)
             _log_event(
                 "spool_short_clip_discarded",
-                channel=clip.channel,
-                audio_file=clip.audio_path.name,
-                duration_seconds=clip.duration_seconds,
+                channel=group.channel,
+                audio_files=[member.audio_path.name for member in group.members],
+                duration_seconds=group.duration_seconds,
                 min_duration_seconds=min_duration_seconds,
             )
             continue
         try:
-            with prepared_spooled_clip_for_upload(
-                clip,
+            with prepared_spooled_group_for_upload(
+                group,
                 audio_filter=audio_filter,
                 mp3_bitrate=mp3_bitrate,
                 ffmpeg_path=ffmpeg_path,
@@ -408,39 +559,44 @@ def process_spool_once(
             ) as upload_clip:
                 result = upload_func(api_url=api_url, ingest_token=ingest_token, clip=upload_clip)
         except ClipPreparationError as exc:
-            failed_path = quarantine_spooled_clip(
-                clip=clip,
-                spool_root=spool_root,
-                failed_root=failed_root,
-                error=exc,
-            )
+            failed_paths = [
+                quarantine_spooled_clip(
+                    clip=member,
+                    spool_root=spool_root,
+                    failed_root=failed_root,
+                    error=exc,
+                )
+                for member in group.members
+            ]
             _log_event(
                 "spool_clip_quarantined",
-                channel=clip.channel,
-                audio_file=clip.audio_path.name,
-                failed_file=str(failed_path),
+                channel=group.channel,
+                audio_files=[member.audio_path.name for member in group.members],
+                failed_files=[str(path) for path in failed_paths],
                 error=f"{type(exc.__cause__ or exc).__name__}: {exc.__cause__ or exc}",
             )
             continue
         except Exception as exc:  # noqa: BLE001 - one bad upload must not block later clips.
             _log_event(
                 "spool_clip_upload_failed",
-                channel=clip.channel,
-                audio_file=clip.audio_path.name,
+                channel=group.channel,
+                audio_files=[member.audio_path.name for member in group.members],
                 error=f"{type(exc).__name__}: {exc}",
             )
             continue
         uploaded += 1
         _log_event(
             "spool_clip_uploaded",
-            channel=clip.channel,
-            audio_file=clip.audio_path.name,
+            channel=group.channel,
+            audio_files=[member.audio_path.name for member in group.members],
+            source_clip_count=len(group.members),
             uploaded_audio_file=upload_clip.audio_path.name,
             key=result.key,
             bytes_uploaded=result.bytes_uploaded,
         )
         if delete_after_upload:
-            clip.audio_path.unlink(missing_ok=True)
+            for member in group.members:
+                _discard_spooled_clip(member.audio_path)
     return uploaded
 
 
@@ -624,6 +780,109 @@ def prepared_spooled_clip_for_upload(
         )
 
 
+@contextmanager
+def prepared_spooled_group_for_upload(
+    group: SpooledClipGroup,
+    *,
+    audio_filter: str | None,
+    mp3_bitrate: str = "64k",
+    ffmpeg_path: str = "ffmpeg",
+    runner: Runner = subprocess.run,
+    fallback_to_original_on_prepare_error: bool = False,
+) -> Iterator[SpooledAudioClip]:
+    if len(group.members) == 1:
+        with prepared_spooled_clip_for_upload(
+            group.members[0],
+            audio_filter=audio_filter,
+            mp3_bitrate=mp3_bitrate,
+            ffmpeg_path=ffmpeg_path,
+            runner=runner,
+            fallback_to_original_on_prepare_error=fallback_to_original_on_prepare_error,
+        ) as prepared:
+            yield prepared
+        return
+
+    del audio_filter, fallback_to_original_on_prepare_error
+    with tempfile.TemporaryDirectory(prefix="talkingboats-spool-merge-") as tempdir:
+        merge_path = Path(tempdir) / "merged.wav"
+        upload_path = Path(tempdir) / "merged-canonical.mp3"
+        try:
+            _merge_spooled_group_audio(
+                group,
+                output_path=merge_path,
+                ffmpeg_path=ffmpeg_path,
+                runner=runner,
+            )
+            result = process_canonical_clip_audio(
+                merge_path,
+                upload_path,
+                bitrate=mp3_bitrate,
+                ffmpeg_path=ffmpeg_path,
+                ffprobe_path=os.getenv("TALKINGBOATS_EDGE_UPLOAD_FFPROBE_PATH", "ffprobe"),
+                runner=runner,
+            )
+        except Exception as exc:  # noqa: BLE001 - daemon quarantines this local group.
+            raise ClipPreparationError(f"{type(exc).__name__}: {exc}") from exc
+        duration_seconds = result.duration_seconds or group.duration_seconds
+        yield SpooledAudioClip(
+            channel=group.channel,
+            audio_path=upload_path,
+            started_at=group.started_at,
+            content_type="audio/mpeg",
+            idempotency_key=group.idempotency_key,
+            ended_at=(
+                group.started_at + timedelta(seconds=duration_seconds)
+                if duration_seconds is not None
+                else group.ended_at
+            ),
+            duration_seconds=duration_seconds,
+            audio_profile=result.audio_profile,
+        )
+
+
+def _merge_spooled_group_audio(
+    group: SpooledClipGroup,
+    *,
+    output_path: Path,
+    ffmpeg_path: str,
+    runner: Runner,
+) -> None:
+    command = [ffmpeg_path, "-hide_banner", "-loglevel", "error", "-y"]
+    inputs: list[tuple[int, str]] = []
+    input_index = 0
+    for index, member in enumerate(group.members):
+        command.extend(["-i", str(member.audio_path)])
+        inputs.append((input_index, f"clip{index}"))
+        input_index += 1
+        if index + 1 >= len(group.members) or member.ended_at is None:
+            continue
+        gap = (group.members[index + 1].started_at - member.ended_at).total_seconds()
+        if gap > 0:
+            command.extend(
+                ["-f", "lavfi", "-t", f"{gap:.3f}", "-i", "anullsrc=r=48000:cl=mono"]
+            )
+            inputs.append((input_index, f"gap{index}"))
+            input_index += 1
+    filters = [
+        f"[{index}:a]aresample=48000,aformat=sample_fmts=s16:channel_layouts=mono[{label}]"
+        for index, label in inputs
+    ]
+    labels = "".join(f"[{label}]" for _, label in inputs)
+    filters.append(f"{labels}concat=n={len(inputs)}:v=0:a=1[out]")
+    command.extend(
+        [
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[out]",
+            "-c:a",
+            "pcm_s16le",
+            str(output_path),
+        ]
+    )
+    runner(command, check=True, capture_output=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Upload completed multichannel audio spool files.")
     parser.add_argument("--spool-root", type=Path, default=Path("/opt/talkingboats/spool/airband"))
@@ -641,6 +900,18 @@ def main() -> None:
         type=_nonnegative_int,
         default=os.getenv("TALKINGBOATS_SPOOL_MAX_SYNCHRONOUS_CHANNELS", "3"),
         help="Discard same-second bursts spanning more than this many channels; 0 disables.",
+    )
+    parser.add_argument(
+        "--merge-gap-seconds",
+        type=_nonnegative_float,
+        default=os.getenv("TALKINGBOATS_SPOOL_MERGE_GAP_SECONDS", "3"),
+        help="Merge completed same-channel clips separated by no more than this gap.",
+    )
+    parser.add_argument(
+        "--merge-max-duration-seconds",
+        type=_positive_float,
+        default=os.getenv("TALKINGBOATS_SPOOL_MERGE_MAX_DURATION_SECONDS", "60"),
+        help="Maximum wall-clock duration of one merged upload.",
     )
     parser.add_argument("--poll-seconds", type=float, default=20.0)
     parser.add_argument(
@@ -686,6 +957,8 @@ def main() -> None:
                 min_age_seconds=args.min_age_seconds,
                 min_duration_seconds=args.min_duration_seconds,
                 max_synchronous_channels=args.max_synchronous_channels,
+                merge_gap_seconds=args.merge_gap_seconds,
+                merge_max_duration_seconds=args.merge_max_duration_seconds,
                 delete_after_upload=args.delete_after_upload,
                 mp3_bitrate=args.mp3_bitrate,
                 ffmpeg_path=args.ffmpeg_path,
@@ -771,6 +1044,13 @@ def _nonnegative_float(value: str) -> float:
     parsed = float(value)
     if parsed < 0:
         raise argparse.ArgumentTypeError("must not be negative")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be positive")
     return parsed
 
 

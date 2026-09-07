@@ -37,13 +37,16 @@ from `dev`, `main`, `codex/*`, or `feature/*`, and allows prod deploys only from
 `TALKINGBOATS_ALLOW_CROSS_ENV_DEPLOY=1` and record why in the operator notes.
 
 Generated public artifacts have a narrower path. The lightweight public clip
-refresh runs every 15 minutes, rebuilds `outputs/public-site`, verifies the
+refresh runs every hour, rebuilds `outputs/public-site`, verifies the
 exact `public_manifest.json` is visible on dev, then uses
 `scripts/deploy_generated_public_assets.sh prod outputs/public-site` to promote
 only `public_manifest.json`, `clips/`, and the existing `analysis/` artifacts
-to prod. The six-hour lexical refresh shares the same export lock, replaces the
-analysis artifacts, performs the same dev validation, and then promotes. This
-keeps public clip/audio/analysis data current from the always-on processing host
+to prod. The weekly lexical refresh shares the same export lock, replaces the
+analysis artifacts, performs the same dev validation, and then promotes. Both
+paths stop when their configured DynamoDB read-capacity ceiling is reached. The
+weekly job checkpoints export and analysis completion under its ISO-week run ID,
+so a deployment retry does not repeat a completed database scan. This keeps
+public clip/audio/analysis data current from the always-on processing host
 without allowing an archive deploy copy to change the production app shell.
 
 ## Resource Policy
@@ -129,9 +132,9 @@ The OptiPlex deploy should keep `loginctl enable-linger rob` active and enable
 `talkingboats-optiplex-boot-recovery.service` in the `rob` user manager. That
 service resets failed state and starts the private API, uploaded-clip
 transcriber, dev and public live proxies, the dev Tailnet proxy, and the refresh
-timers. `talkingboats-lexical-refresh.timer` uses both `OnBootSec=15min` and
-`OnStartupSec=15min` so generated public/search artifacts refresh after either a
-machine reboot or a delayed user-manager start.
+timers. `talkingboats-lexical-refresh.timer` is persistent and scheduled for
+Sunday at 10:15 UTC with a short randomized delay, so a missed weekly run is
+recovered without introducing a separate boot-time database scan.
 
 The private API resolves the current IPv4 address on `eth0` within
 `TALKINGBOATS_LAN_NETWORK` before binding its LAN-only listener. The uploaded-clip
@@ -175,10 +178,16 @@ the timer. The probe also treats a capture PID change during its sample window
 as a fresh-process observation instead of subtracting unrelated CPU counters.
 Rollback restores the previous files and restarts the old healthcheck and timer.
 
-The spool uploader discards completed clips shorter than one second before
-requesting an upload. These subsecond squelch artifacts cannot produce useful
-transcripts and would otherwise consume both network and transcription
-capacity. Override the threshold with
+The spool uploader first merges stable same-channel clips separated by no more
+than three seconds, up to a 60-second wall-clock span. It inserts silence for a
+positive gap and uses a stable group idempotency key, so a retry cannot create a
+duplicate clip. Every source file and sidecar remains in the spool until the
+merged upload succeeds. It then discards merged clips shorter than one second
+before requesting an upload. These subsecond squelch artifacts cannot produce
+useful transcripts and would otherwise consume network, S3, DynamoDB, and
+transcription capacity. Override the merge controls with
+`TALKINGBOATS_SPOOL_MERGE_GAP_SECONDS` and
+`TALKINGBOATS_SPOOL_MERGE_MAX_DURATION_SECONDS`; override the threshold with
 `TALKINGBOATS_SPOOL_MIN_DURATION_SECONDS` only after reviewing receiver output.
 Clips whose duration cannot be probed are retained and uploaded.
 

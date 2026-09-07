@@ -4,10 +4,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import talkingboats.dynamo_clip_store as dynamo_clip_store_module
 from talkingboats.clip_transcriber import ClipQualityMetadata
 from talkingboats.durable_backfill import backfill_clip_read_model
-from talkingboats.dynamo_clip_store import DynamoClipStoreConfig, DynamoUploadedClipStore
+from talkingboats.dynamo_clip_store import (
+    DynamoClipStoreConfig,
+    DynamoReadCapacityLimitExceeded,
+    DynamoUploadedClipStore,
+)
 from talkingboats.schemas import ClipPresignRequest
 from talkingboats.transcript_cleanup import cleanup_noise_transcripts
 
@@ -393,6 +399,40 @@ def test_dynamo_clip_store_streams_recent_transcribed_with_cursor_pages() -> Non
     assert "ExclusiveStartKey" not in transcribed_queries[0]
     assert "ExclusiveStartKey" in transcribed_queries[1]
     assert "ExclusiveStartKey" in transcribed_queries[2]
+
+
+def test_dynamo_clip_store_stops_paginating_at_configured_read_ceiling() -> None:
+    table = FakeDynamoTable(page_size=1, consumed_capacity_per_query=1.0)
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig(
+            table_name="events",
+            aws_region="us-west-2",
+            read_capacity_limit=1.5,
+        ),
+        table=table,
+    )
+    for index in range(3):
+        key = f"raw/channel=14/date=2026-06-01/budget-{index}.mp3"
+        store.record_presigned_upload(key=key, request=_request(channel="14"))
+        store.mark_transcribed(
+            key,
+            [
+                SimpleNamespace(
+                    text=f"Seattle Traffic {index}",
+                    started_at=f"2026-06-01T12:00:0{index}Z",
+                    ended_at=f"2026-06-01T12:00:0{index + 1}Z",
+                    relative_start_seconds=0.0,
+                    relative_end_seconds=1.0,
+                )
+            ],
+        )
+
+    table.query_calls.clear()
+    with pytest.raises(DynamoReadCapacityLimitExceeded, match="1.5"):
+        list(store.iter_recent_transcribed(page_size=1))
+
+    assert all(call["ReturnConsumedCapacity"] == "TOTAL" for call in table.query_calls)
+    assert store.consumed_read_capacity == 2.0
 
 
 def test_dynamo_clip_store_reads_oldest_transcribed_with_forward_query() -> None:
@@ -788,9 +828,15 @@ def _seed_legacy_dynamo_transcribed_clip(
 
 
 class FakeDynamoTable:
-    def __init__(self, *, page_size: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        page_size: int | None = None,
+        consumed_capacity_per_query: float | None = None,
+    ) -> None:
         self.items: dict[tuple[str, str], dict[str, object]] = {}
         self.page_size = page_size
+        self.consumed_capacity_per_query = consumed_capacity_per_query
         self.query_calls: list[dict[str, object]] = []
 
     def put_item(self, *, Item, **kwargs):
@@ -825,6 +871,11 @@ class FakeDynamoTable:
             page_limit = min(int(page_limit), self.page_size) if page_limit else self.page_size
         page_rows = rows[: int(page_limit)] if page_limit is not None else rows
         response = {}
+        if self.consumed_capacity_per_query is not None:
+            response["ConsumedCapacity"] = {
+                "TableName": "events",
+                "CapacityUnits": self.consumed_capacity_per_query,
+            }
         if len(page_rows) < len(rows) and page_rows:
             response["LastEvaluatedKey"] = {
                 "pk": page_rows[-1]["pk"],

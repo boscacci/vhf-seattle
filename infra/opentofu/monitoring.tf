@@ -232,11 +232,122 @@ data "aws_iam_policy_document" "prod_clip_freshness_alerts" {
       values   = [data.aws_caller_identity.current.account_id]
     }
   }
+
+  statement {
+    sid     = "AllowBudgetAlerts"
+    effect  = "Allow"
+    actions = ["SNS:Publish"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["budgets.amazonaws.com"]
+    }
+
+    resources = [aws_sns_topic.prod_clip_freshness_alerts.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+
+  statement {
+    sid     = "AllowCostAnomalyAlerts"
+    effect  = "Allow"
+    actions = ["SNS:Publish"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["costalerts.amazonaws.com"]
+    }
+
+    resources = [aws_sns_topic.prod_clip_freshness_alerts.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
 }
 
 resource "aws_sns_topic_policy" "prod_clip_freshness_alerts" {
   arn    = aws_sns_topic.prod_clip_freshness_alerts.arn
   policy = data.aws_iam_policy_document.prod_clip_freshness_alerts.json
+}
+
+resource "aws_budgets_budget" "monthly_cost" {
+  name              = "${var.project_name}-monthly-cost"
+  budget_type       = "COST"
+  limit_amount      = "35"
+  limit_unit        = "USD"
+  time_unit         = "MONTHLY"
+  time_period_start = "2026-10-01_00:00"
+
+  cost_types {
+    include_tax = true
+  }
+
+  notification {
+    comparison_operator       = "GREATER_THAN"
+    notification_type         = "ACTUAL"
+    threshold                 = 25
+    threshold_type            = "ABSOLUTE_VALUE"
+    subscriber_sns_topic_arns = [aws_sns_topic.prod_clip_freshness_alerts.arn]
+  }
+
+  notification {
+    comparison_operator       = "GREATER_THAN"
+    notification_type         = "FORECASTED"
+    threshold                 = 35
+    threshold_type            = "ABSOLUTE_VALUE"
+    subscriber_sns_topic_arns = [aws_sns_topic.prod_clip_freshness_alerts.arn]
+  }
+
+  tags = merge(local.common_tags, {
+    Environment = "account"
+    Role        = "cost-budget"
+  })
+
+  depends_on = [aws_sns_topic_policy.prod_clip_freshness_alerts]
+}
+
+resource "aws_ce_anomaly_monitor" "services" {
+  name              = "${var.project_name}-service-costs"
+  monitor_type      = "DIMENSIONAL"
+  monitor_dimension = "SERVICE"
+
+  tags = merge(local.common_tags, {
+    Environment = "account"
+    Role        = "cost-anomaly-monitor"
+  })
+}
+
+resource "aws_ce_anomaly_subscription" "service_alerts" {
+  name             = "${var.project_name}-service-cost-alerts"
+  frequency        = "IMMEDIATE"
+  monitor_arn_list = [aws_ce_anomaly_monitor.services.arn]
+
+  threshold_expression {
+    dimension {
+      key           = "ANOMALY_TOTAL_IMPACT_ABSOLUTE"
+      match_options = ["GREATER_THAN_OR_EQUAL"]
+      values        = ["3"]
+    }
+  }
+
+  subscriber {
+    type    = "SNS"
+    address = aws_sns_topic.prod_clip_freshness_alerts.arn
+  }
+
+  tags = merge(local.common_tags, {
+    Environment = "account"
+    Role        = "cost-anomaly-alerts"
+  })
+
+  depends_on = [aws_sns_topic_policy.prod_clip_freshness_alerts]
 }
 
 resource "aws_cloudwatch_metric_alarm" "prod_clip_freshness" {

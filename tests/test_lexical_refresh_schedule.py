@@ -23,12 +23,12 @@ def test_lexical_refresh_script_regenerates_exports_and_promotes_generated_prod_
     assert "/home/rob/.local/bin:/snap/bin" in script
     assert 'exec 9>"${lock_file}"' in script
     assert "flock -n 9" in script
-    assert 'analysis_work_dir="${output_dir}.analysis-refresh"' in script
+    assert 'analysis_work_dir="${run_state_dir}/work"' in script
     assert 'previous_analysis_dir="${output_dir}.analysis-previous"' in script
     assert 'analysis_work_dir="${output_dir}/.analysis-refresh"' not in script
     assert "rm -rf \"${output_dir}/analysis\"" not in script
     assert '--output-dir "${analysis_work_dir}"' in script
-    assert 'mv "${analysis_work_dir}/analysis" "${output_dir}/analysis"' in script
+    assert 'cp -a "${analysis_work_dir}/analysis" "${output_dir}/analysis"' in script
     assert "talkingboats-analyze-transcripts" in script
     assert "--clip-store-backend \"${clip_store_backend}\"" in script
     assert 'analysis_manifest_path="${analysis_work_dir}/public_manifest.snapshot.json"' in script
@@ -61,7 +61,7 @@ def test_lexical_refresh_lock_is_released_after_process_termination() -> None:
     assert 'mkdir "${lock_dir}"' not in script
 
 
-def test_lexical_refresh_systemd_timer_runs_daily() -> None:
+def test_lexical_refresh_systemd_timer_runs_weekly() -> None:
     service = Path(
         "deploy/systemd/talkingboats-lexical-refresh.service.example"
     ).read_text(encoding="utf-8")
@@ -90,9 +90,23 @@ def test_lexical_refresh_systemd_timer_runs_daily() -> None:
     assert "TimeoutStartSec=2h" in service
     assert "CPUQuota=150%" in service
     assert "CPUWeight=20" in service
-    assert "OnBootSec=15min" in timer
-    assert "daily" in timer
-    assert "OnUnitActiveSec=24h" in timer
+    assert "weekly" in timer
+    assert "OnCalendar=Sun *-*-* 10:15:00 UTC" in timer
+    assert "OnUnitActiveSec" not in timer
+    assert "RandomizedDelaySec=5min" in timer
     assert "OnUnitActiveSec=6h" not in timer
     assert "Persistent=true" in timer
     assert "Unit=talkingboats-lexical-refresh.service" in timer
+
+
+def test_lexical_refresh_checkpoints_expensive_stages_and_caps_reads() -> None:
+    script = Path("scripts/refresh_lexical_analysis.sh").read_text(encoding="utf-8")
+
+    assert "TALKINGBOATS_LEXICAL_MAX_READ_CAPACITY_UNITS:-6000000" in script
+    assert 'TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${max_read_capacity_units}"' in script
+    assert 'run_id="${TALKINGBOATS_LEXICAL_RUN_ID:-$(date -u +%G-W%V)}"' in script
+    assert 'analysis_complete_marker="${run_state_dir}/analysis.complete"' in script
+    assert 'refresh_complete_marker="${run_state_dir}/refresh.complete"' in script
+    assert 'if [[ -f "${refresh_complete_marker}" ]]' in script
+    assert 'touch "${analysis_complete_marker}"' in script
+    assert 'touch "${refresh_complete_marker}"' in script

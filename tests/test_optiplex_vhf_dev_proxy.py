@@ -89,12 +89,14 @@ def test_optiplex_proxy_units_allow_a_bounded_private_api_recovery_window() -> N
         assert "TALKINGBOATS_PROXY_PRIVATE_API_READ_TIMEOUT_SECONDS=30" in service
 
 
-def test_optiplex_vhf_reboot_timers_are_persistent() -> None:
+def test_optiplex_vhf_weekly_refresh_timer_is_persistent() -> None:
     for timer_name in [
         "talkingboats-lexical-refresh.timer.example",
     ]:
         timer = (SYSTEMD_DIR / timer_name).read_text(encoding="utf-8")
-        assert "OnStartupSec=15min" in timer, timer_name
+        assert "OnCalendar=Sun *-*-* 10:15:00 UTC" in timer, timer_name
+        assert "OnStartupSec=" not in timer, timer_name
+        assert "OnBootSec=" not in timer, timer_name
         assert "Persistent=true" in timer, timer_name
         assert "WantedBy=timers.target" in timer, timer_name
 

@@ -16,6 +16,7 @@ raw_bucket_output="${TALKINGBOATS_PUBLIC_REFRESH_RAW_BUCKET_OUTPUT:-raw_audio_bu
 raw_bucket="${TALKINGBOATS_RAW_BUCKET:-}"
 tofu_dir="${TALKINGBOATS_TOFU_DIR:-infra/opentofu}"
 dev_generated_asset_url="${TALKINGBOATS_DEV_GENERATED_ASSET_URL:-https://dev.seattleboatradio.com/public_manifest.json}"
+max_read_capacity_units="${TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1000}"
 
 usage() {
   cat <<'EOF'
@@ -35,6 +36,7 @@ Environment overrides:
   TALKINGBOATS_RAW_BUCKET                      Raw bucket override
   TALKINGBOATS_TOFU_DIR                        OpenTofu directory
   TALKINGBOATS_DEV_GENERATED_ASSET_URL         Dev manifest validation URL
+  TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS DynamoDB read ceiling per export
 EOF
 }
 
@@ -88,6 +90,7 @@ fi
 
 echo "event=talkingboats_public_clip_refresh_started environment=dev"
 export TALKINGBOATS_CLIP_STORE_BACKEND="${clip_store_backend}"
+export TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${max_read_capacity_units}"
 "${conda_bin}" run --no-capture-output -n "${conda_env}" \
   talkingboats-export-public \
   --clip-store-backend "${clip_store_backend}" \

@@ -14,6 +14,7 @@ from talkingboats.spool_uploader import (
     SpooledAudioClip,
     UploadResult,
     discover_completed_audio_files,
+    group_completed_audio_clips,
     infer_spool_channel,
     process_spool_once,
     upload_spooled_clip,
@@ -38,6 +39,123 @@ def fake_canonical_audio_processor(monkeypatch):
         "talkingboats.spool_uploader.process_canonical_clip_audio",
         process,
     )
+
+
+def test_spool_uploader_merges_same_channel_clips_within_three_seconds(tmp_path) -> None:
+    clips = [
+        _spooled_clip(tmp_path, channel="14", second=0, duration=2.0),
+        _spooled_clip(tmp_path, channel="14", second=4, duration=3.0),
+        _spooled_clip(tmp_path, channel="13", second=5, duration=2.0),
+    ]
+
+    groups = group_completed_audio_clips(
+        clips,
+        merge_gap_seconds=3.0,
+        max_duration_seconds=60.0,
+    )
+
+    assert [[member.channel for member in group.members] for group in groups] == [
+        ["14", "14"],
+        ["13"],
+    ]
+    assert groups[0].duration_seconds == 7.0
+    assert groups[0].idempotency_key.startswith("spool-merge-v1:14:")
+
+
+def test_spool_uploader_starts_new_group_at_sixty_second_cap(tmp_path) -> None:
+    clips = [
+        _spooled_clip(tmp_path, channel="14", second=0, duration=40.0),
+        _spooled_clip(tmp_path, channel="14", second=42, duration=20.0),
+    ]
+
+    groups = group_completed_audio_clips(
+        clips,
+        merge_gap_seconds=3.0,
+        max_duration_seconds=60.0,
+    )
+
+    assert [len(group.members) for group in groups] == [1, 1]
+
+
+def test_spool_uploader_merged_upload_is_atomic_and_retryable(tmp_path) -> None:
+    first = _spooled_clip(tmp_path, channel="14", second=0, duration=2.0)
+    second = _spooled_clip(tmp_path, channel="14", second=4, duration=2.0)
+    now = datetime(2026, 9, 7, 12, 1, tzinfo=UTC)
+    old_timestamp = (now - timedelta(seconds=30)).timestamp()
+
+    def fake_runner(command, **_kwargs):
+        Path(command[-1]).write_bytes(b"merged wav")
+
+    def failed_upload(**_kwargs):
+        raise RuntimeError("temporary presign failure")
+
+    first_count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=True,
+        now=now,
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        duration_probe=lambda path: 2.0,
+        runner=fake_runner,
+        upload_func=failed_upload,
+    )
+
+    assert first_count == 0
+    assert first.audio_path.exists()
+    assert second.audio_path.exists()
+
+    uploaded = []
+
+    def successful_upload(*, clip, **_kwargs):
+        uploaded.append(clip)
+        return UploadResult(bucket="bucket", key="raw/merged.mp3", bytes_uploaded=16)
+
+    second_count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=True,
+        now=now,
+        stat_func=lambda path: FakeStat(size=path.stat().st_size, mtime=old_timestamp),
+        duration_probe=lambda path: 2.0,
+        runner=fake_runner,
+        upload_func=successful_upload,
+    )
+
+    assert second_count == 1
+    assert uploaded[0].idempotency_key.startswith("spool-merge-v1:14:")
+    assert uploaded[0].duration_seconds == 6.0
+    assert not first.audio_path.exists()
+    assert not second.audio_path.exists()
+
+
+def test_spool_uploader_holds_group_for_young_same_channel_followup(tmp_path) -> None:
+    stable = _spooled_clip(tmp_path, channel="14", second=0, duration=2.0)
+    pending = _spooled_clip(tmp_path, channel="14", second=4, duration=8.0)
+    now = datetime(2026, 9, 7, 12, 0, 8, tzinfo=UTC)
+    old_timestamp = (now - timedelta(seconds=30)).timestamp()
+
+    count = process_spool_once(
+        spool_root=tmp_path,
+        api_url="http://private-api.test",
+        ingest_token="ingest-token",
+        min_age_seconds=10,
+        delete_after_upload=True,
+        now=now,
+        stat_func=lambda path: FakeStat(
+            size=path.stat().st_size,
+            mtime=now.timestamp() if path == pending.audio_path else old_timestamp,
+        ),
+        duration_probe=lambda path: 2.0,
+        upload_func=lambda **_kwargs: pytest.fail("group must remain local"),
+    )
+
+    assert count == 0
+    assert stable.audio_path.exists()
+    assert pending.audio_path.exists()
 
 
 def test_spool_uploader_discovers_stable_channel_files(tmp_path) -> None:
@@ -773,6 +891,29 @@ def test_spool_uploader_imports_without_pydantic() -> None:
     )
 
     assert result.stdout.strip() == "ok"
+
+
+def _spooled_clip(
+    root: Path,
+    *,
+    channel: str,
+    second: int,
+    duration: float,
+) -> SpooledAudioClip:
+    channel_dir = root / channel
+    channel_dir.mkdir(exist_ok=True)
+    started_at = datetime(2026, 9, 7, 12, 0, second, tzinfo=UTC)
+    path = channel_dir / f"vhf-{channel}_{started_at:%Y%m%d_%H%M%S}.mp3"
+    path.write_bytes(f"audio-{channel}-{second}".encode())
+    return SpooledAudioClip(
+        channel=channel,
+        audio_path=path,
+        started_at=started_at,
+        ended_at=started_at + timedelta(seconds=duration),
+        duration_seconds=duration,
+        content_type="audio/mpeg",
+        idempotency_key=f"spool-v1:{channel}:{second}",
+    )
 
 
 class FakeStat:

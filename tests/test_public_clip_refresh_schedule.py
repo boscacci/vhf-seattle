@@ -25,6 +25,7 @@ def test_public_clip_refresh_exports_validates_dev_then_promotes_prod() -> None:
 
 
 def test_public_clip_refresh_runs_hourly_with_bounded_resources() -> None:
+    script = Path("scripts/refresh_public_clips.sh").read_text(encoding="utf-8")
     service = Path("deploy/systemd/talkingboats-public-clip-refresh.service.example").read_text(
         encoding="utf-8"
     )
@@ -43,6 +44,8 @@ def test_public_clip_refresh_runs_hourly_with_bounded_resources() -> None:
     assert "Nice=15" in service
     assert "CPUQuota=75%" in service
     assert "CPUWeight=10" in service
+    assert "TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1000" in script
+    assert 'TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${max_read_capacity_units}"' in script
     assert "OnBootSec=5min" in timer
     assert "every hour" in timer
     assert "OnUnitActiveSec=1h" in timer
@@ -65,7 +68,7 @@ def test_lexical_refresh_releases_the_public_export_lock_during_analysis() -> No
     analysis = lexical_script.index("talkingboats-analyze-transcripts")
     final_lock = lexical_script.index("flock 8", first_lock + 1)
     analysis_swap = lexical_script.index(
-        'mv "${analysis_work_dir}/analysis" "${output_dir}/analysis"'
+        'cp -a "${analysis_work_dir}/analysis" "${output_dir}/analysis"'
     )
     assert first_lock < unlock < analysis < final_lock < analysis_swap
     assert (

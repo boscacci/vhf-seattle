@@ -79,6 +79,8 @@ def test_live_radio_systemd_units_restart_and_stay_lan_scoped() -> None:
     assert "--max-synchronous-channels 3" in uploader_unit
     assert "--max-files-per-poll 20" in uploader_unit
     assert "--max-retained-files 300" in uploader_unit
+    assert "--merge-gap-seconds 3" in uploader_unit
+    assert "--merge-max-duration-seconds 60" in uploader_unit
 
 
 def test_pi_units_do_not_give_up_during_blackout_boot_races() -> None:

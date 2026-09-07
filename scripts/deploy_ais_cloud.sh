@@ -161,8 +161,7 @@ tofu -chdir="${tofu_dir}" init
 tofu -chdir="${tofu_dir}" apply -auto-approve "$@"
 
 deployed_secret_name="$(tofu -chdir="${tofu_dir}" output -raw ais_ingest_secret_name)"
-kms_key_arn="$(tofu -chdir="${tofu_dir}" output -raw ais_ingest_secret_kms_key_arn)"
 put_secret_value "${deployed_secret_name}" "${token}"
 
 echo "Stored AIS ingest token in Secrets Manager secret: ${deployed_secret_name}"
-echo "Secret is encrypted with KMS key: ${kms_key_arn}"
+echo "Secret uses the AWS managed Secrets Manager KMS key"

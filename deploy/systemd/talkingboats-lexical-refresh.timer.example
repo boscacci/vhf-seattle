@@ -1,10 +1,9 @@
 [Unit]
-Description=Refresh Elliott Bay VHF lexical analysis daily
+Description=Refresh Elliott Bay VHF lexical analysis weekly
 
 [Timer]
-OnBootSec=15min
-OnStartupSec=15min
-OnUnitActiveSec=24h
+OnCalendar=Sun *-*-* 10:15:00 UTC
+RandomizedDelaySec=5min
 Persistent=true
 Unit=talkingboats-lexical-refresh.service
 
