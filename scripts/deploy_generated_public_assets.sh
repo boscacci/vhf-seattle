@@ -116,7 +116,7 @@ artifact_release_id() {
   (
     cd "${site_dir}"
     {
-      sha256sum public_manifest.json recent_clips.json
+      sha256sum public_manifest.json recent_clips.json operations.json
       find clips -type f -name '*.mp3' -print0 |
         LC_ALL=C sort -z |
         xargs -0 -r sha256sum
@@ -176,6 +176,10 @@ if [[ ! -f "${site_dir}/recent_clips.json" ]]; then
   echo "Generated recent clip snapshot is missing: ${site_dir}/recent_clips.json" >&2
   exit 1
 fi
+if [[ ! -f "${site_dir}/operations.json" ]]; then
+  echo "Generated operations snapshot is missing: ${site_dir}/operations.json" >&2
+  exit 1
+fi
 if [[ ! -d "${site_dir}/clips" ]]; then
   echo "Generated clips directory is missing: ${site_dir}/clips" >&2
   exit 1
@@ -215,6 +219,9 @@ else
     --include "search_index.json" \
     --include "topic_clusters.html"
   aws s3 cp "${site_dir}/recent_clips.json" "s3://${bucket}/recent_clips.json" \
+    --content-type "application/json" \
+    --cache-control "no-store"
+  aws s3 cp "${site_dir}/operations.json" "s3://${bucket}/operations.json" \
     --content-type "application/json" \
     --cache-control "no-store"
   # Upload the manifest last so its release metadata is a commit marker for

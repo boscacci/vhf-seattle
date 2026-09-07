@@ -43,7 +43,9 @@ SHELL_ASSET_TYPES = {
     "sitemap.xml": "application/xml",
     "public_manifest.json": "application/json",
     "recent_clips.json": "application/json",
+    "operations.json": "application/json",
 }
+PUBLIC_SITE_HOSTS = {"seattleboatradio.com", "www.seattleboatradio.com"}
 PERFORMANCE_DISK_PATHS = (
     ("system", Path("/")),
     ("home", Path("/home/rob")),
@@ -888,7 +890,8 @@ def create_app(
         return await _proxy_ais_catcher(request, proxy_path, settings, client_factory)
 
     @app.get("/api/live/current.mp3")
-    async def current_live_stream(dsp: str | None = None) -> StreamingResponse:
+    async def current_live_stream(request: Request, dsp: str | None = None) -> StreamingResponse:
+        _reject_public_live_audio(request)
         stream_url = await _select_live_stream(settings.stream_urls, client_factory)
         return StreamingResponse(
             _audio_iterator_for_stream(stream_url, dsp, settings, client_factory),
@@ -904,16 +907,15 @@ def create_app(
         }
 
     @app.get("/api/live/performance")
-    async def live_performance(request: Request) -> dict[str, object]:
-        if not settings.tailnet_dev_routes_enabled:
-            raise HTTPException(status_code=404, detail="performance dashboard is dev-only")
-        if not _performance_host_allowed(request, settings):
-            raise HTTPException(status_code=404, detail="performance dashboard is dev-only")
+    async def live_performance() -> dict[str, object]:
         snapshot = await performance_history.payload_for_request(settings, performance_collector)
         return _public_performance_payload(snapshot)
 
     @app.get("/api/live/{channel}/current.mp3")
-    async def channel_live_stream(channel: str, dsp: str | None = None) -> StreamingResponse:
+    async def channel_live_stream(
+        request: Request, channel: str, dsp: str | None = None
+    ) -> StreamingResponse:
+        _reject_public_live_audio(request)
         stream_urls = _stream_urls_for_channel(settings, channel)
         stream_url = await _select_live_stream(stream_urls, client_factory)
         return StreamingResponse(
@@ -1110,6 +1112,13 @@ def _live_status_payload(preset: ChannelPreset) -> dict[str, object]:
         "frequencyMhz": preset.frequency_mhz,
         "streamDelaySeconds": {"minimum": 1, "maximum": 5},
     }
+
+
+def _reject_public_live_audio(request: Request) -> None:
+    host = request.headers.get("host", "")
+    hostname = host.rsplit("@", 1)[-1].split(":", 1)[0].lower()
+    if hostname in PUBLIC_SITE_HOSTS:
+        raise HTTPException(status_code=404, detail="public live audio is disabled")
 
 
 def _performance_host_allowed(request: Request, settings: ProxySettings) -> bool:

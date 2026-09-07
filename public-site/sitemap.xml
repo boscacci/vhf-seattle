@@ -13,13 +13,13 @@
     <loc>https://seattleboatradio.com/search/</loc>
   </url>
   <url>
-    <loc>https://seattleboatradio.com/live/</loc>
-  </url>
-  <url>
     <loc>https://seattleboatradio.com/ais/</loc>
   </url>
   <url>
     <loc>https://seattleboatradio.com/analysis/</loc>
+  </url>
+  <url>
+    <loc>https://seattleboatradio.com/performance/</loc>
   </url>
   <url>
     <loc>https://seattleboatradio.com/about/</loc>

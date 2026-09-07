@@ -927,7 +927,7 @@ def test_proxy_ais_catcher_subpaths_and_redirects_stay_under_dev_prefix() -> Non
     assert response.headers["location"] == "/ais-catcher/"
 
 
-def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
+def test_proxy_performance_endpoint_is_public_and_redacts_private_topology() -> None:
     legacy_home_role = "".join(("Opti", "Plex")) + " live proxy"
 
     def collector(_settings: ProxySettings) -> dict[str, object]:
@@ -1006,8 +1006,8 @@ def test_proxy_performance_endpoint_is_dev_only_and_public_safe() -> None:
     assert "services" not in dev_payload
     assert "internalUrl" not in dev_response.text
     assert "talkingboats-live-radio-proxy" not in dev_response.text
-    assert spoofed_header_response.status_code == 404
-    assert prod_response.status_code == 404
+    assert spoofed_header_response.status_code == 200
+    assert prod_response.status_code == 200
     assert "192.168." not in dev_response.text
     assert "127.0.0.1" not in dev_response.text
     assert "tailbea63b" not in dev_response.text
@@ -1175,7 +1175,7 @@ def test_proxy_performance_lifespan_starts_server_side_sampler(tmp_path: Path) -
     assert response.json()["hosts"][0]["history"][0]["cpuUtilizationPercent"] == 12.0
 
 
-def test_proxy_performance_static_shell_hooks_are_dev_only() -> None:
+def test_proxy_performance_static_shell_hooks_are_public_and_live_tab_is_private() -> None:
     response = _run(_asgi_get(create_app(ProxySettings()), "/assets/app.js"))
     index_response = _run(_asgi_get(create_app(ProxySettings()), "/"))
 
@@ -1185,13 +1185,31 @@ def test_proxy_performance_static_shell_hooks_are_dev_only() -> None:
     assert "const privateAppHost = localAppHost || tailnetAppHost || devAppHost;" in response.text
     assert 'const privateApiBaseUrl = "";' in response.text
     assert "optiplex.tailbea63b.ts.net" not in response.text
-    assert "const performanceDashboardEnabled = systemDashboardEnabled;" in response.text
+    assert "const performanceDashboardEnabled = true;" in response.text
+    assert "const liveDashboardEnabled = systemDashboardEnabled;" in response.text
     assert "renderPerformanceDashboard" in response.text
     assert re.search(
         r'<button[^>]*id="tab-performance"[^>]*type="button"[^>]*data-tab="performance"[^>]*hidden',
         index_response.text,
         flags=re.S,
     )
+    assert re.search(
+        r'<button[^>]*id="tab-live"[^>]*type="button"[^>]*data-tab="live"[^>]*hidden',
+        index_response.text,
+        flags=re.S,
+    )
+
+
+def test_public_hostname_cannot_open_live_audio_stream() -> None:
+    response = _run(
+        _asgi_get(
+            create_app(ProxySettings()),
+            "/api/live/current.mp3",
+            headers={"Host": "seattleboatradio.com"},
+        )
+    )
+
+    assert response.status_code == 404
 
 
 def test_proxy_static_shell_routes_include_search_tab() -> None:

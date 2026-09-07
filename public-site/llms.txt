@@ -1,18 +1,18 @@
 # Elliott Bay VHF
 
-> Live Elliott Bay marine VHF receiver clips, transcript search, AIS vessel map, and channel analysis for nearby Seattle marine traffic.
+> Elliott Bay marine VHF receiver clips, transcript search, AIS vessel map, channel analysis, and public system performance.
 
 Public pages listed here are intentionally crawlable for search and AI discovery. Private operator routes, write APIs, and local receiver control paths are not part of this public crawl surface.
 
 ## Primary Pages
 
-- [Overview](https://seattleboatradio.com/): Live Elliott Bay marine VHF audio and recent receiver clips.
+- [Overview](https://seattleboatradio.com/): Recent Elliott Bay marine VHF audio clips and transcripts.
 - [Recent clips](https://seattleboatradio.com/clips/): Public receiver clip list with transcripts and channel metadata.
 - [Hall of Fame](https://seattleboatradio.com/hall-of-fame/): Featured public radio clips.
 - [Transcript search](https://seattleboatradio.com/search/): Semantic search across public transcript meaning.
-- [Live audio](https://seattleboatradio.com/live/): Current receiver stream and live channel state.
 - [Vessel map](https://seattleboatradio.com/ais/): AIS-catcher map for nearby vessel traffic.
 - [Analysis](https://seattleboatradio.com/analysis/): Channel, language, activity rhythm, and topic analysis.
+- [Performance](https://seattleboatradio.com/performance/): Public-safe host, AWS workload, and budget telemetry.
 - [About](https://seattleboatradio.com/about/): Project architecture and radio capture notes.
 
 ## Machine-Readable Public Data
@@ -20,6 +20,7 @@ Public pages listed here are intentionally crawlable for search and AI discovery
 - [Sitemap](https://seattleboatradio.com/sitemap.xml): Canonical public URLs.
 - [Robots policy](https://seattleboatradio.com/robots.txt): Crawl policy for search and AI crawlers.
 - [Public manifest](https://seattleboatradio.com/public_manifest.json): Public clip metadata and channel counts.
+- [Operations snapshot](https://seattleboatradio.com/operations.json): Daily public-safe AWS workload, budget, and transcription totals.
 - [Lexical analysis JSON](https://seattleboatradio.com/analysis/lexical.json): Public channel and transcript analysis payload.
 
 ## Notes For Crawlers

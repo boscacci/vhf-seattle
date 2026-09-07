@@ -14,6 +14,12 @@ def test_public_clip_refresh_exports_validates_dev_then_promotes_prod() -> None:
     assert 'public_export_lock_file="${TALKINGBOATS_PUBLIC_EXPORT_LOCK_FILE:-' in script
     assert "flock -n 9" in script
     assert "talkingboats-export-public" in script
+    assert "python src/talkingboats/aws_operations_snapshot.py" in script
+    assert 'operations_cache="${TALKINGBOATS_OPERATIONS_CACHE_PATH:-' in script
+    assert (
+        'operations_max_age_seconds="${TALKINGBOATS_OPERATIONS_MAX_AGE_SECONDS:-86400}"'
+        in script
+    )
     assert '--clip-store-backend "${clip_store_backend}"' in script
     assert '--output-dir "${output_dir}"' in script
     assert "verify_dev_generated_assets" in script
