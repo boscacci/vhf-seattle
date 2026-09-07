@@ -9,6 +9,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from itertools import islice
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -234,17 +235,9 @@ def export_recent_clip_site(
         clips_dir.mkdir(exist_ok=True)
         publishable_clips = []
         used_audio_filenames: set[str] = set()
-        candidate_offset = 0
         processed_candidates = 0
         batch_size = max(limit, 50)
-        while len(publishable_clips) < limit:
-            candidates = clip_store.recent_transcribed(
-                limit=batch_size,
-                offset=candidate_offset,
-                excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
-            )
-            if not candidates:
-                break
+        for candidates in _recent_candidate_batches(clip_store, batch_size=batch_size):
             for source_clip in candidates:
                 processed_candidates += 1
                 if progress:
@@ -293,8 +286,7 @@ def export_recent_clip_site(
                     used_audio_filenames.add(destination.name)
                     if len(publishable_clips) >= limit:
                         break
-            candidate_offset += len(candidates)
-            if len(candidates) < batch_size:
+            if len(publishable_clips) >= limit:
                 break
         _remove_unused_public_audio(clips_dir, used_audio_filenames)
 
@@ -309,6 +301,34 @@ def export_recent_clip_site(
         )
         write_recent_clip_snapshot(output_dir, public_manifest)
     return public_manifest
+
+
+def _recent_candidate_batches(clip_store: Any, *, batch_size: int):
+    stream_candidates = getattr(clip_store, "iter_recent_transcribed", None)
+    if callable(stream_candidates):
+        candidates = iter(
+            stream_candidates(
+                page_size=batch_size,
+                excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+            )
+        )
+        while batch := list(islice(candidates, batch_size)):
+            yield batch
+        return
+
+    candidate_offset = 0
+    while True:
+        batch = clip_store.recent_transcribed(
+            limit=batch_size,
+            offset=candidate_offset,
+            excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+        )
+        if not batch:
+            return
+        yield batch
+        candidate_offset += len(batch)
+        if len(batch) < batch_size:
+            return
 
 
 class _preserved_output_subdir:
