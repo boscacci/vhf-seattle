@@ -1137,6 +1137,23 @@ try {
     }
     await page.getByRole("tab", { name: "Performance" }).click();
     await page.locator(".system-kpi-panel .performance-card").first().waitFor({ state: "visible", timeout: 10000 });
+    const mobileThermalState = await page.evaluate(() => {
+      const card = document.querySelector(".thermal-balance-card");
+      return {
+        text: card?.textContent || "",
+        sensorCount: card?.querySelectorAll(".thermal-sensor-row").length || 0,
+        viewportWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      };
+    });
+    if (
+      !mobileThermalState.text.includes("Thermal balance") ||
+      !mobileThermalState.text.includes("Balanced sensor coverage") ||
+      mobileThermalState.sensorCount !== 5 ||
+      mobileThermalState.scrollWidth > mobileThermalState.viewportWidth
+    ) {
+      throw new Error(`mobile combined thermal view failed: ${JSON.stringify(mobileThermalState)}`);
+    }
     await page.getByRole("tab", { name: "About" }).click();
     const aboutState = await page.evaluate(() => ({
       pathname: window.location.pathname,
@@ -1367,12 +1384,22 @@ try {
         hoverLine: Boolean(document.querySelector(".performance-chart-hover-line:not([hidden])")),
         hoverDot: Boolean(document.querySelector(".performance-chart-hover-dot:not([hidden])")),
         hostTitles: [...document.querySelectorAll(".performance-host h3")].map((heading) => heading.textContent || ""),
+        thermalText: document.querySelector(".thermal-balance-card")?.textContent || "",
+        thermalSensors: [...document.querySelectorAll(".thermal-sensor-row")].map((row) => row.textContent || ""),
       }));
       if (!performanceHover.tooltip.includes("%") || !performanceHover.hoverLine || !performanceHover.hoverDot) {
         throw new Error(`performance hover tooltip did not render: ${JSON.stringify(performanceHover)}`);
       }
       if (!performanceHover.hostTitles.includes("Ubuntu Micro-Computer")) {
         throw new Error(`performance host labels were not updated: ${JSON.stringify(performanceHover)}`);
+      }
+      if (
+        !performanceHover.thermalText.includes("52.6% pressure") ||
+        !performanceHover.thermalText.includes("worst sensor controls status") ||
+        performanceHover.thermalSensors.length !== 5 ||
+        !performanceHover.thermalSensors.some((sensor) => sensor.includes("NVMe storage"))
+      ) {
+        throw new Error(`combined thermal view did not render: ${JSON.stringify(performanceHover)}`);
       }
     } finally {
       await desktopPerformanceContext.close();
@@ -1542,6 +1569,7 @@ try {
             afterFlip: clipControlsAfterFlip,
           },
           aboutState,
+          mobileThermalState,
           searchDefaultState,
           performanceHover,
           aisMapState,
@@ -1836,7 +1864,21 @@ function performancePayload() {
         disks: [{ mountpoint: "/", usedPercent: 61 }],
         cpu: { status: "ok" },
         memory: { status: "ok" },
-        thermal: { status: "ok" },
+        thermal: {
+          status: "ok",
+          temperatureC: 61,
+          pressurePercent: 52.6,
+          sensorCount: 5,
+          partial: false,
+          throttled: "unknown",
+          sensors: [
+            { key: "cpuPackage", label: "Processor package", temperatureC: 59, status: "ok" },
+            { key: "cpuCore", label: "Hottest CPU core", temperatureC: 61, status: "ok" },
+            { key: "chipset", label: "Chipset", temperatureC: 41, status: "ok" },
+            { key: "chassis", label: "Chassis / ACPI", temperatureC: 28, status: "ok" },
+            { key: "storage", label: "NVMe storage", temperatureC: 23, status: "ok" },
+          ],
+        },
         history,
       },
     ],

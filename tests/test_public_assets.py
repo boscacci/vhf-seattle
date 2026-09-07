@@ -418,7 +418,7 @@ def test_public_shell_uses_current_shared_asset_cache_key() -> None:
 
     assert style_version is not None
     assert script_version is not None
-    assert style_version.group(1) == "20260902-ais-prod-v1"
+    assert style_version.group(1) == "20260907-thermal-balance-v1"
     assert script_version.group(1) == style_version.group(1)
 
 
@@ -797,7 +797,20 @@ def test_public_site_performance_metric_values_average_selected_window() -> None
     assert "status: performanceSummaryStatus(field, value" in app_js
     assert "performanceWindowCaption(cpuSummary.samples" in app_js
     assert "performanceWindowCaption(memorySummary.samples)" in app_js
-    assert "performanceWindowCaption(thermalSummary.samples)" in app_js
+    assert "thermalBalanceCard(host?.thermal, thermalSummary)" in app_js
+
+
+def test_public_site_performance_view_explains_combined_thermal_balance() -> None:
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
+
+    assert '"Thermal balance"' in app_js
+    assert 'className = "thermal-sensor-list"' in app_js
+    assert 'className = `thermal-sensor-row ${statusClass(sensor.status)}`' in app_js
+    assert '"Limited sensor coverage"' in app_js
+    assert 'performanceMetricChart("Hottest sensor"' in app_js
+    assert ".thermal-balance-card" in styles_css
+    assert ".thermal-sensor-row" in styles_css
 
 
 def test_public_site_shows_only_the_active_transcription_queue() -> None:
@@ -936,11 +949,11 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260902-ais-prod-v1" type="module"></script>'
+        '<script src="/assets/app.js?v=20260907-thermal-balance-v1" type="module"></script>'
         in index_html
     )
     assert (
-        '<link rel="stylesheet" href="/assets/styles.css?v=20260902-ais-prod-v1" />'
+        '<link rel="stylesheet" href="/assets/styles.css?v=20260907-thermal-balance-v1" />'
         in index_html
     )
     assert '<script src="/assets/app.js" type="module"></script>' not in index_html

@@ -13,6 +13,45 @@ def test_optiplex_ci_runs_only_trusted_repository_code() -> None:
     assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow
     assert "conda run --no-capture-output -n dell pytest -q" in workflow
     assert "conda run --no-capture-output -n dell ruff check ." in workflow
+    assert "deploy-dev:" in workflow
+    assert "needs: validate" in workflow
+    assert "release-candidates/performance/${GITHUB_SHA}" in workflow
+    assert "apply_optiplex_performance_release.sh\" dev" in workflow
+    assert "TALKINGBOATS_PERFORMANCE_SMOKE_BASE_URL: https://dev.seattleboatradio.com" in workflow
+
+
+def test_performance_release_promotes_dev_tested_artifact_after_one_approval() -> None:
+    workflow = Path(".github/workflows/deploy-performance-dashboard.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"v*.*.*"' in workflow
+    assert '[[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in workflow
+    assert "environment: production" in workflow
+    assert "production-break-glass" not in workflow
+    assert 'test "$(git cat-file -t "${GITHUB_REF_NAME}")" = "tag"' in workflow
+    assert "release-candidates/performance/${GITHUB_SHA}" in workflow
+    assert "performance-release.sha256" in workflow
+    assert "apply_optiplex_performance_release.sh\" prod" in workflow
+    assert 'scripts/deploy_static_shell.sh prod "${release_root}/public-site"' in workflow
+    assert "TALKINGBOATS_PERFORMANCE_SMOKE_BASE_URL: https://seattleboatradio.com" in workflow
+
+
+def test_performance_release_is_scoped_recorded_and_rolls_back_services() -> None:
+    script = Path("scripts/apply_optiplex_performance_release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "release commit must be a full lowercase Git SHA" in script
+    assert "release artifact sha256 must be a full lowercase digest" in script
+    assert "zzz-ci-performance-release.conf" in script
+    assert "previous-live_radio_proxy.py" in script
+    assert "rollback_dev" in script
+    assert "rollback_prod" in script
+    assert "talkingboats-live-radio-proxy.service" in script
+    assert "talkingboats-public-live-radio-proxy.service" in script
+    assert "release-artifact-sha256" in script
+    assert ".hosts[0].thermal.sensorCount >= 2" in script
 
 
 def test_break_glass_workflow_deploys_the_checked_out_commit() -> None:

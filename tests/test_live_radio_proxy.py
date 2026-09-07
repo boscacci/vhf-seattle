@@ -1304,6 +1304,152 @@ def test_proxy_performance_disk_snapshot_collapses_duplicate_filesystems(
     assert snapshots[0]["label"] == "system"
 
 
+def test_proxy_local_thermal_snapshot_balances_distinct_sensor_groups(tmp_path: Path) -> None:
+    thermal_dir = tmp_path / "thermal"
+    hwmon_dir = tmp_path / "hwmon"
+    for zone_name, sensor_type, temperature in (
+        ("thermal_zone0", "acpitz", "28000"),
+        ("thermal_zone1", "pch_cannonlake", "41000"),
+        ("thermal_zone2", "x86_pkg_temp", "59000"),
+    ):
+        zone = thermal_dir / zone_name
+        zone.mkdir(parents=True)
+        (zone / "type").write_text(sensor_type, encoding="utf-8")
+        (zone / "temp").write_text(temperature, encoding="utf-8")
+
+    coretemp = hwmon_dir / "hwmon0"
+    coretemp.mkdir(parents=True)
+    (coretemp / "name").write_text("coretemp", encoding="utf-8")
+    for index, temperature in enumerate(("58000", "52000", "61000"), start=1):
+        (coretemp / f"temp{index}_input").write_text(temperature, encoding="utf-8")
+
+    nvme = hwmon_dir / "hwmon1"
+    nvme.mkdir(parents=True)
+    (nvme / "name").write_text("nvme", encoding="utf-8")
+    (nvme / "temp1_input").write_text("23000", encoding="utf-8")
+    (nvme / "temp2_input").write_text("99000", encoding="utf-8")
+
+    snapshot = live_radio_proxy._local_thermal_snapshot(thermal_dir, hwmon_dir)
+
+    assert snapshot == {
+        "temperatureC": 61.0,
+        "pressurePercent": 52.6,
+        "sensorCount": 5,
+        "partial": False,
+        "throttled": "unknown",
+        "status": "ok",
+        "sensors": [
+            {
+                "key": "cpuPackage",
+                "label": "Processor package",
+                "temperatureC": 59.0,
+                "watchAtC": 70.0,
+                "highAtC": 85.0,
+                "status": "ok",
+            },
+            {
+                "key": "cpuCore",
+                "label": "Hottest CPU core",
+                "temperatureC": 61.0,
+                "watchAtC": 70.0,
+                "highAtC": 85.0,
+                "status": "ok",
+            },
+            {
+                "key": "chipset",
+                "label": "Chipset",
+                "temperatureC": 41.0,
+                "watchAtC": 70.0,
+                "highAtC": 85.0,
+                "status": "ok",
+            },
+            {
+                "key": "chassis",
+                "label": "Chassis / ACPI",
+                "temperatureC": 28.0,
+                "watchAtC": 50.0,
+                "highAtC": 65.0,
+                "status": "ok",
+            },
+            {
+                "key": "storage",
+                "label": "NVMe storage",
+                "temperatureC": 23.0,
+                "watchAtC": 60.0,
+                "highAtC": 75.0,
+                "status": "ok",
+            },
+        ],
+    }
+
+
+def test_proxy_local_thermal_snapshot_keeps_worst_sensor_status_and_marks_partial(
+    tmp_path: Path,
+) -> None:
+    thermal_dir = tmp_path / "thermal"
+    cpu_zone = thermal_dir / "thermal_zone0"
+    cpu_zone.mkdir(parents=True)
+    (cpu_zone / "type").write_text("x86_pkg_temp", encoding="utf-8")
+    (cpu_zone / "temp").write_text("86000", encoding="utf-8")
+    invalid_zone = thermal_dir / "thermal_zone1"
+    invalid_zone.mkdir()
+    (invalid_zone / "type").write_text("acpitz", encoding="utf-8")
+    (invalid_zone / "temp").write_text("not-a-temperature", encoding="utf-8")
+
+    snapshot = live_radio_proxy._local_thermal_snapshot(thermal_dir, tmp_path / "missing")
+
+    assert snapshot["temperatureC"] == 86.0
+    assert snapshot["pressurePercent"] == 101.2
+    assert snapshot["sensorCount"] == 1
+    assert snapshot["partial"] is True
+    assert snapshot["status"] == "high"
+    assert snapshot["sensors"][0]["key"] == "cpuPackage"
+
+
+def test_proxy_public_thermal_whitelists_combined_sensor_details() -> None:
+    public = live_radio_proxy._public_thermal(
+        {
+            "temperatureC": 61.0,
+            "pressurePercent": 49.8,
+            "sensorCount": 1,
+            "partial": False,
+            "throttled": "unknown",
+            "status": "watch",
+            "sensors": [
+                {
+                    "key": "cpuCore",
+                    "label": "Hottest CPU core",
+                    "temperatureC": 61.0,
+                    "watchAtC": 70.0,
+                    "highAtC": 85.0,
+                    "status": "ok",
+                    "path": "/sys/class/hwmon/hwmon2/temp3_input",
+                }
+            ],
+            "debugPath": "/sys/class/thermal",
+        }
+    )
+
+    assert public == {
+        "temperatureC": 61.0,
+        "pressurePercent": 71.8,
+        "sensorCount": 1,
+        "partial": True,
+        "throttled": "unknown",
+        "status": "watch",
+        "sensors": [
+            {
+                "key": "cpuCore",
+                "label": "Hottest CPU core",
+                "temperatureC": 61.0,
+                "watchAtC": 70.0,
+                "highAtC": 85.0,
+                "status": "ok",
+            }
+        ],
+    }
+
+
 def test_proxy_performance_snapshot_combines_home_processor_and_pi(monkeypatch) -> None:
     monkeypatch.setattr(
         "talkingboats.live_radio_proxy._load_snapshot",

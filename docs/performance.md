@@ -25,10 +25,21 @@ hours.
 
 Each host snapshot includes CPU utilization, 1-minute load average, system
 memory, filesystem capacity, and thermals. The Pi snapshot includes the
-Raspberry Pi throttling flag when `vcgencmd` is available; the Ubuntu
-micro-computer snapshot reports thermal data when Linux exposes it through
-`/sys/class/thermal`. Disk reads collapse duplicate mounts on the same
-filesystem.
+Raspberry Pi throttling flag when `vcgencmd` is available. The Ubuntu
+micro-computer combines five distinct Linux sensor groups when available:
+processor package, hottest CPU core, chipset, chassis/ACPI, and NVMe storage.
+It reads both `/sys/class/thermal` and `/sys/class/hwmon`, deduplicates overlapping
+sources, and keeps the hottest value within each group. Missing groups produce
+an explicit `partial` result instead of being treated as cool readings. Disk
+reads collapse duplicate mounts on the same filesystem.
+
+The headline thermal pressure is the equal-weighted mean of each group’s
+temperature divided by that component’s `High` threshold. Equal group weights
+prevent a many-core CPU from dominating the chassis and storage readings. This
+combined percentage is context, not an alert threshold: the overall thermal
+status is always the worst individual sensor status, so a cold chassis or an
+externally cooled sensor cannot hide a hot processor. The historical chart
+continues to show the hottest sensor reading for the same reason.
 
 The default SQLite file is `data/performance_telemetry.sqlite3` under the proxy
 checkout. Override it with `TALKINGBOATS_PROXY_PERFORMANCE_HISTORY_DB_PATH` if a
@@ -93,7 +104,9 @@ The dashboard uses coarse status labels:
 | CPU utilization | `< 75%` | `75-89.9%` | `>= 90%` |
 | Memory used | `< 75%` | `75-89.9%` | `>= 90%` |
 | Disk used | `< 80%` | `80-89.9%` | `>= 90%` |
-| Temperature | `< 70 C` | `70-84.9 C` | `>= 85 C` |
+| CPU package, CPU core, chipset | `< 70 C` | `70-84.9 C` | `>= 85 C` |
+| Chassis / ACPI | `< 50 C` | `50-64.9 C` | `>= 65 C` |
+| NVMe storage | `< 60 C` | `60-74.9 C` | `>= 75 C` |
 
 A `Watch` state is not a failure; it is a prompt to check whether a backfill,
 transcription run, lexical refresh, or live audio task is expected to be busy.
@@ -170,5 +183,10 @@ state. Restart or re-enable that unit before changing proxy settings.
 - Memory `High`: stop optional analysis/backfill tasks before restarting live
   services.
 
-Do not deploy to prod because the performance tab looks healthy. Prod promotion
-still requires the normal dev smoke test and explicit prod intent.
+Each accepted `main` commit is packaged under its Git SHA, deployed to the dev
+proxy, and checked with the desktop/mobile performance smoke. After a human
+checks `https://dev.seattleboatradio.com/performance/`, create an annotated patch
+tag on that exact commit. The tag workflow resolves the already dev-tested
+artifact by commit and digest, then waits for the single `production`
+environment approval before updating the public proxy and static shell. Do not
+approve production merely because the performance tab reports healthy.
