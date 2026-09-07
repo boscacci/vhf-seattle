@@ -3649,12 +3649,6 @@ function renderCloudOperationsPanel(operations) {
       `${formatCompactCount(transcription.publishedClips)} recent clips in the public snapshot`,
       Number(transcription.pendingClips) > 20 ? "watch" : "ok",
     ),
-    systemKpiCard(
-      "Processing failures",
-      formatCompactCount(transcription.failedClips),
-      "Terminal records kept for diagnosis and excluded from the active queue",
-      Number(transcription.failedClips) > 0 ? "watch" : "ok",
-    ),
   );
   panel.append(title, grid);
   return panel;

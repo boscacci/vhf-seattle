@@ -517,7 +517,7 @@ def _recent_clip_manifest(
     if analyzed_clip_count is not None:
         public_manifest["stats"]["analyzed_clip_count"] = analyzed_clip_count
     if queue_status_counts is not None:
-        allowed_statuses = ("pending", "processing", "waiting_upload", "error")
+        allowed_statuses = ("pending", "processing", "waiting_upload")
         public_manifest["stats"]["queue_status_counts"] = {
             status: max(0, int(queue_status_counts.get(status, 0)))
             for status in allowed_statuses
@@ -558,7 +558,7 @@ def _queue_status_counts(clip_store: Any) -> dict[str, int] | None:
         return None
     return {
         status: max(0, int(counts.get(status, 0)))
-        for status in ("pending", "processing", "waiting_upload", "error")
+        for status in ("pending", "processing", "waiting_upload")
     }
 
 

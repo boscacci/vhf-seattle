@@ -111,7 +111,7 @@ def test_recent_clip_snapshot_keeps_stats_but_bounds_cold_start_payload() -> Non
     assert len(manifest["clips"]) == 30
 
 
-def test_recent_clip_manifest_exposes_only_queue_status_counts() -> None:
+def test_recent_clip_manifest_exposes_only_active_queue_status_counts() -> None:
     manifest = _recent_clip_manifest(
         [],
         received_clip_count=100,
@@ -129,7 +129,6 @@ def test_recent_clip_manifest_exposes_only_queue_status_counts() -> None:
         "pending": 2,
         "processing": 1,
         "waiting_upload": 3,
-        "error": 4,
     }
 
 
