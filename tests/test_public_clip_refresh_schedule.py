@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from talkingboats.config import DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
+from talkingboats.config import DEFAULT_PUBLIC_CLIP_EXPORT_LIMIT
 
 
 def test_public_clip_refresh_exports_validates_dev_then_promotes_prod() -> None:
@@ -9,8 +9,9 @@ def test_public_clip_refresh_exports_validates_dev_then_promotes_prod() -> None:
     assert 'output_dir="${TALKINGBOATS_PUBLIC_REFRESH_OUTPUT_DIR:-outputs/public-site}"' in script
     assert 'clip_store_backend="${TALKINGBOATS_CLIP_STORE_BACKEND:-dynamodb}"' in script
     assert (
-        f"TALKINGBOATS_PUBLIC_REFRESH_EXPORT_LIMIT:-{DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT}" in script
+        f"TALKINGBOATS_PUBLIC_REFRESH_EXPORT_LIMIT:-{DEFAULT_PUBLIC_CLIP_EXPORT_LIMIT}" in script
     )
+    assert DEFAULT_PUBLIC_CLIP_EXPORT_LIMIT == 2500
     assert 'public_export_lock_file="${TALKINGBOATS_PUBLIC_EXPORT_LOCK_FILE:-' in script
     assert "flock -n 9" in script
     assert "talkingboats-export-public" in script

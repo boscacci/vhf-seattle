@@ -7,6 +7,7 @@ from pathlib import Path
 from talkingboats.channel_metadata import CHANNEL_METADATA
 
 DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT = 3000
+DEFAULT_PUBLIC_CLIP_EXPORT_LIMIT = 2500
 
 
 @dataclass(frozen=True)
