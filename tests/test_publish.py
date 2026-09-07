@@ -392,6 +392,51 @@ def test_recent_clip_export_scans_past_skips_to_fill_public_audio_quota(
     assert len(processor.calls) == 2
 
 
+def test_recent_clip_export_streams_cloud_candidates_without_offset_rescans(
+    tmp_path: Path,
+) -> None:
+    site_source = tmp_path / "site-source"
+    site_source.mkdir()
+    (site_source / "index.html").write_text("<html></html>", encoding="utf-8")
+    clips = [
+        RecentTranscribedClip(
+            key=f"raw/channel=14/date=2026-05-24/stream-{index}.mp3",
+            channel="14",
+            started_at=f"2026-05-24T22:0{index}:41Z",
+            ended_at=f"2026-05-24T22:0{index}:49Z",
+            duration_seconds=8.1,
+            content_type="audio/mpeg",
+            transcript=f"Seattle Traffic streaming clip {index}.",
+            segments=[],
+        )
+        for index in range(3)
+    ]
+    store = FakeStreamingRecentClipStore(clips)
+    reader = FakeClipReader(
+        {
+            clips[0].key: b"first available audio",
+            clips[2].key: b"third available audio",
+        }
+    )
+
+    manifest = export_recent_clip_site(
+        clip_store=store,
+        site_source_dir=site_source,
+        output_dir=tmp_path / "output",
+        clip_reader=reader,
+        clip_audio_processor=RecordingAudioProcessor(),
+        clip_audio_quality_gate=None,
+        limit=2,
+    )
+
+    assert [clip["transcript_public"] for clip in manifest["clips"]] == [
+        "Seattle Traffic streaming clip 0.",
+        "Seattle Traffic streaming clip 2.",
+    ]
+    assert store.calls == [{"page_size": 50, "excluded_channels": ("WX",)}]
+    assert reader.downloads == [clips[0].key, clips[1].key, clips[2].key]
+
+
 def test_recent_clip_export_skips_unpublishable_audio_after_download(tmp_path: Path) -> None:
     site_source = tmp_path / "site-source"
     site_source.mkdir()
@@ -683,6 +728,26 @@ class FakeRecentClipStore:
             {"limit": limit, "offset": offset, "excluded_channels": excluded_channels}
         )
         return self.clips[offset : offset + limit]
+
+
+class FakeStreamingRecentClipStore:
+    def __init__(self, clips: list[RecentTranscribedClip]) -> None:
+        self.clips = clips
+        self.calls: list[dict[str, object]] = []
+
+    def recent_transcribed(self, **_kwargs: object):
+        raise AssertionError("streaming stores must not use offset pagination")
+
+    def iter_recent_transcribed(
+        self,
+        *,
+        page_size: int,
+        excluded_channels: tuple[str, ...],
+    ):
+        self.calls.append(
+            {"page_size": page_size, "excluded_channels": excluded_channels}
+        )
+        yield from self.clips
 
 
 class RecordingAudioProcessor:
