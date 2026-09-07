@@ -49,6 +49,24 @@ def test_static_shell_break_glass_deploys_main_and_smokes_real_production_ais() 
     assert "npm run smoke:ais" in workflow
 
 
+def test_production_alert_reconciliation_is_scoped_and_approval_gated() -> None:
+    workflow = Path(".github/workflows/reconcile-production-alerts.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "workflow_dispatch:" in workflow
+    assert "environment: production" in workflow
+    assert 'test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"' in workflow
+    assert "aws_cloudwatch_metric_alarm.prod_clip_freshness" in workflow
+    assert "-out=\"${RUNNER_TEMP}/prod-clip-alert.tfplan\"" in workflow
+    assert "tofu show -json" in workflow
+    assert '$changed == [] or $changed ==' in workflow
+    assert 'actions_enabled == false' in workflow
+    assert "tofu apply -input=false" in workflow
+    assert "talkingboats-talkingboats-prod-public-manifest-stale" in workflow
+    assert "talkingboats-talkingboats-prod-public-clips-stale" in workflow
+
+
 def test_pi_capture_health_deploy_is_scoped_and_records_release_identity() -> None:
     deploy = Path("scripts/deploy_pi_capture_health.sh").read_text(encoding="utf-8")
     apply_release = Path("scripts/apply_pi_capture_health_release.sh").read_text(
