@@ -798,6 +798,25 @@ def test_public_site_performance_metric_values_average_selected_window() -> None
     assert "performanceWindowCaption(cpuSummary.samples" in app_js
     assert "performanceWindowCaption(memorySummary.samples)" in app_js
     assert "performanceWindowCaption(thermalSummary.samples)" in app_js
+
+
+def test_public_site_copy_describes_hourly_clips_and_system_operations() -> None:
+    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
+    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
+    manifest = Path("public-site/public_manifest.json").read_text(encoding="utf-8")
+    publish_py = Path("src/talkingboats/publish.py").read_text(encoding="utf-8")
+
+    expected_subtitle = (
+        "Recent Elliott Bay marine VHF clips, transcripts, AIS, and system performance."
+    )
+    for content in (index_html, app_js, manifest):
+        assert expected_subtitle in content
+        assert "Live Elliott Bay marine VHF audio and recent receiver clips." not in content
+    assert "Recent Elliott Bay marine VHF clips, transcripts, AIS, " in publish_py
+    assert "and system performance." in publish_py
+    assert "Live Elliott Bay marine VHF audio and recent receiver clips." not in publish_py
+    assert '<p class="eyebrow">System operations</p>' in index_html
+    assert "Dev operations" not in index_html
     assert "Average over selected window" in app_js
     assert "percentLabel(memory.usedPercent)" not in app_js
     assert "thermalSummary(thermal)" not in app_js

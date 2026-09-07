@@ -276,7 +276,7 @@ function apiUrl(path) {
 const fallbackManifest = {
   site: {
     title: "Elliott Bay VHF",
-    subtitle: "Live Elliott Bay marine VHF audio and recent receiver clips.",
+    subtitle: "Recent Elliott Bay marine VHF clips, transcripts, AIS, and system performance.",
   },
   stats: {
     clip_count: 0,
