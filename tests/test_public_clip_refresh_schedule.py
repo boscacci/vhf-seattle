@@ -46,6 +46,10 @@ def test_public_clip_refresh_runs_hourly_with_bounded_resources() -> None:
     assert "CPUWeight=10" in service
     assert "TALKINGBOATS_PUBLIC_EXPORT_MAX_READ_CAPACITY_UNITS:-1000" in script
     assert 'TALKINGBOATS_DYNAMO_READ_CAPACITY_LIMIT="${max_read_capacity_units}"' in script
+    assert (
+        'TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED="${TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED:-true}"'
+        in script
+    )
     assert "OnBootSec=5min" in timer
     assert "every hour" in timer
     assert "OnUnitActiveSec=1h" in timer
