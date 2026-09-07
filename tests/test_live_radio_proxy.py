@@ -652,18 +652,26 @@ def test_proxy_serves_generated_public_manifest_and_recent_snapshot(tmp_path: Pa
         '{"clips":[{"id":"fresh"}],"stats":{"clip_count":1}}\n',
         encoding="utf-8",
     )
+    (public_site_dir / "operations.json").write_text(
+        '{"lambda":{"invocations":589509},"dynamodb":{"readCapacityUnits":47286664.5}}\n',
+        encoding="utf-8",
+    )
 
     app = create_app(ProxySettings(public_site_dir=str(public_site_dir)))
 
     response = _run(_asgi_get(app, "/public_manifest.json"))
     snapshot_response = _run(_asgi_get(app, "/recent_clips.json"))
+    operations_response = _run(_asgi_get(app, "/operations.json"))
 
     assert response.status_code == 200
     assert response.json() == {"clips": [{"id": "fresh"}], "stats": {"clip_count": 1}}
     assert snapshot_response.status_code == 200
     assert snapshot_response.json() == response.json()
+    assert operations_response.status_code == 200
+    assert operations_response.json()["lambda"]["invocations"] == 589_509
     assert response.headers["cache-control"] == "no-store"
     assert snapshot_response.headers["cache-control"] == "no-store"
+    assert operations_response.headers["cache-control"] == "no-store"
     assert response.headers["pragma"] == "no-cache"
     assert response.headers["expires"] == "0"
     assert response.headers["content-type"].startswith("application/json")

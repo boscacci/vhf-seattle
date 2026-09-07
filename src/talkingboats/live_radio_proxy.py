@@ -1042,6 +1042,14 @@ def create_app(
             media_type="application/json",
         )
 
+    @app.get("/operations.json", include_in_schema=False)
+    async def operations_snapshot() -> Response:
+        return _generated_public_site_asset_response(
+            settings,
+            "operations.json",
+            media_type="application/json",
+        )
+
     @app.get("/analysis/topic_clusters.html", include_in_schema=False)
     async def topic_clusters_html() -> Response:
         return _generated_public_site_asset_response(
