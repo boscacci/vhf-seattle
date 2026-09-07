@@ -39,5 +39,53 @@ jobs:
         run: /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell ruff check .
       - name: Validate deployment scripts
         run: |
-          bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck deploy/pi/live-radio/talkingboats-reset-voice-sdr scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh scripts/deploy_static_shell.sh
+          bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck deploy/pi/live-radio/talkingboats-reset-voice-sdr scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh scripts/apply_optiplex_performance_release.sh scripts/deploy_static_shell.sh
           node --check scripts/ais_browser_smoke.mjs
+          node --check scripts/performance_browser_smoke.mjs
+
+  deploy-dev:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: [self-hosted, Linux, X64, optiplex, vhf-seattle]
+    timeout-minutes: 5
+    steps:
+      - name: Check out the validated revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify revision identity
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22
+      - name: Install browser smoke dependencies
+        run: npm ci --ignore-scripts
+      - name: Build the immutable release candidate
+        id: artifact
+        run: |
+          candidate_dir="${HOME}/.local/share/talkingboats/release-candidates/performance/${GITHUB_SHA}"
+          artifact_path="${candidate_dir}/performance-release.tar.gz"
+          artifact_pending="${artifact_path}.pending-${GITHUB_RUN_ID}"
+          install -d -m 0755 "${candidate_dir}"
+          git archive --format=tar "${GITHUB_SHA}" | gzip -n > "${artifact_pending}"
+          artifact_sha256="$(sha256sum "${artifact_pending}" | awk '{print $1}')"
+          mv -f "${artifact_pending}" "${artifact_path}"
+          printf '%s\n' "${artifact_sha256}" > "${candidate_dir}/performance-release.sha256"
+          printf '%s\n' "${GITHUB_SHA}" > "${candidate_dir}/release-commit"
+          echo "artifact_path=${artifact_path}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_sha256=${artifact_sha256}" >> "${GITHUB_OUTPUT}"
+      - name: Deploy the exact candidate to dev
+        env:
+          TALKINGBOATS_RELEASE_COMMIT: ${{ github.sha }}
+          TALKINGBOATS_RELEASE_SHA256: ${{ steps.artifact.outputs.artifact_sha256 }}
+        run: |
+          release_root="$(mktemp -d)"
+          trap 'rm -rf "${release_root}"' EXIT
+          tar -xzf "${{ steps.artifact.outputs.artifact_path }}" -C "${release_root}"
+          "${release_root}/scripts/apply_optiplex_performance_release.sh" dev "${release_root}"
+      - name: Smoke the real dev performance view
+        env:
+          TALKINGBOATS_PERFORMANCE_SMOKE_BASE_URL: https://dev.seattleboatradio.com
+        run: npm run smoke:performance

@@ -3802,22 +3802,66 @@ function performanceHostPanel(host, index) {
       memorySummary.status,
     ),
     performanceCard("Disk", diskSummary(disks), "Most used filesystem", worstItemStatus(disks)),
-    performanceCard(
-      "Thermals",
-      thermalSummary.label,
-      performanceWindowCaption(thermalSummary.samples),
-      thermalSummary.status,
-    ),
+    thermalBalanceCard(host?.thermal, thermalSummary),
   );
   const charts = document.createElement("div");
   charts.className = "performance-chart-grid";
   charts.append(
     performanceMetricChart("CPU", host?.history, "cpuUtilizationPercent", "%", "cpu"),
     performanceMetricChart("Memory", host?.history, "memoryUsedPercent", "%", "memory"),
-    performanceMetricChart("Thermals", host?.history, "thermalTemperatureC", " C", "thermal"),
+    performanceMetricChart("Hottest sensor", host?.history, "thermalTemperatureC", " C", "thermal"),
   );
   panel.append(title, cards, charts);
   return panel;
+}
+
+function thermalBalanceCard(thermal, hottestSummary) {
+  const sensors = Array.isArray(thermal?.sensors) ? thermal.sensors.filter(validThermalSensor) : [];
+  const reportedCount = Number(thermal?.sensorCount);
+  const sensorCount = Number.isFinite(reportedCount) ? reportedCount : sensors.length;
+  const pressure = Number(thermal?.pressurePercent);
+  const hottest = sensors.reduce((current, sensor) => {
+    if (!current || Number(sensor.temperatureC) > Number(current.temperatureC)) {
+      return sensor;
+    }
+    return current;
+  }, null);
+  const card = document.createElement("article");
+  card.className = `performance-card thermal-balance-card ${statusClass(thermal?.status || hottestSummary.status)}`;
+  const heading = document.createElement("p");
+  heading.className = "language-label";
+  heading.textContent = "Thermal balance";
+  const metric = document.createElement("strong");
+  metric.textContent = Number.isFinite(pressure)
+    ? `${formatMetricChartValue(pressure, "%")} pressure`
+    : hottestSummary.label;
+  const coverage = document.createElement("span");
+  const coverageLabel = thermal?.partial === true || sensorCount < 2 ? "Limited sensor coverage" : "Balanced sensor coverage";
+  const hottestLabel = hottest
+    ? `hottest ${hottest.label} ${formatMetricChartValue(hottest.temperatureC, " C")}`
+    : `hottest reading ${hottestSummary.label}`;
+  coverage.textContent = `${coverageLabel} · ${formatCountNoun(sensorCount, "sensor group", "sensor groups")} · ${hottestLabel}. Equal-weighted groups; worst sensor controls status.`;
+  card.append(heading, metric, coverage);
+  if (sensors.length) {
+    const sensorList = document.createElement("div");
+    sensorList.className = "thermal-sensor-list";
+    sensors.forEach((sensor) => {
+      const row = document.createElement("div");
+      row.className = `thermal-sensor-row ${statusClass(sensor.status)}`;
+      const label = document.createElement("span");
+      label.textContent = sensor.label;
+      const value = document.createElement("strong");
+      value.textContent = formatMetricChartValue(sensor.temperatureC, " C");
+      row.append(label, value);
+      sensorList.append(row);
+    });
+    card.append(sensorList);
+  }
+  return card;
+}
+
+function validThermalSensor(sensor) {
+  return Boolean(sensor && sensor.label && Number.isFinite(Number(sensor.temperatureC)));
 }
 
 function performanceCard(label, value, caption, status) {

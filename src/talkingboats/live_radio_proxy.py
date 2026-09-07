@@ -85,6 +85,17 @@ PERFORMANCE_PERSIST_INTERVAL_SECONDS = 60.0
 PERFORMANCE_PERSIST_HISTORY_SECONDS = 24 * 60 * 60
 PERFORMANCE_PUBLIC_HISTORY_LIMIT = 6_000
 MAX_PROXIED_CLIP_AUDIO_BYTES = 25 * 1024 * 1024
+THERMAL_SENSOR_GROUPS = (
+    ("cpuPackage", "Processor package", 70.0, 85.0),
+    ("cpuCore", "Hottest CPU core", 70.0, 85.0),
+    ("chipset", "Chipset", 70.0, 85.0),
+    ("chassis", "Chassis / ACPI", 50.0, 65.0),
+    ("storage", "NVMe storage", 60.0, 75.0),
+)
+THERMAL_SENSOR_GROUP_BY_KEY = {
+    key: (label, watch_at, high_at)
+    for key, label, watch_at, high_at in THERMAL_SENSOR_GROUPS
+}
 PI_PERFORMANCE_SCRIPT = r"""
 import json
 import os
@@ -241,7 +252,26 @@ def thermal_snapshot():
         status = threshold_status(temperature, watch_at=70.0, high_at=85.0)
     if throttled not in {"", "0x0", "unknown"}:
         status = worst_status([status, "watch"])
-    return {"temperatureC": temperature, "throttled": throttled, "status": status}
+    snapshot = {"temperatureC": temperature, "throttled": throttled, "status": status}
+    if temperature is not None:
+        snapshot.update(
+            {
+                "pressurePercent": round((temperature / 85.0) * 100, 1),
+                "sensorCount": 1,
+                "partial": True,
+                "sensors": [
+                    {
+                        "key": "cpuPackage",
+                        "label": "Processor package",
+                        "temperatureC": temperature,
+                        "watchAtC": 70.0,
+                        "highAtC": 85.0,
+                        "status": threshold_status(temperature, watch_at=70.0, high_at=85.0),
+                    }
+                ],
+            }
+        )
+    return snapshot
 
 
 load = load_snapshot()
@@ -1259,9 +1289,62 @@ def _public_disks(value: object) -> list[dict[str, object]]:
 
 
 def _public_thermal(value: object) -> dict[str, object]:
-    thermal = _public_metric(value, ("temperatureC",))
+    thermal = _public_metric(value, ("temperatureC", "pressurePercent"))
     throttled = value.get("throttled") if isinstance(value, dict) else None
     thermal["throttled"] = _public_throttled_label(throttled)
+    if not isinstance(value, dict):
+        return thermal
+    sensors = value.get("sensors")
+    if isinstance(sensors, list):
+        public_sensors = []
+        for sensor in sensors:
+            if not isinstance(sensor, dict):
+                continue
+            key = sensor.get("key")
+            config = THERMAL_SENSOR_GROUP_BY_KEY.get(key) if isinstance(key, str) else None
+            temperature = _public_number(sensor.get("temperatureC"))
+            if config is None or temperature is None:
+                continue
+            label, watch_at, high_at = config
+            public_sensors.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "temperatureC": temperature,
+                    "watchAtC": watch_at,
+                    "highAtC": high_at,
+                    "status": _threshold_status(
+                        temperature, watch_at=watch_at, high_at=high_at
+                    ),
+                }
+            )
+        thermal["sensors"] = public_sensors
+        if public_sensors:
+            thermal["temperatureC"] = max(
+                float(sensor["temperatureC"]) for sensor in public_sensors
+            )
+            thermal["pressurePercent"] = round(
+                sum(
+                    (float(sensor["temperatureC"]) / float(sensor["highAtC"])) * 100
+                    for sensor in public_sensors
+                )
+                / len(public_sensors),
+                1,
+            )
+            thermal["sensorCount"] = len(public_sensors)
+            thermal["partial"] = value.get("partial") is True or len(
+                public_sensors
+            ) < len(THERMAL_SENSOR_GROUPS)
+            thermal["status"] = _worst_status(
+                [
+                    _public_status(value.get("status")),
+                    *(str(sensor["status"]) for sensor in public_sensors),
+                ]
+            )
+    elif (sensor_count := _public_number(value.get("sensorCount"))) is not None:
+        thermal["sensorCount"] = max(0, int(sensor_count))
+        if isinstance(value.get("partial"), bool):
+            thermal["partial"] = value["partial"]
     return thermal
 
 
@@ -1532,30 +1615,151 @@ def _disk_snapshots() -> list[dict[str, object]]:
     return disks
 
 
-def _local_thermal_snapshot() -> dict[str, object]:
-    thermal_dir = Path("/sys/class/thermal")
-    temperatures: list[float] = []
+def _local_thermal_snapshot(
+    thermal_dir: Path = Path("/sys/class/thermal"),
+    hwmon_dir: Path = Path("/sys/class/hwmon"),
+) -> dict[str, object]:
+    grouped_temperatures: dict[str, float] = {}
     try:
-        temp_paths = sorted(thermal_dir.glob("thermal_zone*/temp"))
+        thermal_zones = sorted(thermal_dir.glob("thermal_zone*"))
     except OSError:
-        temp_paths = []
-    for temp_path in temp_paths:
+        thermal_zones = []
+    for zone in thermal_zones:
         try:
-            raw_value = temp_path.read_text(encoding="utf-8").strip()
-            temperature = float(raw_value)
-        except (OSError, ValueError):
+            sensor_type = (zone / "type").read_text(encoding="utf-8").strip().lower()
+        except OSError:
             continue
-        if abs(temperature) > 1000:
-            temperature /= 1000
-        temperatures.append(temperature)
-    if not temperatures:
+        group_key = _thermal_sensor_group_for_name(sensor_type)
+        temperature = _read_temperature_c(zone / "temp")
+        if group_key and temperature is not None:
+            _record_group_temperature(grouped_temperatures, group_key, temperature)
+
+    try:
+        hwmon_devices = sorted(hwmon_dir.glob("hwmon*"))
+    except OSError:
+        hwmon_devices = []
+    for device in hwmon_devices:
+        try:
+            device_name = (device / "name").read_text(encoding="utf-8").strip().lower()
+        except OSError:
+            continue
+        _collect_hwmon_temperatures(device, device_name, grouped_temperatures)
+
+    sensors: list[dict[str, object]] = []
+    for key, label, watch_at, high_at in THERMAL_SENSOR_GROUPS:
+        temperature = grouped_temperatures.get(key)
+        if temperature is None:
+            continue
+        sensors.append(
+            {
+                "key": key,
+                "label": label,
+                "temperatureC": round(temperature, 1),
+                "watchAtC": watch_at,
+                "highAtC": high_at,
+                "status": _threshold_status(temperature, watch_at=watch_at, high_at=high_at),
+            }
+        )
+    if not sensors:
         return {"status": "unknown", "throttled": "unknown"}
-    temperature = max(temperatures)
+
+    hottest_temperature = max(float(sensor["temperatureC"]) for sensor in sensors)
+    pressure_percent = sum(
+        (float(sensor["temperatureC"]) / float(sensor["highAtC"])) * 100
+        for sensor in sensors
+    ) / len(sensors)
     return {
-        "temperatureC": round(temperature, 1),
+        "temperatureC": round(hottest_temperature, 1),
+        "pressurePercent": round(pressure_percent, 1),
+        "sensorCount": len(sensors),
+        "partial": len(sensors) < len(THERMAL_SENSOR_GROUPS),
         "throttled": "unknown",
-        "status": _threshold_status(temperature, watch_at=70.0, high_at=85.0),
+        "status": _worst_status([str(sensor["status"]) for sensor in sensors]),
+        "sensors": sensors,
     }
+
+
+def _thermal_sensor_group_for_name(name: str) -> str | None:
+    if "x86_pkg_temp" in name or "package" in name:
+        return "cpuPackage"
+    if name.startswith("pch") or "chipset" in name:
+        return "chipset"
+    if name.startswith("acpitz") or "chassis" in name or "board" in name:
+        return "chassis"
+    if name.startswith("nvme"):
+        return "storage"
+    return None
+
+
+def _collect_hwmon_temperatures(
+    device: Path,
+    device_name: str,
+    grouped_temperatures: dict[str, float],
+) -> None:
+    try:
+        temp_paths = sorted(device.glob("temp*_input"))
+    except OSError:
+        return
+    if device_name == "coretemp":
+        for temp_path in temp_paths:
+            label = _temperature_label(temp_path)
+            index = _temperature_index(temp_path)
+            temperature = _read_temperature_c(temp_path)
+            if temperature is None:
+                continue
+            if "package" in label or (not label and index == 1):
+                _record_group_temperature(grouped_temperatures, "cpuPackage", temperature)
+            elif "core" in label or (not label and index is not None and index > 1):
+                _record_group_temperature(grouped_temperatures, "cpuCore", temperature)
+        return
+
+    group_key = _thermal_sensor_group_for_name(device_name)
+    if group_key is None:
+        return
+    candidates: list[tuple[Path, str, int | None]] = [
+        (temp_path, _temperature_label(temp_path), _temperature_index(temp_path))
+        for temp_path in temp_paths
+    ]
+    if group_key == "storage":
+        composite = [candidate for candidate in candidates if "composite" in candidate[1]]
+        candidates = composite or [candidate for candidate in candidates if candidate[2] == 1]
+    for temp_path, _label, _index in candidates:
+        temperature = _read_temperature_c(temp_path)
+        if temperature is not None:
+            _record_group_temperature(grouped_temperatures, group_key, temperature)
+
+
+def _temperature_label(temp_path: Path) -> str:
+    label_path = temp_path.with_name(temp_path.name.replace("_input", "_label"))
+    try:
+        return label_path.read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return ""
+
+
+def _temperature_index(temp_path: Path) -> int | None:
+    match = re.fullmatch(r"temp(\d+)_input", temp_path.name)
+    return int(match.group(1)) if match else None
+
+
+def _read_temperature_c(path: Path) -> float | None:
+    try:
+        temperature = float(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    if abs(temperature) > 1000:
+        temperature /= 1000
+    if not math.isfinite(temperature) or temperature < -30 or temperature > 200:
+        return None
+    return temperature
+
+
+def _record_group_temperature(
+    grouped_temperatures: dict[str, float], key: str, temperature: float
+) -> None:
+    current = grouped_temperatures.get(key)
+    if current is None or temperature > current:
+        grouped_temperatures[key] = temperature
 
 
 def _pi_performance_snapshot(settings: ProxySettings) -> dict[str, object]:

@@ -1683,6 +1683,45 @@ audio {
   border-color: color-mix(in srgb, var(--danger), transparent 24%);
 }
 
+.thermal-balance-card {
+  grid-column: 1 / -1;
+}
+
+.thermal-sensor-list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.thermal-sensor-row {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-strong), transparent 24%);
+}
+
+.thermal-sensor-row.is-watch {
+  border-color: color-mix(in srgb, var(--amber), transparent 28%);
+}
+
+.thermal-sensor-row.is-high {
+  border-color: color-mix(in srgb, var(--danger), transparent 24%);
+}
+
+.thermal-sensor-row span {
+  font-size: 0.72rem;
+}
+
+.thermal-sensor-row strong {
+  font-size: 0.94rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .performance-range-control {
   display: inline-flex;
   width: fit-content;
@@ -2339,6 +2378,10 @@ audio {
     grid-template-columns: 1fr;
   }
 
+  .thermal-sensor-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .entity-list {
     columns: 1;
   }
@@ -2441,6 +2484,10 @@ audio {
   }
 
   .live-queue {
+    grid-template-columns: 1fr;
+  }
+
+  .thermal-sensor-list {
     grid-template-columns: 1fr;
   }
 
