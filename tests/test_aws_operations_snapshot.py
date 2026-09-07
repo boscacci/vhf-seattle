@@ -84,7 +84,6 @@ def test_operations_snapshot_summarizes_cloud_work_and_transcription() -> None:
         "receivedClips": 149_559,
         "analyzedClips": 149_047,
         "pendingClips": 5,
-        "failedClips": 507,
         "completionPercent": 99.66,
         "publishedClips": 2,
     }
@@ -103,7 +102,7 @@ def test_operations_snapshot_reuses_daily_cache(tmp_path: Path) -> None:
     cached = {
         "generatedAt": "2026-09-07T00:00:00Z",
         "lambda": {"invocations": 5},
-        "transcription": {"pendingClips": 99, "failedClips": 0},
+        "transcription": {"pendingClips": 99},
     }
     cache_path.write_text(json.dumps(cached), encoding="utf-8")
     manifest_path = tmp_path / "public_manifest.json"
@@ -134,7 +133,6 @@ def test_operations_snapshot_reuses_daily_cache(tmp_path: Path) -> None:
         "receivedClips": 100,
         "analyzedClips": 90,
         "pendingClips": 2,
-        "failedClips": 8,
         "completionPercent": 90.0,
         "publishedClips": 1,
     }

@@ -198,7 +198,6 @@ def _transcription_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         _nonnegative_int(counts.get(status))
         for status in ("pending", "processing", "waiting_upload")
     )
-    failed = _nonnegative_int(counts.get("error"))
     if not counts:
         active_queue = max(0, received - analyzed)
     completion = round(analyzed / received * 100, 2) if received else 0.0
@@ -206,7 +205,6 @@ def _transcription_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "receivedClips": received,
         "analyzedClips": analyzed,
         "pendingClips": active_queue,
-        "failedClips": failed,
         "completionPercent": completion,
         "publishedClips": len(manifest.get("clips") or []),
     }

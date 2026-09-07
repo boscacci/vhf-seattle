@@ -800,12 +800,12 @@ def test_public_site_performance_metric_values_average_selected_window() -> None
     assert "performanceWindowCaption(thermalSummary.samples)" in app_js
 
 
-def test_public_site_separates_active_transcription_queue_from_failures() -> None:
+def test_public_site_shows_only_the_active_transcription_queue() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert '"Active transcription queue"' in app_js
-    assert '"Processing failures"' in app_js
-    assert "transcription.failedClips" in app_js
+    assert '"Processing failures"' not in app_js
+    assert "transcription.failedClips" not in app_js
 
 
 def test_public_site_copy_describes_hourly_clips_and_system_operations() -> None:
