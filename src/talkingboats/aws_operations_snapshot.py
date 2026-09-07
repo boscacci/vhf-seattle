@@ -92,12 +92,6 @@ def collect_operations_snapshot(
     month_to_date = round(float(cost_total.get("Amount") or 0), 2)
     budget_limit = round(config.monthly_budget_usd, 2)
 
-    stats = manifest.get("stats") if isinstance(manifest.get("stats"), dict) else {}
-    received = _nonnegative_int(stats.get("received_clip_count"))
-    analyzed = _nonnegative_int(stats.get("analyzed_clip_count"))
-    pending = max(0, received - analyzed)
-    completion = round(analyzed / received * 100, 2) if received else 0.0
-
     return {
         "generatedAt": generated_at.isoformat().replace("+00:00", "Z"),
         "window": {
@@ -124,13 +118,7 @@ def collect_operations_snapshot(
             "writeCapacityUnits": round(write_units, 1),
             "tables": table_totals,
         },
-        "transcription": {
-            "receivedClips": received,
-            "analyzedClips": analyzed,
-            "pendingClips": pending,
-            "completionPercent": completion,
-            "publishedClips": len(manifest.get("clips") or []),
-        },
+        "transcription": _transcription_snapshot(manifest),
     }
 
 
@@ -150,6 +138,8 @@ def refresh_operations_snapshot(
         cache_age = observed_at.timestamp() - cache_path.stat().st_mtime
         if 0 <= cache_age < max_age_seconds:
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            payload["transcription"] = _transcription_snapshot(manifest)
             _write_json_atomic(output_path, payload)
             return payload
 
@@ -196,6 +186,30 @@ def _metric_queries() -> list[dict[str, Any]]:
             )
         )
     return queries
+
+
+def _transcription_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
+    stats = manifest.get("stats") if isinstance(manifest.get("stats"), dict) else {}
+    received = _nonnegative_int(stats.get("received_clip_count"))
+    analyzed = _nonnegative_int(stats.get("analyzed_clip_count"))
+    raw_counts = stats.get("queue_status_counts")
+    counts = raw_counts if isinstance(raw_counts, dict) else {}
+    active_queue = sum(
+        _nonnegative_int(counts.get(status))
+        for status in ("pending", "processing", "waiting_upload")
+    )
+    failed = _nonnegative_int(counts.get("error"))
+    if not counts:
+        active_queue = max(0, received - analyzed)
+    completion = round(analyzed / received * 100, 2) if received else 0.0
+    return {
+        "receivedClips": received,
+        "analyzedClips": analyzed,
+        "pendingClips": active_queue,
+        "failedClips": failed,
+        "completionPercent": completion,
+        "publishedClips": len(manifest.get("clips") or []),
+    }
 
 
 def _metric_query(

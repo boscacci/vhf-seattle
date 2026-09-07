@@ -47,7 +47,16 @@ def test_operations_snapshot_summarizes_cloud_work_and_transcription() -> None:
         config=OperationsSnapshotConfig(monthly_budget_usd=35),
         manifest={
             "clips": [{"id": "one"}, {"id": "two"}],
-            "stats": {"received_clip_count": 149_559, "analyzed_clip_count": 149_047},
+            "stats": {
+                "received_clip_count": 149_559,
+                "analyzed_clip_count": 149_047,
+                "queue_status_counts": {
+                    "pending": 2,
+                    "processing": 1,
+                    "waiting_upload": 2,
+                    "error": 507,
+                },
+            },
         },
         cloudwatch=FakeCloudWatch(),
         cost_explorer=FakeCostExplorer(),
@@ -74,7 +83,8 @@ def test_operations_snapshot_summarizes_cloud_work_and_transcription() -> None:
     assert snapshot["transcription"] == {
         "receivedClips": 149_559,
         "analyzedClips": 149_047,
-        "pendingClips": 512,
+        "pendingClips": 5,
+        "failedClips": 507,
         "completionPercent": 99.66,
         "publishedClips": 2,
     }
@@ -90,16 +100,42 @@ def test_operations_snapshot_summarizes_cloud_work_and_transcription() -> None:
 def test_operations_snapshot_reuses_daily_cache(tmp_path: Path) -> None:
     cache_path = tmp_path / "operations-cache.json"
     output_path = tmp_path / "site" / "operations.json"
-    cached = {"generatedAt": "2026-09-07T00:00:00Z", "lambda": {"invocations": 5}}
+    cached = {
+        "generatedAt": "2026-09-07T00:00:00Z",
+        "lambda": {"invocations": 5},
+        "transcription": {"pendingClips": 99, "failedClips": 0},
+    }
     cache_path.write_text(json.dumps(cached), encoding="utf-8")
+    manifest_path = tmp_path / "public_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "clips": [{"id": "one"}],
+                "stats": {
+                    "received_clip_count": 100,
+                    "analyzed_clip_count": 90,
+                    "queue_status_counts": {"pending": 2, "error": 8},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     result = refresh_operations_snapshot(
-        manifest_path=tmp_path / "missing-manifest.json",
+        manifest_path=manifest_path,
         cache_path=cache_path,
         output_path=output_path,
         max_age_seconds=86_400,
         now=datetime.fromtimestamp(cache_path.stat().st_mtime + 60, tz=UTC),
     )
 
-    assert result == cached
-    assert json.loads(output_path.read_text(encoding="utf-8")) == cached
+    assert result["lambda"] == cached["lambda"]
+    assert result["transcription"] == {
+        "receivedClips": 100,
+        "analyzedClips": 90,
+        "pendingClips": 2,
+        "failedClips": 8,
+        "completionPercent": 90.0,
+        "publishedClips": 1,
+    }
+    assert json.loads(output_path.read_text(encoding="utf-8")) == result

@@ -12,6 +12,7 @@ from talkingboats.clip_transcriber import (
 from talkingboats.publish import (
     PublicExportError,
     _public_audio_filename,
+    _recent_clip_manifest,
     export_public_site,
     export_recent_clip_site,
     recent_clip_snapshot,
@@ -108,6 +109,28 @@ def test_recent_clip_snapshot_keeps_stats_but_bounds_cold_start_payload() -> Non
     assert snapshot["stats"] == manifest["stats"]
     assert [clip["id"] for clip in snapshot["clips"]] == [f"clip-{index}" for index in range(24)]
     assert len(manifest["clips"]) == 30
+
+
+def test_recent_clip_manifest_exposes_only_queue_status_counts() -> None:
+    manifest = _recent_clip_manifest(
+        [],
+        received_clip_count=100,
+        analyzed_clip_count=90,
+        queue_status_counts={
+            "pending": 2,
+            "processing": 1,
+            "waiting_upload": 3,
+            "error": 4,
+            "transcribed": 90,
+        },
+    )
+
+    assert manifest["stats"]["queue_status_counts"] == {
+        "pending": 2,
+        "processing": 1,
+        "waiting_upload": 3,
+        "error": 4,
+    }
 
 
 def test_public_export_copies_static_site_and_writes_manifest(tmp_path: Path) -> None:

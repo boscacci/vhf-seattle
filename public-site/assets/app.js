@@ -3641,13 +3641,19 @@ function renderCloudOperationsPanel(operations) {
       "Transcribed clips",
       formatCompactCount(transcription.analyzedClips),
       `${formatPercent(transcription.completionPercent)} of ${formatCompactCount(transcription.receivedClips)} received`,
-      Number(transcription.pendingClips) > 1000 ? "watch" : "ok",
+      Number(transcription.pendingClips) > 20 ? "watch" : "ok",
     ),
     systemKpiCard(
-      "Transcription backlog",
+      "Active transcription queue",
       formatCompactCount(transcription.pendingClips),
       `${formatCompactCount(transcription.publishedClips)} recent clips in the public snapshot`,
-      Number(transcription.pendingClips) > 1000 ? "watch" : "ok",
+      Number(transcription.pendingClips) > 20 ? "watch" : "ok",
+    ),
+    systemKpiCard(
+      "Processing failures",
+      formatCompactCount(transcription.failedClips),
+      "Terminal records kept for diagnosis and excluded from the active queue",
+      Number(transcription.failedClips) > 0 ? "watch" : "ok",
     ),
   );
   panel.append(title, grid);

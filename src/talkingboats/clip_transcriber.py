@@ -54,6 +54,7 @@ DEFAULT_TRANSCRIBE_VAD_FILTER = False
 DEFAULT_TRANSCRIBE_VAD_MIN_SILENCE_DURATION_MS = 500
 DEFAULT_TRANSCRIBE_VAD_SPEECH_PAD_MS = 400
 DEFAULT_TRANSCRIBE_MIN_SEGMENT_AVG_LOGPROB: float | None = None
+DEFAULT_WAITING_UPLOAD_MAX_AGE_SECONDS = 3600
 
 
 class ClipNotAvailable(RuntimeError):
@@ -1178,9 +1179,17 @@ def process_pending_uploads_once(
     ffmpeg_runner: Any | None = None,
     quality_analysis_enabled: bool = True,
     quality_analyzer: AudioQualityAnalyzer | None = None,
+    waiting_upload_max_age_seconds: int = DEFAULT_WAITING_UPLOAD_MAX_AGE_SECONDS,
+    now: datetime | None = None,
 ) -> ProcessSummary:
     if beam_size <= 0:
         raise ValueError("beam_size must be positive")
+    if waiting_upload_max_age_seconds <= 0:
+        raise ValueError("waiting_upload_max_age_seconds must be positive")
+    observed_at = now or datetime.now(UTC)
+    if observed_at.tzinfo is None:
+        raise ValueError("now must include a timezone")
+    observed_at = observed_at.astimezone(UTC)
     summary = ProcessSummary()
     for record in store.pending_uploads(limit=limit, retry_errors=retry_errors):
         summary.processed += 1
@@ -1234,8 +1243,17 @@ def process_pending_uploads_once(
                 store.mark_empty(record.key)
                 summary.empty += 1
         except ClipNotAvailable as exc:
-            store.mark_waiting_upload(record.key, str(exc))
-            summary.waiting_upload += 1
+            upload_age_seconds = (observed_at - _parse_utc(record.started_at)).total_seconds()
+            if upload_age_seconds >= waiting_upload_max_age_seconds:
+                store.mark_failed(
+                    record.key,
+                    "ClipNotAvailable: upload did not appear within "
+                    f"{waiting_upload_max_age_seconds} seconds",
+                )
+                summary.failed += 1
+            else:
+                store.mark_waiting_upload(record.key, str(exc))
+                summary.waiting_upload += 1
         except Exception as exc:  # noqa: BLE001 - keep background worker retryable.
             store.mark_failed(record.key, f"{type(exc).__name__}: {exc}")
             summary.failed += 1
@@ -1357,6 +1375,15 @@ def main() -> None:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument(
+        "--waiting-upload-max-age-seconds",
+        type=int,
+        default=_env_int(
+            "TALKINGBOATS_TRANSCRIBE_WAITING_UPLOAD_MAX_AGE_SECONDS",
+            DEFAULT_WAITING_UPLOAD_MAX_AGE_SECONDS,
+        ),
+        help="Mark missing uploads failed after this many seconds instead of retrying forever.",
+    )
+    parser.add_argument(
         "--vad-filter",
         action="store_true",
         default=_env_bool("TALKINGBOATS_TRANSCRIBE_VAD_FILTER", DEFAULT_TRANSCRIBE_VAD_FILTER),
@@ -1424,6 +1451,8 @@ def main() -> None:
         parser.error("--bucket or TALKINGBOATS_RAW_BUCKET is required")
     if args.poll_seconds <= 0:
         parser.error("--poll-seconds must be positive")
+    if args.waiting_upload_max_age_seconds <= 0:
+        parser.error("--waiting-upload-max-age-seconds must be positive")
     if args.sample_rate_hz <= 0:
         parser.error("--sample-rate-hz must be positive")
     if args.cpu_threads <= 0:
@@ -1493,6 +1522,7 @@ def main() -> None:
             quality_analysis_enabled=(
                 args.audio_quality_analysis and not args.no_audio_quality_analysis
             ),
+            waiting_upload_max_age_seconds=args.waiting_upload_max_age_seconds,
         )
         next_poll_delay_seconds = _next_poll_delay_seconds(
             summary,
