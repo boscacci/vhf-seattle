@@ -1,0 +1,16 @@
+[Unit]
+Description=Bounded Talking Boats Pi Wi-Fi recovery
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/talkingboats/network-recovery.env
+ExecStart=/usr/bin/python3 /opt/talkingboats/bin/network_recovery.py --connection ${PI_WIFI_CONNECTION}
+TimeoutStartSec=40
+StateDirectory=talkingboats-network-recovery
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
