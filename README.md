@@ -48,6 +48,9 @@ Production browsers read only public surfaces. They do not connect directly to
 the Raspberry Pi, Ubuntu micro-computer private API, LAN Icecast URLs, Tailscale/Funnel
 origins, raw S3 objects, DynamoDB, receiver controls, or write-capable routes.
 
+Pi network recovery and persistent diagnostic logs have a separate
+[deployment and rollback runbook](docs/pi-network-recovery.md).
+
 ## Runtime Layers
 
 | Layer | Runs On | Owns |

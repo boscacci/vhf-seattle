@@ -39,7 +39,7 @@ jobs:
         run: /home/rob/miniforge3/condabin/conda run --no-capture-output -n dell ruff check .
       - name: Validate deployment scripts
         run: |
-          bash -n deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck deploy/pi/live-radio/talkingboats-reset-voice-sdr scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh scripts/apply_optiplex_performance_release.sh scripts/deploy_static_shell.sh
+          bash -n scripts/apply_pi_network_release.sh scripts/deploy_pi_network_release.sh deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck deploy/pi/live-radio/talkingboats-reset-voice-sdr scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh scripts/apply_optiplex_performance_release.sh scripts/deploy_static_shell.sh
           node --check scripts/ais_browser_smoke.mjs
           node --check scripts/performance_browser_smoke.mjs
 
@@ -89,3 +89,7 @@ jobs:
         env:
           TALKINGBOATS_PERFORMANCE_SMOKE_BASE_URL: https://dev.seattleboatradio.com
         run: npm run smoke:performance
+      - name: Record successful dev smoke for artifact promotion
+        run: |
+          candidate_dir="${HOME}/.local/share/talkingboats/release-candidates/performance/${GITHUB_SHA}"
+          printf '%s\n' "${{ steps.artifact.outputs.artifact_sha256 }}" > "${candidate_dir}/dev-smoke-passed"

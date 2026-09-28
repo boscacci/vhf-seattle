@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Pi LAN connectivity every minute
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
