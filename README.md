@@ -184,8 +184,10 @@ Retention and export:
 
 The transcriber intentionally uses one inference-only path: the open-source
 Whisper `large-v3-turbo` checkpoint through `faster-whisper` with CPU `int8`.
-The service is capped at two CPU cores and one worker so transcription cannot
-crowd out live audio, the API, or the public proxy. There are no local dataset
+The OptiPlex CPU policy allows six of its eight cores and one worker, with low
+CPU priority and weight so live audio, the API, and Plex retain scheduling priority.
+The policy preserves hourly batches and takes effect on the next batch; it does
+not interrupt a clip already being processed. See [the CPU policy runbook](docs/transcriber-cpu-policy.md). There are no local dataset
 curation or model-building workflows in this repository.
 
 ## Local Setup
