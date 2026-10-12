@@ -516,11 +516,13 @@ def train_candidate(config, directory, train, validation, update):
         TrainerCallback,
         WhisperForConditionalGeneration,
         WhisperProcessor,
+        set_seed,
     )
 
     from talkingboats.audio_analysis import decode_audio_file
 
     torch.set_num_threads(1)
+    set_seed(config["seed"])  # Seed adapter initialization before Trainer initializes itself.
     processor = WhisperProcessor.from_pretrained(
         config["base_model"],
         revision=config["base_revision"],

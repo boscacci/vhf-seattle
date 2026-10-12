@@ -225,7 +225,11 @@ class DynamoUploadedClipStore:
         for partition in partitions:
             for item in self._query_items(partition, scan_forward=False, limit=limit):
                 state = self._state_item(str(item["key"]))
-                if state:
+                if (
+                    state
+                    and state.get("status") in statuses
+                    and (allowed_channels is None or state.get("channel") in allowed_channels)
+                ):
                     records.append(_record_from_state(state))
         records.sort(key=lambda record: (record.started_at, record.key), reverse=True)
         return records[:limit]

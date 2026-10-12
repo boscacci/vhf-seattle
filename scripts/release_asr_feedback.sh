@@ -106,7 +106,7 @@ else
     path="${unit_root}/${service}.service.d/zzzz-asr-feedback.conf"
     [[ ! -f "${path}" ]] || cp -a "${path}" "${backup}/${service}.conf"
   done
-  systemctl --user stop talkingboats-uploaded-clip-transcriber.service
+  timer_was_active="$(systemctl --user is-active talkingboats-uploaded-clip-transcriber.timer || true)"
   for part in src scripts config public-site; do
     [[ ! -d "${runtime}/${part}" ]] || cp -a "${runtime}/${part}" "${backup}/${part}"
   done
@@ -119,11 +119,25 @@ else
       if [[ -f "${backup}/${service}.conf" ]]; then cp -a "${backup}/${service}.conf" "${path}"; else rm -f "${path}"; fi
     done
     systemctl --user daemon-reload
+    [[ "${timer_was_active}" != active ]] || systemctl --user start talkingboats-uploaded-clip-transcriber.timer
     "${release_root}/scripts/deploy_asr_receiver.sh" "${release_root}" "${commit}" "${digest}" rollback || true
     systemctl --user restart talkingboats-api.service talkingboats-public-live-radio-proxy.service || true
     printf 'event=asr_release_rollback environment=prod commit=%s require_static_cache_check=true\n' "${commit}" >&2
   }
   trap rollback_prod ERR
+  systemctl --user stop talkingboats-uploaded-clip-transcriber.timer talkingboats-uploaded-clip-transcriber.service
+  PYTHONPATH="${release_root}/src" "${HOME}/miniforge3/envs/dell/bin/python" - <<'PYCODE'
+import os
+from pathlib import Path
+values = dict(line.partition("=")[::2] for line in (Path.home()/".config/talkingboats/asr.env").read_text().splitlines())
+os.environ.update(values)
+import boto3
+from talkingboats.queue_channel_indexes import seed_indexes
+result = seed_indexes(boto3.resource("dynamodb", region_name="us-west-2").Table(values["TALKINGBOATS_ASR_FEEDBACK_TABLE"]), Path(values["TALKINGBOATS_ASR_OUTPUT_DIR"])/"queue-index-cutover.json")
+print("event=asr_queue_index_cutover complete=" + str(result["complete"]).lower())
+if not result["complete"]:
+    raise SystemExit("bounded cutover paused; retry the same approved artifact to resume")
+PYCODE
   for part in src scripts config public-site; do
     install -d -m 0755 "${runtime}/${part}"
     cp -a "${release_root}/${part}/." "${runtime}/${part}/"
@@ -145,6 +159,7 @@ from talkingboats.channel_exclusion_cache import sanitize_caches
 sanitize_caches(Path(values["TALKINGBOATS_PUBLIC_SITE_DIR"]), Path(values["TALKINGBOATS_ASR_OUTPUT_DIR"]).parent/"release-cache-backups"/sys.argv[2])
 PYCODE
   "${release_root}/scripts/deploy_static_shell.sh" prod "${release_root}/public-site"
+  [[ "${timer_was_active}" != active ]] || systemctl --user start talkingboats-uploaded-clip-transcriber.timer
   systemctl --user start talkingboats-public-clip-refresh.service
   cp "${approval_file}" "${release_root}/human-approval.json"
   TALKINGBOATS_ASR_RELEASE_COMMIT="${commit}" "${HOME}/miniforge3/envs/dell/bin/python" - <<'PYCODE'

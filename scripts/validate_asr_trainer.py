@@ -11,7 +11,7 @@ from pathlib import Path
 from faster_whisper.utils import download_model
 from transformers import WhisperConfig, WhisperForConditionalGeneration, WhisperProcessor
 
-from talkingboats.asr_experiments import DEFAULT_CONFIG, train_candidate
+from talkingboats.asr_experiments import DEFAULT_CONFIG, model_digest, train_candidate
 
 snapshot = Path(download_model("turbo", local_files_only=True))
 with tempfile.TemporaryDirectory() as temporary:
@@ -72,12 +72,19 @@ with tempfile.TemporaryDirectory() as temporary:
     row = {"audio_path": str(audio), "text": "radio test"}
     result = train_candidate(config, run, [row], [row], lambda *args, **kwargs: None)
     assert (result / "model.bin").exists() and (run / "model_identity.json").exists()
+    repeated = root / "repeated-run"
+    repeated.mkdir()
+    second = train_candidate(config, repeated, [row], [row], lambda *args, **kwargs: None)
+    assert model_digest(result) == model_digest(second), (
+        "identical seeded inputs must reproduce weights"
+    )
     print(
         json.dumps(
             {
                 "event": "asr_complete_trainer_probe_passed",
                 "isolated_fixture": True,
                 "merge_and_int8_conversion": True,
+                "reproducible_model_digest": True,
             }
         )
     )

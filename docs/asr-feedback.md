@@ -6,6 +6,11 @@ channels retain searchable historical clips. Receiver pruning preserves the
 retained channels' exact frequency, squelch, gain, serial, and output settings.
 Excluded DynamoDB queue entries and local spool files are retained; fresh
 uploads use channel-specific processing indexes without scanning that backlog.
+Production cutover adds indexes for existing retained-channel pending work,
+without changing legacy queue entries or transcribing anything during migration.
+This index-only migration has a resumable private checkpoint, a 90-second
+window, and a 20,000-read-capacity-unit ceiling per invocation. A bounded pause
+blocks cutover; retrying the same approved artifact resumes it.
 
 ## Measured capacity
 
