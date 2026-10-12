@@ -423,7 +423,7 @@
               <h3>Processing</h3>
               <p>
                 The Ubuntu micro-computer private API handles uploads, transcription, and public exports for maritime
-                radio audio. Transcription currently uses Whisper base.en through CTranslate2/faster-whisper, with CPU inference capped at two cores. Whisper large-v3-turbo is available for local experiments; it did not meet the current receiver workload capacity target.
+                radio audio. This release selects Whisper Large V3 Turbo through CTranslate2/faster-whisper, with CPU inference capped at two cores. Reception is limited to six channels; temporary peak-hour transcription delays are allowed, with quieter periods available for catching up.
               </p>
             </section>
             <section class="about-card">
