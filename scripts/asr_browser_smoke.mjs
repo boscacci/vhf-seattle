@@ -57,7 +57,14 @@ try {
   await page.route("**/api/asr-feedback/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname.endsWith("/audio")) return route.fulfill({ body: wav, contentType: "audio/wav" });
+    if (url.pathname.endsWith("/audio")) {
+      const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers().range || "");
+      const start = range ? Number(range[1]) : 0;
+      const end = range?.[2] ? Math.min(Number(range[2]), wav.length - 1) : wav.length - 1;
+      return route.fulfill({ body: wav.subarray(start, end + 1), status: range ? 206 : 200,
+        contentType: "audio/wav", headers: { "Accept-Ranges": "bytes",
+          ...(range ? { "Content-Range": `bytes ${start}-${end}/${wav.length}` } : {}) } });
+    }
     if (url.pathname.endsWith("/status")) return route.fulfill({ json: {
       ...actualStatus, ready: true, runs: experiment ? [experiment] : [],
     } });

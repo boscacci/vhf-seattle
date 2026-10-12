@@ -6795,18 +6795,33 @@ function renderReviewedExperimentAudio(runId, example) {
   audio.src = apiUrl(`/api/asr-feedback/runs/${runId}/audio?${params}`) + `#t=${begin},${end}`;
   const notice = document.createElement("p");
   notice.textContent = `Reviewed audio range: ${begin}–${end} seconds.`;
+  let boundaryTimer;
+  const stopAtEnd = () => {
+    clearTimeout(boundaryTimer);
+    if (audio.currentTime >= end) {
+      audio.pause();
+      if (audio.currentTime > end) audio.currentTime = end;
+    } else if (!audio.paused) {
+      boundaryTimer = setTimeout(stopAtEnd, Math.min(50, (end - audio.currentTime) * 1000 / audio.playbackRate));
+    }
+  };
   audio.addEventListener("loadedmetadata", () => { audio.currentTime = begin; });
   audio.addEventListener("timeupdate", () => {
-    if (audio.currentTime >= end) audio.pause();
-    if (audio.currentTime < begin) audio.currentTime = begin;
+    if (audio.seeking) return;
+    if (audio.currentTime >= end) stopAtEnd();
+    if (audio.currentTime < begin && audio.readyState >= 2) audio.currentTime = begin;
   });
   audio.addEventListener("play", () => {
     stopOtherAudio(audio);
     currentClipPlayback = audio;
     if (audio.currentTime >= end) audio.currentTime = begin;
+    stopAtEnd();
     clearBrowserMediaSession();
   });
-  audio.addEventListener("pause", () => { if (currentClipPlayback === audio) currentClipPlayback = null; });
+  audio.addEventListener("pause", () => {
+    clearTimeout(boundaryTimer);
+    if (currentClipPlayback === audio) currentClipPlayback = null;
+  });
   audio.addEventListener("error", () => { notice.textContent = "Reviewed audio is unavailable. Reload this view to retry."; });
   wrapper.append(notice, audio);
   return wrapper;
