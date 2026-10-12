@@ -22,6 +22,43 @@ from talkingboats.clip_quality import is_quality_visible
 CORE = ["14", "13", "16"]
 
 
+def recovery_forecast(selection: dict) -> dict:
+    """Replay complete UTC hours at real-time capacity, grouped into Pacific days."""
+    hourly = Counter()
+    for row in selection["channels"]:
+        if row["channel"] not in selection["active_channels"]:
+            continue
+        sample = selection["benchmark"]["samples"][row["channel"]]
+        rate = sample["elapsed_seconds"] / sample["audio_seconds"]
+        for hour, audio in row["hourly_audio_seconds"].items():
+            hourly[hour] += audio * rate
+    start = datetime.fromisoformat(selection["window_start"])
+    end = datetime.fromisoformat(selection["window_end"])
+    days = Counter()
+    backlog = maximum = 0.0
+    recovery_hours = []
+    while start < end:
+        work = hourly[start.strftime("%Y-%m-%dT%H")]
+        days[start.astimezone(ZoneInfo("America/Los_Angeles")).date().isoformat()] += work
+        previous = backlog
+        backlog = max(0.0, backlog + work - 3600)
+        maximum = max(maximum, backlog)
+        if previous and not backlog:
+            recovery_hours.append((start + timedelta(hours=1)).isoformat())
+        start += timedelta(hours=1)
+    return {
+        "daily_processing_seconds": {day: round(work, 3) for day, work in sorted(days.items())},
+        "max_daily_processing_seconds": round(max(days.values(), default=0), 3),
+        "mean_daily_processing_seconds": round(sum(days.values()) / len(days), 3),
+        "peak_hour_processing_seconds": round(max(hourly.values(), default=0), 3),
+        "max_backlog_processing_seconds": round(maximum, 3),
+        "end_backlog_processing_seconds": round(backlog, 3),
+        "recovered_at": recovery_hours,
+        "caveat": "Sample-based forecast starts with an empty queue; excludes existing backlog, "
+        "startup, other host load, and hourly invocation/clip-limit overhead.",
+    }
+
+
 def pacific_window(now: datetime) -> tuple[datetime, datetime]:
     end = now.astimezone(ZoneInfo("America/Los_Angeles")).replace(
         hour=0, minute=0, second=0, microsecond=0

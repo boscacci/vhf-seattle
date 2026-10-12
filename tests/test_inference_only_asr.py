@@ -17,6 +17,7 @@ def test_public_proxy_has_no_correction_or_experiment_routes_even_with_spoofed_h
                 "/api/clips/corrections",
                 "/api/asr-feedback/status",
                 "/api/asr-feedback/runs",
+                "/api/asr-feedback/runs/" + "a" * 32 + "/audio?clip_id=fixture",
             ]:
                 response = await client.get(path, headers={"X-TalkingBoats-Tailnet-Dev": "1"})
                 assert response.status_code == 404

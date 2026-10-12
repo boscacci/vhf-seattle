@@ -22,7 +22,15 @@ measurements are excluded. Counts include untranscribed uploads.
 
 Eight channels needed 5,400 processing seconds during the busiest measured
 hour; six needed 4,449. Neither meets the 2,400-second limit for 1.5 times
-headroom. Production therefore retains `base.en`. The benchmark used ten
+headroom. The operator explicitly requested Turbo despite this peak constraint.
+The six-channel release therefore selects `large-v3-turbo`, with temporary
+backlog allowed. The busiest sampled Pacific day requires 40,342 processing
+seconds (11.2 hours); an empty-queue hourly replay clears its modeled peak
+backlog of 849 processing seconds in the following hour. These forecasts exclude
+existing backlog, startup costs, hourly invocation limits, and other host load.
+`recovery_forecast` records the reproducible estimate; inspect actual queue age
+after activation to confirm recovery. The stricter 1.5-times capacity criterion
+still applies to fine-tuned candidate eligibility. The benchmark used ten
 seeded recordings per channel, CPU int8, two threads, one worker, beam size 5,
 and full audio without VAD. These sample-based estimates should be repeated
 when hardware or capture conditions change. Seventy rounded timing events were
@@ -55,20 +63,44 @@ same saved revision to retry archival. Audio retention is bounded to 5 GiB and
 
 In **Performance → Transcription experiments**, use the diverse review queue
 and inspect minutes, vocabulary, and effort. Stable Pacific recording-day
-splits keep related channels together. Training hints come only from reviewed
+splits keep related channels together. Reviewed ranges in the 30 minutes before
+or after Pacific midnight, or crossing their original recording day, remain
+display-only and never enter training or vocabulary hints. This conservative
+buffer keeps short exchanges around midnight from straddling dataset splits. Training hints come only from reviewed
 training labels; validation/test text and terms never become training hints.
 Experiments require 30 training minutes, five validation minutes, five test
 minutes, and 50 annotated test mentions. New dataset/configuration fingerprints
 start new runs; unchanged requests reuse completed runs. Failed/interrupted
 runs resume retained checkpoints through the same request.
 
+Prepare the immutable representative capacity samples from the completed audit
+before the first experiment:
+
+```bash
+PYTHONPATH=src conda run -n dell python -m talkingboats.capacity_benchmark \
+  --selection config/channel-selection.json --audit-work outputs/channel-audit \
+  --storage /path/to/owned/data-volume/asr
+```
+
+Every candidate repeats the full-audio benchmark on the same ten audited
+recordings per retained channel; reviewed test ranges alone cannot establish
+capacity. The dataset/audio hashes and hourly workload identity are pinned to
+each run. Missing capacity proof keeps a candidate ineligible. Benchmark timing
+checkpoints are reused after interruption. The one-core experiment limit makes
+this capacity check conservative for the two-thread serving path.
+
 The local worker freezes encoder/base weights and trains decoder LoRA attention
 adapters. It evaluates plain Turbo, Turbo with hints, and merged/converted int8
 candidates. Promotion eligibility requires at least 10% fewer entity omissions,
 no more known-name insertions, at most one percentage point worse overall word
 error, and 1.5 times workload headroom. Insertion metrics cover the annotated
-vocabulary, not every possible hallucinated name. Eligibility never promotes
-weights automatically. Review example playback before requesting adoption.
+vocabulary, not every possible hallucinated name. Estimated word edits show
+correction effort per model; timed manual correction effort is reported
+separately. Validation/test annotations can define scoring vocabulary but
+never enter inference hints. Eligibility never promotes
+weights automatically. Review example playback before requesting adoption. Experiment playback uses
+the immutable dataset’s private reviewed audio, including after normal raw
+audio expiry, and labels/plays the exact range that was evaluated.
 
 Each job has one CPU core, 12 GiB RAM, and a two-hour limit. It checkpoints every
 20 optimizer updates, keeps two training checkpoints, and preserves failed

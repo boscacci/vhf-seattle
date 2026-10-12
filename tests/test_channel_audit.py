@@ -39,3 +39,36 @@ def test_runtime_and_audit_selection_agree_and_turbo_stays_capacity_gated():
     assert selection["turbo_capacity_passed"] is any(
         c["passes"] for c in selection["benchmark"]["capacity_checks"]
     )
+
+
+def test_explicit_turbo_upgrade_allows_peak_backlog_with_overnight_recovery():
+    import json
+    from pathlib import Path
+
+    from talkingboats.channel_audit import recovery_forecast
+
+    selection = json.loads(Path('config/channel-selection.json').read_text())
+    forecast = recovery_forecast(selection)
+    assert selection['serving_model'] == 'large-v3-turbo'
+    assert selection['activation_policy'] == 'allow_peak_backlog_overnight_recovery'
+    assert forecast['max_daily_processing_seconds'] < 86400
+    assert forecast['peak_hour_processing_seconds'] > 3600
+    assert forecast['end_backlog_processing_seconds'] == 0
+    assert forecast == selection['recovery_forecast']
+
+
+def test_recovery_forecast_reports_sustained_overload():
+    from talkingboats.channel_audit import recovery_forecast
+
+    selection = {
+        'active_channels': ['14'],
+        'benchmark': {'samples': {'14': {'elapsed_seconds': 2, 'audio_seconds': 1}}},
+        'channels': [{'channel': '14', 'hourly_audio_seconds': {
+            '2026-10-05T07': 3600, '2026-10-05T08': 3600,
+        }}],
+        'window_start': '2026-10-05T07:00:00+00:00',
+        'window_end': '2026-10-05T09:00:00+00:00',
+    }
+    forecast = recovery_forecast(selection)
+    assert forecast['end_backlog_processing_seconds'] == 7200
+    assert forecast['max_backlog_processing_seconds'] == 7200

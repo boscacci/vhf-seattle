@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -92,6 +92,39 @@ def split_day(started_at: str) -> str:
     return "train" if bucket < 70 else "validation" if bucket < 85 else "test"
 
 
+def isolated_recording_day(row) -> bool:
+    """Keep exchanges near recording-day boundaries out of both training and hints."""
+    try:
+        stamp = row.get("started_at")
+        if not isinstance(stamp, str):
+            return False
+        recorded = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if recorded.tzinfo is None:
+            return False
+        begin = recorded + timedelta(seconds=float(row.get("start_seconds") or 0))
+        finish = recorded + timedelta(
+            seconds=float(
+                row["end_seconds"]
+                if row.get("end_seconds") is not None
+                else row["duration_seconds"]
+            )
+        )
+        zone = ZoneInfo("America/Los_Angeles")
+        recorded, begin, finish = (at.astimezone(zone) for at in (recorded, begin, finish))
+
+        def seconds(at):
+            return at.hour * 3600 + at.minute * 60 + at.second + at.microsecond / 1e6
+
+        return (
+            finish >= begin
+            and begin.date() == finish.date() == recorded.date()
+            and seconds(begin) >= 1800
+            and seconds(finish) < 84600
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+
+
 class Corrections:
     def get(self, channel: str, started_at: str) -> dict | None:
         raise NotImplementedError
@@ -138,6 +171,12 @@ class Corrections:
             "split": split_day(label.started_at),
             "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "fingerprint": fingerprint,
+            "total_effort_seconds": float(
+                (previous or {}).get("total_effort_seconds")
+                or (previous or {}).get("effort_seconds")
+                or 0
+            )
+            + label.effort_seconds,
             "embedding": embedding,
             "original_embedding": (previous or {}).get("original_embedding")
             or (
@@ -361,6 +400,7 @@ def reviewed_hotwords(base: str | None) -> str | None:
         and not r.get("reverted")
         and r.get("split") == "train"
         and r.get("archive_status") == "ready"
+        and isolated_recording_day(r)
         for t in r.get("terms", [])
     )
     terms = list(dict.fromkeys([*(base or "").split(","), *(t for t, _ in counts.most_common(50))]))

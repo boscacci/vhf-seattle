@@ -43,6 +43,62 @@ try {
     assert.equal(live.status, 200);
     assert(live.bytes > 0, `Live feed ${channel} must deliver audio`);
   }));
+  // Isolated experiment controls and archived range audio; no actual job or label is created.
+  const actualStatus = await (await page.request.get(`${base}/api/asr-feedback/status`)).json();
+  const experimentId = "f".repeat(32);
+  const exampleId = "e".repeat(64);
+  let experiment = null;
+  const wav = Buffer.alloc(44 + 48000);
+  wav.write("RIFF", 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34); wav.write("data", 36); wav.writeUInt32LE(48000, 40);
+  for (let n = 0; n < 24000; n++) wav.writeInt16LE(Math.round(500 * Math.sin(n * Math.PI / 20)), 44 + n * 2);
+  await page.route("**/api/asr-feedback/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname.endsWith("/audio")) {
+      const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers().range || "");
+      const start = range ? Number(range[1]) : 0;
+      const end = range?.[2] ? Math.min(Number(range[2]), wav.length - 1) : wav.length - 1;
+      return route.fulfill({ body: wav.subarray(start, end + 1), status: range ? 206 : 200,
+        contentType: "audio/wav", headers: { "Accept-Ranges": "bytes",
+          ...(range ? { "Content-Range": `bytes ${start}-${end}/${wav.length}` } : {}) } });
+    }
+    if (url.pathname.endsWith("/status")) return route.fulfill({ json: {
+      ...actualStatus, ready: true, runs: experiment ? [experiment] : [],
+    } });
+    if (url.pathname.endsWith("/cancel")) experiment = { ...experiment, status: "cancelled", reason: "Cancelled fixture" };
+    else if (request.method() === "POST") experiment = { id: experimentId, status: "queued", eligible: false };
+    return route.fulfill({ json: experiment });
+  });
+  await panel.getByRole("button", { name: "Refresh experiments" }).click();
+  await panel.getByRole("button", { name: "Train and compare Turbo" }).click();
+  await panel.locator("h3", { hasText: "queued" }).waitFor();
+  await panel.getByRole("button", { name: "Cancel experiment" }).click();
+  await panel.locator("h3", { hasText: "cancelled" }).waitFor();
+  const metric = { entity_errors: 1, entity_mentions: 50, invented_names: 0, wer: 0.1,
+    word_errors: 1, real_time_factor: 2, examples: [] };
+  experiment = { id: experimentId, status: "completed", eligible: false, metrics: {
+    turbo: metric, turbo_with_hints: metric, candidate_with_hints: { ...metric, examples: [{
+      id: exampleId, reference: "Osprey northbound", prediction: "Osprey northbound",
+      audio_start_seconds: 1, audio_end_seconds: 2,
+    }] },
+  } };
+  await panel.getByRole("button", { name: "Refresh experiments" }).click();
+  const reviewedAudio = panel.locator('audio[aria-label="Reviewed range audio"]');
+  await reviewedAudio.waitFor({ state: "attached" });
+  await reviewedAudio.evaluate((audio) => { audio.load(); });
+  await page.waitForFunction(() => document.querySelector('audio[aria-label="Reviewed range audio"]')?.readyState > 0);
+  await reviewedAudio.evaluate((audio) => audio.play());
+  await page.waitForFunction(() => {
+    const audio = document.querySelector('audio[aria-label="Reviewed range audio"]');
+    return audio && !audio.seeking && audio.currentTime >= 1 && audio.currentTime <= 2.1;
+  });
+  await page.waitForFunction(() => {
+    const audio = document.querySelector('audio[aria-label="Reviewed range audio"]');
+    return audio?.paused && audio.currentTime >= 1.95 && audio.currentTime <= 2.1;
+  });
   // Isolated editor fixture: no write touches the shared production corpus.
   const fixture = { channel: "14", started_at: "2026-10-05T12:00:00Z", ended_at: "2026-10-05T12:00:05Z",
     duration_seconds: 5, transcript: "Tug spray northbound", original: "Tug spray northbound", revision: 0, production_overlay_active: true };
@@ -70,6 +126,14 @@ try {
   assert.equal(await card.locator("blockquote").textContent(), "Tug Osprey northbound");
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator(".clip-card blockquote", { hasText: "Tug Osprey northbound" }).first().waitFor();
+  await page.route("**/api/clips/search?**", async (route) => route.fulfill({ json: {
+    query: "Osprey", recency: "7d", results: [{ ...fixture, score: 1 }],
+  } }));
+  await page.goto(`${base}/search/`, { waitUntil: "domcontentloaded" });
+  await page.getByLabel("Search transcript meaning").fill("Osprey");
+  await page.getByRole("button", { name: "Search clips", exact: true }).click();
+  await page.locator("#clip-search-results blockquote", { hasText: "Tug Osprey northbound" }).waitFor();
+  await page.goto(`${base}/clips/`, { waitUntil: "domcontentloaded" });
   await page.locator(".clip-card").first().locator("summary", { hasText: "Correct transcript" }).click();
   await page.locator(".clip-card").first().getByRole("button", { name: "Restore original" }).click();
   await page.getByRole("status").filter({ hasText: "Original restored" }).waitFor();

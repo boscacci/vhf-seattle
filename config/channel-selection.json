@@ -2551,5 +2551,27 @@
     "71"
   ],
   "turbo_capacity_passed": false,
-  "serving_model": "base.en"
+  "serving_model": "large-v3-turbo",
+  "activation_policy": "allow_peak_backlog_overnight_recovery",
+  "recovery_forecast": {
+    "daily_processing_seconds": {
+      "2026-10-05": 33630.946,
+      "2026-10-06": 37249.864,
+      "2026-10-07": 35326.684,
+      "2026-10-08": 40341.746,
+      "2026-10-09": 34816.786,
+      "2026-10-10": 29020.014,
+      "2026-10-11": 26169.076
+    },
+    "max_daily_processing_seconds": 40341.746,
+    "mean_daily_processing_seconds": 33793.588,
+    "peak_hour_processing_seconds": 4448.54,
+    "max_backlog_processing_seconds": 848.54,
+    "end_backlog_processing_seconds": 0.0,
+    "recovered_at": [
+      "2026-10-05T21:00:00+00:00",
+      "2026-10-07T01:00:00+00:00"
+    ],
+    "caveat": "Sample-based forecast starts with an empty queue; excludes existing backlog, startup, other host load, and hourly invocation/clip-limit overhead."
+  }
 }

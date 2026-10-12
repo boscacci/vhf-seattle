@@ -156,7 +156,7 @@ Default edge audio/transcription settings:
 
 ```bash
 TALKINGBOATS_AUDIO_FILTER_ENABLED=true
-TALKINGBOATS_TRANSCRIBE_MODEL=base.en
+TALKINGBOATS_TRANSCRIBE_MODEL=large-v3-turbo
 TALKINGBOATS_TRANSCRIBE_CPU_THREADS=2
 TALKINGBOATS_TRANSCRIBE_WORKERS=1
 TALKINGBOATS_TRANSCRIBE_WAITING_UPLOAD_MAX_AGE_SECONDS=3600
@@ -182,10 +182,12 @@ Retention and export:
 
 ## Speech Recognition
 
-The serving transcriber uses `base.en` through faster-whisper CPU `int8`, two
-threads, and one worker. The measured six-channel workload still exceeds
-`large-v3-turbo` capacity during its busiest hour, so the release retains the
-current model rather than growing the queue.
+The selected serving model is Whisper Large V3 Turbo through faster-whisper CPU
+`int8`, two threads, and one worker. Six retained channels can build a temporary
+queue during peak hours; the sampled busiest day needs about 11.2 processing
+hours. This explicitly approved operating policy allows backlog growth and
+uses quieter periods to recover. Queue age remains visible in dev. Production
+activation follows the single release approval after manual dev smoke testing.
 
 Dev restores immediate shared transcript corrections, reviewed vocabulary
 hints, and on-demand Turbo LoRA experiments. Original predictions stay intact;

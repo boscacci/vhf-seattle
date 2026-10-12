@@ -30,7 +30,7 @@ from talkingboats.audio_processing import (
 from talkingboats.durable_events import to_dynamodb_item
 
 DEFAULT_AUDIO_FILTER = DEFAULT_SPEECH_AUDIO_FILTER
-DEFAULT_TRANSCRIBE_MODEL = "base.en"
+DEFAULT_TRANSCRIBE_MODEL = "large-v3-turbo"
 
 
 class TranscriptStore:
