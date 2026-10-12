@@ -50,6 +50,8 @@ if [[ "${action}" == prod ]]; then
 fi
 state_root="${HOME}/.config/talkingboats"
 install -d -m 0700 "${state_root}"
+runtime_env_backup="${release_root}/previous-asr-env-${action}-$(date -u +%s%N)"
+[[ ! -f "${state_root}/asr.env" ]] || cp -a "${state_root}/asr.env" "${runtime_env_backup}"
 # Store only in the established private runtime configuration, never the artifact or logs.
 TALKINGBOATS_ASR_RELEASE_COMMIT="${commit}" \
 TALKINGBOATS_ASR_STORAGE_ROOT="${TALKINGBOATS_ASR_STORAGE_ROOT:-}" \
@@ -65,6 +67,7 @@ if [[ "${action}" == dev ]]; then
     [[ ! -f "${path}" ]] || cp -a "${path}" "${release_root}/previous-$(basename "$(dirname "${path}")")"
   done
   rollback_dev() {
+    if [[ -f "${runtime_env_backup}" ]]; then cp -a "${runtime_env_backup}" "${state_root}/asr.env"; else rm -f "${state_root}/asr.env"; fi
     for path in "${api_dropin}" "${proxy_dropin}"; do
       backup="${release_root}/previous-$(basename "$(dirname "${path}")")"
       if [[ -f "${backup}" ]]; then cp -a "${backup}" "${path}"; else rm -f "${path}"; fi
@@ -111,6 +114,7 @@ else
     [[ ! -d "${runtime}/${part}" ]] || cp -a "${runtime}/${part}" "${backup}/${part}"
   done
   rollback_prod() {
+    if [[ -f "${runtime_env_backup}" ]]; then cp -a "${runtime_env_backup}" "${state_root}/asr.env"; else rm -f "${state_root}/asr.env"; fi
     for part in src scripts config public-site; do
       [[ ! -d "${backup}/${part}" ]] || cp -a "${backup}/${part}/." "${runtime}/${part}/"
     done
@@ -126,6 +130,16 @@ else
   }
   trap rollback_prod ERR
   systemctl --user stop talkingboats-uploaded-clip-transcriber.timer talkingboats-uploaded-clip-transcriber.service
+  for part in src scripts config public-site; do
+    install -d -m 0755 "${runtime}/${part}"
+    cp -a "${release_root}/${part}/." "${runtime}/${part}/"
+  done
+  for service in talkingboats-api talkingboats-public-live-radio-proxy talkingboats-uploaded-clip-transcriber talkingboats-public-clip-refresh talkingboats-lexical-refresh; do
+    install -d -m 0755 "${unit_root}/${service}.service.d"
+    printf '[Service]\nEnvironmentFile=%s/asr.env\n' "${state_root}" > "${unit_root}/${service}.service.d/zzzz-asr-feedback.conf"
+  done
+  systemctl --user daemon-reload
+  systemctl --user restart talkingboats-api.service talkingboats-public-live-radio-proxy.service
   PYTHONPATH="${release_root}/src" "${HOME}/miniforge3/envs/dell/bin/python" - <<'PYCODE'
 import os
 from pathlib import Path
@@ -138,16 +152,6 @@ print("event=asr_queue_index_cutover complete=" + str(result["complete"]).lower(
 if not result["complete"]:
     raise SystemExit("bounded cutover paused; retry the same approved artifact to resume")
 PYCODE
-  for part in src scripts config public-site; do
-    install -d -m 0755 "${runtime}/${part}"
-    cp -a "${release_root}/${part}/." "${runtime}/${part}/"
-  done
-  for service in talkingboats-api talkingboats-public-live-radio-proxy talkingboats-uploaded-clip-transcriber talkingboats-public-clip-refresh talkingboats-lexical-refresh; do
-    install -d -m 0755 "${unit_root}/${service}.service.d"
-    printf '[Service]\nEnvironmentFile=%s/asr.env\n' "${state_root}" > "${unit_root}/${service}.service.d/zzzz-asr-feedback.conf"
-  done
-  systemctl --user daemon-reload
-  systemctl --user restart talkingboats-api.service talkingboats-public-live-radio-proxy.service
   "${release_root}/scripts/deploy_asr_receiver.sh" "${release_root}" "${commit}" "${digest}"
   # Purge derived caches before publishing; raw corpus objects and clip-state history are untouched.
   PYTHONPATH="${release_root}/src" "${HOME}/miniforge3/envs/dell/bin/python" - "${release_root}" "${commit}" <<'PYCODE'
