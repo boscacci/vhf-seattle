@@ -23,6 +23,7 @@ identity = hashlib.sha256(
     (source / "config/asr-training-requirements.txt").read_bytes()
 ).hexdigest()[:16]
 python = root.parent / "training-env" / identity / "bin/python"
+env["PATH"] = str(python.parent) + os.pathsep + env.get("PATH", "")
 if not python.is_file():
     raise ValueError("experiment's pinned CPU environment is unavailable")
 os.execve(str(python), [str(python), "-m", "talkingboats.asr_experiments", run_id], env)

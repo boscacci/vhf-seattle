@@ -6816,12 +6816,12 @@ if (asrFeedbackEnabled) {
         if (!response.ok) throw new Error("Experiments are unavailable. Check the local feedback service.");
         const payload = await response.json();
         start.disabled = !payload.ready;
-        status.textContent = `Serving ${payload.serving_model}; active channels ${payload.active_channels.join(", ")}. Oldest active queued clip: ${payload.oldest_active_queued_at ? formatDateTime(payload.oldest_active_queued_at) : "none"}. Reviewed audio: ${payload.minutes.train}/30 training minutes, ${payload.minutes.validation}/5 validation, ${payload.minutes.test}/5 test; ${payload.test_mentions}/50 test-name mentions. ${payload.pending_archives} audio archives pending. Correction effort: ${payload.effort_minutes} minutes.`;
+        status.textContent = `Serving ${payload.serving_model}; active channels ${payload.active_channels.join(", ")}. Oldest active queued clip: ${payload.oldest_active_queued_at ? formatDateTime(payload.oldest_active_queued_at) : "none"}. Reviewed audio: ${payload.minutes.train}/30 training minutes, ${payload.minutes.validation}/5 validation, ${payload.minutes.test}/5 test; ${payload.test_mentions}/50 test-name mentions. ${payload.pending_archives} audio archives pending. Reviewed vocabulary: ${payload.vocabulary.length} confirmed terms. Correction effort: ${payload.effort_minutes} minutes.`;
         results.replaceChildren();
         for (const run of payload.runs || []) {
           const card = document.createElement("article");
           const title = document.createElement("h3");
-          title.textContent = `${run.id.slice(0, 8)} · ${run.status} · ${run.stage || ""}`;
+          title.textContent = `${run.id.slice(0, 8)} · ${run.status} · ${run.stage || ""}${run.step ? ` · step ${run.step}/${run.max_steps}` : ""}`;
           const detail = document.createElement("p");
           detail.textContent = run.reason || (run.eligible ? "Measured gain meets the adoption criteria." : "Not eligible for production.");
           card.append(title, detail);
@@ -6872,5 +6872,6 @@ if (asrFeedbackEnabled) {
     panel.append(heading, caption, review, refresh, start, status, results);
     host.append(panel);
     document.querySelector("#tab-performance")?.addEventListener("click", load);
+    setInterval(() => { if (activeTab === "performance" && !document.hidden) load(); }, 30000);
   }
 }
