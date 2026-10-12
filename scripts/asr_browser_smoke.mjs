@@ -83,14 +83,14 @@ try {
   await reviewedAudio.waitFor({ state: "attached" });
   await reviewedAudio.evaluate((audio) => { audio.load(); });
   await page.waitForFunction(() => document.querySelector('audio[aria-label="Reviewed range audio"]')?.readyState > 0);
-  await page.waitForFunction(() => {
-    const audio = document.querySelector('audio[aria-label="Reviewed range audio"]');
-    return audio && !audio.seeking && Math.abs(audio.currentTime - 1) < 0.1;
-  });
   await reviewedAudio.evaluate((audio) => audio.play());
   await page.waitForFunction(() => {
     const audio = document.querySelector('audio[aria-label="Reviewed range audio"]');
-    return audio?.paused && audio.currentTime >= 2;
+    return audio && !audio.seeking && audio.currentTime >= 1 && audio.currentTime <= 2.1;
+  });
+  await page.waitForFunction(() => {
+    const audio = document.querySelector('audio[aria-label="Reviewed range audio"]');
+    return audio?.paused && audio.currentTime >= 1.95 && audio.currentTime <= 2.1;
   });
   // Isolated editor fixture: no write touches the shared production corpus.
   const fixture = { channel: "14", started_at: "2026-10-05T12:00:00Z", ended_at: "2026-10-05T12:00:05Z",
