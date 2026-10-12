@@ -126,6 +126,14 @@ try {
   assert.equal(await card.locator("blockquote").textContent(), "Tug Osprey northbound");
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator(".clip-card blockquote", { hasText: "Tug Osprey northbound" }).first().waitFor();
+  await page.route("**/api/clips/search?**", async (route) => route.fulfill({ json: {
+    query: "Osprey", recency: "7d", results: [{ ...fixture, score: 1 }],
+  } }));
+  await page.goto(`${base}/search/`, { waitUntil: "domcontentloaded" });
+  await page.getByLabel("Search transcript meaning").fill("Osprey");
+  await page.getByRole("button", { name: "Search clips", exact: true }).click();
+  await page.locator("#clip-search-results blockquote", { hasText: "Tug Osprey northbound" }).waitFor();
+  await page.goto(`${base}/clips/`, { waitUntil: "domcontentloaded" });
   await page.locator(".clip-card").first().locator("summary", { hasText: "Correct transcript" }).click();
   await page.locator(".clip-card").first().getByRole("button", { name: "Restore original" }).click();
   await page.getByRole("status").filter({ hasText: "Original restored" }).waitFor();
