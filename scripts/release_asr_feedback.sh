@@ -44,8 +44,8 @@ fi
 if [[ "${action}" == prod ]]; then
   "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/verify_asr_approval.py" \
     "${approval_file}" "${release_tag}" "${commit}" "${digest}" "${candidate}/dev-smoke.json"
-  [[ "$(git -C "${repo_root}" rev-parse origin/main)" == "${commit}" ]] || {
-    echo 'Production tag must select the dev-tested default-branch commit.' >&2; exit 2;
+  git -C "${repo_root}" merge-base --is-ancestor "${commit}" origin/main || {
+    echo 'Production tag must select an accepted, dev-tested default-branch commit.' >&2; exit 2;
   }
 fi
 state_root="${HOME}/.config/talkingboats"

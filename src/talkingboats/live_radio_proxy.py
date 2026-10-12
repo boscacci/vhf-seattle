@@ -882,7 +882,7 @@ def create_app(
             allowed = (
                 feedback_path in {"status", "review"}
                 or feedback_path == "runs"
-                or (re.fullmatch(r"runs/[a-f0-9]{32}/cancel", feedback_path) is not None)
+                or (re.fullmatch(r"runs/[a-f0-9]{32}/(?:cancel|audio)", feedback_path) is not None)
             )
             if not allowed:
                 raise HTTPException(status_code=404, detail="feedback route not found")

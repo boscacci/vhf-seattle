@@ -1,5 +1,6 @@
 """Configure private runtime settings without printing credentials."""
 
+import json
 import os
 import secrets
 import shlex
@@ -33,6 +34,18 @@ if storage.startswith("/mnt/") and not Path("/mnt/" + storage.split("/")[2]).is_
     raise ValueError("configured data volume is not mounted")
 root.mkdir(parents=True, exist_ok=True, mode=0o700)
 root.chmod(0o700)
+selection = json.loads(
+    (Path(__file__).resolve().parents[1] / "config/channel-selection.json").read_text()
+)
+serving_model = selection["serving_model"]
+if serving_model == "large-v3-turbo":
+    from faster_whisper.utils import download_model
+
+    serving_model = download_model(
+        "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        revision=selection["benchmark"]["model_revision"],
+        cache_dir=str(root / "models"),
+    )
 values = {
     "TALKINGBOATS_ASR_OPERATOR_TOKEN": previous.get("TALKINGBOATS_ASR_OPERATOR_TOKEN")
     or secrets.token_urlsafe(32),
@@ -43,7 +56,8 @@ values = {
     "HF_HOME": str(root / "models"),
     "TMPDIR": str(root / "tmp"),
     "TALKINGBOATS_ASR_RELEASE_COMMIT": os.environ["TALKINGBOATS_ASR_RELEASE_COMMIT"],
-    "TALKINGBOATS_ACTIVE_ASR_MODEL": "base.en",
+    "TALKINGBOATS_ACTIVE_ASR_MODEL": selection["serving_model"],
+    "TALKINGBOATS_TRANSCRIBE_MODEL": serving_model,
     "TALKINGBOATS_PUBLIC_SITE_DIR": api.get("TALKINGBOATS_PUBLIC_SITE_DIR")
     or str(Path.home() / "repos/elliott-bay-vhf/.runtime/live-ais-deploy/outputs/public-site"),
 }

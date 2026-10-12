@@ -6782,6 +6782,36 @@ function renderCorrectionEditor(clip, transcriptNode) {
   return details;
 }
 
+function renderReviewedExperimentAudio(runId, example) {
+  const wrapper = document.createElement("div");
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.preload = "none";
+  audio.setAttribute("aria-label", "Reviewed range audio");
+  audio.setAttribute("controlslist", "nodownload noremoteplayback");
+  const begin = Number(example.audio_start_seconds || 0);
+  const end = Number(example.audio_end_seconds);
+  const params = new URLSearchParams({ clip_id: example.id });
+  audio.src = apiUrl(`/api/asr-feedback/runs/${runId}/audio?${params}`) + `#t=${begin},${end}`;
+  const notice = document.createElement("p");
+  notice.textContent = `Reviewed audio range: ${begin}–${end} seconds.`;
+  audio.addEventListener("loadedmetadata", () => { audio.currentTime = begin; });
+  audio.addEventListener("timeupdate", () => {
+    if (audio.currentTime >= end) audio.pause();
+    if (audio.currentTime < begin) audio.currentTime = begin;
+  });
+  audio.addEventListener("play", () => {
+    stopOtherAudio(audio);
+    currentClipPlayback = audio;
+    if (audio.currentTime >= end) audio.currentTime = begin;
+    clearBrowserMediaSession();
+  });
+  audio.addEventListener("pause", () => { if (currentClipPlayback === audio) currentClipPlayback = null; });
+  audio.addEventListener("error", () => { notice.textContent = "Reviewed audio is unavailable. Reload this view to retry."; });
+  wrapper.append(notice, audio);
+  return wrapper;
+}
+
 if (asrFeedbackEnabled) {
   const host = document.querySelector("#panel-performance");
   if (host) {
@@ -6790,7 +6820,7 @@ if (asrFeedbackEnabled) {
     const heading = document.createElement("h2");
     heading.textContent = "Transcription experiments";
     const caption = document.createElement("p");
-    caption.textContent = "Review useful names and places in Clip Review. Only fully checked audio enters learning. Experiments run locally and never automatically replace production weights.";
+    caption.textContent = "Review useful names and places in Clip Review. Only fully checked audio enters learning. Experiments run locally and never automatically replace production weights. Name-insertion counts cover the reviewed vocabulary; listen to example comparisons before adopting a model.";
     const review = document.createElement("button");
     review.textContent = "Review useful examples";
     review.addEventListener("click", async () => {
@@ -6816,15 +6846,20 @@ if (asrFeedbackEnabled) {
         if (!response.ok) throw new Error("Experiments are unavailable. Check the local feedback service.");
         const payload = await response.json();
         start.disabled = !payload.ready;
-        status.textContent = `Serving ${payload.serving_model}; active channels ${payload.active_channels.join(", ")}. Oldest active queued clip: ${payload.oldest_active_queued_at ? formatDateTime(payload.oldest_active_queued_at) : "none"}. Reviewed audio: ${payload.minutes.train}/30 training minutes, ${payload.minutes.validation}/5 validation, ${payload.minutes.test}/5 test; ${payload.test_mentions}/50 test-name mentions. ${payload.pending_archives} audio archives pending. Reviewed vocabulary: ${payload.vocabulary.length} confirmed terms. Correction effort: ${payload.effort_minutes} minutes.`;
+        status.textContent = `Serving ${payload.serving_model}; active channels ${payload.active_channels.join(", ")}. Sampled busiest day: ${payload.recovery_forecast ? (payload.recovery_forecast.max_daily_processing_seconds / 3600).toFixed(1) + " processing hours; peak backlog allowed" : "forecast unavailable"}. Oldest active queued clip: ${payload.oldest_active_queued_at ? formatDateTime(payload.oldest_active_queued_at) : "none"}. Reviewed audio: ${payload.minutes.train}/30 training minutes, ${payload.minutes.validation}/5 validation, ${payload.minutes.test}/5 test; ${payload.test_mentions}/50 test-name mentions. ${payload.pending_archives} audio archives pending. Reviewed vocabulary: ${payload.vocabulary.length} confirmed terms. ${payload.day_boundary_labels || 0} corrections near recording-day boundaries remain display-only. Correction effort: ${payload.effort_minutes} minutes.`;
         results.replaceChildren();
         for (const run of payload.runs || []) {
           const card = document.createElement("article");
           const title = document.createElement("h3");
           title.textContent = `${run.id.slice(0, 8)} · ${run.status} · ${run.stage || ""}${run.step ? ` · step ${run.step}/${run.max_steps}` : ""}`;
           const detail = document.createElement("p");
-          detail.textContent = run.reason || (run.eligible ? "Measured gain meets the adoption criteria." : "Not eligible for production.");
+          detail.textContent = run.reason || run.capacity_benchmark?.reason || (run.eligible ? "Measured gain meets the adoption criteria." : "Not eligible for production.");
           card.append(title, detail);
+          if (run.capacity_benchmark?.peak_hour_processing_seconds != null) {
+            const capacity = document.createElement("p");
+            capacity.textContent = `Full-audio capacity: ${(run.capacity_benchmark.peak_hour_processing_seconds / 60).toFixed(1)} processing minutes in the busiest hour; limit 40 minutes for required headroom. Measured within the experiment's one-core budget.`;
+            card.append(capacity);
+          }
           if (["queued", "running", "cancelling"].includes(run.status)) {
             const cancel = document.createElement("button");
             cancel.textContent = "Cancel experiment";
@@ -6838,7 +6873,7 @@ if (asrFeedbackEnabled) {
             const table = document.createElement("table");
             for (const [name, metric] of Object.entries(run.metrics)) {
               const tr = document.createElement("tr");
-              for (const value of [name, `${metric.entity_errors}/${metric.entity_mentions} name errors`, `${metric.invented_names} known-name insertions`, `${(100 * metric.wer).toFixed(1)}% word error`, `${metric.real_time_factor.toFixed(2)} processing seconds/audio second`]) {
+              for (const value of [name, `${metric.entity_errors}/${metric.entity_mentions} name errors`, `${metric.invented_names} known-name insertions`, `${(100 * metric.wer).toFixed(1)}% word error`, `${metric.word_errors} estimated word edits`, `${metric.real_time_factor.toFixed(2)} processing seconds/audio second`]) {
                 const td = document.createElement("td"); td.textContent = value; tr.append(td);
               }
               table.append(tr);
@@ -6847,10 +6882,10 @@ if (asrFeedbackEnabled) {
             const examples = run.metrics.candidate_with_hints?.examples || [];
             for (const example of examples) {
               const comparison = document.createElement("p");
-              comparison.textContent = `Reviewed: ${example.reference} | Candidate: ${example.prediction}`;
+              comparison.textContent = `Reviewed range ${example.audio_start_seconds}–${example.audio_end_seconds} seconds: ${example.reference} | Candidate: ${example.prediction}`;
               card.append(comparison);
-              if (example.channel && example.started_at) {
-                card.append(renderExamplePlayer({ channel: example.channel, started_at: example.started_at }));
+              if (example.id) {
+                card.append(renderReviewedExperimentAudio(run.id, example));
               }
             }
           }

@@ -37,6 +37,7 @@ def test_holdout_vocabulary_never_enters_training_hints():
             reviewed=True,
             archive_status="ready",
             duration_seconds=30,
+            started_at="2026-10-05T12:00:00Z",
             channel="14",
             text=term,
             terms=[term],
@@ -88,7 +89,15 @@ def test_repeated_completed_dataset_reuses_immutable_run(tmp_path, monkeypatch):
         return Result()
 
     monkeypatch.setattr(experiments.subprocess, "run", dispatch)
-    row = dict(id="fixture", revision=1, reviewed=True, archive_status="ready", channel="14")
+    row = dict(
+        id="fixture",
+        revision=1,
+        reviewed=True,
+        archive_status="ready",
+        channel="14",
+        started_at="2026-10-05T12:00:00Z",
+        duration_seconds=5,
+    )
     started = experiments.start_run([row])
     experiments.atomic_json(
         experiments.run_directory(started["id"]) / "status.json", {**started, "status": "completed"}
@@ -118,3 +127,69 @@ def test_oversized_reviewed_audio_stays_pending_and_is_not_copied(monkeypatch):
     row = {"id": "fixture", "key": "fixture.mp3", "archive_status": "pending"}
     experiments.archive_label(Store(), row, "fixture-bucket")
     assert row["archive_status"] == "pending"
+
+
+def test_comparison_models_receive_no_holdout_hints_but_count_known_holdout_name_insertions(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import boto3
+    import faster_whisper
+    import huggingface_hub
+
+    from talkingboats import asr_experiments as experiments
+
+    monkeypatch.setenv("TALKINGBOATS_ASR_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("TALKINGBOATS_RAW_BUCKET", "isolated-fixture")
+    monkeypatch.setattr("signal.signal", lambda *args: None)
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        huggingface_hub, "snapshot_download", lambda *args, **kwargs: "baseline-fixture"
+    )
+    run_id = "b" * 32
+    directory = experiments.run_directory(run_id)
+    candidate = directory / "candidate"
+    candidate.mkdir(parents=True)
+    monkeypatch.setattr(experiments, "train_candidate", lambda *args: candidate)
+    seen_hints = []
+
+    class Model:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def transcribe(self, path, **kwargs):
+            seen_hints.append(kwargs["hotwords"])
+            return iter([SimpleNamespace(text="ValidationName northbound")]), None
+
+    monkeypatch.setattr(faster_whisper, "WhisperModel", Model)
+    rows = [
+        dict(
+            id=split,
+            split=split,
+            duration_seconds=5,
+            text=term + " northbound",
+            terms=[term],
+            channel="14",
+            started_at="2026-10-05T12:00:00Z",
+        )
+        for split, term in [
+            ("train", "TrainingName"),
+            ("validation", "ValidationName"),
+            ("test", "TestName"),
+        ]
+    ]
+    for row in rows:
+        (directory / (row["id"] + ".wav")).write_bytes(b"isolated fixture")
+    experiments.atomic_json(directory / "dataset.json", rows)
+    experiments.atomic_json(directory / "config.json", experiments.DEFAULT_CONFIG)
+    experiments.atomic_json(
+        directory / "status.json", {"id": run_id, "status": "queued", "eligible": False}
+    )
+    experiments.execute_run(run_id)
+    assert seen_hints == [None, "TrainingName", "TrainingName"]
+    import json
+
+    status = json.loads((directory / "status.json").read_text())
+    assert status["status"] == "completed"
+    assert status["metrics"]["candidate_with_hints"]["invented_names"] == 1

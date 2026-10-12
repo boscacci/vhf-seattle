@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
@@ -1221,6 +1222,9 @@ def feedback_status(
     from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
     from talkingboats.clip_transcriber import DEFAULT_TRANSCRIBE_MODEL
 
+    selection = json.loads(
+        (FilePath(__file__).resolve().parents[2] / "config/channel-selection.json").read_text()
+    )
     oldest = (
         clip_store.active_queue_oldest(ACTIVE_CAPTURE_CHANNELS)
         if hasattr(clip_store, "active_queue_oldest")
@@ -1228,6 +1232,8 @@ def feedback_status(
     )
     return {
         "oldest_active_queued_at": oldest,
+        "recovery_forecast": selection.get("recovery_forecast"),
+        "activation_policy": selection.get("activation_policy"),
         **dataset_summary(_required_feedback(feedback).list()),
         "runs": list_runs(),
         "active_channels": ACTIVE_CAPTURE_CHANNELS,
@@ -1320,6 +1326,52 @@ def cancel_feedback_run(run_id: str):
         return cancel_run(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/asr-feedback/runs/{run_id}/audio", dependencies=[Depends(require_feedback_operator)])
+def experiment_audio(
+    run_id: str,
+    clip_id: Annotated[str, Query(min_length=1, max_length=64)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    storage: Annotated[S3AudioStorage, Depends(get_storage)],
+):
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    from talkingboats.asr_experiments import run_directory
+
+    try:
+        dataset = run_directory(run_id) / "dataset.json"
+        rows = json.loads(dataset.read_text())
+    except (ValueError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail="experiment audio not found") from None
+    row = next((r for r in rows if r.get("id") == clip_id), None)
+    key = (row or {}).get("archive_key", "")
+    if (
+        not row
+        or row.get("channel") == "74"
+        or row.get("archive_status") != "ready"
+        or not isinstance(key, str)
+        or not re.fullmatch(r"asr-feedback/audio/[a-f0-9]{64}\.mp3", key)
+    ):
+        raise HTTPException(status_code=404, detail="experiment audio not found")
+    try:
+        storage.client.head_object(Bucket=settings.raw_bucket, Key=key)
+        url = storage.client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.raw_bucket, "Key": key},
+            ExpiresIn=settings.playback_presign_seconds,
+        )
+    except (BotoCoreError, ClientError) as exc:
+        code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            raise HTTPException(status_code=404, detail="experiment audio not found") from None
+        logger.error(
+            "event=asr_example_audio_failed run_id=%s error_type=%s", run_id, type(exc).__name__
+        )
+        raise HTTPException(status_code=503, detail="reviewed audio storage unavailable") from None
+    return RedirectResponse(
+        url=url, status_code=307, headers={"Cache-Control": "private, no-store"}
+    )
 
 
 def main() -> None:

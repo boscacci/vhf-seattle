@@ -74,8 +74,8 @@ def test_faster_whisper_model_is_limited_to_two_cpu_threads(monkeypatch) -> None
     }
 
 
-def test_uploaded_clip_transcriber_defaults_to_capacity_safe_model() -> None:
-    assert DEFAULT_TRANSCRIBE_MODEL == "base.en"
+def test_uploaded_clip_transcriber_defaults_to_requested_turbo_model() -> None:
+    assert DEFAULT_TRANSCRIBE_MODEL == "large-v3-turbo"
 
 
 def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:

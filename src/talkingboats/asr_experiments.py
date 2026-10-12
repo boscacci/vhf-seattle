@@ -10,9 +10,10 @@ import os
 import re
 import subprocess
 import time
-from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+
+from talkingboats.asr_feedback import isolated_recording_day
 
 DEFAULT_CONFIG = {
     "base_model": "openai/whisper-large-v3-turbo",
@@ -28,11 +29,15 @@ DEFAULT_CONFIG = {
     "quantization": "int8",
     "cpu_threads": 2,
     "beam_size": 5,
+    "day_boundary_guard_minutes": 30,
 }
 
 _RUNTIME_REQUIREMENTS = Path(__file__).resolve().parents[2] / "config/asr-training-requirements.txt"
 DEFAULT_CONFIG["runtime_requirements_sha256"] = hashlib.sha256(
     _RUNTIME_REQUIREMENTS.read_bytes()
+).hexdigest()
+DEFAULT_CONFIG["capacity_selection_sha256"] = hashlib.sha256(
+    (_RUNTIME_REQUIREMENTS.parent / "channel-selection.json").read_bytes()
 ).hexdigest()
 
 
@@ -61,6 +66,7 @@ def eligible_labels(labels):
         and not r.get("reverted")
         and r.get("channel") != "74"
         and r.get("archive_status") == "ready"
+        and isolated_recording_day(r)
     ]
 
 
@@ -79,10 +85,7 @@ def dataset_summary(labels):
         for split in ["train", "validation", "test"]
     }
     mentions = sum(
-        sum(
-            len(re.findall(re.escape(normalize(t)), normalize(r.get("training_text") or r["text"])))
-            for t in r.get("terms", [])
-        )
+        sum(occurrences(r.get("training_text") or r["text"], t) for t in r.get("terms", []))
         for r in ready_labels
         if r["split"] == "test"
     )
@@ -93,13 +96,23 @@ def dataset_summary(labels):
         "test_mentions": mentions,
         "minimum_test_mentions": 50,
         "reviewed_labels": len(ready_labels),
+        "day_boundary_labels": sum(
+            r.get("reviewed") and not r.get("reverted") and not isolated_recording_day(r)
+            for r in labels
+        ),
         "pending_archives": sum(
             r.get("reviewed") and r.get("archive_status") != "ready" for r in labels
         ),
         "vocabulary": sorted(
             {t for r in ready_labels if r["split"] == "train" for t in r.get("terms", [])}
         ),
-        "effort_minutes": round(sum(float(r.get("effort_seconds") or 0) for r in labels) / 60, 2),
+        "effort_minutes": round(
+            sum(
+                float(r.get("total_effort_seconds") or r.get("effort_seconds") or 0) for r in labels
+            )
+            / 60,
+            2,
+        ),
         "ready": all(minutes[s] >= n for s, n in targets.items()) and mentions >= 50,
     }
 
@@ -149,8 +162,15 @@ def start_run(labels):
     if not summary["ready"]:
         raise ValueError("more fully reviewed, archived training/validation/test audio is required")
     labels = sorted(eligible_labels(labels), key=lambda r: (r["id"], r["revision"]))
+    from talkingboats.capacity_benchmark import digest, sample_directory
+
+    config = dict(DEFAULT_CONFIG)
+    capacity_manifest = sample_directory(config["capacity_selection_sha256"]) / "manifest.json"
+    config["capacity_manifest_sha256"] = (
+        digest(capacity_manifest) if capacity_manifest.exists() else None
+    )
     fingerprint = hashlib.sha256(
-        json.dumps({"labels": labels, "config": DEFAULT_CONFIG}, sort_keys=True).encode()
+        json.dumps({"labels": labels, "config": config}, sort_keys=True).encode()
     ).hexdigest()
     run_id = fingerprint[:32]
     directory = run_directory(run_id)
@@ -167,7 +187,7 @@ def start_run(labels):
     if sum(p.stat().st_size for p in root().rglob("*") if p.is_file()) > 16 * 1024**3:
         raise ValueError("local artifact quota reached; archive old runs before starting another")
     atomic_json(directory / "dataset.json", labels)
-    atomic_json(directory / "config.json", DEFAULT_CONFIG)
+    atomic_json(directory / "config.json", config)
     status = {
         "id": run_id,
         "dataset_fingerprint": fingerprint,
@@ -247,6 +267,10 @@ def evaluate_predictions(rows, predictions, *, vocabulary):
         if len(examples) < 12:
             examples.append(
                 {
+                    "id": row.get("id"),
+                    "revision": row.get("revision"),
+                    "audio_start_seconds": row.get("start_seconds") or 0,
+                    "audio_end_seconds": row.get("end_seconds") or row.get("duration_seconds"),
                     "channel": row.get("channel"),
                     "started_at": row.get("started_at"),
                     "reference": row["text"],
@@ -419,6 +443,7 @@ def execute_run(run_id):
             validation = [r for r in labels if r["split"] == "validation"]
             test = [r for r in labels if r["split"] == "test"]
             vocabulary = sorted({t for r in train for t in r.get("terms", [])})
+            evaluation_vocabulary = sorted({t for r in labels for t in r.get("terms", [])})
             update("training")
             candidate_path = train_candidate(config, directory, train, validation, update)
             update("evaluating")
@@ -450,19 +475,20 @@ def execute_run(run_id):
                     )
                     predictions.append(" ".join(s.text.strip() for s in segments))
                     elapsed += time.monotonic() - begin
-                metrics[name] = evaluate_predictions(test, predictions, vocabulary=vocabulary)
+                metrics[name] = evaluate_predictions(
+                    test, predictions, vocabulary=evaluation_vocabulary
+                )
                 metrics[name]["elapsed_seconds"] = elapsed
                 metrics[name]["real_time_factor"] = elapsed / sum(label_duration(r) for r in test)
                 del model
-            selection = json.loads(
-                (Path(__file__).resolve().parents[2] / "config/channel-selection.json").read_text()
+            from talkingboats.capacity_benchmark import benchmark_candidate
+
+            update("benchmarking_capacity")
+            capacity = benchmark_candidate(
+                config, candidate_path, ",".join(vocabulary), update, directory
             )
-            hourly = Counter()
-            for row in selection["channels"]:
-                if row["channel"] in selection["active_channels"]:
-                    hourly.update(row["hourly_audio_seconds"])
             candidate = metrics["candidate_with_hints"]
-            capacity_passed = max(hourly.values()) * candidate["real_time_factor"] * 1.5 <= 3600
+            capacity_passed = capacity["passes"]
             decision = promotion_decision(
                 metrics["turbo_with_hints"],
                 candidate,
@@ -474,6 +500,7 @@ def execute_run(run_id):
                 stage="completed",
                 metrics=metrics,
                 promotion=decision,
+                capacity_benchmark=capacity,
                 eligible=decision["eligible"],
                 model_digest=model_digest(candidate_path),
                 elapsed_seconds=round(time.monotonic() - started),
