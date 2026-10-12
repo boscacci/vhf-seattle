@@ -6717,8 +6717,11 @@ function renderCorrectionEditor(clip, transcriptNode) {
   let started = performance.now();
   let pendingEdit = null;
   const params = new URLSearchParams({ channel: clip.channel, started_at: clip.started_at });
+  const editorInputs = [text, terms, reviewed, begin, end, rangeText, save, undo];
+  editorInputs.forEach((input) => { input.disabled = true; });
   details.addEventListener("toggle", async () => {
     if (!details.open) return;
+    editorInputs.forEach((input) => { input.disabled = true; });
     try {
       const response = await fetch(apiUrl(`/api/clips/corrections?${params}`), { cache: "no-store", credentials: "include" });
       if (!response.ok) throw new Error("Could not load the latest correction.");
@@ -6731,6 +6734,7 @@ function renderCorrectionEditor(clip, transcriptNode) {
       begin.value = row.start_seconds ?? "";
       end.value = row.end_seconds ?? "";
       rangeText.value = row.training_text || "";
+      editorInputs.forEach((input) => { input.disabled = false; });
       started = performance.now();
     } catch (error) { status.textContent = error.message; }
   });
