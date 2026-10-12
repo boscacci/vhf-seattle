@@ -320,7 +320,6 @@ def test_recent_clip_export_writes_real_clip_manifest_and_audio(tmp_path: Path) 
         "71": "Non-commercial",
         "72": "Ship-to-ship",
         "73": "Port Operations",
-        "74": "Port Operations",
         "77": "Ship-to-ship",
         "78A": "Non-commercial",
     }
@@ -364,7 +363,7 @@ def test_recent_clip_export_can_use_cloud_clip_store_without_sqlite(tmp_path: Pa
     assert [clip["transcript_public"] for clip in manifest["clips"]] == [
         "Seattle Traffic cloud-backed export."
     ]
-    assert store.calls == [{"limit": 50, "offset": 0, "excluded_channels": ("WX",)}]
+    assert store.calls == [{"limit": 50, "offset": 0, "excluded_channels": ("WX", "74")}]
     assert json.loads((tmp_path / "output" / "public_manifest.json").read_text()) == manifest
 
 
@@ -455,7 +454,7 @@ def test_recent_clip_export_streams_cloud_candidates_without_offset_rescans(
         "Seattle Traffic streaming clip 0.",
         "Seattle Traffic streaming clip 2.",
     ]
-    assert store.calls == [{"page_size": 50, "excluded_channels": ("WX",)}]
+    assert store.calls == [{"page_size": 50, "excluded_channels": ("WX", "74")}]
     assert reader.downloads == [clips[0].key, clips[1].key, clips[2].key]
 
 

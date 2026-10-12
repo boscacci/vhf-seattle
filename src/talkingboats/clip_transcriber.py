@@ -194,6 +194,7 @@ class UploadedClipStore:
         *,
         limit: int,
         retry_errors: bool = False,
+        allowed_channels: tuple[str, ...] | None = None,
     ) -> list[UploadedClipRecord]:
         if limit <= 0:
             raise ValueError("limit must be positive")
@@ -201,6 +202,11 @@ class UploadedClipStore:
         if retry_errors:
             statuses.append("error")
         placeholders = ",".join("?" for _ in statuses)
+        channel_clause = (
+            ""
+            if allowed_channels is None
+            else (" AND channel IN (" + ",".join("?" for _ in allowed_channels) + ")")
+        )
         with sqlite3.connect(self.path) as connection:
             rows = connection.execute(
                 f"""
@@ -217,11 +223,11 @@ class UploadedClipStore:
                     transcript,
                     error
                 FROM uploaded_clips
-                WHERE status IN ({placeholders})
+                WHERE status IN ({placeholders}) {channel_clause}
                 ORDER BY started_at DESC, id DESC
                 LIMIT ?
                 """,
-                (*statuses, limit),
+                (*statuses, *(allowed_channels or ()), limit),
             ).fetchall()
         return [_row_to_record(row) for row in rows]
 
@@ -1182,6 +1188,7 @@ def process_pending_uploads_once(
     quality_analyzer: AudioQualityAnalyzer | None = None,
     waiting_upload_max_age_seconds: int = DEFAULT_WAITING_UPLOAD_MAX_AGE_SECONDS,
     now: datetime | None = None,
+    allowed_channels: tuple[str, ...] | None = None,
 ) -> ProcessSummary:
     if beam_size <= 0:
         raise ValueError("beam_size must be positive")
@@ -1192,7 +1199,10 @@ def process_pending_uploads_once(
         raise ValueError("now must include a timezone")
     observed_at = observed_at.astimezone(UTC)
     summary = ProcessSummary()
-    for record in store.pending_uploads(limit=limit, retry_errors=retry_errors):
+    pending_kwargs = {"limit": limit, "retry_errors": retry_errors}
+    if allowed_channels is not None:
+        pending_kwargs["allowed_channels"] = allowed_channels
+    for record in store.pending_uploads(**pending_kwargs):
         summary.processed += 1
         store.mark_processing(record.key)
         suffix = _suffix_for_content_type(record.content_type)
@@ -1503,12 +1513,17 @@ def main() -> None:
             clip_store_backend=clip_store_backend,
         ),
     )
+    from talkingboats.asr_feedback import reviewed_hotwords
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+
+    current_hotwords = reviewed_hotwords(args.hotwords)
     while True:
         summary = process_pending_uploads_once(
             store=store,
             clip_reader=reader,
             model=model,
             limit=args.limit,
+            allowed_channels=ACTIVE_CAPTURE_CHANNELS,
             retry_errors=args.retry_errors,
             vad_filter=args.vad_filter,
             vad_parameters={
@@ -1519,7 +1534,7 @@ def main() -> None:
             audio_filter=None,
             sample_rate_hz=args.sample_rate_hz,
             beam_size=args.beam_size,
-            hotwords=args.hotwords,
+            hotwords=current_hotwords,
             quality_analysis_enabled=(
                 args.audio_quality_analysis and not args.no_audio_quality_analysis
             ),

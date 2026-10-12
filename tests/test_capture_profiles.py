@@ -3,6 +3,7 @@ from talkingboats.capture_profiles import (
     AirbandIcecastOutput,
     render_rtlsdr_airband_config,
 )
+from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
 
 
 def test_debug_profile_uses_vts_14_for_fast_feedback() -> None:
@@ -27,20 +28,9 @@ def test_voice_net_balanced_profile_prioritizes_busy_voice_channels() -> None:
     assert profile.mode == "multichannel"
     assert profile.center_frequency_hz == 156_675_000
     assert profile.sample_rate_hz == 2_560_000
-    assert [channel.channel for channel in profile.channels] == [
-        "14",
-        "13",
-        "66A",
-        "67",
-        "77",
-        "68",
-        "74",
-        "73",
-        "71",
-        "78A",
-        "69",
-        "72",
-    ]
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+
+    assert [channel.channel for channel in profile.channels] == list(ACTIVE_CAPTURE_CHANNELS)
 
 
 def test_voice_net_airband_config_pins_device_serial_sample_rate_and_squelch() -> None:
@@ -55,12 +45,12 @@ def test_voice_net_airband_config_pins_device_serial_sample_rate_and_squelch() -
     assert "index = 0;" not in config
     assert "sample_rate = 2560000;" in config
     assert "centerfreq = 156675000;" in config
-    assert config.count('type = "file";') == 12
-    assert config.count("squelch_threshold = -35;") == 12
+    assert config.count('type = "file";') == len(ACTIVE_CAPTURE_CHANNELS)
+    assert config.count("squelch_threshold = -35;") == len(ACTIVE_CAPTURE_CHANNELS)
     assert "squelch_snr_threshold" not in config
     assert "freq = 156650000;" in config
     assert "freq = 156700000;" in config
-    assert "freq = 156875000;" in config
+    assert "freq = 156875000;" not in config
     assert "freq = 156925000;" in config
     assert 'label = "vhf-66a";' in config
     assert 'label = "vhf-78a";' in config
@@ -89,7 +79,7 @@ def test_airband_config_supports_per_channel_squelch_overrides() -> None:
         channel_squelch_snr_thresholds={"14": 18.0},
     )
 
-    assert config.count("squelch_threshold = -35;") == 10
+    assert config.count("squelch_threshold = -35;") == len(ACTIVE_CAPTURE_CHANNELS) - 2
     assert (
         'freq = 156325000;\n      modulation = "nfm";\n'
         '      label = "vhf-66a";\n      squelch_threshold = -30;' in config

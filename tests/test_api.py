@@ -135,7 +135,7 @@ def test_ingest_presign_returns_short_lived_upload_url() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["bucket"] == "raw-bucket"
-    assert body["key"].startswith("raw/channel=68/")
+    assert body["key"].startswith("raw/channel=14/")
     assert body["upload_url"] == "https://s3.example.test/upload"
     assert body["expires_in_seconds"] == 900
     assert body["required_headers"] == {
@@ -158,8 +158,8 @@ def test_ingest_presign_records_upload_for_background_transcription(tmp_path) ->
     store = UploadedClipStore(db_path)
     pending = store.pending_uploads(limit=10)
     assert len(pending) == 1
-    assert pending[0].key == "raw/channel=68/date=2026-05-20/fake.mp3"
-    assert pending[0].channel == "68"
+    assert pending[0].key == "raw/channel=14/date=2026-05-20/fake.mp3"
+    assert pending[0].channel == "14"
     assert pending[0].status == "pending"
 
 
@@ -177,12 +177,12 @@ def test_ingest_presign_records_durable_event_without_sqlite() -> None:
     assert event_store.events == [
         {
             "event_type": "clip.presigned",
-            "key": "raw/channel=68/date=2026-05-20/fake.mp3",
+            "key": "raw/channel=14/date=2026-05-20/fake.mp3",
             "observed_at": datetime(2026, 5, 20, 19, 12, tzinfo=UTC),
             "idempotency_key": "unique-radio-event",
             "payload": {
                 "bucket": "raw-bucket",
-                "channel": "68",
+                "channel": "14",
                 "started_at": "2026-05-20T19:12:00Z",
                 "ended_at": None,
                 "duration_seconds": 12.5,
@@ -209,7 +209,7 @@ def test_operator_can_read_ingest_clip_stats_when_db_configured(tmp_path) -> Non
     body = response.json()
     assert body["persisted"] is True
     assert body["counts"] == {"pending": 1}
-    assert body["recent"][0]["key"] == "raw/channel=68/date=2026-05-20/fake.mp3"
+    assert body["recent"][0]["key"] == "raw/channel=14/date=2026-05-20/fake.mp3"
 
 
 def test_recent_clips_are_public_read_only_with_playback_urls(tmp_path) -> None:
@@ -335,9 +335,7 @@ def test_recent_clips_hide_legacy_scores_below_current_intelligibility_limit(
                 _segment(
                     text=text,
                     started_at=started_at.isoformat().replace("+00:00", "Z"),
-                    ended_at=(started_at + timedelta(seconds=2))
-                    .isoformat()
-                    .replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=2)).isoformat().replace("+00:00", "Z"),
                 )
             ],
             quality=ClipQualityMetadata(quality_status="ok", quality_score=score),
@@ -351,9 +349,7 @@ def test_recent_clips_hide_legacy_scores_below_current_intelligibility_limit(
         "verify_playback_exists=false"
     ).json()
 
-    assert [clip["transcript"] for clip in visible_body["clips"]] == [
-        "Seattle Traffic, roger."
-    ]
+    assert [clip["transcript"] for clip in visible_body["clips"]] == ["Seattle Traffic, roger."]
     assert [clip["transcript"] for clip in all_body["clips"]] == [
         "Seattle Traffic, roger.",
         "All right.",
@@ -1109,9 +1105,7 @@ def test_recent_clips_cursor_is_bound_to_datetime_anchor(tmp_path) -> None:
                 _segment(
                     text=f"Around bound cursor {index}",
                     started_at=started_at.isoformat().replace("+00:00", "Z"),
-                    ended_at=(started_at + timedelta(seconds=4))
-                    .isoformat()
-                    .replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace("+00:00", "Z"),
                 )
             ],
         )
@@ -1374,9 +1368,7 @@ def test_recent_clips_can_start_around_pacific_datetime_and_filter_channel(tmp_p
                 _segment(
                     text=transcript,
                     started_at=started_at.isoformat().replace("+00:00", "Z"),
-                    ended_at=(started_at + timedelta(seconds=4))
-                    .isoformat()
-                    .replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=4)).isoformat().replace("+00:00", "Z"),
                 )
             ],
         )
@@ -1519,7 +1511,6 @@ def test_recent_clips_can_filter_by_sparse_channel(tmp_path) -> None:
             "71": "Non-commercial",
             "72": "Ship-to-ship",
             "73": "Port Operations",
-            "74": "Port Operations",
             "77": "Ship-to-ship",
             "78A": "Non-commercial",
         },
@@ -1734,6 +1725,9 @@ class AsgiTestClient:
     def post(self, path: str, **kwargs) -> httpx.Response:
         return _run(self._request("POST", path, **kwargs))
 
+    def put(self, path: str, **kwargs) -> httpx.Response:
+        return _run(self._request("PUT", path, **kwargs))
+
     def delete(self, path: str, **kwargs) -> httpx.Response:
         return _run(self._request("DELETE", path, **kwargs))
 
@@ -1805,7 +1799,7 @@ def _run(awaitable):
 
 def _clip_request() -> dict[str, object]:
     return {
-        "channel": "68",
+        "channel": "14",
         "started_at": "2026-05-20T19:12:00Z",
         "content_type": "audio/mpeg",
         "idempotency_key": "unique-radio-event",

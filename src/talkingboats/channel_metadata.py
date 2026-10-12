@@ -36,21 +36,11 @@ CHANNEL_METADATA = {
     "77": ChannelMetadata("77", "Ship-to-ship", 156.875),
     "78A": ChannelMetadata("78A", "Non-commercial", 156.925),
 }
-VOICE_NET_BALANCED_CHANNELS = (
-    "14",
-    "13",
-    "66A",
-    "67",
-    "77",
-    "68",
-    "74",
-    "73",
-    "71",
-    "78A",
-    "69",
-    "72",
-)
-PUBLIC_MONITORED_CHANNELS = tuple(CHANNEL_METADATA)
+VOICE_NET_BALANCED_CHANNELS = ("14", "13", "16", "66A", "78A", "71")
+PUBLIC_EXCLUDED_CHANNELS = ("WX", "74")
+PUBLIC_MONITORED_CHANNELS = tuple(c for c in CHANNEL_METADATA if c not in PUBLIC_EXCLUDED_CHANNELS)
+# The measured profile is installed from a versioned selection artifact.
+ACTIVE_CAPTURE_CHANNELS = VOICE_NET_BALANCED_CHANNELS
 
 
 def channel_label(channel: str | None) -> str | None:
@@ -72,5 +62,11 @@ def channel_label_map(channels: Iterable[str] | None = None) -> dict[str, str]:
 
 def public_monitored_channel_labels(channels: Iterable[str] | None = None) -> dict[str, str]:
     labels = channel_label_map(PUBLIC_MONITORED_CHANNELS)
-    labels.update(channel_label_map(channels))
+    labels.update(
+        {
+            c: label
+            for c, label in channel_label_map(channels).items()
+            if c not in PUBLIC_EXCLUDED_CHANNELS
+        }
+    )
     return labels

@@ -88,7 +88,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert 'const liveChannelsUrl = apiUrl("/api/live/channels");' in app_js
     assert 'const aisCatcherFrameUrl = "/ais-catcher/?lat=47.6190158&lon=-122.3595353' in app_js
     assert 'const aisCatcherFallbackUrl = "https://aiscatcher.org/";' in app_js
-    assert "/api/clips/corrections" not in app_js
+    assert "/api/clips/corrections" in app_js
     assert 'const clipFeaturesUrl = apiUrl("/api/clips/features");' in app_js
     assert 'const hallOfFameRouteSegment = "hall-of-fame";' in app_js
     assert 'const reviewedRouteSegment = "reviewed";' not in app_js
@@ -108,7 +108,7 @@ def test_public_site_is_recent_clip_app_with_dedicated_ais_catcher_tab() -> None
     assert "operatorLabelingLink" not in app_js
     assert ".operator-labeling-link" not in styles_css
     assert "\n[hidden] {\n  display: none !important;\n}" in styles_css
-    assert "/api/asr-feedback/status" not in app_js
+    assert "/api/asr-feedback/status" in app_js
     assert "privateAppHost" in app_js
     assert "devAppHost" in app_js
     assert "/operator/" not in app_js
@@ -418,7 +418,7 @@ def test_public_shell_uses_current_shared_asset_cache_key() -> None:
 
     assert style_version is not None
     assert script_version is not None
-    assert style_version.group(1) == "20260907-thermal-balance-v1"
+    assert style_version.group(1) == "20261012-asr-feedback-v1"
     assert script_version.group(1) == style_version.group(1)
 
 
@@ -949,11 +949,11 @@ def test_public_site_cache_busts_app_module() -> None:
 
     assert '<script src="/assets/app.js?v=' in index_html
     assert (
-        '<script src="/assets/app.js?v=20260907-thermal-balance-v1" type="module"></script>'
+        '<script src="/assets/app.js?v=20261012-asr-feedback-v1" type="module"></script>'
         in index_html
     )
     assert (
-        '<link rel="stylesheet" href="/assets/styles.css?v=20260907-thermal-balance-v1" />'
+        '<link rel="stylesheet" href="/assets/styles.css?v=20261012-asr-feedback-v1" />'
         in index_html
     )
     assert '<script src="/assets/app.js" type="module"></script>' not in index_html
@@ -1349,21 +1349,13 @@ def test_public_site_allows_live_radio_without_system_media_controls() -> None:
     assert ".system-media-toggle" in styles_css
 
 
-def test_public_site_has_no_model_training_surface() -> None:
-    app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
-    index_html = Path("public-site/index.html").read_text(encoding="utf-8")
-    styles_css = Path("public-site/assets/styles.css").read_text(encoding="utf-8")
-
-    for retired_text in (
-        "asrFeedback",
-        "training-metadata",
-        "include_in_training",
-        "transcript_reviewed",
-        "Fix transcript",
-    ):
-        assert retired_text not in app_js
-        assert retired_text not in index_html
-        assert retired_text not in styles_css
+def test_public_site_feedback_controls_are_guarded_by_private_host() -> None:
+    app_js = Path("public-site/assets/app.js").read_text()
+    assert "const asrFeedbackEnabled = privateAppHost;" in app_js
+    assert "if (asrFeedbackEnabled && canReviewClip(clip))" in app_js
+    assert "if (asrFeedbackEnabled)" in app_js
+    assert "TALKINGBOATS_ASR_OPERATOR_TOKEN" not in app_js
+    assert "start.disabled = !payload.ready" in app_js
 
 
 def test_public_site_live_audio_everything_mode_queues_transmissions() -> None:

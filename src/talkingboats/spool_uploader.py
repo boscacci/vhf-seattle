@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from talkingboats.audio_processing import process_canonical_clip_audio
+from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
 
 ALLOWED_CHANNELS = {
     "05A",
@@ -175,6 +176,11 @@ def discover_completed_audio_files(
         try:
             channel = infer_spool_channel(audio_path)
         except ValueError:
+            continue
+        if (
+            os.getenv("TALKINGBOATS_ENFORCE_ACTIVE_CHANNELS", "false").lower() == "true"
+            and channel not in ACTIVE_CAPTURE_CHANNELS
+        ):
             continue
         candidates.append(
             (
@@ -343,6 +349,12 @@ def prune_completed_audio_files(
 
     candidates: list[tuple[datetime, datetime, Path]] = []
     for audio_path in spool_root.rglob("*"):
+        if os.getenv("TALKINGBOATS_ENFORCE_ACTIVE_CHANNELS", "false").lower() == "true":
+            try:
+                if infer_spool_channel(audio_path) not in ACTIVE_CAPTURE_CHANNELS:
+                    continue
+            except ValueError:
+                continue
         if not audio_path.is_file() or audio_path.suffix.lower() not in CONTENT_TYPES:
             continue
         stat = stat_func(audio_path)
@@ -858,9 +870,7 @@ def _merge_spooled_group_audio(
             continue
         gap = (group.members[index + 1].started_at - member.ended_at).total_seconds()
         if gap > 0:
-            command.extend(
-                ["-f", "lavfi", "-t", f"{gap:.3f}", "-i", "anullsrc=r=48000:cl=mono"]
-            )
+            command.extend(["-f", "lavfi", "-t", f"{gap:.3f}", "-i", "anullsrc=r=48000:cl=mono"])
             inputs.append((input_index, f"gap{index}"))
             input_index += 1
     filters = [

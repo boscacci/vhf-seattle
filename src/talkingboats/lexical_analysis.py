@@ -12,6 +12,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -25,7 +26,7 @@ from talkingboats.security import assert_public_safe
 _DISPLAYED_TRANSCRIPT_SQL = "uploaded_clips.transcript"
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
-PUBLIC_EXCLUDED_CHANNELS = ("WX",)
+PUBLIC_EXCLUDED_CHANNELS = ("WX", "74")
 TOPIC_PLOT_PATH = "/analysis/topic_clusters.html"
 PUBLIC_AUDIO_EXAMPLE_LIMIT = DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 MAX_ENTITY_EXAMPLE_DURATION_SECONDS = 12.0
@@ -628,7 +629,21 @@ def load_transcribed_clips_from_store(
         yield _transcript_clip_from_recent(clip)
 
 
+@cache
+def _analysis_corrections():
+    from talkingboats.asr_feedback import feedback_store_from_env
+
+    feedback = feedback_store_from_env()
+    return {(r["channel"], r["started_at"]): r for r in feedback.list()} if feedback else {}
+
+
 def _transcript_clip_from_recent(clip: Any) -> TranscriptClip:
+    feedback = _analysis_corrections()
+    transcript = str(clip.transcript)
+    if feedback:
+        correction = feedback.get((str(clip.channel), str(clip.started_at)))
+        if correction and not correction.get("reverted"):
+            transcript = correction["text"]
     return TranscriptClip(
         key=str(clip.key),
         channel=str(clip.channel),
@@ -636,7 +651,7 @@ def _transcript_clip_from_recent(clip: Any) -> TranscriptClip:
         ended_at=str(clip.ended_at) if clip.ended_at else None,
         duration_seconds=clip.duration_seconds,
         content_type=str(clip.content_type),
-        transcript=_public_text(str(clip.transcript)),
+        transcript=_public_text(transcript),
     )
 
 
@@ -884,7 +899,7 @@ def read_cached_lexical_analysis(db_path: Path | None) -> dict[str, Any]:
         return missing_lexical_analysis()
     payload = json.loads(row[0])
     assert_public_safe(payload)
-    return payload
+    return public_analysis(payload)
 
 
 def read_published_lexical_analysis(path: Path) -> dict[str, Any]:
@@ -892,6 +907,14 @@ def read_published_lexical_analysis(path: Path) -> dict[str, Any]:
         return missing_lexical_analysis()
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert_public_safe(payload)
+    return public_analysis(payload)
+
+
+def public_analysis(payload):
+    """Reject aggregates from excluded channels until the next safe rebuild."""
+    channels = payload.get("channels") or payload.get("frequency", {}).get("by_channel", {})
+    if "74" in channels:
+        return missing_lexical_analysis()
     return payload
 
 
@@ -1091,9 +1114,7 @@ def _build_topics(
                     generated_at=generated_at,
                 ),
             )
-        plot_indices = [
-            index for index, topic_id in enumerate(topics) if int(topic_id) != -1
-        ]
+        plot_indices = [index for index, topic_id in enumerate(topics) if int(topic_id) != -1]
         plot_topics = [int(topics[index]) for index in plot_indices]
         plot_documents = [documents[index] for index in plot_indices]
         coordinate_columns = [list(coordinates[:, column]) for column in range(3)]
@@ -1114,8 +1135,7 @@ def _build_topics(
                     },
                     text=[_short_text(doc, limit=160) for doc in plot_documents],
                     customdata=[
-                        topic_labels.get(topic_id, "Keywords pending")
-                        for topic_id in plot_topics
+                        topic_labels.get(topic_id, "Keywords pending") for topic_id in plot_topics
                     ],
                     hovertemplate="%{customdata}<br>%{text}<extra></extra>",
                 )
@@ -1744,8 +1764,7 @@ def _topic_word_is_interesting(word: str) -> bool:
     return bool(
         tokens
         and any(
-            token not in TOPIC_LABEL_STOPWORDS
-            and any(character.isalpha() for character in token)
+            token not in TOPIC_LABEL_STOPWORDS and any(character.isalpha() for character in token)
             for token in tokens
         )
     )
@@ -1926,10 +1945,7 @@ def _bucket_hits(pattern: re.Pattern[str], text: str) -> Iterable[str]:
 
 
 def _counter_items(counter: Counter[str], *, limit: int) -> list[dict[str, int | str]]:
-    return [
-        {"term": term, "count": int(count)}
-        for term, count in counter.most_common(limit)
-    ]
+    return [{"term": term, "count": int(count)} for term, count in counter.most_common(limit)]
 
 
 def _source_fingerprint(clips: list[TranscriptClip]) -> str:

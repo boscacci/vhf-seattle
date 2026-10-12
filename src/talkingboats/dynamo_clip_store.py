@@ -205,6 +205,7 @@ class DynamoUploadedClipStore:
         *,
         limit: int,
         retry_errors: bool = False,
+        allowed_channels: tuple[str, ...] | None = None,
     ) -> list[UploadedClipRecord]:
         if limit <= 0:
             raise ValueError("limit must be positive")
@@ -212,13 +213,35 @@ class DynamoUploadedClipStore:
         if retry_errors:
             statuses.append("error")
         records: list[UploadedClipRecord] = []
-        for status in statuses:
-            for item in self._query_items(_status_pk(status), scan_forward=False, limit=limit):
+        partitions = (
+            [_status_pk(status) for status in statuses]
+            if allowed_channels is None
+            else [
+                f"clip_status#{status}#channel#{channel}"
+                for status in statuses
+                for channel in allowed_channels
+            ]
+        )
+        for partition in partitions:
+            for item in self._query_items(partition, scan_forward=False, limit=limit):
                 state = self._state_item(str(item["key"]))
                 if state:
                     records.append(_record_from_state(state))
         records.sort(key=lambda record: (record.started_at, record.key), reverse=True)
         return records[:limit]
+
+    def active_queue_oldest(self, channels):
+        """Bounded oldest lookup excludes preserved inactive-channel backlog."""
+        rows = [
+            row
+            for channel in channels
+            for status in ("pending", "waiting_upload", "processing")
+            for row in self._query_items(
+                f"clip_status#{status}#channel#{channel}", scan_forward=True, limit=1
+            )
+        ]
+        times = [str(row["started_at"]) for row in rows if row.get("started_at")]
+        return min(times) if times else None
 
     def get_clip(self, key: str) -> UploadedClipRecord | None:
         item = self._state_item(key)
@@ -592,12 +615,9 @@ class DynamoUploadedClipStore:
         ):
             channel = str(item.get("channel") or "?")
             channel_upper = channel.upper()
-            row_is_displayable = (
-                _is_displayable_index_item(item)
-                and quality_matches_filter(
-                    item.get("quality_status"),
-                    quality,
-                )
+            row_is_displayable = _is_displayable_index_item(item) and quality_matches_filter(
+                item.get("quality_status"),
+                quality,
             )
             if row_is_displayable and channel_upper not in excluded_set:
                 counts[channel] = counts.get(channel, 0) + 1
@@ -740,8 +760,7 @@ class DynamoUploadedClipStore:
             return {
                 "counts": snapshot.operator_counts(),
                 "channel_counts": {
-                    channel: {"transcribed": count}
-                    for channel, count in channel_counts.items()
+                    channel: {"transcribed": count} for channel, count in channel_counts.items()
                 },
                 "featured_clip_count": snapshot.transcribed_count(
                     featured_only=True,
@@ -809,8 +828,16 @@ class DynamoUploadedClipStore:
         if old_status and old_status != item.get("status"):
             self._delete_item({"pk": _status_pk(old_status), "sk": _index_sk(started_at, key)})
         status = str(item.get("status"))
+        if old_status and old_status != status:
+            self._delete_item(
+                {
+                    "pk": f"clip_status#{old_status}#channel#{channel}",
+                    "sk": _index_sk(started_at, key),
+                }
+            )
         if status in {"pending", "processing", "waiting_upload", "error"}:
             self._put_item(_index_item(_status_pk(status), item))
+            self._put_item(_index_item(f"clip_status#{status}#channel#{channel}", item))
         if old_status == "transcribed" and status != "transcribed":
             self._delete_transcribed_indexes(channel, started_at, key)
             self._delete_featured_indexes(channel, started_at, key)
@@ -1420,9 +1447,7 @@ def _recent_from_item(item: dict[str, Any]) -> RecentTranscribedClip:
 
 
 def _is_displayable_index_item(item: dict[str, Any]) -> bool:
-    return is_displayable_transcript(
-        item.get("display_transcript") or item.get("transcript") or ""
-    )
+    return is_displayable_transcript(item.get("display_transcript") or item.get("transcript") or "")
 
 
 def _segment_payload(segment: UploadedClipSegment) -> dict[str, object]:

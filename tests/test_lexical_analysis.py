@@ -104,8 +104,7 @@ def test_generate_lexical_analysis_counts_terms_entities_and_writes_cache(tmp_pa
     )
     assert any("West Waterway" in section["signals"] for section in payload["education_guide"])
     assert any(
-        "pilot" in section["what_it_explains"].lower()
-        for section in payload["education_guide"]
+        "pilot" in section["what_it_explains"].lower() for section in payload["education_guide"]
     )
     assert payload["education"][0]["url"].startswith("https://")
     assert (output_dir / "analysis" / "lexical.json").exists()
@@ -140,7 +139,7 @@ def test_generate_lexical_analysis_can_use_cloud_clip_store(tmp_path: Path) -> N
     assert payload["source_clip_count"] == 1
     assert payload["channels"] == {"14": 1}
     assert ("seattle traffic", 1) in _term_pairs(payload["terms"]["bigrams"])
-    assert store.calls == [{"limit": 500, "excluded_channels": ("WX",), "offset": 0}]
+    assert store.calls == [{"limit": 500, "excluded_channels": ("WX", "74"), "offset": 0}]
 
 
 def test_generate_lexical_analysis_from_store_excludes_clips_hidden_by_quality_gate(
@@ -398,7 +397,7 @@ def test_generate_lexical_analysis_streams_cloud_clip_store_when_available(
     )
 
     assert payload["source_clip_count"] == 2
-    assert store.iter_calls == [{"page_size": 2, "excluded_channels": ("WX",)}]
+    assert store.iter_calls == [{"page_size": 2, "excluded_channels": ("WX", "74")}]
     assert store.recent_calls == []
 
 
@@ -1185,9 +1184,7 @@ class StreamingAnalysisClipStore:
         page_size: int,
         excluded_channels: tuple[str, ...] = (),
     ):
-        self.iter_calls.append(
-            {"page_size": page_size, "excluded_channels": excluded_channels}
-        )
+        self.iter_calls.append({"page_size": page_size, "excluded_channels": excluded_channels})
         yield from self.clips
 
     def recent_transcribed(self, **kwargs):
@@ -1221,3 +1218,17 @@ def _entity(payload: dict[str, object], name: str) -> dict[str, object]:
         if entity["name"] == name:
             return entity
     raise AssertionError(f"missing entity {name}")
+
+
+def test_stale_analysis_with_channel_74_is_hidden_until_safe_rebuild(tmp_path):
+    import json
+
+    from talkingboats.lexical_analysis import read_published_lexical_analysis
+
+    path = tmp_path / "lexical.json"
+    path.write_text(
+        json.dumps({"status": "ok", "channels": {"14": 2, "74": 1}, "source_clip_count": 3})
+    )
+    payload = read_published_lexical_analysis(path)
+    assert payload["status"] == "missing" and payload["source_clip_count"] == 0
+    assert "74" not in payload["channels"]

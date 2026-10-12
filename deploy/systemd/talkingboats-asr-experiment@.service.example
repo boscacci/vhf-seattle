@@ -1,0 +1,26 @@
+[Unit]
+Description=Bounded local Whisper experiment %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/.local/share/talkingboats/releases/asr/dev/current
+EnvironmentFile=%h/.config/talkingboats/api.env
+EnvironmentFile=%h/.config/talkingboats/asr.env
+Environment=PYTHONPATH=%h/.local/share/talkingboats/releases/asr/dev/current/src
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=OMP_NUM_THREADS=1
+Environment=PATH=%h/.local/share/talkingboats/asr-training-env/bin:%h/miniforge3/envs/dell/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/share/talkingboats/asr-training-env/bin/python %h/.local/share/talkingboats/releases/asr/dev/current/scripts/run_asr_experiment.py %i
+CPUQuota=100%
+MemoryMax=12G
+MemorySwapMax=0
+RuntimeMaxSec=7200
+TimeoutStopSec=60
+KillSignal=SIGTERM
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0077
+Restart=no

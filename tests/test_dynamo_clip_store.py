@@ -505,9 +505,7 @@ def test_dynamo_clip_store_starts_on_either_side_of_datetime_anchor() -> None:
                 SimpleNamespace(
                     text=f"Around clip {index}",
                     started_at=started_at.isoformat().replace("+00:00", "Z"),
-                    ended_at=(started_at + timedelta(seconds=1))
-                    .isoformat()
-                    .replace("+00:00", "Z"),
+                    ended_at=(started_at + timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
                     relative_start_seconds=0.0,
                     relative_end_seconds=1.0,
                 )
@@ -937,3 +935,16 @@ class FakeBatchWriter:
 
     def delete_item(self, *, Key):
         self.table.delete_item(Key=Key)
+
+
+def test_active_channel_queue_does_not_consume_excluded_backlog():
+    table = FakeDynamoTable()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"), event_store=CapturingEventStore(), table=table
+    )
+    excluded = "raw/channel=74/date=2026-06-01/excluded.mp3"
+    retained = "raw/channel=14/date=2026-06-01/retained.mp3"
+    store.record_presigned_upload(key=excluded, request=_request(channel="74"))
+    store.record_presigned_upload(key=retained, request=_request(channel="14"))
+    assert [r.key for r in store.pending_uploads(limit=1, allowed_channels=("14",))] == [retained]
+    assert store.get_clip(excluded).status == "pending"

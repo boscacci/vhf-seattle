@@ -182,7 +182,7 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'TALKINGBOATS_CLOUD_HLS_PUBLISH_INTERVAL_SECONDS=%q\n' "1"
     printf 'TALKINGBOATS_CLOUD_HLS_DEFAULT_CHANNEL=%q\n' "14"
     printf 'TALKINGBOATS_CLOUD_HLS_CHANNELS=%q\n' \
-      "05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A"
+      "14,13,16,66A,78A,71"
     printf 'TALKINGBOATS_CAPTURE_PROFILE=%q\n' "debug"
     printf 'TALKINGBOATS_CAPTURE_STATUS_CHANNEL=%q\n' "14"
     printf 'TALKINGBOATS_CAPTURE_STATUS_FREQUENCY_HZ=%q\n' "156700000"
@@ -278,7 +278,7 @@ append_env_if_missing TALKINGBOATS_CLOUD_HLS_LIST_SIZE "6"
 append_env_if_missing TALKINGBOATS_CLOUD_HLS_PUBLISH_INTERVAL_SECONDS "1"
 append_env_if_missing TALKINGBOATS_CLOUD_HLS_DEFAULT_CHANNEL "14"
 append_env_if_missing TALKINGBOATS_CLOUD_HLS_CHANNELS \
-  "05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A"
+  "14,13,16,66A,78A,71"
 append_env_if_missing TALKINGBOATS_EDGE_THRESHOLD_RMS "8000"
 append_env_if_missing TALKINGBOATS_EDGE_MIN_CLIP_SECONDS "1.0"
 append_env_if_missing TALKINGBOATS_EDGE_PRE_ROLL_SECONDS "0"
@@ -433,7 +433,6 @@ PYTHONPATH="${app_root}/src" python3 -m talkingboats.capture_profiles \
   --icecast-output "71:/talkingboats-71.mp3:Talking Boats Non-commercial" \
   --icecast-output "72:/talkingboats-72.mp3:Talking Boats Ship-to-ship" \
   --icecast-output "73:/talkingboats-73.mp3:Talking Boats Port Operations" \
-  --icecast-output "74:/talkingboats-74.mp3:Talking Boats Port Operations" \
   --icecast-output "77:/talkingboats-77.mp3:Talking Boats Ship-to-ship" \
   --icecast-output "78A:/talkingboats-78a.mp3:Talking Boats Non-commercial" \
   --icecast-source-password "${TALKINGBOATS_ICECAST_SOURCE_PASSWORD}" \

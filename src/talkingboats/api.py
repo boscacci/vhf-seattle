@@ -6,6 +6,7 @@ import binascii
 import hashlib
 import json
 import logging
+import os
 import time
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
@@ -16,11 +17,12 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Path, Query, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from talkingboats.asr_feedback import Correction, Corrections, DynamoCorrections, RevisionConflict
 from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
 from talkingboats.clip_quality import (
     QualityFilter,
@@ -130,9 +132,15 @@ PUBLISHED_LEXICAL_PATH = (
     FilePath(__file__).resolve().parents[2] / "outputs/public-site/analysis/lexical.json"
 )
 PUBLISHED_SEARCH_INDEX_PATH = (
-    FilePath(__file__).resolve().parents[2] / "outputs/public-site/analysis/search_index.json"
+    FilePath(
+        os.getenv(
+            "TALKINGBOATS_PUBLIC_SITE_DIR",
+            str(FilePath(__file__).resolve().parents[2] / "outputs/public-site"),
+        )
+    )
+    / "analysis/search_index.json"
 )
-PUBLIC_EXCLUDED_CHANNELS = ("WX",)
+PUBLIC_EXCLUDED_CHANNELS = ("WX", "74")
 CLIP_NAVIGATION_TIMEZONE_NAME = "America/Los_Angeles"
 CLIP_NAVIGATION_TIMEZONE = ZoneInfo(CLIP_NAVIGATION_TIMEZONE_NAME)
 if SHARED_UI_DIR.exists():
@@ -238,6 +246,10 @@ async def presign_clip_upload(
         Depends(get_clip_store),
     ],
 ) -> ClipPresignResponse:
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+
+    if request.channel not in ACTIVE_CAPTURE_CHANNELS:
+        raise HTTPException(status_code=422, detail="channel is not actively monitored")
     try:
         key, upload_url = storage.presign_raw_upload(request)
     except RuntimeError as exc:
@@ -326,6 +338,24 @@ def recent_clips(
         )
     effective_offset = (page - 1) * limit if page is not None else offset
     effective_page = page if page is not None else (effective_offset // limit) + 1
+    requested_values = [
+        str(c).strip().upper()
+        for value in [channel, *(channels or [])]
+        if value
+        for c in str(value).split(",")
+    ]
+    if "74" in requested_values and not any(
+        c not in PUBLIC_EXCLUDED_CHANNELS for c in requested_values
+    ):
+        return {
+            "clips": [],
+            "channel_counts": {},
+            "channel_labels": public_monitored_channel_labels(),
+            "next_cursor": None,
+            "clip_count": 0,
+            "filtered_clip_count": 0,
+            "counts_deferred": not include_counts,
+        }
     requested_excluded_channels = _requested_public_excluded_channels(exclude_channels)
     selected_channels = _requested_public_channels(
         channel=channel,
@@ -516,7 +546,7 @@ def recent_clips(
         else None
     )
     return {
-        "clips": clips,
+        "clips": _correct_public_clips(settings, clips),
         "clip_count": clip_count,
         "received_clip_count": received_clip_count,
         "analyzed_clip_count": analyzed_clip_count,
@@ -566,11 +596,7 @@ def _recent_playable_clip_page(
     latest_playable_started_at: str | None = None
     playable_seen = 0
     candidate_offset = 0
-    indexed_page = (
-        page is not None
-        and not verify_playback_exists
-        and quality != "visible"
-    )
+    indexed_page = page is not None and not verify_playback_exists and quality != "visible"
     batch_size = limit if indexed_page else max(limit, 50)
     playable_offset = 0 if indexed_page else offset
     target_count = limit + 1
@@ -952,6 +978,13 @@ async def clip_search(
             len(q),
             round((time.monotonic() - started_at) * 1000),
         )
+        feedback = get_feedback_store(settings)
+        if feedback:
+            from talkingboats.feedback_search import corrected_search
+
+            payload = await run_in_threadpool(
+                corrected_search, feedback, payload, index, query=q, limit=limit, recency=recency
+            )
         return payload
     except SearchIndexUnavailable as exc:
         logger.warning(
@@ -998,6 +1031,8 @@ async def presign_clip_playback(
     settings: Annotated[Settings, Depends(get_settings)],
     storage: Annotated[S3AudioStorage, Depends(get_storage)],
 ) -> PlaybackUrlResponse:
+    if "/channel=74/" in request.key or request.key.startswith("raw/channel=74/"):
+        raise HTTPException(status_code=404, detail="clip not found")
     try:
         playback_url = storage.presign_playback(request.key)
     except RuntimeError as exc:
@@ -1097,6 +1132,194 @@ def _requested_public_excluded_channels(channels: list[str] | None) -> tuple[str
         if requested_channel not in excluded:
             excluded.append(requested_channel)
     return tuple(excluded)
+
+
+def get_feedback_store(settings: Annotated[Settings, Depends(get_settings)]) -> Corrections | None:
+    table = settings.asr_feedback_table or settings.durable_events_table
+    if not settings.asr_feedback_enabled or not table:
+        return None
+    return DynamoCorrections(table, settings.aws_region)
+
+
+def _correct_public_clips(settings: Settings, clips: list[dict]) -> list[dict]:
+    feedback = get_feedback_store(settings)
+    return feedback.overlay(clips) if feedback else clips
+
+
+async def require_feedback_operator(
+    settings: Annotated[Settings, Depends(get_settings)],
+    x_talkingboats_asr_operator: Annotated[str | None, Header()] = None,
+) -> None:
+    require_token(
+        x_talkingboats_asr_operator, settings.asr_operator_token, "TALKINGBOATS_ASR_OPERATOR_TOKEN"
+    )
+
+
+def _required_feedback(feedback: Corrections | None) -> Corrections:
+    if feedback is None:
+        raise HTTPException(status_code=503, detail="feedback storage is not configured")
+    return feedback
+
+
+@app.get("/api/clips/corrections", dependencies=[Depends(require_feedback_operator)])
+def read_correction(
+    channel: str,
+    started_at: str,
+    feedback: Annotated[Corrections | None, Depends(get_feedback_store)],
+):
+    return _required_feedback(feedback).get(channel, started_at) or {"revision": 0}
+
+
+@app.put("/api/clips/corrections", dependencies=[Depends(require_feedback_operator)])
+def save_correction(
+    label: Correction,
+    background_tasks: BackgroundTasks,
+    feedback: Annotated[Corrections | None, Depends(get_feedback_store)],
+    clip_store: Annotated[Any, Depends(get_clip_store)],
+):
+    feedback = _required_feedback(feedback)
+    clip = clip_store.transcribed_clip_for_public_playback(
+        channel=label.channel,
+        started_at=label.started_at,
+        excluded_channels=PUBLIC_EXCLUDED_CHANNELS,
+    )
+    if clip is None:
+        raise HTTPException(status_code=404, detail="clip not found")
+    try:
+        row = feedback.save(
+            label,
+            original=clip.transcript,
+            key=clip.key,
+            duration=float(clip.duration_seconds or 0),
+        )
+    except RevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if row["reviewed"] and not row["reverted"] and isinstance(feedback, DynamoCorrections):
+        from talkingboats.asr_experiments import archive_label
+
+        settings = Settings.from_env()
+        background_tasks.add_task(archive_label, feedback, row, settings.raw_bucket)
+    logger.info(
+        "event=asr_correction_saved clip_id=%s revision=%s reviewed=%s",
+        row["id"],
+        row["revision"],
+        row["reviewed"],
+    )
+    from talkingboats.asr_experiments import root
+
+    return {**row, "production_overlay_active": (root() / "production-overlay.json").is_file()}
+
+
+@app.get("/api/asr-feedback/status", dependencies=[Depends(require_feedback_operator)])
+def feedback_status(
+    feedback: Annotated[Corrections | None, Depends(get_feedback_store)],
+    clip_store: Annotated[Any, Depends(get_clip_store)],
+):
+    from talkingboats.asr_experiments import dataset_summary, list_runs
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+    from talkingboats.clip_transcriber import DEFAULT_TRANSCRIBE_MODEL
+
+    oldest = (
+        clip_store.active_queue_oldest(ACTIVE_CAPTURE_CHANNELS)
+        if hasattr(clip_store, "active_queue_oldest")
+        else None
+    )
+    return {
+        "oldest_active_queued_at": oldest,
+        **dataset_summary(_required_feedback(feedback).list()),
+        "runs": list_runs(),
+        "active_channels": ACTIVE_CAPTURE_CHANNELS,
+        "serving_model": os.getenv("TALKINGBOATS_ACTIVE_ASR_MODEL", DEFAULT_TRANSCRIBE_MODEL),
+    }
+
+
+@app.get("/api/asr-feedback/review", dependencies=[Depends(require_feedback_operator)])
+def feedback_review(
+    feedback: Annotated[Corrections | None, Depends(get_feedback_store)],
+    clip_store: Annotated[Any, Depends(get_clip_store)],
+):
+    from dataclasses import asdict
+
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+
+    labels = _required_feedback(feedback).list()
+    done = {
+        (r["channel"], r["started_at"])
+        for r in labels
+        if r.get("reviewed") and not r.get("reverted")
+    }
+    import re
+    from collections import Counter
+
+    terminology_errors = Counter()
+    for label in labels:
+        if label.get("reviewed") and not label.get("reverted") and label.get("terms"):
+            old = set(re.findall(r"\w+", label.get("original", "").casefold()))
+            corrected = set(re.findall(r"\w+", label["text"].casefold()))
+            terminology_errors.update(old - corrected)
+    candidates = []
+    for channel in ACTIVE_CAPTURE_CHANNELS:
+        rows = clip_store.recent_transcribed(
+            limit=20, channel=channel, quality="all", excluded_channels=PUBLIC_EXCLUDED_CHANNELS
+        )
+        for row in rows:
+            if (row.channel, row.started_at) in done:
+                continue
+            if not row.duration_seconds or row.duration_seconds < 2:
+                continue
+            if "static_or_no_speech" in row.quality_flags or "clipped_audio" in row.quality_flags:
+                continue
+            candidates.append(asdict(row))
+
+    def priority(row):
+        words = set(re.findall(r"\w+", row.get("transcript", "").casefold()))
+        repeated = sum(n for word, n in terminology_errors.items() if n >= 2 and word in words)
+        return repeated, len(row.get("quality_flags", [])), row["started_at"]
+
+    candidates.sort(key=priority, reverse=True)
+    seen = {}
+    selected = []
+    for row in candidates:
+        day_channel = row["started_at"][:10] + row["channel"]
+        if seen.get(day_channel, 0) >= 3:
+            continue
+        seen[day_channel] = seen.get(day_channel, 0) + 1
+        row.pop("key", None)
+        row["transcript_public"] = row["transcript"]
+        selected.append(row)
+        if len(selected) == 24:
+            break
+    return {
+        "clips": _required_feedback(feedback).overlay(selected),
+        "rationale": (
+            "Repeated corrected terminology and unreviewed speech with channel/day diversity. "
+            "Uncertainty does not mean a word is wrong."
+        ),
+    }
+
+
+@app.post("/api/asr-feedback/runs", dependencies=[Depends(require_feedback_operator)])
+def start_feedback_run(feedback: Annotated[Corrections | None, Depends(get_feedback_store)]):
+    from talkingboats.asr_experiments import start_run
+
+    try:
+        return start_run(_required_feedback(feedback).list())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/asr-feedback/runs/{run_id}/cancel", dependencies=[Depends(require_feedback_operator)]
+)
+def cancel_feedback_run(run_id: str):
+    from talkingboats.asr_experiments import cancel_run
+
+    try:
+        return cancel_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def main() -> None:

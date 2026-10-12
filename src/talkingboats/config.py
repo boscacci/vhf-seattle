@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from talkingboats.channel_metadata import CHANNEL_METADATA
+from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS, CHANNEL_METADATA
 
 DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT = 3000
 DEFAULT_PUBLIC_CLIP_EXPORT_LIMIT = 2500
@@ -38,6 +38,9 @@ class Settings:
     durable_events_table: str | None = None
     durable_events_environment: str = "dev"
     durable_events_required: bool = True
+    asr_feedback_enabled: bool = False
+    asr_operator_token: str | None = None
+    asr_feedback_table: str | None = None
     clip_count_aggregates_enabled: bool = False
 
     @classmethod
@@ -61,20 +64,18 @@ class Settings:
             durable_events_table=os.getenv("TALKINGBOATS_DURABLE_EVENTS_TABLE"),
             durable_events_environment=os.getenv("TALKINGBOATS_DURABLE_EVENTS_ENVIRONMENT", "dev"),
             durable_events_required=_env_bool("TALKINGBOATS_DURABLE_EVENTS_REQUIRED", True),
+            asr_feedback_enabled=_env_bool("TALKINGBOATS_ASR_FEEDBACK_ENABLED", False),
+            asr_operator_token=os.getenv("TALKINGBOATS_ASR_OPERATOR_TOKEN"),
+            asr_feedback_table=os.getenv("TALKINGBOATS_ASR_FEEDBACK_TABLE"),
             clip_count_aggregates_enabled=_env_bool(
                 "TALKINGBOATS_CLIP_COUNT_AGGREGATES_ENABLED",
                 False,
             ),
             live_channels={
-                "13": _live_channel_from_metadata("13", os.getenv("TALKINGBOATS_LIVE_13_URL")),
-                "14": LiveChannel(
-                    channel="14",
-                    label=CHANNEL_METADATA["14"].label,
-                    frequency_mhz=CHANNEL_METADATA["14"].frequency_mhz,
-                    stream_url=os.getenv("TALKINGBOATS_LIVE_14_URL"),
-                ),
-                "16": _live_channel_from_metadata("16", os.getenv("TALKINGBOATS_LIVE_16_URL")),
-                "68": _live_channel_from_metadata("68", os.getenv("TALKINGBOATS_LIVE_68_URL")),
+                channel: _live_channel_from_metadata(
+                    channel, os.getenv(f"TALKINGBOATS_LIVE_{channel}_URL")
+                )
+                for channel in ACTIVE_CAPTURE_CHANNELS
             },
         )
 
