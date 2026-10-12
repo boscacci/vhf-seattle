@@ -22,7 +22,8 @@ seeded recordings per channel, CPU int8, two threads, one worker, beam size 5,
 and full audio without VAD. These sample-based estimates should be repeated
 when hardware or capture conditions change. Seventy rounded timing events were
 recovered after a task-created training clone exhausted system disk space;
-the recorded times include a conservative rounding allowance. Training now uses an isolated, pinned CPU-only environment on the data
+the recorded times include a conservative rounding allowance. Training now
+uses an isolated, pinned CPU-only environment on the data
 volume instead of duplicating the CUDA serving environment. The installed data
 SSD is the configured home for model caches, reviewed datasets, checkpoints,
 and temporary experiment files. A missing data mount prevents job startup;

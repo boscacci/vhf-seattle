@@ -26,7 +26,7 @@ try {
   await panel.getByRole("button", { name: "Refresh experiments" }).click();
   await panel.getByRole("status").filter({ hasText: "Reviewed audio:" }).waitFor();
   assert(await panel.getByRole("button", { name: "Train and compare Turbo" }).isDisabled());
-  for (const channel of channels) {
+  await Promise.all(channels.map(async (channel) => {
     const response = await page.request.get(`${base}/api/live/${channel}/status`);
     assert.equal(response.status(), 200);
     const live = await page.evaluate(async (channelNumber) => {
@@ -42,7 +42,7 @@ try {
     }, channel);
     assert.equal(live.status, 200);
     assert(live.bytes > 0, `Live feed ${channel} must deliver audio`);
-  }
+  }));
   // Isolated editor fixture: no write touches the shared production corpus.
   const fixture = { channel: "14", started_at: "2026-10-05T12:00:00Z", ended_at: "2026-10-05T12:00:05Z",
     duration_seconds: 5, transcript: "Tug spray northbound", original: "Tug spray northbound", revision: 0, production_overlay_active: true };
