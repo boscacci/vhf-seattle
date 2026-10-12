@@ -135,6 +135,15 @@ else
   systemctl --user daemon-reload
   systemctl --user restart talkingboats-api.service talkingboats-public-live-radio-proxy.service
   "${release_root}/scripts/deploy_asr_receiver.sh" "${release_root}" "${commit}" "${digest}"
+  # Purge derived caches before publishing; raw corpus objects and clip-state history are untouched.
+  PYTHONPATH="${release_root}/src" "${HOME}/miniforge3/envs/dell/bin/python" - "${release_root}" "${commit}" <<'PYCODE'
+import os, sys
+from pathlib import Path
+values = dict(line.partition("=")[::2] for line in (Path.home()/".config/talkingboats/asr.env").read_text().splitlines())
+os.environ.update(values)
+from talkingboats.channel_exclusion_cache import sanitize_caches
+sanitize_caches(Path(values["TALKINGBOATS_PUBLIC_SITE_DIR"]), Path(values["TALKINGBOATS_ASR_OUTPUT_DIR"]).parent/"release-cache-backups"/sys.argv[2])
+PYCODE
   "${release_root}/scripts/deploy_static_shell.sh" prod "${release_root}/public-site"
   systemctl --user start talkingboats-public-clip-refresh.service
   cp "${approval_file}" "${release_root}/human-approval.json"

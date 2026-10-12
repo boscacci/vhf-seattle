@@ -29,6 +29,19 @@ try {
   for (const channel of channels) {
     const response = await page.request.get(`${base}/api/live/${channel}/status`);
     assert.equal(response.status(), 200);
+    const live = await page.evaluate(async (channelNumber) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await fetch(`/api/live/${channelNumber}/current.mp3`, { signal: controller.signal });
+        const reader = response.body.getReader();
+        const first = await reader.read();
+        await reader.cancel();
+        return { status: response.status, bytes: first.value?.length || 0 };
+      } finally { clearTimeout(timer); controller.abort(); }
+    }, channel);
+    assert.equal(live.status, 200);
+    assert(live.bytes > 0, `Live feed ${channel} must deliver audio`);
   }
   // Isolated editor fixture: no write touches the shared production corpus.
   const fixture = { channel: "14", started_at: "2026-10-05T12:00:00Z", ended_at: "2026-10-05T12:00:05Z",

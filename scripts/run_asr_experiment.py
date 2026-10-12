@@ -1,5 +1,6 @@
 """Load the exact source artifact recorded when an experiment was requested."""
 
+import hashlib
 import json
 import os
 import re
@@ -18,4 +19,10 @@ source = Path.home() / ".local/share/talkingboats/releases/asr/dev" / commit
 if (source / "release-commit").read_text().strip() != commit:
     raise ValueError("experiment source artifact is unavailable")
 env = {**os.environ, "PYTHONPATH": str(source / "src")}
-os.execve(sys.executable, [sys.executable, "-m", "talkingboats.asr_experiments", run_id], env)
+identity = hashlib.sha256(
+    (source / "config/asr-training-requirements.txt").read_bytes()
+).hexdigest()[:16]
+python = root.parent / "training-env" / identity / "bin/python"
+if not python.is_file():
+    raise ValueError("experiment's pinned CPU environment is unavailable")
+os.execve(str(python), [str(python), "-m", "talkingboats.asr_experiments", run_id], env)

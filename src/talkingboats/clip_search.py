@@ -191,7 +191,11 @@ def search_clips(
     if limit <= 0:
         raise ValueError("limit must be positive")
     recency_key = recency if recency in SEARCH_RECENCY_WINDOWS else "7d"
-    clips = [clip for clip in index.get("clips", []) if isinstance(clip, dict)]
+    clips = [
+        clip
+        for clip in index.get("clips", [])
+        if isinstance(clip, dict) and clip.get("channel") not in PUBLIC_EXCLUDED_CHANNELS
+    ]
     if index.get("status") != "ok" or not clips:
         raise SearchIndexUnavailable("clip search index is not ready")
     runtime = _vector_search_runtime(index, clips)
@@ -245,7 +249,7 @@ def search_clips(
         "recency_cutoff": cutoff.isoformat().replace("+00:00", "Z") if cutoff else None,
         "index": {
             "generated_at": index.get("generated_at"),
-            "source_clip_count": index.get("source_clip_count", len(clips)),
+            "source_clip_count": len(clips),
             "embedding_model": embedding_model,
         },
         "results": results,

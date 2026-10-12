@@ -30,6 +30,11 @@ DEFAULT_CONFIG = {
     "beam_size": 5,
 }
 
+_RUNTIME_REQUIREMENTS = Path(__file__).resolve().parents[2] / "config/asr-training-requirements.txt"
+DEFAULT_CONFIG["runtime_requirements_sha256"] = hashlib.sha256(
+    _RUNTIME_REQUIREMENTS.read_bytes()
+).hexdigest()
+
 
 def root() -> Path:
     return Path(

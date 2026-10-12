@@ -22,8 +22,7 @@ seeded recordings per channel, CPU int8, two threads, one worker, beam size 5,
 and full audio without VAD. These sample-based estimates should be repeated
 when hardware or capture conditions change. Seventy rounded timing events were
 recovered after a task-created training clone exhausted system disk space;
-the recorded times include a conservative rounding allowance. Training now
-reuses Conda dependencies read-only and stores artifacts on a configured data
+the recorded times include a conservative rounding allowance. Training now uses an isolated, pinned CPU-only environment on the data
 volume instead of duplicating the CUDA serving environment. The installed data
 SSD is the configured home for model caches, reviewed datasets, checkpoints,
 and temporary experiment files. A missing data mount prevents job startup;
@@ -73,7 +72,7 @@ No automatic nightly training or historical bulk retranscription occurs.
 
 ## Release and rollback
 
-Run the checked-in setup script to isolate the small training dependencies:
+Run the checked-in setup script to install the pinned CPU-only training environment:
 
 ```bash
 scripts/setup_asr_training.sh
@@ -89,7 +88,7 @@ TALKINGBOATS_ASR_STORAGE_ROOT=/path/to/owned/data-volume/asr scripts/release_asr
 The script preserves an existing storage choice on later releases, configures a
 mode-0600 operator credential, deploys only dev API/proxy services, installs the
 on-demand worker, and runs Playwright. Smoke writes use isolated fixtures;
-real dev channel/status/readiness reads and a separate real DynamoDB fixture
+real dev channel/status/readiness reads and first audio bytes from every retained feed and a separate real DynamoDB fixture
 probe validate the deployed boundaries without changing corpus labels.
 
 Merge to the protected default branch after required checks, then deliver and
