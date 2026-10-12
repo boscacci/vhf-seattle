@@ -93,8 +93,7 @@ THERMAL_SENSOR_GROUPS = (
     ("storage", "NVMe storage", 60.0, 75.0),
 )
 THERMAL_SENSOR_GROUP_BY_KEY = {
-    key: (label, watch_at, high_at)
-    for key, label, watch_at, high_at in THERMAL_SENSOR_GROUPS
+    key: (label, watch_at, high_at) for key, label, watch_at, high_at in THERMAL_SENSOR_GROUPS
 }
 PI_PERFORMANCE_SCRIPT = r"""
 import json
@@ -866,6 +865,35 @@ def create_app(
 
     if settings.tailnet_dev_routes_enabled:
 
+        @app.api_route("/api/clips/corrections", methods=["GET", "PUT"])
+        async def corrections(request: Request) -> Response:
+            _require_tailnet_operator(request)
+            return await _proxy_private_api(
+                request,
+                "/api/clips/corrections",
+                settings,
+                client_factory,
+                forward_content_type=True,
+            )
+
+        @app.api_route("/api/asr-feedback/{feedback_path:path}", methods=["GET", "POST"])
+        async def asr_feedback(request: Request, feedback_path: str) -> Response:
+            _require_tailnet_operator(request)
+            allowed = (
+                feedback_path in {"status", "review"}
+                or feedback_path == "runs"
+                or (re.fullmatch(r"runs/[a-f0-9]{32}/cancel", feedback_path) is not None)
+            )
+            if not allowed:
+                raise HTTPException(status_code=404, detail="feedback route not found")
+            return await _proxy_private_api(
+                request,
+                "/api/asr-feedback/" + feedback_path,
+                settings,
+                client_factory,
+                forward_content_type=True,
+            )
+
         @app.delete("/api/clips/archive")
         async def delete_clip_archive(request: Request) -> Response:
             _require_tailnet_operator(request)
@@ -1313,9 +1341,7 @@ def _public_thermal(value: object) -> dict[str, object]:
                     "temperatureC": temperature,
                     "watchAtC": watch_at,
                     "highAtC": high_at,
-                    "status": _threshold_status(
-                        temperature, watch_at=watch_at, high_at=high_at
-                    ),
+                    "status": _threshold_status(temperature, watch_at=watch_at, high_at=high_at),
                 }
             )
         thermal["sensors"] = public_sensors
@@ -1332,9 +1358,9 @@ def _public_thermal(value: object) -> dict[str, object]:
                 1,
             )
             thermal["sensorCount"] = len(public_sensors)
-            thermal["partial"] = value.get("partial") is True or len(
-                public_sensors
-            ) < len(THERMAL_SENSOR_GROUPS)
+            thermal["partial"] = value.get("partial") is True or len(public_sensors) < len(
+                THERMAL_SENSOR_GROUPS
+            )
             thermal["status"] = _worst_status(
                 [
                     _public_status(value.get("status")),
@@ -1665,8 +1691,7 @@ def _local_thermal_snapshot(
 
     hottest_temperature = max(float(sensor["temperatureC"]) for sensor in sensors)
     pressure_percent = sum(
-        (float(sensor["temperatureC"]) / float(sensor["highAtC"])) * 100
-        for sensor in sensors
+        (float(sensor["temperatureC"]) / float(sensor["highAtC"])) * 100 for sensor in sensors
     ) / len(sensors)
     return {
         "temperatureC": round(hottest_temperature, 1),
@@ -1865,8 +1890,19 @@ def _generated_public_site_asset_response(
         raise HTTPException(status_code=404, detail="asset not found") from exc
     if not path.is_file():
         raise HTTPException(status_code=404, detail="asset not found")
+    content = path.read_bytes()
+    if relative_path == "analysis/lexical.json":
+        from talkingboats.lexical_analysis import public_analysis
+        content = json.dumps(public_analysis(json.loads(content))).encode()
+    if relative_path == "analysis/topic_clusters.html":
+        lexical_path = root / "analysis/lexical.json"
+        if lexical_path.exists():
+            lexical = json.loads(lexical_path.read_text())
+            channels = lexical.get("channels") or lexical.get("frequency", {}).get("by_channel", {})
+            if "74" in channels:
+                content = b"<!doctype html><p>Analysis is being refreshed.</p>"
     return Response(
-        content=path.read_bytes(),
+        content=content,
         headers={"Cache-Control": "no-store", "Pragma": "no-cache", "Expires": "0"},
         media_type=media_type,
     )
@@ -2318,6 +2354,13 @@ def _private_api_request_headers(
     forward_content_type: bool,
 ) -> dict[str, str]:
     headers: dict[str, str] = {}
+    if (
+        request.url.path == "/api/clips/corrections"
+        or request.url.path.startswith("/api/asr-feedback/")
+    ) and _tailnet_operator_allowed(request):
+        token = os.getenv("TALKINGBOATS_ASR_OPERATOR_TOKEN")
+        if token:
+            headers["x-talkingboats-asr-operator"] = token
     if forward_content_type and (content_type := request.headers.get("content-type")):
         headers["content-type"] = content_type
     return headers

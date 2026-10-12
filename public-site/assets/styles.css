@@ -2630,3 +2630,12 @@ audio {
     min-height: 0;
   }
 }
+
+.correction-editor { margin-top: 1rem; }
+.correction-editor form { display: grid; gap: .75rem; margin-top: .75rem; }
+.correction-editor textarea { width: 100%; min-height: 7rem; font: inherit; }
+.correction-editor input { min-width: 0; font: inherit; }
+.asr-experiments { margin-top: 2rem; padding: 1rem; border: 1px solid var(--line); border-radius: 1rem; }
+.asr-experiments table { width: 100%; font-size: .85rem; }
+.asr-experiments td { padding: .5rem; }
+.asr-experiments article { margin-top: 1rem; overflow-x: auto; }

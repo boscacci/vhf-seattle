@@ -464,9 +464,9 @@ exit 0
 
 def test_pi_icecast_source_timeout_outlives_the_daily_capture_restart() -> None:
     installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
-    capture_unit = Path(
-        "deploy/systemd/talkingboats-profile-capture.service.example"
-    ).read_text(encoding="utf-8")
+    capture_unit = Path("deploy/systemd/talkingboats-profile-capture.service.example").read_text(
+        encoding="utf-8"
+    )
 
     assert "RuntimeMaxSec=24h" in capture_unit
     assert 'append_env_if_missing TALKINGBOATS_ICECAST_SOURCE_TIMEOUT_SECONDS "90000"' in installer
@@ -790,17 +790,16 @@ def test_pi_installer_streams_every_balanced_voice_net_channel_to_icecast() -> N
         "71",
         "72",
         "73",
-        "74",
         "77",
         "78A",
     )
 
     assert "<sources>24</sources>" in installer
     assert "append_env_if_missing TALKINGBOATS_CLOUD_HLS_CHANNELS \\" in installer
-    assert '"05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A"' in installer
+    assert '"14,13,16,66A,78A,71"' in installer
     assert (
         'channels_csv="${TALKINGBOATS_CLOUD_HLS_CHANNELS:-'
-        '05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A}"' in hls_wrapper
+        '14,13,16,66A,78A,71}"' in hls_wrapper
     )
     for channel in expected_channels:
         mount_channel = channel.lower()
@@ -847,26 +846,15 @@ def test_multichannel_capture_uses_ranked_busy_channels_and_buffered_boundaries(
     from talkingboats.capture_profiles import CAPTURE_PROFILES, render_rtlsdr_airband_config
 
     profile = CAPTURE_PROFILES["voice_net_balanced"]
-    assert [channel.channel for channel in profile.channels] == [
-        "14",
-        "13",
-        "66A",
-        "67",
-        "77",
-        "68",
-        "74",
-        "73",
-        "71",
-        "78A",
-        "69",
-        "72",
-    ]
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+
+    assert [channel.channel for channel in profile.channels] == list(ACTIVE_CAPTURE_CHANNELS)
     rendered = render_rtlsdr_airband_config(profile, output_root="/tmp/spool")
-    assert rendered.count("pre_roll_seconds = 0.50;") == 12
-    assert rendered.count("post_roll_seconds = 0.75;") == 12
-    assert rendered.count("attack_confirmation_batches = 2;") == 12
-    assert rendered.count("minimum_active_batches = 3;") == 12
-    assert rendered.count("maximum_transmission_seconds = 45;") == 12
+    assert rendered.count("pre_roll_seconds = 0.50;") == len(ACTIVE_CAPTURE_CHANNELS)
+    assert rendered.count("post_roll_seconds = 0.75;") == len(ACTIVE_CAPTURE_CHANNELS)
+    assert rendered.count("attack_confirmation_batches = 2;") == len(ACTIVE_CAPTURE_CHANNELS)
+    assert rendered.count("minimum_active_batches = 3;") == len(ACTIVE_CAPTURE_CHANNELS)
+    assert rendered.count("maximum_transmission_seconds = 45;") == len(ACTIVE_CAPTURE_CHANNELS)
 
 
 def test_rtlsdr_airband_installer_pins_and_applies_repo_patch() -> None:

@@ -93,3 +93,8 @@ jobs:
         run: |
           candidate_dir="${HOME}/.local/share/talkingboats/release-candidates/performance/${GITHUB_SHA}"
           printf '%s\n' "${{ steps.artifact.outputs.artifact_sha256 }}" > "${candidate_dir}/dev-smoke-passed"
+      - name: Build and deliver the reviewed-transcription artifact
+        run: |
+          scripts/setup_asr_training.sh
+          scripts/release_asr_feedback.sh build
+          scripts/release_asr_feedback.sh dev

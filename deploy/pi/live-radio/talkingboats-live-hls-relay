@@ -17,7 +17,7 @@ icecast_host="${TALKINGBOATS_ICECAST_HOST:-127.0.0.1}"
 icecast_port="${TALKINGBOATS_ICECAST_PORT:-8000}"
 bitrate="${TALKINGBOATS_LIVE_BITRATE:-64k}"
 default_channel="${TALKINGBOATS_CLOUD_HLS_DEFAULT_CHANNEL:-14}"
-channels_csv="${TALKINGBOATS_CLOUD_HLS_CHANNELS:-05A,06,09,10,13,14,16,22A,65A,66A,67,68,69,71,72,73,74,77,78A}"
+channels_csv="${TALKINGBOATS_CLOUD_HLS_CHANNELS:-14,13,16,66A,78A,71}"
 
 IFS=',' read -r -a channels <<< "${channels_csv}"
 mkdir -p "${hls_dir}"
@@ -99,7 +99,6 @@ mount_for_channel() {
     71) printf '%s\n' "/talkingboats-71.mp3" ;;
     72) printf '%s\n' "/talkingboats-72.mp3" ;;
     73) printf '%s\n' "/talkingboats-73.mp3" ;;
-    74) printf '%s\n' "/talkingboats-74.mp3" ;;
     77) printf '%s\n' "/talkingboats-77.mp3" ;;
     78A) printf '%s\n' "/talkingboats-78a.mp3" ;;
     *)

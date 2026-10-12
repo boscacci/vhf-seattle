@@ -10,6 +10,8 @@ const tailnetHostSuffix = ".tailbea63b.ts.net";
 const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
 const privateAppHost = localAppHost || tailnetAppHost || devAppHost;
 const quarantineClipLaneEnabled = privateAppHost;
+const asrFeedbackEnabled = privateAppHost;
+const activeRadioChannels = new Set(["14", "13", "16", "66A", "78A", "71"]);
 const systemDashboardEnabled = devAppHost || localAppHost || tailnetAppHost;
 const privateApiBaseUrl = "";
 const publicLiveApiTimeoutMs = 8000;
@@ -265,8 +267,7 @@ const defaultChannelLabels = {
   "71": "Non-commercial",
   "72": "Ship-to-ship",
   "73": "Port Operations",
-  "74": "Port Operations",
-  "77": "Ship-to-ship",
+    "77": "Ship-to-ship",
   "78A": "Non-commercial",
 };
 function apiUrl(path) {
@@ -302,8 +303,7 @@ const channelColors = {
   "71": "#a5b4fc",
   "72": "#f7cf5d",
   "73": "#93c5fd",
-  "74": "#5eead4",
-  "77": "#fda4af",
+    "77": "#fda4af",
   "78A": "#86efac",
 };
 
@@ -557,13 +557,7 @@ let liveChannels = [
     streamPath: "/api/live/73/current.mp3",
     statusPath: "/api/live/73/status",
   },
-  {
-    channel: "74",
-    label: defaultChannelLabels["74"],
-    frequencyMhz: "156.725",
-    streamPath: "/api/live/74/current.mp3",
-    statusPath: "/api/live/74/status",
-  },
+
   {
     channel: "77",
     label: defaultChannelLabels["77"],
@@ -578,7 +572,7 @@ let liveChannels = [
     streamPath: "/api/live/78A/current.mp3",
     statusPath: "/api/live/78A/status",
   },
-];
+].filter((channel) => activeRadioChannels.has(channel.channel));
 let currentChannelLabels = { ...defaultChannelLabels };
 
 if (languageTab) {
@@ -1412,7 +1406,7 @@ function payloadWithRetainedClipStats(payload, previousPayload) {
 }
 
 function normalizeCachedRecentClipPayload(payload) {
-  const clips = Array.isArray(payload.clips) ? payload.clips : [];
+  const clips = (Array.isArray(payload.clips) ? payload.clips : []).filter((clip) => clip.channel !== "74");
   if (!clips.length) {
     return null;
   }
@@ -1433,6 +1427,8 @@ function normalizeCachedRecentClipPayload(payload) {
       ended_at: clip.ended_at,
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript_public || clip.transcript || "",
+      correction_revision: clip.correction_revision || 0,
+      human_corrected: Boolean(clip.human_corrected),
       quality_status: clip.quality_status || "unknown",
       quality_score: clip.quality_score ?? null,
       quality_reason: clip.quality_reason || "",
@@ -1653,7 +1649,7 @@ async function loadPublishedLanguagePayload() {
 }
 
 function normalizeLivePayload(payload) {
-  const clips = Array.isArray(payload.clips) ? payload.clips : [];
+  const clips = (Array.isArray(payload.clips) ? payload.clips : []).filter((clip) => clip.channel !== "74");
   const latestStartedAt = payload.latest_started_at || clips[0]?.started_at || null;
   const payloadPage = Math.max(1, Math.floor(Number(payload.page ?? selectedClipPage) || 1));
   const payloadOffset = Math.max(
@@ -1737,7 +1733,7 @@ function normalizeLivePayload(payload) {
 }
 
 function normalizePublishedManifest(payload) {
-  const clips = Array.isArray(payload.clips) ? payload.clips : [];
+  const clips = (Array.isArray(payload.clips) ? payload.clips : []).filter((clip) => clip.channel !== "74");
   return {
     source: "published",
     site: {
@@ -1755,6 +1751,8 @@ function normalizePublishedManifest(payload) {
       ended_at: clip.ended_at,
       duration_seconds: clip.duration_seconds,
       transcript_public: clip.transcript_public || clip.transcript || "",
+      correction_revision: clip.correction_revision || 0,
+      human_corrected: Boolean(clip.human_corrected),
       quality_status: clip.quality_status || "unknown",
       quality_score: clip.quality_score ?? null,
       quality_reason: clip.quality_reason || "",
@@ -1768,7 +1766,7 @@ function normalizePublishedManifest(payload) {
 }
 
 function renderSite(payload) {
-  const clips = payload.clips || [];
+  const clips = (payload.clips || []).filter((clip) => clip.channel !== "74");
   nextClipCursor = payload.source === "live" ? payload.next_cursor || null : null;
   rememberGlobalClipStats(payload);
   currentChannelLabels = channelLabelsForPayload(payload);
@@ -1792,7 +1790,7 @@ function renderSite(payload) {
 }
 
 function renderClipSummaryOnly(payload) {
-  const clips = payload.clips || [];
+  const clips = (payload.clips || []).filter((clip) => clip.channel !== "74");
   rememberGlobalClipStats(payload);
   renderClipHeading();
   const filteredClips = filterClipsByChannel(clips);
@@ -1867,7 +1865,7 @@ function rememberGlobalClipStats(payload) {
   if (!payload?.stats || payload.stats.counts_deferred || payload.stats.featured) {
     return;
   }
-  const clips = payload.clips || [];
+  const clips = (payload.clips || []).filter((clip) => clip.channel !== "74");
   const channelCounts =
     payload.stats.playable_channel_counts ||
     payload.stats.channel_counts ||
@@ -2619,6 +2617,9 @@ function renderClipCard(clip) {
   if (audioUrl) {
     article.append(renderExamplePlayer(clip));
   }
+  if (asrFeedbackEnabled && canReviewClip(clip)) {
+    article.append(renderCorrectionEditor(clip, transcript));
+  }
   if (canDeleteArchivedClip) {
     article.append(renderArchiveDeleteControl(clip, article));
   }
@@ -2901,7 +2902,7 @@ function normalizeLiveChannels(channels) {
       streamPath: channel.streamPath || "",
       statusPath: channel.statusPath || "",
     }))
-    .filter((channel) => channel.channel && channel.label);
+    .filter((channel) => activeRadioChannels.has(channel.channel) && channel.label);
 }
 
 function renderLiveChannelPicker() {
@@ -5646,7 +5647,7 @@ async function pollEverythingQueue({
   if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) {
     return;
   }
-  const clips = Array.isArray(payload.clips) ? payload.clips : [];
+  const clips = (Array.isArray(payload.clips) ? payload.clips : []).filter((clip) => clip.channel !== "74");
   if (seedRecent && !everythingQueueSeeded) {
     enqueueEverythingClips(clips, { includeBackfill: true });
     everythingQueueSeeded = true;
@@ -6441,11 +6442,12 @@ function channelLabelsForPayload(payload) {
       labels[clip.channel] = clip.channel_label;
     }
   }
+  delete labels["74"];
   return labels;
 }
 
 function selectedChannelValues() {
-  return [...selectedChannels].sort(compareChannels);
+  return [...selectedChannels].filter((channel) => channel !== "74").sort(compareChannels);
 }
 
 function clipExcludedChannelValues() {
@@ -6668,3 +6670,208 @@ loadLiveChannels();
 loadAndRender();
 startClipStatsPolling();
 activateTab(initialRouteState.tab, { replaceRoute: true, updateRoute: false });
+
+function renderCorrectionEditor(clip, transcriptNode) {
+  const details = document.createElement("details");
+  details.className = "correction-editor";
+  const summary = document.createElement("summary");
+  summary.textContent = "Correct transcript";
+  const form = document.createElement("form");
+  const text = document.createElement("textarea");
+  text.setAttribute("aria-label", "Corrected transcript");
+  text.value = clip.transcript_public || "";
+  text.maxLength = 12000;
+  text.required = true;
+  const terms = document.createElement("input");
+  terms.setAttribute("aria-label", "Confirmed vessel names, places, and call signs");
+  terms.placeholder = "Names and places, separated by commas";
+  const reviewed = document.createElement("input");
+  reviewed.type = "checkbox";
+  const reviewedLabel = document.createElement("label");
+  reviewedLabel.append(reviewed, " I checked every word against the selected audio");
+  const begin = document.createElement("input");
+  const end = document.createElement("input");
+  for (const [input, caption] of [[begin, "Audio range start (seconds)"], [end, "Audio range end (seconds)"]]) {
+    input.type = "number";
+    input.min = "0";
+    input.step = "0.01";
+    input.max = String(clip.duration_seconds || 0);
+    input.placeholder = caption;
+    input.setAttribute("aria-label", caption);
+  }
+  const rangeText = document.createElement("textarea");
+  rangeText.setAttribute("aria-label", "Exact transcript for selected audio range");
+  rangeText.placeholder = "For a selected range only: every audible word in that range";
+  const hint = document.createElement("p");
+  hint.textContent = "Partial edits publish immediately. For learning, check all words in a range of at most 30 seconds; enter its exact words separately below. The corrected transcript above remains the full clip text. Unclear audio is not a training label.";
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.textContent = "Save correction";
+  const undo = document.createElement("button");
+  undo.type = "button";
+  undo.textContent = "Restore original";
+  const status = document.createElement("p");
+  status.setAttribute("role", "status");
+  let revision = clip.correction_revision || 0;
+  let original = text.value;
+  let started = performance.now();
+  let pendingEdit = null;
+  const params = new URLSearchParams({ channel: clip.channel, started_at: clip.started_at });
+  const editorInputs = [text, terms, reviewed, begin, end, rangeText, save, undo];
+  editorInputs.forEach((input) => { input.disabled = true; });
+  details.addEventListener("toggle", async () => {
+    if (!details.open) return;
+    editorInputs.forEach((input) => { input.disabled = true; });
+    try {
+      const response = await fetch(apiUrl(`/api/clips/corrections?${params}`), { cache: "no-store", credentials: "include" });
+      if (!response.ok) throw new Error("Could not load the latest correction.");
+      const row = await response.json();
+      revision = row.revision || 0;
+      original = row.original || clip.transcript_public || "";
+      if (row.text && !row.reverted) text.value = row.text;
+      terms.value = (row.terms || []).join(", ");
+      reviewed.checked = Boolean(row.reviewed && !row.reverted);
+      begin.value = row.start_seconds ?? "";
+      end.value = row.end_seconds ?? "";
+      rangeText.value = row.training_text || "";
+      editorInputs.forEach((input) => { input.disabled = false; });
+      started = performance.now();
+    } catch (error) { status.textContent = error.message; }
+  });
+  async function write(reverted) {
+    save.disabled = undo.disabled = true;
+    status.textContent = "Saving…";
+    const body = { channel: clip.channel, started_at: clip.started_at,
+      text: reverted ? original : text.value, expected_revision: revision,
+      reviewed: !reverted && reviewed.checked,
+      terms: reverted ? [] : terms.value.split(",").map((v) => v.trim()).filter(Boolean),
+      start_seconds: begin.value === "" ? null : Number(begin.value),
+      end_seconds: end.value === "" ? null : Number(end.value),
+      training_text: rangeText.value.trim() || null,
+      effort_seconds: Math.min(7200, (performance.now() - started) / 1000), reverted };
+    // Keep the same identifier and payload when retrying an uncertain network response.
+    const fingerprint = JSON.stringify({ ...body, effort_seconds: 0 });
+    if (!pendingEdit || pendingEdit.fingerprint !== fingerprint) {
+      pendingEdit = { fingerprint, body: { ...body, request_id: crypto.randomUUID() } };
+    }
+    try {
+      const response = await fetch(apiUrl("/api/clips/corrections"), {
+        method: "PUT", credentials: "include", headers: operatorWriteHeaders(),
+        body: JSON.stringify(pendingEdit.body),
+      });
+      const row = await response.json();
+      if (!response.ok) throw new Error(response.status === 409 ? "Another edit was saved. Close and reopen this editor to reload it." : (row.detail || "Correction was not saved."));
+      revision = row.revision;
+      original = row.original;
+      text.value = reverted ? original : row.text;
+      clip.transcript_public = text.value;
+      clip.correction_revision = revision;
+      transcriptNode.textContent = text.value;
+      pendingEdit = null;
+      status.textContent = row.production_overlay_active
+        ? (reverted ? "Original restored on dev and production." : "Saved on dev and production. Search updates on its next request.")
+        : (reverted ? "Original restored on dev. Public overlay awaits this release's production approval." : "Saved on dev. Public overlay awaits this release's production approval.");
+      started = performance.now();
+    } catch (error) { status.textContent = error.message; }
+    finally { save.disabled = undo.disabled = false; }
+  }
+  form.addEventListener("submit", (event) => { event.preventDefault(); write(false); });
+  undo.addEventListener("click", () => write(true));
+  form.append(text, terms, reviewedLabel, begin, end, rangeText, hint, save, undo, status);
+  details.append(summary, form);
+  return details;
+}
+
+if (asrFeedbackEnabled) {
+  const host = document.querySelector("#panel-performance");
+  if (host) {
+    const panel = document.createElement("section");
+    panel.className = "asr-experiments";
+    const heading = document.createElement("h2");
+    heading.textContent = "Transcription experiments";
+    const caption = document.createElement("p");
+    caption.textContent = "Review useful names and places in Clip Review. Only fully checked audio enters learning. Experiments run locally and never automatically replace production weights.";
+    const review = document.createElement("button");
+    review.textContent = "Review useful examples";
+    review.addEventListener("click", async () => {
+      try {
+        const response = await fetch(apiUrl("/api/asr-feedback/review"), { cache: "no-store", credentials: "include" });
+        if (!response.ok) throw new Error("Review queue is unavailable.");
+        const payload = await response.json();
+        results.replaceChildren(...(payload.clips || []).map(renderClipCard));
+        status.textContent = payload.rationale;
+      } catch (error) { status.textContent = error.message; }
+    });
+    const refresh = document.createElement("button");
+    refresh.textContent = "Refresh experiments";
+    const start = document.createElement("button");
+    start.textContent = "Train and compare Turbo";
+    start.disabled = true;
+    const status = document.createElement("p");
+    status.setAttribute("role", "status");
+    const results = document.createElement("div");
+    async function load() {
+      try {
+        const response = await fetch(apiUrl("/api/asr-feedback/status"), { cache: "no-store", credentials: "include" });
+        if (!response.ok) throw new Error("Experiments are unavailable. Check the local feedback service.");
+        const payload = await response.json();
+        start.disabled = !payload.ready;
+        status.textContent = `Serving ${payload.serving_model}; active channels ${payload.active_channels.join(", ")}. Oldest active queued clip: ${payload.oldest_active_queued_at ? formatDateTime(payload.oldest_active_queued_at) : "none"}. Reviewed audio: ${payload.minutes.train}/30 training minutes, ${payload.minutes.validation}/5 validation, ${payload.minutes.test}/5 test; ${payload.test_mentions}/50 test-name mentions. ${payload.pending_archives} audio archives pending. Reviewed vocabulary: ${payload.vocabulary.length} confirmed terms. Correction effort: ${payload.effort_minutes} minutes.`;
+        results.replaceChildren();
+        for (const run of payload.runs || []) {
+          const card = document.createElement("article");
+          const title = document.createElement("h3");
+          title.textContent = `${run.id.slice(0, 8)} · ${run.status} · ${run.stage || ""}${run.step ? ` · step ${run.step}/${run.max_steps}` : ""}`;
+          const detail = document.createElement("p");
+          detail.textContent = run.reason || (run.eligible ? "Measured gain meets the adoption criteria." : "Not eligible for production.");
+          card.append(title, detail);
+          if (["queued", "running", "cancelling"].includes(run.status)) {
+            const cancel = document.createElement("button");
+            cancel.textContent = "Cancel experiment";
+            cancel.addEventListener("click", async () => {
+              await fetch(apiUrl(`/api/asr-feedback/runs/${run.id}/cancel`), { method: "POST", credentials: "include", headers: operatorWriteHeaders() });
+              load();
+            });
+            card.append(cancel);
+          }
+          if (run.metrics) {
+            const table = document.createElement("table");
+            for (const [name, metric] of Object.entries(run.metrics)) {
+              const tr = document.createElement("tr");
+              for (const value of [name, `${metric.entity_errors}/${metric.entity_mentions} name errors`, `${metric.invented_names} known-name insertions`, `${(100 * metric.wer).toFixed(1)}% word error`, `${metric.real_time_factor.toFixed(2)} processing seconds/audio second`]) {
+                const td = document.createElement("td"); td.textContent = value; tr.append(td);
+              }
+              table.append(tr);
+            }
+            card.append(table);
+            const examples = run.metrics.candidate_with_hints?.examples || [];
+            for (const example of examples) {
+              const comparison = document.createElement("p");
+              comparison.textContent = `Reviewed: ${example.reference} | Candidate: ${example.prediction}`;
+              card.append(comparison);
+              if (example.channel && example.started_at) {
+                card.append(renderExamplePlayer({ channel: example.channel, started_at: example.started_at }));
+              }
+            }
+          }
+          results.append(card);
+        }
+      } catch (error) { status.textContent = error.message; }
+    }
+    refresh.addEventListener("click", load);
+    start.addEventListener("click", async () => {
+      start.disabled = true;
+      status.textContent = "Starting local experiment…";
+      try {
+        const response = await fetch(apiUrl("/api/asr-feedback/runs"), { method: "POST", credentials: "include", headers: operatorWriteHeaders() });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "Experiment could not start.");
+        load();
+      } catch (error) { status.textContent = error.message; }
+    });
+    panel.append(heading, caption, review, refresh, start, status, results);
+    host.append(panel);
+    document.querySelector("#tab-performance")?.addEventListener("click", load);
+    setInterval(() => { if (activeTab === "performance" && !document.hidden) load(); }, 30000);
+  }
+}

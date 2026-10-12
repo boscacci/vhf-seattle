@@ -168,19 +168,19 @@ def test_proxy_lists_live_channels_without_upstream_urls() -> None:
     assert "http://pi.test" not in response.text
 
 
-def test_proxy_default_live_channels_include_recreational_voice_mount() -> None:
+def test_proxy_default_live_channels_include_distress_calling_mount() -> None:
     app = create_app(ProxySettings())
 
     response = _run(_asgi_get(app, "/api/live/channels"))
 
     assert response.status_code == 200
     channels = {channel["channel"]: channel for channel in response.json()["channels"]}
-    assert channels["68"] == {
-        "channel": "68",
-        "label": "Recreational",
-        "frequencyMhz": "156.425",
-        "streamPath": "/api/live/68/current.mp3",
-        "statusPath": "/api/live/68/status",
+    assert channels["16"] == {
+        "channel": "16",
+        "label": "Distress / Calling",
+        "frequencyMhz": "156.800",
+        "streamPath": "/api/live/16/current.mp3",
+        "statusPath": "/api/live/16/status",
     }
     assert "192.168.1.114" not in response.text
 
@@ -192,24 +192,13 @@ def test_proxy_default_live_channels_match_balanced_voice_net_mounts() -> None:
 
     assert response.status_code == 200
     channels = {channel["channel"]: channel for channel in response.json()["channels"]}
-    assert set(channels) == {
-        "13",
-        "14",
-        "66A",
-        "67",
-        "68",
-        "69",
-        "71",
-        "72",
-        "73",
-        "74",
-        "77",
-        "78A",
-    }
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+
+    assert set(channels) == set(ACTIVE_CAPTURE_CHANNELS)
     assert channels["14"]["streamPath"] == "/api/live/14/current.mp3"
     assert channels["66A"]["frequencyMhz"] == "156.325"
     assert channels["78A"]["statusPath"] == "/api/live/78A/status"
-    assert channels["72"]["label"] == "Ship-to-ship"
+    assert channels["16"]["label"] == "Distress / Calling"
     assert channels["78A"]["streamPath"] == "/api/live/78A/current.mp3"
     assert "192.168.1.114" not in response.text
 

@@ -30,7 +30,7 @@ from talkingboats.config import DEFAULT_PUBLIC_CLIP_EXPORT_LIMIT
 from talkingboats.security import assert_public_safe
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
-PUBLIC_EXCLUDED_CHANNELS = ("WX",)
+PUBLIC_EXCLUDED_CHANNELS = ("WX", "74")
 RECENT_CLIP_SNAPSHOT_LIMIT = 24
 ClipAudioProcessor = Callable[[Path, Path], None]
 ClipAudioQualityGate = Callable[[Path], None]
@@ -45,6 +45,8 @@ ALLOWED_CLIP_FIELDS = {
     "started_at",
     "duration_seconds",
     "transcript_public",
+    "correction_revision",
+    "human_corrected",
     "featured",
     "featured_at",
     "quality_status",
@@ -140,6 +142,10 @@ def sanitize_public_manifest(private_manifest: Mapping[str, Any]) -> dict[str, A
             continue
         clips.append(_sanitize_clip(clip))
 
+    from talkingboats.asr_feedback import feedback_store_from_env
+    feedback = feedback_store_from_env()
+    if feedback:
+        clips = feedback.overlay(clips)
     channel_counts = _channel_counts_for_public_clips(clips)
     stats = _copy_allowed(private_manifest.get("stats", {}), ALLOWED_STATS_FIELDS)
     stats["clip_count"] = len(clips)

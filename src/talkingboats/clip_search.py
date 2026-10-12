@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 
 import numpy as np
 
-from talkingboats.channel_metadata import channel_label
+from talkingboats.channel_metadata import PUBLIC_EXCLUDED_CHANNELS, channel_label
 from talkingboats.security import assert_public_safe
 
 DEFAULT_SEARCH_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
@@ -90,6 +90,8 @@ def build_search_index(
 ) -> dict[str, Any]:
     entries = []
     for index, clip in enumerate(clips):
+        if str(clip.channel) in PUBLIC_EXCLUDED_CHANNELS:
+            continue
         vector = _embedding_at(embeddings, index)
         if not vector:
             continue
@@ -180,6 +182,8 @@ def search_clips(
     limit: int,
     recency: str,
     query_vector: list[float] | None = None,
+    excluded_clips: set[tuple[str, str]] | None = None,
+    reference_time_override: datetime | None = None,
 ) -> dict[str, Any]:
     normalized_query = " ".join(query.split())
     if not normalized_query:
@@ -187,7 +191,11 @@ def search_clips(
     if limit <= 0:
         raise ValueError("limit must be positive")
     recency_key = recency if recency in SEARCH_RECENCY_WINDOWS else "7d"
-    clips = [clip for clip in index.get("clips", []) if isinstance(clip, dict)]
+    clips = [
+        clip
+        for clip in index.get("clips", [])
+        if isinstance(clip, dict) and clip.get("channel") not in PUBLIC_EXCLUDED_CHANNELS
+    ]
     if index.get("status") != "ok" or not clips:
         raise SearchIndexUnavailable("clip search index is not ready")
     runtime = _vector_search_runtime(index, clips)
@@ -196,7 +204,7 @@ def search_clips(
         query_vector if query_vector is not None else embed_query(normalized_query, embedding_model)
     )
     query_array = np.asarray(query_embedding, dtype=np.float32)
-    reference_time = runtime.reference_time
+    reference_time = reference_time_override or runtime.reference_time
     cutoff = _recency_cutoff(reference_time, recency_key)
     scored = []
     if query_array.ndim == 1 and runtime.matrix.shape[1:] == query_array.shape:
@@ -207,14 +215,22 @@ def search_clips(
                 if cutoff is None
                 else np.flatnonzero(runtime.started_at_seconds >= cutoff.timestamp())
             )
-            candidate_scores = (
-                runtime.matrix[candidate_indexes] @ query_array
-            ) / (runtime.norms[candidate_indexes] * query_norm)
+            candidate_scores = (runtime.matrix[candidate_indexes] @ query_array) / (
+                runtime.norms[candidate_indexes] * query_norm
+            )
             for runtime_index, score in zip(
                 candidate_indexes.tolist(),
                 candidate_scores.tolist(),
                 strict=True,
             ):
+                clip = runtime.clips[runtime_index]
+                if (
+                    excluded_clips
+                    and (clip.get("channel"), clip.get("started_at")) in excluded_clips
+                ):
+                    continue
+                if clip.get("channel") in PUBLIC_EXCLUDED_CHANNELS:
+                    continue
                 if not number_is_finite(score) or score < MINIMUM_SEARCH_SCORE:
                     continue
                 scored.append((score, runtime.clips[runtime_index]))
@@ -233,7 +249,7 @@ def search_clips(
         "recency_cutoff": cutoff.isoformat().replace("+00:00", "Z") if cutoff else None,
         "index": {
             "generated_at": index.get("generated_at"),
-            "source_clip_count": index.get("source_clip_count", len(clips)),
+            "source_clip_count": len(clips),
             "embedding_model": embedding_model,
         },
         "results": results,

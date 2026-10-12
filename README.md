@@ -89,8 +89,8 @@ Current boundary decisions:
 
 Radio capture:
 
-- RTLSDR-Airband monitors a 12-channel marine VHF profile: 05A, 06, 09, 13, 14,
-  16, 22A, 67, 68, 69, 71, and 72.
+- RTLSDR-Airband uses a measured six-channel profile: 14, 13, 16, 66A, 78A,
+  and 71. Channel 74 is categorically excluded from the app.
 - VHF 14 is the default live feed for Seattle Traffic / Puget Sound VTS.
 - AIS-catcher runs on the Pi with either the dedicated AIS RTL-SDR or the
   dAISy-catcher serial receiver around 162 MHz.
@@ -182,13 +182,18 @@ Retention and export:
 
 ## Speech Recognition
 
-The transcriber intentionally uses one inference-only path: the open-source
-Whisper `large-v3-turbo` checkpoint through `faster-whisper` with CPU `int8`.
-The OptiPlex CPU policy allows six of its eight cores and one worker, with low
-CPU priority and weight so live audio, the API, and Plex retain scheduling priority.
-The policy preserves hourly batches and takes effect on the next batch; it does
-not interrupt a clip already being processed. See [the CPU policy runbook](docs/transcriber-cpu-policy.md). There are no local dataset
-curation or model-building workflows in this repository.
+The serving transcriber uses `base.en` through faster-whisper CPU `int8`, two
+threads, and one worker. The measured six-channel workload still exceeds
+`large-v3-turbo` capacity during its busiest hour, so the release retains the
+current model rather than growing the queue.
+
+Dev restores immediate shared transcript corrections, reviewed vocabulary
+hints, and on-demand Turbo LoRA experiments. Original predictions stay intact;
+only evaluated candidates can become eligible for an explicitly approved model
+release. See [reviewed transcription and release instructions](docs/asr-feedback.md).
+
+The separate [CPU policy runbook](docs/transcriber-cpu-policy.md) describes
+receiver-friendly scheduling and any explicitly deployed CPU policy changes.
 
 ## Local Setup
 
