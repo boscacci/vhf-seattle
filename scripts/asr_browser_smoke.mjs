@@ -83,7 +83,10 @@ try {
   await reviewedAudio.waitFor({ state: "attached" });
   await reviewedAudio.evaluate((audio) => { audio.load(); });
   await page.waitForFunction(() => document.querySelector('audio[aria-label="Reviewed range audio"]')?.readyState > 0);
-  assert(Math.abs(await reviewedAudio.evaluate((audio) => audio.currentTime) - 1) < 0.1);
+  await page.waitForFunction(() => {
+    const audio = document.querySelector('audio[aria-label="Reviewed range audio"]');
+    return audio && !audio.seeking && Math.abs(audio.currentTime - 1) < 0.1;
+  });
   await reviewedAudio.evaluate((audio) => audio.play());
   await page.waitForFunction(() => {
     const audio = document.querySelector('audio[aria-label="Reviewed range audio"]');
