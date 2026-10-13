@@ -106,7 +106,8 @@ ensure_transcriber_progress() {
       --since "${transcriber_max_poll_age_minutes} minutes ago" \
       --no-pager
   )"
-  if grep -q "uploaded_clip_transcriber_poll" <<<"${recent_log}"; then
+  if grep -q "uploaded_clip_transcriber_poll" <<<"${recent_log}" ||
+     grep -q "uploaded_clip_transcriber_progress" <<<"${recent_log}"; then
     return 0
   fi
   if grep -q "uploaded_clip_transcriber_start" <<<"${recent_log}"; then

@@ -78,7 +78,7 @@ def test_uploaded_clip_transcriber_defaults_to_requested_turbo_model() -> None:
     assert DEFAULT_TRANSCRIBE_MODEL == "large-v3-turbo"
 
 
-def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
+def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path, capsys) -> None:
     db_path = tmp_path / "radio.sqlite3"
     event_store = CapturingEventStore()
     store = UploadedClipStore(db_path, event_store=event_store)
@@ -97,6 +97,7 @@ def test_uploaded_clip_transcriber_persists_clip_segments(tmp_path) -> None:
 
     clip = store.get_clip("raw/channel=68/date=2026-05-24/20260524T210000Z-test.mp3")
     assert summary.transcribed == 1
+    assert '"event": "uploaded_clip_transcriber_progress"' in capsys.readouterr().out
     assert clip is not None
     assert clip.status == "transcribed"
     assert clip.transcript == "Seattle traffic inbound for the locks"
@@ -465,7 +466,7 @@ def test_uploaded_clip_store_ignores_duplicate_idempotency_key(tmp_path) -> None
     assert [clip.key for clip in pending] == [first_key]
 
 
-def test_uploaded_clip_store_returns_newest_pending_first(tmp_path) -> None:
+def test_uploaded_clip_store_returns_oldest_pending_first_without_starvation(tmp_path) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)
     older_key = "raw/channel=13/date=2026-05-24/20260524T210000Z-first.mp3"
@@ -481,7 +482,7 @@ def test_uploaded_clip_store_returns_newest_pending_first(tmp_path) -> None:
 
     pending = store.pending_uploads(limit=1)
 
-    assert [clip.key for clip in pending] == [newer_key]
+    assert [clip.key for clip in pending] == [older_key]
 
 
 def test_recent_transcribed_clips_returns_newest_with_segments(tmp_path) -> None:
@@ -932,3 +933,91 @@ class RepeatedPlosiveHallucinationSpeechModel:
             ],
             None,
         )
+
+
+def test_continuous_worker_polls_promptly_without_busy_loop():
+    assert _next_poll_delay_seconds(ProcessSummary(), idle_delay_seconds=5) == 5
+    assert (
+        _next_poll_delay_seconds(ProcessSummary(processed=5, transcribed=5), idle_delay_seconds=5)
+        == 0
+    )
+    assert (
+        _next_poll_delay_seconds(
+            ProcessSummary(processed=5, waiting_upload=5), idle_delay_seconds=5
+        )
+        == 5
+    )
+    with pytest.raises(ValueError):
+        _next_poll_delay_seconds(ProcessSummary(), idle_delay_seconds=0)
+
+
+def test_continuous_worker_loads_model_once_drains_then_sleeps(monkeypatch, tmp_path):
+    import talkingboats.asr_feedback as feedback
+    import talkingboats.clip_transcriber as module
+
+    monkeypatch.setenv("TALKINGBOATS_CLIP_STORE_BACKEND", "sqlite")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "transcribe",
+            "--bucket",
+            "test-bucket",
+            "--db-path",
+            str(tmp_path / "clips.db"),
+            "--poll-seconds",
+            "5",
+            "--cpu-threads",
+            "6",
+            "--workers",
+            "1",
+        ],
+    )
+    monkeypatch.setattr(module, "durable_event_store_from_env", lambda **kwargs: None)
+    monkeypatch.setattr(module, "S3ClipReader", lambda **kwargs: object())
+    hints = iter(["Seattle Traffic", "Tacoma"])
+    monkeypatch.setattr(feedback, "reviewed_hotwords", lambda _: next(hints))
+    model = object()
+    loads, calls, events, sleeps = [], [], [], []
+    monkeypatch.setattr(
+        module, "_load_faster_whisper_model", lambda **kwargs: loads.append(kwargs) or model
+    )
+    summaries = iter([ProcessSummary(processed=5, transcribed=5), ProcessSummary()])
+
+    def process(**kwargs):
+        calls.append(kwargs)
+        return next(summaries)
+
+    monkeypatch.setattr(module, "process_pending_uploads_once", process)
+    monkeypatch.setattr(
+        module, "_log_event", lambda event, **fields: events.append((event, fields))
+    )
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(module.time, "sleep", sleep)
+    with pytest.raises(KeyboardInterrupt):
+        module.main()
+    assert len(loads) == 1 and loads[0]["cpu_threads"] == 6
+    assert len(calls) == 2 and all(call["model"] is model for call in calls)
+    assert all(call["limit"] == 5 for call in calls)
+    assert sleeps == [5]
+    assert [call["hotwords"] for call in calls] == ["Seattle Traffic", "Tacoma"]
+    assert events[0][1]["run_mode"] == "continuous"
+    assert events[0][1]["workers"] == 1
+
+
+def test_missing_uploads_do_not_block_ready_clips_and_keep_retry_slot(tmp_path):
+    store = UploadedClipStore(tmp_path / "clips.db")
+    for index in range(6):
+        key = f"raw/channel=14/{index}.mp3"
+        store.record_presigned_upload(
+            key=key, request=_clip_request(channel="14", started_at=f"2026-05-24T21:0{index}:00Z")
+        )
+        if index < 5:
+            store.mark_waiting_upload(key, "not uploaded yet")
+    rows = store.pending_uploads(limit=5, allowed_channels=("14",))
+    assert "raw/channel=14/5.mp3" in [row.key for row in rows]
+    assert any(row.status == "waiting_upload" for row in rows)

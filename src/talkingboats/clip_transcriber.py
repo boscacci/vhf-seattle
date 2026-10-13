@@ -208,8 +208,11 @@ class UploadedClipStore:
             else (" AND channel IN (" + ",".join("?" for _ in allowed_channels) + ")")
         )
         with sqlite3.connect(self.path) as connection:
-            rows = connection.execute(
-                f"""
+            rows = []
+            for waiting in (False, True):
+                rows.extend(
+                    connection.execute(
+                        f"""
                 SELECT
                     key,
                     channel,
@@ -224,12 +227,14 @@ class UploadedClipStore:
                     error
                 FROM uploaded_clips
                 WHERE status IN ({placeholders}) {channel_clause}
-                ORDER BY started_at DESC, id DESC
+                  AND (status = 'waiting_upload') = ?
+                ORDER BY started_at ASC, id ASC
                 LIMIT ?
                 """,
-                (*statuses, *(allowed_channels or ()), limit),
-            ).fetchall()
-        return [_row_to_record(row) for row in rows]
+                        (*statuses, *(allowed_channels or ()), int(waiting), limit),
+                    ).fetchall()
+                )
+        return _fair_pending_records([_row_to_record(row) for row in rows], limit)
 
     def get_clip(self, key: str) -> UploadedClipRecord | None:
         with sqlite3.connect(self.path) as connection:
@@ -1270,6 +1275,13 @@ def process_pending_uploads_once(
             summary.failed += 1
         finally:
             audio_path.unlink(missing_ok=True)
+        _log_event(
+            "uploaded_clip_transcriber_progress",
+            processed=summary.processed,
+            transcribed=summary.transcribed,
+            failed=summary.failed,
+            waiting_upload=summary.waiting_upload,
+        )
     return summary
 
 
@@ -1504,6 +1516,9 @@ def main() -> None:
         compute_type=args.compute_type,
         cpu_threads=args.cpu_threads,
         workers=args.workers,
+        run_mode="once" if args.once else "continuous",
+        poll_seconds=args.poll_seconds,
+        batch_limit=args.limit,
         vad_filter=args.vad_filter,
         min_segment_avg_logprob=args.min_segment_avg_logprob,
         **_quality_gate_log_fields(),
@@ -1516,8 +1531,8 @@ def main() -> None:
     from talkingboats.asr_feedback import reviewed_hotwords
     from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
 
-    current_hotwords = reviewed_hotwords(args.hotwords)
     while True:
+        current_hotwords = reviewed_hotwords(args.hotwords)
         summary = process_pending_uploads_once(
             store=store,
             clip_reader=reader,
@@ -1847,6 +1862,18 @@ def _format_utc(value: datetime) -> str:
 
 def _log_event(event: str, **fields: object) -> None:
     print(json.dumps({"event": event, **fields}, sort_keys=True), flush=True)
+
+
+def _fair_pending_records(
+    records: list[UploadedClipRecord], limit: int
+) -> list[UploadedClipRecord]:
+    records = sorted(records, key=lambda record: (record.started_at, record.key))
+    ready = [record for record in records if record.status != "waiting_upload"]
+    waiting = [record for record in records if record.status == "waiting_upload"]
+    ready_slots = max(1, limit - 1) if waiting else limit
+    selected = ready[:ready_slots]
+    selected.extend(waiting[: limit - len(selected)])
+    return sorted(selected, key=lambda record: (record.started_at, record.key))
 
 
 if __name__ == "__main__":
