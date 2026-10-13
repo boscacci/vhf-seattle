@@ -948,3 +948,17 @@ def test_active_channel_queue_does_not_consume_excluded_backlog():
     store.record_presigned_upload(key=retained, request=_request(channel="14"))
     assert [r.key for r in store.pending_uploads(limit=1, allowed_channels=("14",))] == [retained]
     assert store.get_clip(excluded).status == "pending"
+
+
+def test_active_channel_queue_processes_oldest_first_with_bounded_queries():
+    table = FakeDynamoTable()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"), event_store=CapturingEventStore(), table=table
+    )
+    for hour, channel in [(13, "14"), (12, "13"), (14, "14")]:
+        request = _request(channel=channel).model_copy(
+            update={"started_at": datetime(2026, 6, 1, hour, tzinfo=UTC)}
+        )
+        store.record_presigned_upload(key=f"raw/channel={channel}/hour={hour}.mp3", request=request)
+    pending = store.pending_uploads(limit=1, allowed_channels=("13", "14"))
+    assert [row.started_at for row in pending] == ["2026-06-01T12:00:00Z"]

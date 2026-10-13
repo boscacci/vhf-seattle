@@ -32,6 +32,7 @@ from talkingboats.clip_transcriber import (
     RecentTranscribedClip,
     UploadedClipRecord,
     UploadedClipSegment,
+    _fair_pending_records,
     is_displayable_transcript,
 )
 from talkingboats.durable_events import (
@@ -223,7 +224,7 @@ class DynamoUploadedClipStore:
             ]
         )
         for partition in partitions:
-            for item in self._query_items(partition, scan_forward=False, limit=limit):
+            for item in self._query_items(partition, scan_forward=True, limit=limit):
                 state = self._state_item(str(item["key"]))
                 if (
                     state
@@ -231,8 +232,7 @@ class DynamoUploadedClipStore:
                     and (allowed_channels is None or state.get("channel") in allowed_channels)
                 ):
                     records.append(_record_from_state(state))
-        records.sort(key=lambda record: (record.started_at, record.key), reverse=True)
-        return records[:limit]
+        return _fair_pending_records(records, limit)
 
     def active_queue_oldest(self, channels):
         """Bounded oldest lookup excludes preserved inactive-channel backlog."""

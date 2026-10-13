@@ -213,3 +213,21 @@ def test_pi_capture_health_release_updates_only_scoped_runtime(tmp_path: Path) -
     start_timer = commands.index("start talkingboats-pi-healthcheck.timer")
     assert stop_timer < restart_capture < start_health < start_timer
     assert "talkingboats-ais" not in commands
+
+
+def test_asr_release_runs_one_resident_worker_and_restores_schedule_on_rollback():
+    config = Path(
+        "deploy/systemd/overrides/talkingboats-uploaded-clip-transcriber.service.d/zzzz-asr-continuous.conf"
+    ).read_text()
+    assert "Type=simple" in config
+    assert "--poll-seconds 5 --limit 5 --cpu-threads 6 --workers 1" in config
+    assert "--once" not in config
+    assert "CPUQuota=600%" in config
+    assert "Restart=on-failure" in config
+    script = Path("scripts/release_asr_feedback.sh").read_text()
+    production = script[script.index('  runtime="${HOME}/repos') :]
+    assert "zzzz-asr-continuous.conf" in production
+    assert "disable talkingboats-uploaded-clip-transcriber.timer" in production
+    assert "enable talkingboats-uploaded-clip-transcriber.service" in production
+    assert "start --no-block talkingboats-uploaded-clip-transcriber.service" in production
+    assert "timer_was_enabled" in production and "worker_was_enabled" in production

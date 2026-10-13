@@ -87,7 +87,7 @@ recordings per retained channel; reviewed test ranges alone cannot establish
 capacity. The dataset/audio hashes and hourly workload identity are pinned to
 each run. Missing capacity proof keeps a candidate ineligible. Benchmark timing
 checkpoints are reused after interruption. The one-core experiment limit makes
-this capacity check conservative for the two-thread serving path.
+this capacity check conservative for the six-thread serving path.
 
 The local worker freezes encoder/base weights and trains decoder LoRA attention
 adapters. It evaluates plain Turbo, Turbo with hints, and merged/converted int8
@@ -184,3 +184,13 @@ as limited variety. Topic-policy version 2 invalidates the earlier three-topic
 dev cache. Plot colors, labels, examples and semantic search topic IDs all use
 the same assignments. This is unsupervised grouping, not a verified radio taxonomy.
 The fallback uses the [supported BERTopic cluster-model interface](https://maartengr.github.io/BERTopic/getting_started/clustering/clustering.html).
+
+## Continuous serving
+
+The single shared Turbo worker stays loaded and drains retained channels oldest
+first. It processes five clips per poll without sleeping after progress; when
+idle or all selected uploads are unavailable, it waits five seconds. Serving uses
+six CPU threads, one worker, int8 and a 600% CPU quota on the eight-core OptiPlex.
+The hourly transcription timer is disabled by the approved production release;
+the hourly public export is a separate task and remains scheduled. Dev delivery
+validates the candidate without starting an additional production-data worker.

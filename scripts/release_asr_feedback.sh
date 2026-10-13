@@ -44,6 +44,7 @@ fi
 if [[ "${action}" == prod ]]; then
   "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/verify_asr_approval.py" \
     "${approval_file}" "${release_tag}" "${commit}" "${digest}" "${candidate}/dev-smoke.json"
+  [[ $(getconf _NPROCESSORS_ONLN) == 8 ]] || { echo 'Continuous six-thread policy requires the eight-core OptiPlex.' >&2; exit 2; }
   git -C "${repo_root}" merge-base --is-ancestor "${commit}" origin/main || {
     echo 'Production tag must select an accepted, dev-tested default-branch commit.' >&2; exit 2;
   }
@@ -126,6 +127,12 @@ else
     [[ ! -f "${path}" ]] || cp -a "${path}" "${backup}/${service}.conf"
   done
   timer_was_active="$(systemctl --user is-active talkingboats-uploaded-clip-transcriber.timer || true)"
+  timer_was_enabled="$(systemctl --user is-enabled talkingboats-uploaded-clip-transcriber.timer || true)"
+  worker_was_active="$(systemctl --user is-active talkingboats-uploaded-clip-transcriber.service || true)"
+  worker_was_enabled="$(systemctl --user is-enabled talkingboats-uploaded-clip-transcriber.service || true)"
+  printf '{"timer_active":"%s","timer_enabled":"%s","worker_active":"%s","worker_enabled":"%s"}\n' \
+    "${timer_was_active}" "${timer_was_enabled}" "${worker_was_active}" "${worker_was_enabled}" > "${backup}/worker-state.json"
+
   for part in src scripts config public-site; do
     [[ ! -d "${runtime}/${part}" ]] || cp -a "${runtime}/${part}" "${backup}/${part}"
   done
@@ -138,7 +145,21 @@ else
       path="${unit_root}/${service}.service.d/zzzz-asr-feedback.conf"
       if [[ -f "${backup}/${service}.conf" ]]; then cp -a "${backup}/${service}.conf" "${path}"; else rm -f "${path}"; fi
     done
+    systemctl --user stop talkingboats-uploaded-clip-transcriber.service || true
     systemctl --user daemon-reload
+    if [[ "${timer_was_enabled}" == enabled ]]; then
+      systemctl --user enable talkingboats-uploaded-clip-transcriber.timer
+    else
+      systemctl --user disable talkingboats-uploaded-clip-transcriber.timer
+    fi
+    if [[ "${worker_was_enabled}" == enabled ]]; then
+      systemctl --user enable talkingboats-uploaded-clip-transcriber.service
+    else
+      systemctl --user disable talkingboats-uploaded-clip-transcriber.service
+    fi
+    if [[ "${worker_was_active}" == active || "${worker_was_active}" == activating ]]; then
+      systemctl --user start --no-block talkingboats-uploaded-clip-transcriber.service
+    fi
     [[ "${timer_was_active}" != active ]] || systemctl --user start talkingboats-uploaded-clip-transcriber.timer
     "${release_root}/scripts/deploy_asr_receiver.sh" "${release_root}" "${commit}" "${digest}" rollback || true
     systemctl --user restart talkingboats-api.service talkingboats-public-live-radio-proxy.service || true
@@ -153,6 +174,9 @@ else
   for service in talkingboats-api talkingboats-public-live-radio-proxy talkingboats-uploaded-clip-transcriber talkingboats-public-clip-refresh talkingboats-lexical-refresh; do
     install -d -m 0755 "${unit_root}/${service}.service.d"
     printf '[Service]\nEnvironmentFile=%s/asr.env\n' "${state_root}" > "${unit_root}/${service}.service.d/zzzz-asr-feedback.conf"
+    if [[ "${service}" == talkingboats-uploaded-clip-transcriber ]]; then
+      cat "${release_root}/deploy/systemd/overrides/talkingboats-uploaded-clip-transcriber.service.d/zzzz-asr-continuous.conf" >> "${unit_root}/${service}.service.d/zzzz-asr-feedback.conf"
+    fi
   done
   systemctl --user daemon-reload
   systemctl --user restart talkingboats-api.service talkingboats-public-live-radio-proxy.service
@@ -183,7 +207,9 @@ snapshot = str(Path(values["TALKINGBOATS_ASR_OUTPUT_DIR"]).parent/"dev-analysis"
 subprocess.run([sys.executable, str(Path(sys.argv[1])/"scripts/prepare_dev_analysis.py"), site, snapshot, "--promote-to", site], check=True)
 PYCODE
   "${release_root}/scripts/deploy_static_shell.sh" prod "${release_root}/public-site"
-  [[ "${timer_was_active}" != active ]] || systemctl --user start talkingboats-uploaded-clip-transcriber.timer
+  systemctl --user disable talkingboats-uploaded-clip-transcriber.timer
+  systemctl --user enable talkingboats-uploaded-clip-transcriber.service
+  systemctl --user start --no-block talkingboats-uploaded-clip-transcriber.service
   systemctl --user start talkingboats-public-clip-refresh.service
   cp "${approval_file}" "${release_root}/human-approval.json"
   TALKINGBOATS_ASR_RELEASE_COMMIT="${commit}" "${HOME}/miniforge3/envs/dell/bin/python" - <<'PYCODE'

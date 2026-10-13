@@ -4,6 +4,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def test_optiplex_healthcheck_fails_when_the_pi_receiver_is_unreachable() -> None:
     script = Path("scripts/talkingboats_optiplex_healthcheck.sh").read_text(encoding="utf-8")
@@ -12,11 +14,15 @@ def test_optiplex_healthcheck_fails_when_the_pi_receiver_is_unreachable() -> Non
     assert "http://192.168.1.114:8050/current-status.json" in script
     assert "ensure_edge_receiver_reachable" in script
     assert "edge_receiver_unreachable" in script
-    assert 'failures=$((failures + 1))' in script
+    assert "failures=$((failures + 1))" in script
 
 
+@pytest.mark.parametrize(
+    "journal_event", ["uploaded_clip_transcriber_poll", "uploaded_clip_transcriber_progress"]
+)
 def test_optiplex_healthcheck_reports_degraded_when_only_the_pi_probe_fails(
     tmp_path: Path,
+    journal_event: str,
 ) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -29,7 +35,7 @@ case " $* " in
 esac
 """,
         "journalctl": """#!/usr/bin/env bash
-echo 'uploaded_clip_transcriber_poll'
+echo "$JOURNAL_EVENT"
 """,
         "seq": """#!/usr/bin/env bash
 echo 1
@@ -55,9 +61,8 @@ exit 0
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "TALKINGBOATS_OPTIPLEX_PI_STATUS_URL": (
-                "http://pi.invalid:8050/current-status.json"
-            ),
+            "JOURNAL_EVENT": journal_event,
+            "TALKINGBOATS_OPTIPLEX_PI_STATUS_URL": ("http://pi.invalid:8050/current-status.json"),
             "TALKINGBOATS_OPTIPLEX_HEALTHCHECK_ATTEMPTS": "1",
         },
         capture_output=True,
@@ -66,14 +71,15 @@ exit 0
     )
 
     assert result.returncode == 1
+    assert "poll_stale" not in result.stdout
     assert "unit=raspberry-pi-edge detail=edge_receiver_unreachable" in result.stdout
     assert "event=talkingboats_optiplex_health_degraded" in result.stdout
 
 
 def test_pi_installer_enables_a_hardware_watchdog_for_host_level_hangs() -> None:
-    watchdog = Path(
-        "deploy/systemd/talkingboats-system-watchdog.conf.example"
-    ).read_text(encoding="utf-8")
+    watchdog = Path("deploy/systemd/talkingboats-system-watchdog.conf.example").read_text(
+        encoding="utf-8"
+    )
     installer = Path("deploy/pi/install_live_radio.sh").read_text(encoding="utf-8")
 
     assert "[Manager]" in watchdog
