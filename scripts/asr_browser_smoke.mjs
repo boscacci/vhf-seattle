@@ -27,8 +27,8 @@ try {
   assert(analysis.source_clip_count > 0, "Analysis must retain usable transcripts");
   assert(!Object.hasOwn(analysis.channels, "74"));
   await page.goto(`${base}/analysis/`, { waitUntil: "domcontentloaded" });
-  await page.locator("#panel-analysis").waitFor({ state: "visible" });
-  assert(!(await page.locator("#panel-analysis").innerText()).includes("No analysis cache yet"));
+  await page.locator("#panel-language").waitFor({ state: "visible" });
+  assert(!(await page.locator("#panel-language").innerText()).includes("No analysis cache yet"));
   await page.goto(`${base}/performance/`, { waitUntil: "domcontentloaded" });
   const panel = page.locator(".asr-experiments");
   await panel.getByRole("button", { name: "Refresh experiments" }).click();
