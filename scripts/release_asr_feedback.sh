@@ -192,7 +192,7 @@ from pathlib import Path
 values = dict(line.partition("=")[::2] for line in (Path.home()/".config/talkingboats/asr.env").read_text().splitlines())
 path = Path(values["TALKINGBOATS_ASR_OUTPUT_DIR"])/"production-overlay.json"
 path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(json.dumps({"commit": values["TALKINGBOATS_ASR_RELEASE_COMMIT"]}))
+path.write_text(json.dumps({"commit": values["TALKINGBOATS_ASR_RELEASE_COMMIT"], "serving_model": values["TALKINGBOATS_ACTIVE_ASR_MODEL"]}))
 path.chmod(0o600)
 PYCODE
   trap - ERR
