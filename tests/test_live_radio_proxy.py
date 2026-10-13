@@ -1721,3 +1721,25 @@ async def _wait_for_event(event: threading.Event, *, timeout: float) -> bool:
             return True
         await asyncio.sleep(0.01)
     return event.is_set()
+
+
+def test_dev_analysis_cache_is_independent_of_production_generated_assets(tmp_path):
+    import json
+
+    production = tmp_path / 'production'
+    dev = tmp_path / 'dev'
+    for root, channel in [(production, '74'), (dev, '14')]:
+        (root / 'analysis').mkdir(parents=True)
+        (root / 'analysis/lexical.json').write_text(json.dumps({
+            'status': 'ok', 'channels': {channel: 2}, 'source_clip_count': 2,
+        }))
+    app = create_app(ProxySettings(public_site_dir=str(production), analysis_site_dir=str(dev)))
+    response = _run(_asgi_get(app, '/api/analysis/lexical', follow_redirects=True))
+    assert response.json()['source_clip_count'] == 2
+    assert response.json()['channels'] == {'14': 2}
+    assert json.loads((production / 'analysis/lexical.json').read_text())['channels'] == {'74': 2}
+    (production / 'analysis/lexical.json').write_text(json.dumps({
+        'status': 'ok', 'channels': {'14': 5}, 'source_clip_count': 5,
+    }))
+    response = _run(_asgi_get(app, '/analysis/lexical.json'))
+    assert response.json()['source_clip_count'] == 5

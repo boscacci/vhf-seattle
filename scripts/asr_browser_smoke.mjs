@@ -21,6 +21,14 @@ try {
   assert([6, 8].includes(channels.length));
   const forbidden = await page.request.get(`${base}/api/clips/recent?channels=74&quality=all&include_playback_url=false`);
   assert.deepEqual((await forbidden.json()).clips, []);
+  const analysisResponse = await page.request.get(`${base}/api/analysis/lexical`);
+  const analysis = await analysisResponse.json();
+  assert.equal(analysis.status, "ok");
+  assert(analysis.source_clip_count > 0, "Analysis must retain usable transcripts");
+  assert(!Object.hasOwn(analysis.channels, "74"));
+  await page.goto(`${base}/analysis/`, { waitUntil: "domcontentloaded" });
+  await page.locator("#panel-language").waitFor({ state: "visible" });
+  assert(!(await page.locator("#panel-language").innerText()).includes("No analysis cache yet"));
   await page.goto(`${base}/performance/`, { waitUntil: "domcontentloaded" });
   const panel = page.locator(".asr-experiments");
   await panel.getByRole("button", { name: "Refresh experiments" }).click();

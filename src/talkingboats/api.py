@@ -130,7 +130,10 @@ app = FastAPI(
 
 SHARED_UI_DIR = FilePath(__file__).resolve().parents[2] / "public-site"
 PUBLISHED_LEXICAL_PATH = (
-    FilePath(__file__).resolve().parents[2] / "outputs/public-site/analysis/lexical.json"
+    FilePath(os.getenv("TALKINGBOATS_ANALYSIS_SITE_DIR", os.getenv(
+        "TALKINGBOATS_PUBLIC_SITE_DIR",
+        str(FilePath(__file__).resolve().parents[2] / "outputs/public-site"),
+    ))) / "analysis/lexical.json"
 )
 PUBLISHED_SEARCH_INDEX_PATH = (
     FilePath(
@@ -941,6 +944,11 @@ async def lexical_analysis(
 ) -> dict[str, object]:
     try:
         if settings.clip_store_backend == "dynamodb":
+            shared = read_published_lexical_analysis(
+                PUBLISHED_SEARCH_INDEX_PATH.parent / "lexical.json"
+            )
+            if shared.get("status") == "ok":
+                return shared
             return read_published_lexical_analysis(PUBLISHED_LEXICAL_PATH)
         return read_cached_lexical_analysis(settings.clip_db_path)
     except ValueError as exc:

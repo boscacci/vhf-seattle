@@ -3318,7 +3318,7 @@ function renderLanguageDashboard(payload) {
     languageStatus.textContent = "No analysis cache yet";
   } else {
     const generated = payload.generated_at ? `Analyzed ${formatDateTime(payload.generated_at)}` : "Analysis ready";
-    languageStatus.textContent = generated;
+    languageStatus.textContent = payload.source_scope ? `${generated} · ${payload.source_scope}` : generated;
   }
 
   const frequency = payload.frequency || {};
