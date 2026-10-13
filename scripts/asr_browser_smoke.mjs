@@ -41,6 +41,24 @@ try {
   await panel.getByRole("status").filter({ hasText: "Reviewed audio:" }).waitFor();
   await page.locator('svg[aria-label="Queued clips time series"]').waitFor();
   assert(await panel.getByRole("button", { name: "Train and compare Turbo" }).isDisabled());
+  // Regression: desktop charts must not scale a tiny SVG and its labels to page width.
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    const queueChart = page.locator('svg[aria-label="Queued clips time series"]');
+    await page.waitForFunction(() => {
+      const svg = document.querySelector('svg[aria-label="Queued clips time series"]');
+      return Math.abs(svg.viewBox.baseVal.width - svg.getBoundingClientRect().width) < 2;
+    }, null, { timeout: 5000 });
+    const geometry = await queueChart.evaluate(svg => ({
+      height: svg.getBoundingClientRect().height,
+      labelHeight: svg.querySelector('.performance-chart-axis').getBoundingClientRect().height,
+      overflow: document.documentElement.scrollWidth > window.innerWidth,
+    }));
+    assert(geometry.height <= 221, `Chart must stay compact: ${JSON.stringify(geometry)}`);
+    assert(geometry.labelHeight <= 20, `Labels must retain normal size: ${JSON.stringify(geometry)}`);
+    assert(!geometry.overflow, 'Performance charts must not overflow mobile width');
+  }
+
   await Promise.all(channels.map(async (channel) => {
     const response = await page.request.get(`${base}/api/live/${channel}/status`);
     assert.equal(response.status(), 200);
