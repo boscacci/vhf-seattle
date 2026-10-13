@@ -67,6 +67,8 @@ try {
   } }));
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator(".transcription-backlog", { hasText: "800 clips" }).waitFor();
+  assert.equal(await page.locator(".transcription-backlog .performance-chart-value").innerText(), "800 clips");
+  await page.locator(".transcription-backlog .performance-chart-caption", { hasText: "Latest measurement" }).waitFor();
   assert.equal(await page.locator('svg[aria-label="Queued clips time series"]').getAttribute("data-max-value"), "1500");
   // Isolated experiment controls and archived range audio; no actual job or label is created.
   const actualStatus = await (await page.request.get(`${base}/api/asr-feedback/status`)).json();

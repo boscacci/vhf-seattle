@@ -3578,7 +3578,12 @@ function renderPerformanceDashboard(payload) {
   backlogPanel.append(
     performanceCard("Transcription backlog", backlog.status === "ok" ? `${backlog.queued_clips} clips` : "Unavailable",
       backlog.status === "ok" ? `Shared worker · oldest ${backlog.oldest_age_seconds == null ? "none" : Math.round(backlog.oldest_age_seconds / 60) + " min"} · retained channels` : "No complete queue measurement yet", "unknown"),
-    performanceMetricChart("Queued clips", backlog.history, "queuedClips", " clips", "backlog"),
+    performanceMetricChart("Queued clips", backlog.history, "queuedClips", " clips", "backlog", {
+      label: backlog.status === "ok" ? `${backlog.queued_clips} clips` : "Unavailable",
+      caption: backlog.status === "ok"
+        ? `Latest measurement · ${formatPerformanceDateTime(backlog.generatedAt)} · Five-minute samples`
+        : "Current measurement unavailable · Historical samples shown when available",
+    }),
   );
   performanceDashboard.replaceChildren(backlogPanel, rangeControl, systemKpis, hostGrid, cloudOperations);
 }
@@ -3907,7 +3912,7 @@ function performanceRangeControl() {
   return control;
 }
 
-function performanceMetricChart(label, history, field, suffix, className) {
+function performanceMetricChart(label, history, field, suffix, className, summary = null) {
   const chart = document.createElement("article");
   chart.className = `performance-chart is-${className}`;
   const samples = performanceMetricSamples(history, field);
@@ -3918,7 +3923,7 @@ function performanceMetricChart(label, history, field, suffix, className) {
   title.textContent = label;
   const value = document.createElement("strong");
   value.className = "performance-chart-value";
-  value.textContent = formatMetricChartValue(averageMetricValue(samples), suffix);
+  value.textContent = summary?.label ?? formatMetricChartValue(averageMetricValue(samples), suffix);
   heading.append(title, value);
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -3935,7 +3940,7 @@ function performanceMetricChart(label, history, field, suffix, className) {
 
   const caption = document.createElement("span");
   caption.className = "performance-chart-caption";
-  caption.textContent = performanceChartCaption(samples);
+  caption.textContent = summary?.caption ?? performanceChartCaption(samples);
   chart.append(heading, svg, tooltip, caption);
   return chart;
 }
