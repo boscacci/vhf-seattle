@@ -1649,3 +1649,8 @@ def test_public_site_keeps_quarantined_clip_quality_lane_out_of_production() -> 
     assert "quality_status" in app_js
     assert ".pill.quality-pill" in styles_css
     assert ".clip-card.is-quarantined blockquote" in styles_css
+
+
+def test_performance_omits_the_most_used_filesystem_card():
+    app_js = Path('public-site/assets/app.js').read_text(encoding='utf-8')
+    assert 'Most used filesystem' not in app_js

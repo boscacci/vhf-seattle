@@ -3785,7 +3785,6 @@ function performanceHostPanel(host, index) {
   title.textContent = role;
   const cards = document.createElement("div");
   cards.className = "performance-grid";
-  const disks = host?.disks || [];
   const cpuSummary = performanceSummaryMetric(host, "cpuUtilizationPercent", "%", "cpu");
   const memorySummary = performanceSummaryMetric(host, "memoryUsedPercent", "%", "memory");
   const thermalSummary = performanceSummaryMetric(host, "thermalTemperatureC", " C", "thermal");
@@ -3802,7 +3801,6 @@ function performanceHostPanel(host, index) {
       performanceWindowCaption(memorySummary.samples),
       memorySummary.status,
     ),
-    performanceCard("Disk", diskSummary(disks), "Most used filesystem", worstItemStatus(disks)),
     thermalBalanceCard(host?.thermal, thermalSummary),
   );
   const charts = document.createElement("div");
@@ -4207,19 +4205,6 @@ function thresholdStatus(value, watchAt, highAt) {
 function performanceWindowCaption(samples, extra = "") {
   const base = samples.length ? "Average over selected window" : "No samples in selected window";
   return extra ? `${base}; ${extra}` : base;
-}
-
-function diskSummary(disks) {
-  const values = disks.map((disk) => Number(disk.usedPercent)).filter(Number.isFinite);
-  if (!values.length) {
-    return "Unknown";
-  }
-  return percentLabel(Math.max(...values));
-}
-
-function worstItemStatus(items) {
-  const ranks = { high: 3, watch: 2, ok: 1, unknown: 0 };
-  return items.reduce((worst, item) => (ranks[item.status] > ranks[worst] ? item.status : worst), "unknown");
 }
 
 function statusLabel(status) {

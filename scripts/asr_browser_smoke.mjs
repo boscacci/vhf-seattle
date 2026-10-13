@@ -30,6 +30,7 @@ try {
   await page.locator("#panel-language").waitFor({ state: "visible" });
   assert(!(await page.locator("#panel-language").innerText()).includes("No analysis cache yet"));
   await page.goto(`${base}/performance/`, { waitUntil: "domcontentloaded" });
+  assert(!(await page.locator("#panel-performance").innerText()).includes("Most used filesystem"));
   const panel = page.locator(".asr-experiments");
   await panel.getByRole("button", { name: "Refresh experiments" }).click();
   await panel.getByRole("status").filter({ hasText: "Reviewed audio:" }).waitFor();
