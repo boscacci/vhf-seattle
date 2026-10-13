@@ -428,6 +428,7 @@ class ProxySettings:
     performance_history_db_path: str = str(DEFAULT_PERFORMANCE_HISTORY_DB_PATH)
     static_shell_dir: str = str(DEFAULT_STATIC_SHELL_DIR)
     public_site_dir: str = str(REPO_ROOT / "outputs/public-site")
+    analysis_site_dir: str | None = None
     performance_dev_hosts: tuple[str, ...] = PERFORMANCE_DEV_HOSTS
     performance_dev_origin_hosts: tuple[str, ...] = PERFORMANCE_DEV_ORIGIN_HOSTS
     cors_origins: tuple[str, ...] = (
@@ -526,6 +527,7 @@ class ProxySettings:
                 "TALKINGBOATS_PROXY_PUBLIC_SITE_DIR",
                 os.environ.get("TALKINGBOATS_PUBLIC_SITE_DIR", cls.public_site_dir),
             ),
+            analysis_site_dir=os.environ.get("TALKINGBOATS_ANALYSIS_SITE_DIR"),
             performance_dev_hosts=_env_csv("TALKINGBOATS_PROXY_PERFORMANCE_DEV_HOSTS")
             or cls.performance_dev_hosts,
             performance_dev_origin_hosts=_env_csv("TALKINGBOATS_PROXY_PERFORMANCE_DEV_ORIGIN_HOSTS")
@@ -1882,7 +1884,19 @@ def _generated_public_site_asset_response(
     *,
     media_type: str,
 ) -> Response:
-    root = Path(settings.public_site_dir).resolve()
+    root = Path(
+        settings.analysis_site_dir
+        if relative_path.startswith("analysis/") and settings.analysis_site_dir
+        else settings.public_site_dir
+    ).resolve()
+    if relative_path.startswith("analysis/") and settings.analysis_site_dir:
+        shared = Path(settings.public_site_dir).resolve()
+        shared_lexical = shared / "analysis/lexical.json"
+        if shared_lexical.is_file():
+            from talkingboats.lexical_analysis import public_analysis
+
+            if public_analysis(json.loads(shared_lexical.read_text())).get("status") == "ok":
+                root = shared
     path = (root / relative_path).resolve()
     try:
         path.relative_to(root)

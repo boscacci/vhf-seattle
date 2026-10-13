@@ -58,6 +58,20 @@ TALKINGBOATS_ASR_STORAGE_ROOT="${TALKINGBOATS_ASR_STORAGE_ROOT:-}" \
 "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/configure_asr_runtime.py"
 unit_root="${HOME}/.config/systemd/user"
 if [[ "${action}" == dev ]]; then
+  analysis_site="$("${HOME}/miniforge3/envs/dell/bin/python" - <<'PY'
+from pathlib import Path
+values = dict(line.partition('=')[::2] for line in (Path.home()/'.config/talkingboats/asr.env').read_text().splitlines())
+print(Path(values['TALKINGBOATS_ASR_OUTPUT_DIR']).parent/'dev-analysis')
+PY
+)"
+  source_site="$("${HOME}/miniforge3/envs/dell/bin/python" - <<'PY'
+from pathlib import Path
+values = dict(line.partition('=')[::2] for line in (Path.home()/'.config/talkingboats/asr.env').read_text().splitlines())
+print(values['TALKINGBOATS_PUBLIC_SITE_DIR'])
+PY
+)"
+  PYTHONPATH="${release_root}/src" CUDA_VISIBLE_DEVICES='' \
+    "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/prepare_dev_analysis.py" "${source_site}" "${analysis_site}"
   current="${HOME}/.local/share/talkingboats/releases/asr/dev/current"
   prior="$(readlink "${current}" 2>/dev/null || true)"
   api_dropin="${unit_root}/talkingboats-api-dev.service.d/zzzz-asr-release.conf"
@@ -84,6 +98,7 @@ if [[ "${action}" == dev ]]; then
 WorkingDirectory=${current}
 Environment=PYTHONPATH=${current}/src
 EnvironmentFile=${state_root}/asr.env
+Environment=TALKINGBOATS_ANALYSIS_SITE_DIR=${analysis_site}
 EOF
   cat > "${proxy_dropin}" <<EOF
 [Service]
@@ -91,6 +106,7 @@ WorkingDirectory=${current}
 Environment=PYTHONPATH=${current}/src
 Environment=TALKINGBOATS_PROXY_STATIC_SHELL_DIR=${current}/public-site
 EnvironmentFile=${state_root}/asr.env
+Environment=TALKINGBOATS_ANALYSIS_SITE_DIR=${analysis_site}
 EOF
   install -m 0644 "${release_root}/deploy/systemd/talkingboats-asr-experiment@.service.example" \
     "${unit_root}/talkingboats-asr-experiment@.service"

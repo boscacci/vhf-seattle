@@ -155,3 +155,11 @@ Dev failures restore prior service drop-ins and the release symlink. Production
 records previous runtime source and receiver files for rollback. Roll back to a
 previous dev-tested release through the same one-approval production gate.
 Never delete raw audio, queue history, or reviewed examples as a rollback step.
+
+Dev delivery checks Analysis as well as corrections and live feeds. If the shared
+analysis still contains channel 74, an isolated snapshot of up to 2,500 recent
+publicly exported clips is generated on the configured data volume. The dashboard
+labels that scope. A subsequent safe full shared analysis takes precedence;
+production analysis and the historical search index remain untouched by dev.
+The first snapshot may take several minutes to fit topic clusters; later dev
+releases reuse it. This cold setup falls within the five-minute deployment budget.
