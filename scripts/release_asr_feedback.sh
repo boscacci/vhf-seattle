@@ -177,6 +177,10 @@ values = dict(line.partition("=")[::2] for line in (Path.home()/".config/talking
 os.environ.update(values)
 from talkingboats.channel_exclusion_cache import sanitize_caches
 sanitize_caches(Path(values["TALKINGBOATS_PUBLIC_SITE_DIR"]), Path(values["TALKINGBOATS_ASR_OUTPUT_DIR"]).parent/"release-cache-backups"/sys.argv[2])
+import subprocess
+site = values["TALKINGBOATS_PUBLIC_SITE_DIR"]
+snapshot = str(Path(values["TALKINGBOATS_ASR_OUTPUT_DIR"]).parent/"dev-analysis")
+subprocess.run([sys.executable, str(Path(sys.argv[1])/"scripts/prepare_dev_analysis.py"), site, snapshot, "--promote-to", site], check=True)
 PYCODE
   "${release_root}/scripts/deploy_static_shell.sh" prod "${release_root}/public-site"
   [[ "${timer_was_active}" != active ]] || systemctl --user start talkingboats-uploaded-clip-transcriber.timer

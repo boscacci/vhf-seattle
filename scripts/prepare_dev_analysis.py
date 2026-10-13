@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 
 from talkingboats.lexical_analysis import generate_lexical_analysis_from_public_manifest
@@ -31,13 +32,33 @@ def prepare(source: Path, target: Path):
     return payload
 
 
+def promote_if_missing(snapshot: Path, site: Path):
+    """Used only inside the approved production release; preserve a safe full cache."""
+    from talkingboats.lexical_analysis import read_published_lexical_analysis
+
+    if read_published_lexical_analysis(site / "analysis/lexical.json")["status"] == "ok":
+        return
+    if read_published_lexical_analysis(snapshot / "analysis/lexical.json")["status"] != "ok":
+        raise ValueError("refusing to promote missing or excluded-channel analysis")
+    for name in ["topic_clusters.html", "lexical.json"]:
+        source = snapshot / "analysis" / name
+        destination = site / "analysis" / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(".pending")
+        shutil.copyfile(source, temporary)
+        temporary.replace(destination)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("target", type=Path)
+    parser.add_argument("--promote-to", type=Path)
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     result = prepare(args.source, args.target)
+    if args.promote_to:
+        promote_if_missing(args.target, args.promote_to)
     print(
         json.dumps(
             {
