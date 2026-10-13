@@ -3556,7 +3556,16 @@ async function pollPerformance() {
   startPerformancePolling();
 }
 
+const performanceChartResizeObserver = new ResizeObserver(entries => {
+  for (const { target, contentRect } of entries) {
+    target.redrawPerformanceChart?.(contentRect.width, contentRect.height);
+  }
+});
+
 function renderPerformanceDashboard(payload) {
+  document.querySelectorAll(".performance-chart-svg").forEach(svg => {
+    performanceChartResizeObserver.unobserve(svg);
+  });
   const generated = payload.generatedAt
     ? `Updated ${formatPerformanceDateTime(payload.generatedAt)}`
     : "Snapshot ready";
@@ -3932,6 +3941,13 @@ function performanceMetricChart(label, history, field, suffix, className, summar
   svg.setAttribute("role", "img");
   svg.setAttribute("aria-label", `${label} time series`);
   const chartState = drawPerformanceMetricChart(svg, samples, suffix);
+  svg.redrawPerformanceChart = (width, height) => {
+    if (width <= 0 || height <= 0) return;
+    svg.replaceChildren();
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    Object.assign(chartState, drawPerformanceMetricChart(svg, samples, suffix, width, height));
+  };
+  performanceChartResizeObserver.observe(svg);
 
   const tooltip = document.createElement("span");
   tooltip.className = "performance-chart-tooltip";
@@ -3971,9 +3987,7 @@ function averageMetricValue(samples) {
   return total / samples.length;
 }
 
-function drawPerformanceMetricChart(svg, samples, suffix) {
-  const width = 320;
-  const height = 124;
+function drawPerformanceMetricChart(svg, samples, suffix, width = 320, height = 124) {
   const left = suffix === " clips" ? 44 : 34;
   const right = 12;
   const top = 12;
@@ -4003,8 +4017,8 @@ function drawPerformanceMetricChart(svg, samples, suffix) {
   });
   if (!samples.length) {
     const empty = performanceSvgElement("text");
-    empty.setAttribute("x", "160");
-    empty.setAttribute("y", "66");
+    empty.setAttribute("x", String(width / 2));
+    empty.setAttribute("y", String(height / 2));
     empty.classList.add("performance-chart-empty");
     empty.textContent = "Waiting for samples";
     svg.append(empty);
@@ -4097,7 +4111,7 @@ function attachPerformanceChartTooltip(chart, svg, tooltip, samples, suffix, cha
   }
   const setHover = (event) => {
     const bounds = svg.getBoundingClientRect();
-    const x = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * 320;
+    const x = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * svg.viewBox.baseVal.width;
     const nearest = nearestPerformancePoint(chartState.points, x);
     const sample = samples[nearest.index];
     chartState.hoverLine.hidden = false;
@@ -4108,7 +4122,7 @@ function attachPerformanceChartTooltip(chart, svg, tooltip, samples, suffix, cha
     chartState.hoverDot.setAttribute("cy", nearest.point.y.toFixed(1));
     tooltip.removeAttribute("hidden");
     tooltip.textContent = `${formatMetricChartValue(sample.value, suffix)} · ${formatPerformanceDateTime(sample.generatedAt)}`;
-    tooltip.style.left = `${Math.max(8, Math.min(bounds.width - 8, (nearest.point.x / 320) * bounds.width)).toFixed(1)}px`;
+    tooltip.style.left = `${Math.max(8, Math.min(bounds.width - 8, (nearest.point.x / svg.viewBox.baseVal.width) * bounds.width)).toFixed(1)}px`;
   };
   svg.addEventListener("mousemove", setHover);
   svg.addEventListener("mouseenter", setHover);

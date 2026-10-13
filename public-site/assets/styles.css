@@ -1786,7 +1786,7 @@ audio {
 .performance-chart-svg {
   display: block;
   width: 100%;
-  aspect-ratio: 320 / 124;
+  height: clamp(124px, 25vw, 220px);
   overflow: visible;
 }
 
