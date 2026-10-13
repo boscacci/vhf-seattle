@@ -1009,19 +1009,8 @@ def test_continuous_worker_loads_model_once_drains_then_sleeps(monkeypatch, tmp_
     assert events[0][1]["workers"] == 1
 
 
-@pytest.mark.parametrize("backend", ["sqlite", "dynamodb"])
-def test_missing_uploads_do_not_block_ready_clips_and_keep_retry_slot(tmp_path, backend):
-    if backend == "sqlite":
-        store = UploadedClipStore(tmp_path / "clips.db")
-    else:
-        from talkingboats.dynamo_clip_store import DynamoClipStoreConfig, DynamoUploadedClipStore
-        from tests.test_dynamo_clip_store import CapturingEventStore, FakeDynamoTable
-
-        store = DynamoUploadedClipStore(
-            DynamoClipStoreConfig("events", "us-west-2"),
-            event_store=CapturingEventStore(),
-            table=FakeDynamoTable(),
-        )
+def test_missing_uploads_do_not_block_ready_clips_and_keep_retry_slot(tmp_path):
+    store = UploadedClipStore(tmp_path / "clips.db")
     for index in range(6):
         key = f"raw/channel=14/{index}.mp3"
         store.record_presigned_upload(

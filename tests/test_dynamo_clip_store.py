@@ -962,3 +962,22 @@ def test_active_channel_queue_processes_oldest_first_with_bounded_queries():
         store.record_presigned_upload(key=f"raw/channel={channel}/hour={hour}.mp3", request=request)
     pending = store.pending_uploads(limit=1, allowed_channels=("13", "14"))
     assert [row.started_at for row in pending] == ["2026-06-01T12:00:00Z"]
+
+
+def test_missing_uploads_do_not_block_ready_clips_and_keep_retry_slot():
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"),
+        event_store=CapturingEventStore(),
+        table=FakeDynamoTable(),
+    )
+    for index in range(6):
+        key = f"raw/channel=14/{index}.mp3"
+        request = _request(channel="14").model_copy(
+            update={"started_at": datetime(2026, 6, 1, 12, index, tzinfo=UTC)}
+        )
+        store.record_presigned_upload(key=key, request=request)
+        if index < 5:
+            store.mark_waiting_upload(key, "not uploaded yet")
+    rows = store.pending_uploads(limit=5, allowed_channels=("14",))
+    assert "raw/channel=14/5.mp3" in [row.key for row in rows]
+    assert any(row.status == "waiting_upload" for row in rows)
