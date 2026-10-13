@@ -174,3 +174,13 @@ threshold. Incomplete measurements show unavailable and never create zero sample
 Before the channel-index cutover, legacy status indexes supply the measurements;
 after cutover, retained-channel indexes avoid preserved excluded-channel backlog.
 Model status distinguishes the selected release from the activated shared worker.
+
+Topic analysis targets 8–18 non-outlier groups. Density clustering is retained
+when it produces at least eight topics. For a collapsed sample with at least
+160 distinct transcripts (20 per target topic), a seeded eight-cluster model
+uses normalized original sentence embeddings, with automatic topic reduction
+disabled. Small or repetitive samples keep their natural groups and are labeled
+as limited variety. Topic-policy version 2 invalidates the earlier three-topic
+dev cache. Plot colors, labels, examples and semantic search topic IDs all use
+the same assignments. This is unsupervised grouping, not a verified radio taxonomy.
+The fallback uses the [supported BERTopic cluster-model interface](https://maartengr.github.io/BERTopic/getting_started/clustering/clustering.html).

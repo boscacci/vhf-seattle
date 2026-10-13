@@ -21,7 +21,10 @@ def test_dev_analysis_bootstrap_is_bounded_retry_safe_and_keeps_shared_cache(tmp
             "status": "ok",
             "source_clip_count": 2,
             "channels": {"14": 2},
-            "topics": {"status": "ok"},
+            "topics": {
+                "status": "ok",
+                "clustering": {"policy_version": module.TOPIC_POLICY_VERSION},
+            },
         }
 
     monkeypatch.setattr(module, "generate_lexical_analysis_from_public_manifest", generate)

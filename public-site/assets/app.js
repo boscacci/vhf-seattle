@@ -3345,7 +3345,9 @@ function renderLanguageDashboard(payload) {
       dominantThemeSummary(topics),
       "Largest non-outlier topic by analyzed clips",
     ),
-    languageCard("Topic model", topicStatus(topics), "Condensed topic clusters"),
+    languageCard("Topic model", topicStatus(topics), topics.clustering
+      ? `${topics.clustering.minimum_satisfied ? "" : "Limited transcript variety · "}Target ${topics.clustering.minimum_target}–${topics.clustering.maximum_target} topics`
+      : "Condensed topic clusters"),
   );
 
   const channelPanel = languagePanel("Analyzed transcript clips by VHF channel");
