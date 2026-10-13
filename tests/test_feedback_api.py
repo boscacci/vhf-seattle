@@ -216,8 +216,17 @@ def test_operator_status_reports_turbo_recovery_policy(tmp_path, monkeypatch):
         response = client.get('/api/asr-feedback/status')
         assert response.status_code == 200
         status = response.json()
-        assert status['serving_model'] == 'large-v3-turbo'
+        assert status['selected_model'] == 'large-v3-turbo'
+        assert status['serving_model'] is None
+        assert status['shared_worker_release_active'] is False
         assert status['activation_policy'] == 'allow_peak_backlog_overnight_recovery'
         assert status['recovery_forecast']['max_daily_processing_seconds'] < 86400
+        import json
+        proof = tmp_path / 'feedback/production-overlay.json'
+        proof.parent.mkdir(parents=True, exist_ok=True)
+        proof.write_text(json.dumps({'commit': 'released', 'serving_model': 'large-v3-turbo'}))
+        activated = client.get('/api/asr-feedback/status').json()
+        assert activated['serving_model'] == 'large-v3-turbo'
+        assert activated['shared_worker_release_active'] is True
     finally:
         app.dependency_overrides.clear()

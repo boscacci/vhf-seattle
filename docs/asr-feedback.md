@@ -163,3 +163,14 @@ labels that scope. A subsequent safe full shared analysis takes precedence;
 production analysis and the historical search index remain untouched by dev.
 The first snapshot may take several minutes to fit topic clusters; later dev
 releases reuse it. This cold setup falls within the five-minute deployment budget.
+
+Performance shows the shared transcription backlog instead of the most-used
+filesystem card. Five-minute snapshots count pending, processing and waiting-upload
+clips on retained channels, exclude channel 74, and record the oldest queue age.
+The existing performance sampler reads a shared, file-locked SQLite cache on the
+configured data volume; both deployments reuse it. Seven days of history are
+retained. Each refresh is bounded to 30 query pages and a 200-read-unit stopping
+threshold. Incomplete measurements show unavailable and never create zero samples.
+Before the channel-index cutover, legacy status indexes supply the measurements;
+after cutover, retained-channel indexes avoid preserved excluded-channel backlog.
+Model status distinguishes the selected release from the activated shared worker.

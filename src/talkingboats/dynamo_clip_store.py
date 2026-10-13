@@ -247,6 +247,50 @@ class DynamoUploadedClipStore:
         times = [str(row["started_at"]) for row in rows if row.get("started_at")]
         return min(times) if times else None
 
+    def active_queue_snapshot(self, channels, *, max_pages=30, indexed_channels=False):
+        """Bounded primary-index reads, including legacy queues before channel cutover."""
+        from boto3.dynamodb.conditions import Attr, Key
+
+        count, pages = 0, 0
+        oldest = None
+        reads = 0.0
+        partitions = (
+            [
+                f"clip_status#{state}#channel#{channel}"
+                for state in ("pending", "waiting_upload", "processing")
+                for channel in channels
+            ]
+            if indexed_channels
+            else [f"clip_status#{state}" for state in ("pending", "waiting_upload", "processing")]
+        )
+        for partition in partitions:
+            cursor = None
+            while True:
+                if pages >= max_pages or reads >= 200:
+                    return {"complete": False, "queued_clips": count, "oldest_started_at": oldest}
+                args = {
+                    "KeyConditionExpression": Key("pk").eq(partition),
+                    "FilterExpression": Attr("channel").is_in(list(channels)),
+                    "ProjectionExpression": "channel, started_at",
+                    "ConsistentRead": True,
+                    "Limit": 1000,
+                    "ReturnConsumedCapacity": "TOTAL",
+                }
+                if cursor:
+                    args["ExclusiveStartKey"] = cursor
+                response = self.table.query(**args)
+                pages += 1
+                reads += float(response.get("ConsumedCapacity", {}).get("CapacityUnits", 0))
+                items = [r for r in response.get("Items", []) if r.get("channel") in channels]
+                count += len(items)
+                times = [str(r["started_at"]) for r in items if r.get("started_at")]
+                if times:
+                    oldest = min([oldest, *times] if oldest else times)
+                cursor = response.get("LastEvaluatedKey")
+                if not cursor:
+                    break
+        return {"complete": True, "queued_clips": count, "oldest_started_at": oldest}
+
     def get_clip(self, key: str) -> UploadedClipRecord | None:
         item = self._state_item(key)
         return _record_from_state(item) if item else None

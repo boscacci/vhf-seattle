@@ -1221,12 +1221,28 @@ def save_correction(
     return {**row, "production_overlay_active": (root() / "production-overlay.json").is_file()}
 
 
+@app.get("/api/transcription/backlog")
+def transcription_backlog(clip_store: Annotated[Any, Depends(get_clip_store)]):
+    from talkingboats.asr_experiments import root
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+    from talkingboats.transcription_backlog import backlog_history
+
+    checkpoint = root() / "queue-index-cutover.json"
+    progress = json.loads(checkpoint.read_text()) if checkpoint.is_file() else {}
+    ready = progress.get("status_index") == 3 and progress.get("channels") == list(
+        ACTIVE_CAPTURE_CHANNELS
+    )
+    return backlog_history(
+        clip_store, ACTIVE_CAPTURE_CHANNELS, root().parent / "telemetry", indexed_channels=ready
+    )
+
+
 @app.get("/api/asr-feedback/status", dependencies=[Depends(require_feedback_operator)])
 def feedback_status(
     feedback: Annotated[Corrections | None, Depends(get_feedback_store)],
     clip_store: Annotated[Any, Depends(get_clip_store)],
 ):
-    from talkingboats.asr_experiments import dataset_summary, list_runs
+    from talkingboats.asr_experiments import dataset_summary, list_runs, root
     from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
     from talkingboats.clip_transcriber import DEFAULT_TRANSCRIBE_MODEL
 
@@ -1238,6 +1254,8 @@ def feedback_status(
         if hasattr(clip_store, "active_queue_oldest")
         else None
     )
+    deployed_path = root() / "production-overlay.json"
+    deployed = json.loads(deployed_path.read_text()) if deployed_path.is_file() else {}
     return {
         "oldest_active_queued_at": oldest,
         "recovery_forecast": selection.get("recovery_forecast"),
@@ -1245,7 +1263,9 @@ def feedback_status(
         **dataset_summary(_required_feedback(feedback).list()),
         "runs": list_runs(),
         "active_channels": ACTIVE_CAPTURE_CHANNELS,
-        "serving_model": os.getenv("TALKINGBOATS_ACTIVE_ASR_MODEL", DEFAULT_TRANSCRIBE_MODEL),
+        "selected_model": os.getenv("TALKINGBOATS_ACTIVE_ASR_MODEL", DEFAULT_TRANSCRIBE_MODEL),
+        "serving_model": deployed.get("serving_model"),
+        "shared_worker_release_active": bool(deployed),
     }
 
 

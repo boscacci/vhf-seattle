@@ -34,6 +34,7 @@ try {
   const panel = page.locator(".asr-experiments");
   await panel.getByRole("button", { name: "Refresh experiments" }).click();
   await panel.getByRole("status").filter({ hasText: "Reviewed audio:" }).waitFor();
+  await page.locator('svg[aria-label="Queued clips time series"]').waitFor();
   assert(await panel.getByRole("button", { name: "Train and compare Turbo" }).isDisabled());
   await Promise.all(channels.map(async (channel) => {
     const response = await page.request.get(`${base}/api/live/${channel}/status`);
@@ -52,6 +53,16 @@ try {
     assert.equal(live.status, 200);
     assert(live.bytes > 0, `Live feed ${channel} must deliver audio`);
   }));
+  const actualPerformance = await (await page.request.get(`${base}/api/live/performance`)).json();
+  await page.route("**/api/live/performance", async route => route.fulfill({ json: {
+    ...actualPerformance, transcriptionBacklog: { status: "ok", queued_clips: 800,
+      oldest_age_seconds: 3600, history: [1000, 1500, 800, null].map((queuedClips, index) => ({
+        generatedAt: new Date(Date.now() - (3 - index) * 300000).toISOString(), queuedClips,
+      })) },
+  } }));
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.locator(".transcription-backlog", { hasText: "800 clips" }).waitFor();
+  assert.equal(await page.locator('svg[aria-label="Queued clips time series"]').getAttribute("data-max-value"), "1500");
   // Isolated experiment controls and archived range audio; no actual job or label is created.
   const actualStatus = await (await page.request.get(`${base}/api/asr-feedback/status`)).json();
   const experimentId = "f".repeat(32);

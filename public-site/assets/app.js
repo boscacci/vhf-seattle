@@ -3570,7 +3570,15 @@ function renderPerformanceDashboard(payload) {
   const hostGrid = document.createElement("div");
   hostGrid.className = "performance-host-grid";
   hostGrid.append(...hosts.map((host, index) => performanceHostPanel(host, index)));
-  performanceDashboard.replaceChildren(cloudOperations, rangeControl, systemKpis, hostGrid);
+  const backlog = payload.transcriptionBacklog || {};
+  const backlogPanel = document.createElement("section");
+  backlogPanel.className = "transcription-backlog performance-chart-grid";
+  backlogPanel.append(
+    performanceCard("Transcription backlog", backlog.status === "ok" ? `${backlog.queued_clips} clips` : "Unavailable",
+      backlog.status === "ok" ? `Shared worker · oldest ${backlog.oldest_age_seconds == null ? "none" : Math.round(backlog.oldest_age_seconds / 60) + " min"} · retained channels` : "No complete queue measurement yet", "unknown"),
+    performanceMetricChart("Queued clips", backlog.history, "queuedClips", " clips", "backlog"),
+  );
+  performanceDashboard.replaceChildren(backlogPanel, rangeControl, systemKpis, hostGrid, cloudOperations);
 }
 
 function renderCloudOperationsPanel(operations) {
@@ -3934,7 +3942,8 @@ function performanceMetricSamples(history, field) {
   const rows = Array.isArray(history) ? history : [];
   const samples = rows
     .map((sample) => {
-      const value = Number(sample?.[field]);
+      if (sample?.[field] == null) return null;
+      const value = Number(sample[field]);
       const time = performanceSampleTime(sample);
       if (!Number.isFinite(value) || !Number.isFinite(time)) {
         return null;
@@ -3958,15 +3967,18 @@ function averageMetricValue(samples) {
 function drawPerformanceMetricChart(svg, samples, suffix) {
   const width = 320;
   const height = 124;
-  const left = 34;
+  const left = suffix === " clips" ? 44 : 34;
   const right = 12;
   const top = 12;
   const bottom = 26;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const maxValue = 100;
+  const maxValue = suffix === " clips"
+    ? Math.max(10, Math.ceil(Math.max(0, ...samples.map(sample => sample.value)) / 10) * 10)
+    : 100;
   svg.dataset.windowHours = String(selectedPerformanceRangeHours);
-  [0, 50, 100].forEach((tick) => {
+  svg.dataset.maxValue = String(maxValue);
+  [0, maxValue / 2, maxValue].forEach((tick) => {
     const y = top + plotHeight - (tick / maxValue) * plotHeight;
     const line = performanceSvgElement("line");
     line.setAttribute("x1", left);
@@ -3979,7 +3991,7 @@ function drawPerformanceMetricChart(svg, samples, suffix) {
     label.setAttribute("x", "4");
     label.setAttribute("y", (y + 4).toFixed(1));
     label.classList.add("performance-chart-axis");
-    label.textContent = tick === 100 && suffix === " C" ? "100C" : `${tick}${suffix.trim()}`;
+    label.textContent = suffix === " clips" ? formatCompactCount(tick) : tick === 100 && suffix === " C" ? "100C" : `${tick}${suffix.trim()}`;
     svg.append(label);
   });
   if (!samples.length) {
@@ -6846,7 +6858,7 @@ if (asrFeedbackEnabled) {
         if (!response.ok) throw new Error("Experiments are unavailable. Check the local feedback service.");
         const payload = await response.json();
         start.disabled = !payload.ready;
-        status.textContent = `Serving ${payload.serving_model}; active channels ${payload.active_channels.join(", ")}. Sampled busiest day: ${payload.recovery_forecast ? (payload.recovery_forecast.max_daily_processing_seconds / 3600).toFixed(1) + " processing hours; peak backlog allowed" : "forecast unavailable"}. Oldest active queued clip: ${payload.oldest_active_queued_at ? formatDateTime(payload.oldest_active_queued_at) : "none"}. Reviewed audio: ${payload.minutes.train}/30 training minutes, ${payload.minutes.validation}/5 validation, ${payload.minutes.test}/5 test; ${payload.test_mentions}/50 test-name mentions. ${payload.pending_archives} audio archives pending. Reviewed vocabulary: ${payload.vocabulary.length} confirmed terms. ${payload.day_boundary_labels || 0} corrections near recording-day boundaries remain display-only. Correction effort: ${payload.effort_minutes} minutes.`;
+        status.textContent = `Shared transcription worker: ${payload.serving_model || (payload.shared_worker_release_active ? "model status unavailable" : "current production model; release cutover pending")}; release selects ${payload.selected_model}, channels ${payload.active_channels.join(", ")}. Sampled busiest day: ${payload.recovery_forecast ? (payload.recovery_forecast.max_daily_processing_seconds / 3600).toFixed(1) + " processing hours; peak backlog allowed" : "forecast unavailable"}. Oldest active queued clip: ${payload.oldest_active_queued_at ? formatDateTime(payload.oldest_active_queued_at) : "none"}. Reviewed audio: ${payload.minutes.train}/30 training minutes, ${payload.minutes.validation}/5 validation, ${payload.minutes.test}/5 test; ${payload.test_mentions}/50 test-name mentions. ${payload.pending_archives} audio archives pending. Reviewed vocabulary: ${payload.vocabulary.length} confirmed terms. ${payload.day_boundary_labels || 0} corrections near recording-day boundaries remain display-only. Correction effort: ${payload.effort_minutes} minutes.`;
         results.replaceChildren();
         for (const run of payload.runs || []) {
           const card = document.createElement("article");

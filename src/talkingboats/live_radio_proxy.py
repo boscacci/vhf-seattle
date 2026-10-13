@@ -1254,6 +1254,23 @@ def _public_performance_payload(payload: dict[str, object]) -> dict[str, object]
         "generatedAt": _public_generated_at(payload.get("generatedAt")),
         "host": public_hosts[0] if public_hosts else {},
         "hosts": public_hosts,
+        "transcriptionBacklog": _public_backlog(payload.get("transcriptionBacklog")),
+    }
+
+
+def _public_backlog(value):
+    value = value if isinstance(value, dict) else {}
+    return {
+        "status": "ok" if value.get("status") == "ok" else "unavailable",
+        "generatedAt": _public_generated_at(value.get("generatedAt")),
+        "queued_clips": _public_number(value.get("queued_clips")),
+        "oldest_age_seconds": _public_number(value.get("oldest_age_seconds")),
+        "history": [
+            {"generatedAt": _public_generated_at(row.get("generatedAt")), "queuedClips": count}
+            for row in (value.get("history") or [])[-2016:]
+            if isinstance(row, dict)
+            and (count := _public_number(row.get("queuedClips"))) is not None
+        ],
     }
 
 
@@ -1498,7 +1515,19 @@ def collect_performance_snapshot(settings: ProxySettings) -> dict[str, object]:
         "generatedAt": _format_utc(datetime.now(UTC)),
         "host": home_processor,
         "hosts": [home_processor, pi],
+        "transcriptionBacklog": _transcription_backlog_snapshot(settings),
     }
+
+
+def _transcription_backlog_snapshot(settings):
+    try:
+        response = httpx.get(
+            settings.private_api_url.rstrip("/") + "/api/transcription/backlog", timeout=8
+        )
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, ValueError):
+        return {"status": "unavailable", "queued_clips": None, "history": []}
 
 
 def _local_performance_host_snapshot() -> dict[str, object]:
@@ -1907,6 +1936,7 @@ def _generated_public_site_asset_response(
     content = path.read_bytes()
     if relative_path == "analysis/lexical.json":
         from talkingboats.lexical_analysis import public_analysis
+
         content = json.dumps(public_analysis(json.loads(content))).encode()
     if relative_path == "analysis/topic_clusters.html":
         lexical_path = root / "analysis/lexical.json"
