@@ -77,3 +77,17 @@ def test_backlog_history_expires_after_seven_days(tmp_path):
     backlog_history(Store(), ["14"], tmp_path, now=now)
     later = backlog_history(Store(), ["14"], tmp_path, now=now + timedelta(days=8))
     assert len(later["history"]) == 1
+
+
+def test_missing_data_volume_does_not_fall_back_to_boot_disk(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "is_mount", lambda self: False)
+
+    def refuse_write(*args, **kwargs):
+        raise AssertionError("must not create storage on an absent data volume")
+
+    monkeypatch.setattr(Path, "mkdir", refuse_write)
+    result = backlog_history(None, ["14"], Path("/mnt/missing-asr-volume/telemetry"))
+    assert result["status"] == "unavailable"
+    assert result["queued_clips"] is None

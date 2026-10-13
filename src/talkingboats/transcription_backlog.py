@@ -13,6 +13,9 @@ from pathlib import Path
 def backlog_history(store, channels, directory: Path, *, now=None, indexed_channels=False):
     now = now or datetime.now(UTC)
     epoch = now.timestamp()
+    if str(directory).startswith("/mnt/") and not Path("/mnt", directory.parts[2]).is_mount():
+        logging.getLogger(__name__).error("event=transcription_backlog_storage_unavailable")
+        return {"status": "unavailable", "queued_clips": None, "history": []}
     channels = sorted(c for c in channels if c not in {"74", "WX"})
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     scope = ",".join(channels)
