@@ -21,7 +21,10 @@ def test_dev_analysis_bootstrap_is_bounded_retry_safe_and_keeps_shared_cache(tmp
             "status": "ok",
             "source_clip_count": 2,
             "channels": {"14": 2},
-            "topics": {"status": "ok"},
+            "topics": {
+                "status": "ok",
+                "clustering": {"policy_version": module.TOPIC_POLICY_VERSION},
+            },
         }
 
     monkeypatch.setattr(module, "generate_lexical_analysis_from_public_manifest", generate)
@@ -66,3 +69,45 @@ def test_approved_cache_promotion_preserves_search_and_prefers_full_safe_analysi
     )
     module.promote_if_missing(snapshot, site)
     assert json.loads((site / "analysis/lexical.json").read_text())["source_clip_count"] == 50
+
+
+def test_old_three_topic_cache_is_rebuilt_under_the_new_policy(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "prepare_dev_analysis", "scripts/prepare_dev_analysis.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source, target = tmp_path / "shared", tmp_path / "dev"
+    source.mkdir()
+    (target / "analysis").mkdir(parents=True)
+    cached = target / "analysis/lexical.json"
+    cached.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "source_clip_count": 200,
+                "channels": {"14": 200},
+                "topics": {"status": "ok", "items": [{"id": n} for n in range(3)]},
+            }
+        )
+    )
+    calls = []
+
+    def generate(**kwargs):
+        calls.append(kwargs)
+        return {
+            "status": "ok",
+            "source_clip_count": 200,
+            "channels": {"14": 200},
+            "topics": {
+                "status": "ok",
+                "items": [{"id": n} for n in range(8)],
+                "clustering": {"policy_version": module.TOPIC_POLICY_VERSION},
+            },
+        }
+
+    monkeypatch.setattr(module, "generate_lexical_analysis_from_public_manifest", generate)
+    assert len(module.prepare(source, target)["topics"]["items"]) == 8
+    assert len(calls) == 1
+    assert len(module.prepare(source, target)["topics"]["items"]) == 8
+    assert len(calls) == 1

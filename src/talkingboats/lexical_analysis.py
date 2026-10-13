@@ -32,6 +32,9 @@ PUBLIC_AUDIO_EXAMPLE_LIMIT = DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT
 MAX_ENTITY_EXAMPLE_DURATION_SECONDS = 12.0
 RECENT_ANALYSIS_EXAMPLE_WINDOW_DAYS = 3
 MAX_BERTOPIC_TOPICS = 18
+MIN_BERTOPIC_TOPICS = 8
+MIN_DISTINCT_DOCUMENTS_PER_TOPIC = 20
+TOPIC_POLICY_VERSION = 2
 TOPIC_COLOR_PALETTE = (
     "#40e0bf",
     "#6ab8ff",
@@ -1032,6 +1035,53 @@ def _build_payload(
     return payload
 
 
+def fit_topic_model(factory, documents, embeddings, *, umap_model):
+    """Keep density topics when useful; recover collapsed, sufficiently diverse samples."""
+    config = dict(
+        language="english",
+        n_gram_range=(1, 2),
+        top_n_words=12,
+        min_topic_size=8,
+        nr_topics=MAX_BERTOPIC_TOPICS,
+        calculate_probabilities=False,
+        umap_model=umap_model,
+    )
+    model = factory(**config)
+    topics, _ = model.fit_transform(documents, embeddings=embeddings)
+    natural_count = len(set(topics) - {-1})
+    distinct_count = len({doc.strip().casefold() for doc in documents})
+    applicable = distinct_count >= MIN_BERTOPIC_TOPICS * MIN_DISTINCT_DOCUMENTS_PER_TOPIC
+    method = "density"
+    if natural_count < MIN_BERTOPIC_TOPICS and applicable:
+        from sklearn.cluster import KMeans
+        from sklearn.preprocessing import Normalizer
+
+        # Normalize original sentence vectors: avoid forcing groups from a distorted 3-D plot.
+        config.update(
+            hdbscan_model=KMeans(n_clusters=MIN_BERTOPIC_TOPICS, random_state=42, n_init=10),
+            umap_model=Normalizer(),
+            nr_topics=None,
+        )
+        model = factory(**config)
+        topics, _ = model.fit_transform(documents, embeddings=embeddings)
+        method = "semantic_kmeans"
+    return (
+        model,
+        topics,
+        {
+            "policy_version": TOPIC_POLICY_VERSION,
+            "minimum_target": MIN_BERTOPIC_TOPICS,
+            "maximum_target": MAX_BERTOPIC_TOPICS,
+            "minimum_applicable": applicable,
+            "minimum_satisfied": len(set(topics) - {-1}) >= MIN_BERTOPIC_TOPICS,
+            "distinct_documents": distinct_count,
+            "density_topic_count": natural_count,
+            "topic_count": len(set(topics) - {-1}),
+            "method": method,
+        },
+    )
+
+
 def _build_topics(
     clips: list[TranscriptClip],
     *,
@@ -1091,16 +1141,12 @@ def _build_topics(
         embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
         embeddings = embedder.encode(documents, show_progress_bar=True)
         umap_model = UMAP(n_components=3, metric="cosine", random_state=42)
-        topic_model = BERTopic(
-            language="english",
-            n_gram_range=(1, 2),
-            top_n_words=12,
-            min_topic_size=8,
-            nr_topics=MAX_BERTOPIC_TOPICS,
-            calculate_probabilities=False,
+        topic_model, topics, clustering = fit_topic_model(
+            BERTopic,
+            documents,
+            embeddings,
             umap_model=umap_model,
         )
-        topics, _ = topic_model.fit_transform(documents, embeddings=embeddings)
         topic_labels = _topic_labels_by_id(topic_model, topics, documents)
         coordinates = umap_model.fit_transform(embeddings)
         if search_index_output_path is not None:
@@ -1191,6 +1237,7 @@ def _build_topics(
         return {
             "status": "ok",
             "reason": None,
+            "clustering": clustering,
             "plot_url": TOPIC_PLOT_PATH,
             "items": _topic_items(
                 topic_model,

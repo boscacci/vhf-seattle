@@ -6,7 +6,10 @@ import os
 import shutil
 from pathlib import Path
 
-from talkingboats.lexical_analysis import generate_lexical_analysis_from_public_manifest
+from talkingboats.lexical_analysis import (
+    TOPIC_POLICY_VERSION,
+    generate_lexical_analysis_from_public_manifest,
+)
 
 
 def prepare(source: Path, target: Path):
@@ -17,6 +20,8 @@ def prepare(source: Path, target: Path):
             payload.get("status") == "ok"
             and payload.get("source_clip_count", 0) > 0
             and "74" not in payload.get("channels", {})
+            and payload.get("topics", {}).get("clustering", {}).get("policy_version")
+            == TOPIC_POLICY_VERSION
         ):
             return payload
     # This isolated snapshot never replaces the shared archive/search index.

@@ -1232,3 +1232,72 @@ def test_stale_analysis_with_channel_74_is_hidden_until_safe_rebuild(tmp_path):
     payload = read_published_lexical_analysis(path)
     assert payload["status"] == "missing" and payload["source_clip_count"] == 0
     assert "74" not in payload["channels"]
+
+
+def test_topic_model_uses_semantic_fallback_when_a_diverse_corpus_collapses():
+    from talkingboats.lexical_analysis import fit_topic_model
+
+    models = []
+
+    class Model:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            models.append(self)
+
+        def fit_transform(self, documents, *, embeddings):
+            count = self.kwargs["hdbscan_model"].n_clusters if "hdbscan_model" in self.kwargs else 3
+            return [n % count for n in range(len(documents))], None
+
+    documents = [f"Tug passage message {n}" for n in range(200)]
+    vectors = [(n, n + 1) for n in range(200)]
+    model, topics, policy = fit_topic_model(Model, documents, vectors, umap_model=object())
+    assert len(set(topics)) == 8
+    assert len(models) == 2
+    assert model.kwargs["hdbscan_model"].random_state == 42
+    assert model.kwargs["nr_topics"] is None
+    assert policy["method"] == "semantic_kmeans"
+    assert policy["minimum_target"] == 8
+
+
+def test_topic_model_preserves_natural_clusters_and_does_not_split_duplicate_corpora():
+    from talkingboats.lexical_analysis import fit_topic_model
+
+    calls = []
+
+    class Model:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def fit_transform(self, documents, *, embeddings):
+            return [n % 3 for n in range(len(documents))], None
+
+    _, topics, policy = fit_topic_model(
+        Model, ["Good copy"] * 200, [(1, 1)] * 200, umap_model=object()
+    )
+    assert len(calls) == 1
+    assert len(set(topics)) == 3
+    assert policy["minimum_applicable"] is False
+
+
+def test_topic_model_keeps_eight_or_more_natural_topics_without_refitting():
+    from talkingboats.lexical_analysis import fit_topic_model
+
+    calls = []
+
+    class Model:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def fit_transform(self, documents, *, embeddings):
+            return [n % 12 for n in range(len(documents))], None
+
+    _, topics, policy = fit_topic_model(
+        Model,
+        [f"Distinct vessel report {n}" for n in range(200)],
+        [(n, n + 1) for n in range(200)],
+        umap_model=object(),
+    )
+    assert len(calls) == 1
+    assert len(set(topics)) == 12
+    assert policy["method"] == "density"
+    assert policy["minimum_satisfied"] is True

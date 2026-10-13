@@ -26,6 +26,11 @@ try {
   assert.equal(analysis.status, "ok");
   assert(analysis.source_clip_count > 0, "Analysis must retain usable transcripts");
   assert(!Object.hasOwn(analysis.channels, "74"));
+  assert.equal(analysis.topics.clustering.minimum_target, 8);
+  if (analysis.topics.clustering.minimum_applicable) {
+    assert(analysis.topics.items.filter(topic => topic.id !== -1).length >= 8,
+      "A diverse dev corpus must not collapse below eight topics");
+  }
   await page.goto(`${base}/analysis/`, { waitUntil: "domcontentloaded" });
   await page.locator("#panel-language").waitFor({ state: "visible" });
   assert(!(await page.locator("#panel-language").innerText()).includes("No analysis cache yet"));
