@@ -204,3 +204,48 @@ def test_node_service_has_no_usb_or_receiver_access():
     assert "ProtectSystem=strict" in unit and "MemoryMax=512M" in unit
     assert "CPUQuota=25%" in unit and "NoNewPrivileges=true" in unit
     assert "CapabilityBoundingSet=" in unit
+
+
+def test_claim_parser_accepts_optional_literal_port_id():
+    result = parse_claim(
+        "NODE_ID=node PORT_ID=sea PORT_NAME=Seattle PUSH_TOKEN=0123456789abcdef MODE=alongside"
+    )
+    assert result["PORT_ID"] == "sea"
+
+
+@pytest.mark.parametrize("port_id", ["../secret", "$(id)", "sea;reboot"])
+def test_claim_parser_rejects_unsafe_port_id(port_id):
+    with pytest.raises(ValueError):
+        parse_claim(
+            f"NODE_ID=node PORT_ID={port_id} PORT_NAME=Seattle "
+            "PUSH_TOKEN=0123456789abcdef MODE=alongside"
+        )
+
+
+def test_docktalk_preflight_checks_full_plan_without_claiming(tmp_path, monkeypatch):
+    import talkingboats.docktalk as module
+    from talkingboats.channel_metadata import CHANNEL_METADATA, LIVE_STREAM_CHANNELS
+
+    claim = tmp_path / "claim"
+    claim.write_text("DT-XXXX-XXXX")
+    claim.chmod(0o600)
+    requests = []
+    plan = "\n".join(
+        f"{CHANNEL_METADATA[c].frequency_hz} harbor-{c.lower()}.mp3" for c in LIVE_STREAM_CHANNELS
+    )
+
+    def api(method, path, **kwargs):
+        requests.append(method)
+        return plan
+
+    monkeypatch.setattr(module, "api", api)
+    module.preflight(claim)
+    assert requests == ["GET"]
+    plan = "\n".join(plan.splitlines()[:6])
+    with pytest.raises(ValueError):
+        module.preflight(claim)
+    assert requests == ["GET", "GET"]
+    claim.chmod(0o644)
+    with pytest.raises(ValueError):
+        module.preflight(claim)
+    assert requests == ["GET", "GET"]

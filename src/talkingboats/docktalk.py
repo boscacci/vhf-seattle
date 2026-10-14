@@ -37,16 +37,18 @@ def parse_claim(text: str) -> dict[str, str]:
         key, separator, value = assignment.partition("=")
         if (
             not separator
-            or key not in {"NODE_ID", "PORT_NAME", "PUSH_TOKEN", "MODE"}
+            or key not in {"NODE_ID", "PORT_ID", "PORT_NAME", "PUSH_TOKEN", "MODE"}
             or key in fields
         ):
             raise ValueError("invalid claim fields")
         fields[key] = value
     if (
-        set(fields) != {"NODE_ID", "PORT_NAME", "PUSH_TOKEN", "MODE"}
+        not {"NODE_ID", "PORT_NAME", "PUSH_TOKEN", "MODE"} <= set(fields)
         or fields["MODE"] != "alongside"
     ):
         raise ValueError("claim is not an alongside identity")
+    if "PORT_ID" in fields and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", fields["PORT_ID"]):
+        raise ValueError("invalid port identity")
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", fields["NODE_ID"]):
         raise ValueError("invalid node identity")
     if not re.fullmatch(r"[A-Za-z0-9._~+/=-]{16,4096}", fields["PUSH_TOKEN"]):
@@ -121,15 +123,44 @@ def load_identity(directory: Path):
     if path.stat().st_mode & 0o027:
         raise ValueError("node identity is publicly readable")
     values = json.loads(path.read_text())
+    if set(values) - {"NODE_ID", "PORT_ID", "PORT_NAME", "PUSH_TOKEN", "MODE", "CLAIM"}:
+        raise ValueError("unexpected stored identity fields")
     # Reuse the same validation on persisted identity without evaluating its values.
     parse_claim(
         " ".join(
-            f"{k}={shlex.quote(values[k])}" for k in ("NODE_ID", "PORT_NAME", "PUSH_TOKEN", "MODE")
+            f"{k}={shlex.quote(values[k])}"
+            for k in ("NODE_ID", "PORT_ID", "PORT_NAME", "PUSH_TOKEN", "MODE")
+            if k in values
         )
     )
     if not re.fullmatch(r"DT-[A-Z0-9]{4}-[A-Z0-9]{4}", values["CLAIM"]):
         raise ValueError("invalid stored claim")
     return values
+
+
+def preflight(claim_path: Path):
+    """Check external coverage before pausing any shared services; never claim here."""
+    from talkingboats.channel_metadata import CHANNEL_METADATA, LIVE_STREAM_CHANNELS
+
+    if claim_path.stat().st_mode & 0o077:
+        raise ValueError("claim file must be private")
+    code = claim_path.read_text().strip()
+    if not re.fullmatch(r"DT-[A-Z0-9]{4}-[A-Z0-9]{4}", code):
+        raise ValueError("invalid claim code")
+    plan = parse_plan(
+        api(
+            "GET", "/v1/nodes/conf?" + urllib.parse.urlencode({"code": code, "format": "alongside"})
+        )
+    )
+    missing = [
+        channel
+        for channel in LIVE_STREAM_CHANNELS
+        if sum(abs(hz - CHANNEL_METADATA[channel].frequency_hz) <= 2000 for hz in plan) != 1
+    ]
+    if missing:
+        emit("docktalk_preflight_blocked", missing_channels=missing)
+        raise ValueError("DockTalk server must configure all approved channels")
+    emit("docktalk_preflight_passed", channels=len(LIVE_STREAM_CHANNELS), mode="alongside")
 
 
 def provision(directory: Path, claim_path: Path):
@@ -378,16 +409,21 @@ def vitals(directory: Path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["provision", "run", "watchdog", "vitals", "map"])
+    parser.add_argument(
+        "action", choices=["preflight", "provision", "run", "watchdog", "vitals", "map"]
+    )
     parser.add_argument("--directory", type=Path, default=Path("/etc/docktalk"))
     parser.add_argument("--claim-file", type=Path)
     parser.add_argument("--receiver-config", type=Path)
     args = parser.parse_args()
     try:
-        if args.action == "provision":
+        if args.action in {"provision", "preflight"}:
             if args.claim_file is None:
                 parser.error("private claim file required")
-            provision(args.directory, args.claim_file)
+            if args.action == "preflight":
+                preflight(args.claim_file)
+            else:
+                provision(args.directory, args.claim_file)
         elif args.action == "map":
             private_write(
                 args.directory / "streams.json",
