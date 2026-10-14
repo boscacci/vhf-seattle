@@ -18,7 +18,7 @@ try {
   assert.equal(channelsResponse.status(), 200);
   const channelRows = (await channelsResponse.json()).channels;
   const channels = channelRows.map((row) => row.channel);
-  const recorded = ["14", "13", "16", "66A", "78A", "71", "22A"];
+  const recorded = ["14", "13", "16", "66A", "78A", "71", "22A", "77", "65A"];
   assert.deepEqual(channelRows.filter(row => row.recorded).map(row => row.channel).sort(), [...recorded].sort());
   assert(channels.includes("14") && channels.includes("13") && channels.includes("16"));
   assert(!channels.includes("74"));
@@ -43,14 +43,14 @@ try {
   const panel = page.locator(".asr-experiments");
   await panel.getByRole("button", { name: "Refresh experiments" }).click();
   await panel.getByRole("status").filter({ hasText: "Reviewed audio:" }).waitFor();
-  await page.locator('svg[aria-label="Queued clips time series"]').waitFor();
+  await page.locator('svg[aria-label="Transcription backlog time series"]').waitFor();
   assert(await panel.getByRole("button", { name: "Train and compare Turbo" }).isDisabled());
   // Regression: desktop charts must not scale a tiny SVG and its labels to page width.
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
-    const queueChart = page.locator('svg[aria-label="Queued clips time series"]');
+    const queueChart = page.locator('svg[aria-label="Transcription backlog time series"]');
     await page.waitForFunction(() => {
-      const svg = document.querySelector('svg[aria-label="Queued clips time series"]');
+      const svg = document.querySelector('svg[aria-label="Transcription backlog time series"]');
       return Math.abs(svg.viewBox.baseVal.width - svg.getBoundingClientRect().width) < 2;
     }, null, { timeout: 5000 });
     const geometry = await queueChart.evaluate(svg => ({
@@ -95,7 +95,7 @@ try {
   await page.goto(`${base}/live/`, { waitUntil: "domcontentloaded" });
   await page.locator(".live-advanced-channel-selector > summary").click();
   await page.waitForFunction(() => document.querySelectorAll("#live-channel-picker .live-channel-option").length === 18);
-  assert.equal(await page.locator("#live-channel-picker .live-channel-option", { hasText: "Live only" }).count(), 11);
+  assert.equal(await page.locator("#live-channel-picker .live-channel-option", { hasText: "Live only" }).count(), 9);
   await page.locator('#live-channel-picker [data-channel="06"]').click();
   await page.locator("#live-last-communication", { hasText: "Live only · no saved clips" }).waitFor();
   const fixtureAudioResponse = page.waitForResponse(response => response.url().includes("/api/live/06/current.mp3") && response.status() === 200);
@@ -125,7 +125,11 @@ try {
   await page.locator(".transcription-backlog", { hasText: "800 clips" }).waitFor();
   assert.equal(await page.locator(".transcription-backlog .performance-chart-value").innerText(), "800 clips");
   await page.locator(".transcription-backlog .performance-chart-caption", { hasText: "Latest measurement" }).waitFor();
-  assert.equal(await page.locator('svg[aria-label="Queued clips time series"]').getAttribute("data-max-value"), "1500");
+  assert.equal(await page.locator('svg[aria-label="Transcription backlog time series"]').getAttribute("data-max-value"), "1500");
+  assert.equal(await page.locator(".transcription-backlog .performance-chart").count(), 1);
+  await page.goto(`${base}/about/`, { waitUntil: "domcontentloaded" });
+  await page.locator("#panel-about", { hasText: "DockTalk node" }).waitFor();
+  await page.locator("#panel-about", { hasText: "maintainers, contributors, and receiver operators" }).waitFor();
   // Isolated experiment controls and archived range audio; no actual job or label is created.
   const actualStatus = await (await page.request.get(`${base}/api/asr-feedback/status`)).json();
   const experimentId = "f".repeat(32);

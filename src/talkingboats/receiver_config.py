@@ -72,6 +72,17 @@ def configure_channels(current, template, live, recorded):
         ]
         files = [row for row in outputs if re.match(r'\{\s*type\s*=\s*"file"', row[2])]
         streams = [row for row in outputs if re.match(r'\{\s*type\s*=\s*"icecast"', row[2])]
+        if channel in recorded and not files and len(streams) == 1:
+            template_files = [
+                row[2]
+                for row in object_blocks(original.get(channel, ""))
+                if re.match(r'\{\s*type\s*=\s*"file"', row[2])
+            ]
+            if len(template_files) != 1:
+                raise ValueError("missing recording output template")
+            body = body[: streams[0][0]] + template_files[0] + "," + body[streams[0][0] :]
+            selected.append(body)
+            continue
         if len(streams) != 1 or (channel in recorded and len(files) != 1):
             raise ValueError("unexpected receiver output structure")
         if channel not in recorded:

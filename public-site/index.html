@@ -416,14 +416,24 @@
                 <a href="https://github.com/astuder" target="_blank" rel="noopener">Adrian Studer</a>
                 and
                 <a href="https://github.com/jvde-github" target="_blank" rel="noopener">Jasper</a>,
-                who generously mailed one over for this project.
+                who generously mailed one over for this project. Thank you to the wider
+                <a href="https://www.aiscatcher.org/" target="_blank" rel="noopener">AIS-catcher community</a>: its
+                maintainers, contributors, and receiver operators make this open-source vessel map possible.
+              </p>
+            </section>
+            <section class="about-card">
+              <h3>DockTalk</h3>
+              <p>
+                Our Elliott Bay receiver serves as a DockTalk node, sharing eighteen live maritime VHF
+                channels with the network. Thanks to Michael Donovan and the DockTalk community for
+                connecting local receivers and making more coastal radio traffic available.
               </p>
             </section>
             <section class="about-card">
               <h3>Processing</h3>
               <p>
                 The Ubuntu micro-computer private API handles uploads, transcription, and public exports for maritime
-                radio audio. This release selects Whisper Large V3 Turbo (large-v3-turbo) through CTranslate2/faster-whisper, with CPU inference capped at two cores. Reception is limited to six channels; temporary peak-hour transcription delays are allowed, with quieter periods available for catching up.
+                radio audio. This release selects Whisper Large V3 Turbo (large-v3-turbo) through CTranslate2/faster-whisper, with one shared six-thread worker for both deployments. Nine channels are recorded and transcribed continuously as clips arrive; nine more are live only. Temporary peak-hour delays can catch up during quieter periods.
               </p>
             </section>
             <section class="about-card">
