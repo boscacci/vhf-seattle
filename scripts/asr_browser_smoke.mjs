@@ -231,12 +231,15 @@ try {
   const publicPage = await publicContext.newPage();
   await publicPage.route("https://seattleboatradio.com/**", async (route) => {
     const url = new URL(route.request().url());
-    if (url.pathname === "/" || url.pathname === "/clips/") {
+    if (url.pathname === "/" || url.pathname === "/clips/" || url.pathname === "/live/") {
       return route.fulfill({ contentType: "text/html", body: await fs.readFile(path.join(root, "public-site/index.html"), "utf8") });
     }
     if (["/assets/app.js", "/assets/styles.css"].includes(url.pathname)) {
       return route.fulfill({ contentType: url.pathname.endsWith(".js") ? "text/javascript" : "text/css", body: await fs.readFile(path.join(root, "public-site", url.pathname.slice(1)), "utf8") });
     }
+    if (url.pathname === "/api/live/channels") return route.fulfill({ json: {
+      channels: channelRows, defaultChannel: "14",
+    } });
     if (url.pathname === "/api/clips/recent") return route.fulfill({ json: {
       clips: [{ ...fixture, transcript: "Tug Osprey northbound" }], next_cursor: null,
       clip_count: 1, channel_labels: { "14": "VTS / Seattle Traffic" }, counts_deferred: true,
@@ -247,6 +250,12 @@ try {
   await publicPage.locator(".clip-card blockquote", { hasText: "Tug Osprey northbound" }).waitFor();
   assert.equal(await publicPage.locator(".correction-editor").count(), 0);
   assert.equal(await publicPage.locator(".asr-experiments").count(), 0);
+  await publicPage.getByRole("tab", { name: "Listen live", exact: true }).click();
+  await publicPage.locator(".live-advanced-channel-selector > summary").click();
+  await publicPage.waitForFunction(() => document.querySelectorAll("#live-channel-picker .live-channel-option").length === 18);
+  assert.equal(await publicPage.locator("#live-channel-picker .live-channel-option", { hasText: "Live only" }).count(), 9);
+  assert.equal(await publicPage.locator(".asr-experiments").count(), 0);
+  assert.equal(await publicPage.locator(".correction-editor").count(), 0);
   assert.deepEqual(errors, []);
   await publicContext.close();
   console.log("event=asr_dev_playwright_passed real_dev_reads=true isolated_editor_and_public_overlay=true");

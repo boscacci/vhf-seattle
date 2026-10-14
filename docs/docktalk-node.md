@@ -3,7 +3,8 @@
 The Pi receives eighteen live channels and records nine: **14, 13, 16, 66A,
 78A, 71, 22A, 77, and 65A**. Channels 05A, 06, 09, 10, 67, 68, 69, 72, and
 73 have Icecast outputs only. Channel 74 stays excluded. Each live channel is
-individually selectable in the app. **All recorded channels** and **Recorded
+individually selectable in both the public production app and dev.
+Listen live is public; correction, training, and administration controls stay private. **All recorded channels** and **Recorded
 except Traffic** use saved clips from the nine recorded channels; they are
 not an eighteen-channel live mixer. Live-only channels do not display historical
 clip timestamps as current activity. Their existing archived clips stay readable.
