@@ -1151,6 +1151,13 @@ audio {
   margin-top: 4px;
 }
 
+.live-channel-group-heading {
+  grid-column: 1 / -1;
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 .live-channel-option {
   min-width: 0;
   min-height: 48px;
@@ -2654,4 +2661,8 @@ audio {
 
 .performance-chart-svg [hidden] {
   display: none;
+}
+
+.live-primary-channel-picker [data-channel="coast-guard-emergency"] {
+  grid-column: 1 / -1;
 }

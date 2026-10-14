@@ -240,7 +240,7 @@ path.write_text(json.dumps({"commit": values["TALKINGBOATS_ASR_RELEASE_COMMIT"],
 path.chmod(0o600)
 PYCODE
   TALKINGBOATS_BROWSER_DEPENDENCY_ROOT="${repo_root}" node "${release_root}/scripts/docktalk_browser_smoke.mjs"
-  "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/verify_docktalk_release.py" --output "${release_root}/docktalk-soak.json"
+  PYTHONPATH="${release_root}/src" "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/verify_docktalk_release.py" --output "${release_root}/docktalk-soak.json"
   trap - ERR
 fi
 printf 'event=asr_release_deployed environment=%s commit=%s digest=%s\n' "${action}" "${commit}" "${digest}"

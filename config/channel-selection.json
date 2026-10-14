@@ -2551,7 +2551,11 @@
     "71",
     "22A",
     "77",
-    "65A"
+    "65A",
+    "09",
+    "67",
+    "69",
+    "72"
   ],
   "turbo_capacity_passed": false,
   "serving_model": "large-v3-turbo",
@@ -2580,15 +2584,11 @@
   "live_only_channels": [
     "05A",
     "06",
-    "09",
     "10",
-    "67",
     "68",
-    "69",
-    "72",
     "73"
   ],
-  "policy_note": "Continuous six-thread Turbo: add 77 and 65A, the next two quality-ranked optional channels, alongside 22A. All three require persisted activation boundaries; historical backlog stays excluded.",
+  "policy_note": "Continuous shared six-thread Turbo: thirteen recorded channels, eighteen live. Add 09, 67, 69, and 72 by usable-speech ranking excluding port operations. Each added channel requires a persisted activation boundary; no historical backlog processing.",
   "forecast_channels": [
     "14",
     "13",
@@ -2628,5 +2628,17 @@
     ],
     "measured_audio_minutes_per_day": 32.021,
     "selection_basis": "Next two optional channels ranked by estimated usable speech in the seven-day audit; continuous worker allows quieter-period catch-up. Historical two-thread capacity forecast is not a new capacity claim."
+  },
+  "recording_expansion": {
+    "channels": [
+      "09",
+      "67",
+      "69",
+      "72"
+    ],
+    "selection_basis": "Next four remaining channels ranked by estimated usable speech minutes in the seven-day audit, excluding port operations (including mixed VTS / Port Ops 05A). Existing port-operation recordings remain enabled.",
+    "audio_minutes_per_day": 72.881,
+    "estimated_usable_minutes_per_day": 21.436,
+    "capacity_note": "Historical proxy measurements; no new capacity guarantee. Preserve six-thread continuous Turbo and quieter-period catch-up."
   }
 }

@@ -6,6 +6,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+
 REMOTE = r"""
 import json,sys,time,os,subprocess,urllib.request
 sys.path.insert(0,'/opt/talkingboats/docktalk/current')
@@ -54,8 +56,7 @@ def validate_observation(state):
         state["live_mounts"] != 18
         or state["configured_relay_channels"] <= 0
         or state["missing_relay_channels"]
-        or state["receiver_recorded_channels"]
-        != ["13", "14", "16", "22A", "65A", "66A", "71", "77", "78A"]
+        or state["receiver_recorded_channels"] != sorted(ACTIVE_CAPTURE_CHANNELS)
         or state["unexpected_live_only_files"]
     ):
         raise RuntimeError("channel isolation or relay health acceptance failed")

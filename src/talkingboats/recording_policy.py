@@ -10,7 +10,7 @@ from pathlib import Path
 
 from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
 
-NEW_RECORDING_CHANNELS = ("22A", "77", "65A")
+NEW_RECORDING_CHANNELS = ("22A", "77", "65A", "09", "67", "69", "72")
 
 NOT_ACTIVATED = "9999-12-31T00:00:00Z"
 

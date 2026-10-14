@@ -1,13 +1,16 @@
 # DockTalk alongside node
 
-The Pi receives eighteen live channels and records nine: **14, 13, 16, 66A,
-78A, 71, 22A, 77, and 65A**. Channels 05A, 06, 09, 10, 67, 68, 69, 72, and
+The Pi receives eighteen live channels and records thirteen: **14, 13, 16, 66A,
+78A, 71, 22A, 77, 65A, 09, 67, 69, and 72**. Channels 05A, 06, 10, 68, and
 73 have Icecast outputs only. Channel 74 stays excluded. Each live channel is
 individually selectable in both the public production app and dev.
-Listen live is public; correction, training, and administration controls stay private. **All recorded channels** and **Recorded
-except Traffic** use saved clips from the nine recorded channels; they are
-not an eighteen-channel live mixer. Live-only channels do not display historical
-clip timestamps as current activity. Their existing archived clips stay readable.
+Listen live is public; correction, training, and administration controls stay private.
+**All channels**, **All but traffic**, and **Coast Guard / emergency** play recent
+clips without recording labels. All but traffic excludes VTS channels 05A and 14;
+the safety group covers 06, 16, and 22A. Only available recordings enter these
+queues; individual channels use their live streams. Channels are grouped by
+purpose in the expanded selector. Existing archived clips stay readable, and
+stream-only channels do not display historical clip timestamps as current activity.
 
 ## Receiver and recording boundary
 
@@ -17,7 +20,8 @@ live-only channels. Frequencies, gain, serial, sample rate, and squelch remain
 unchanged. Both receiver generation and deployment preserve the output split.
 The currently disabled cloud HLS relay stays disabled; the app uses direct MP3.
 
-The approved production release persists a UTC activation boundary for each newly recorded channel (22A, 77, and 65A)
+The approved production release persists a UTC activation boundary for each newly
+recorded channel (22A, 77, 65A, 09, 67, 69, and 72)
 before enabling its recordings. It is stored in the existing private ASR state
 volume and copied to the Pi. Uploads, spool discovery/pruning, normal processing,
 and backlog counts exclude recordings on each added channel older than its boundary. Other pruned
@@ -78,7 +82,7 @@ After manual dev smoke, approve the release tag, exact artifact, and production
 target once. Promotion applies the queue boundary, receiver outputs, app routing,
 and node together. It verifies real eighteen-channel playback and observes the
 node for at least thirty minutes. Acceptance requires fresh audio on every configured relay
-channel, eighteen Icecast mounts, the correct nine recording outputs, fresh
+channel, eighteen Icecast mounts, the correct thirteen recording outputs, fresh
 server-confirmed reception, no new files on live-only channels, and Pi temperature
 below 80 C. Failures invoke the release rollback and produce diagnostic logs.
 
@@ -112,12 +116,12 @@ Before pausing shared services, production deployment reads DockTalk's channel
 plan and requires at least one approved frequency with an unambiguous mapping.
 A partial server plan is accepted: only the matching approved channels are relayed,
 and the other channel names are reported as unconfigured in operator logs. The
-local receiver continues to provide all eighteen live channels and record nine.
+local receiver continues to provide all eighteen live channels and record thirteen.
 Empty, unsafe, or ambiguous plans fail before shared services are paused.
 
 The operator explicitly authorized partial DockTalk coverage while its server plan
 is expanded. Acceptance checks require fresh audio on every configured relay
-channel, eighteen local Icecast mounts, and nine recording outputs. The relay
+channel, eighteen local Icecast mounts, and thirteen recording outputs. The relay
 refreshes the server plan every ten minutes and restarts with expanded coverage
 when the plan changes. Registration credentials are reused; adding server
 channels needs no application deployment or new claim.
@@ -148,3 +152,13 @@ disposable fixtures and caches, then removes it. This avoids journal contention
 on the capture host without skipping tests or increasing CI's timeout. A
 sixty-second faulthandler dump helps diagnose future stalled tests. Durable
 release data and provider caches remain on the data SSD.
+
+## Four-channel expansion
+
+The next four additions are 09, 67, 69, and 72, selected by the existing
+seven-day usable-speech ranking with port operations excluded. They add about
+73 minutes of incoming audio per day in that historical sample. The existing
+65A and 66A recordings remain enabled. New activation boundaries preserve old
+backlog and existing activation times; deployment retries do not reset them.
+The continuous shared six-thread Turbo worker and SSD storage remain unchanged.
+This historical estimate is not a new capacity guarantee.

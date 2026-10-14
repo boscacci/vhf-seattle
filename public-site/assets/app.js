@@ -11,7 +11,7 @@ const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
 const privateAppHost = localAppHost || tailnetAppHost || devAppHost;
 const quarantineClipLaneEnabled = privateAppHost;
 const asrFeedbackEnabled = privateAppHost;
-const recordedRadioChannels = new Set(["14", "13", "16", "66A", "78A", "71", "22A", "77", "65A"]);
+const recordedRadioChannels = new Set(["14", "13", "16", "66A", "78A", "71", "22A", "77", "65A", "09", "67", "69", "72"]);
 const activeRadioChannels = new Set(["05A", "06", "09", "10", "13", "14", "16", "22A", "65A", "66A", "67", "68", "69", "71", "72", "73", "77", "78A"]);
 const systemDashboardEnabled = devAppHost || localAppHost || tailnetAppHost;
 const privateApiBaseUrl = "";
@@ -100,6 +100,9 @@ const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();
 const unknownPlaybackTimeLabel = "—";
 const everythingLiveChannel = "everything";
 const allButTrafficLiveChannel = "all-but-traffic";
+const coastGuardLiveChannel = "coast-guard-emergency";
+const liveTrafficChannelIds = new Set(["05A", "14"]);
+const coastGuardChannelIds = new Set(["06", "16", "22A"]);
 const defaultRealtimeLiveChannel = "14";
 const everythingInitialQueueLimit = 3;
 const everythingCatchUpLabel = "Catching up on latest 3 transmissions";
@@ -2870,7 +2873,7 @@ async function loadLiveChannels() {
     liveChannels = channels;
     loadedFromLiveApi = true;
     if (
-      selectedLiveChannel !== everythingLiveChannel &&
+      !isQueuedLiveMode() &&
       payload.defaultChannel &&
       liveChannels.some((item) => item.channel === payload.defaultChannel)
     ) {
@@ -2914,17 +2917,32 @@ function renderLiveChannelPicker() {
   livePrimaryChannelPicker.replaceChildren(
     liveChannelOptionButton(everythingChannelOption(), { primary: true }),
     liveChannelOptionButton(allButTrafficChannelOption(), { primary: true }),
+    liveChannelOptionButton(coastGuardChannelOption(), { primary: true }),
   );
   liveChannelPicker.replaceChildren();
-  for (const channel of liveChannels) {
-    liveChannelPicker.append(liveChannelOptionButton(channel));
+  const groups = [
+    ["Coast Guard / emergency", ["06", "16", "22A"]],
+    ["Vessel traffic", ["05A", "14"]],
+    ["Calling / commercial", ["09", "10", "13", "67"]],
+    ["Recreational / ship-to-ship", ["68", "69", "71", "72", "77", "78A"]],
+    ["Port operations", ["65A", "66A", "73"]],
+  ];
+  for (const [label, channels] of groups) {
+    const heading = document.createElement("h3");
+    heading.className = "live-channel-group-heading";
+    heading.textContent = label;
+    liveChannelPicker.append(heading);
+    for (const id of channels) {
+      const channel = liveChannels.find(item => item.channel === id);
+      if (channel) liveChannelPicker.append(liveChannelOptionButton(channel));
+    }
   }
 }
 
 function everythingChannelOption() {
   return {
     channel: everythingLiveChannel,
-    label: "All recorded channels",
+    label: "All channels",
     frequencyMhz: "",
     streamPath: "",
     statusPath: "",
@@ -2934,11 +2952,15 @@ function everythingChannelOption() {
 function allButTrafficChannelOption() {
   return {
     channel: allButTrafficLiveChannel,
-    label: "Recorded except Traffic",
+    label: "All but traffic",
     frequencyMhz: "",
     streamPath: "",
     statusPath: "",
   };
+}
+
+function coastGuardChannelOption() {
+  return { channel: coastGuardLiveChannel, label: "Coast Guard / emergency", frequencyMhz: "", streamPath: "", statusPath: "" };
 }
 
 function liveChannelOptionButton(channel, { primary = false } = {}) {
@@ -2949,12 +2971,12 @@ function liveChannelOptionButton(channel, { primary = false } = {}) {
   button.classList.toggle("is-everything", channel.channel === everythingLiveChannel);
   button.classList.toggle("is-primary", primary);
   button.dataset.channel = channel.channel;
-  button.textContent = channelLabel(channel.channel) + (channel.recorded === false ? " · Live only" : "");
+  button.textContent = channelLabel(channel.channel);
   button.title =
     channel.channel === everythingLiveChannel
-      ? "Queue transmissions from all recorded channels"
+      ? "Play recent transmissions across channels"
       : channel.channel === allButTrafficLiveChannel
-        ? "Queue recorded channels except Seattle Traffic on VHF 14"
+        ? "Play recent transmissions except VTS on VHF 05A and 14"
       : channelLabel(channel.channel);
   button.setAttribute("aria-pressed", String(channel.channel === selectedLiveChannel));
   button.addEventListener("click", () => selectLiveChannel(channel.channel));
@@ -3010,6 +3032,9 @@ function findLiveChannel(channel) {
   if (channel === allButTrafficLiveChannel) {
     return allButTrafficChannelOption();
   }
+  if (channel === coastGuardLiveChannel) {
+    return coastGuardChannelOption();
+  }
   const selected = liveChannels.find((item) => item.channel === channel);
   if (selected) {
     return selected;
@@ -3026,7 +3051,7 @@ function isAllButTrafficLiveMode() {
 }
 
 function isQueuedLiveMode() {
-  return isEverythingLiveMode() || isAllButTrafficLiveMode();
+  return isEverythingLiveMode() || isAllButTrafficLiveMode() || selectedLiveChannel === coastGuardLiveChannel;
 }
 
 function normalizeTabName(name) {
@@ -5480,7 +5505,7 @@ async function connectEverythingLive() {
       await playNextEverythingQueueClip({ queueGeneration, queueChannel });
     }
   } catch {
-    liveStatus.textContent = "Recorded queue waiting";
+    liveStatus.textContent = "Playback queue waiting";
   } finally {
     renderEverythingQueuePanel();
     updateLiveMediaSession(everythingQueueEnabled ? "playing" : "paused");
@@ -5721,14 +5746,15 @@ function liveQueueRequestUrl() {
 }
 
 function queueChannelsForMode() {
-  return [...recordedRadioChannels];
+  return [...recordedRadioChannels].filter(channel =>
+    selectedLiveChannel !== coastGuardLiveChannel || coastGuardChannelIds.has(channel));
 }
 
 function excludedQueueChannelsForMode() {
   if (!isAllButTrafficLiveMode()) {
     return [];
   }
-  return [...trafficChannelIds];
+  return [...liveTrafficChannelIds];
 }
 
 function enqueueEverythingClips(clips, { includeBackfill = false } = {}) {
@@ -5848,7 +5874,7 @@ function isCurrentLiveQueueSession(queueGeneration, queueChannel) {
 
 function isQueueClipAllowedForCurrentMode(clip) {
   const channel = String(clip?.channel || "").toUpperCase();
-  return Boolean(channel && !excludedQueueChannelsForMode().includes(channel));
+  return Boolean(queueChannelsForMode().includes(channel) && !excludedQueueChannelsForMode().includes(channel));
 }
 
 function nextLiveQueueClipForCurrentMode() {
@@ -5983,8 +6009,10 @@ function renderLiveStatus(status) {
   if (isQueuedLiveMode()) {
     liveChannel.textContent = channelLabel(selectedLiveChannel);
     liveFrequency.textContent = isAllButTrafficLiveMode()
-      ? "Queued active transmissions except Seattle Traffic"
-      : "Queued active transmissions across monitored channels";
+      ? "Recent transmissions except vessel traffic"
+      : selectedLiveChannel === coastGuardLiveChannel
+        ? "Recent Coast Guard and emergency transmissions"
+        : "Queued active transmissions across monitored channels";
     renderLiveTelemetry();
     return;
   }
@@ -6010,7 +6038,7 @@ function renderLiveTelemetry() {
     return;
   }
   if (findLiveChannel(selectedLiveChannel).recorded === false) {
-    liveLastCommunication.textContent = "Live only · no saved clips";
+    liveLastCommunication.textContent = "Live stream";
     liveLatency.textContent = formatLiveLatency(latestLiveStatus?.streamDelaySeconds);
     return;
   }
@@ -6048,8 +6076,10 @@ function hasEverythingQueueCatchUp() {
 
 function liveQueueModeDescription() {
   return isAllButTrafficLiveMode()
-    ? "Seattle Traffic is filtered out of this playback queue"
-    : "All channels feed one playback queue";
+    ? "Recent transmissions except vessel traffic"
+    : selectedLiveChannel === coastGuardLiveChannel
+      ? "Recent Coast Guard and emergency transmissions"
+      : "Recent transmissions across channels";
 }
 
 function liveQueueItem(label, value) {
@@ -6430,10 +6460,13 @@ function titleForClip(clip) {
 
 function channelLabel(channel) {
   if (String(channel || "").toLowerCase() === everythingLiveChannel) {
-    return "All recorded channels";
+    return "All channels";
   }
   if (String(channel || "").toLowerCase() === allButTrafficLiveChannel) {
-    return "Recorded except Traffic";
+    return "All but traffic";
+  }
+  if (String(channel || "").toLowerCase() === coastGuardLiveChannel) {
+    return "Coast Guard / emergency";
   }
   const channelText = `VHF ${channel || "?"}`;
   const label = currentChannelLabels[channel] || "";
