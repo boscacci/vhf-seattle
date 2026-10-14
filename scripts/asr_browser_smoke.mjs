@@ -130,6 +130,7 @@ try {
   await page.goto(`${base}/about/`, { waitUntil: "domcontentloaded" });
   await page.locator("#panel-about", { hasText: "DockTalk node" }).waitFor();
   await page.locator("#panel-about", { hasText: "maintainers, contributors, and receiver operators" }).waitFor();
+  await page.goto(`${base}/performance/`, { waitUntil: "domcontentloaded" });
   // Isolated experiment controls and archived range audio; no actual job or label is created.
   const actualStatus = await (await page.request.get(`${base}/api/asr-feedback/status`)).json();
   const experimentId = "f".repeat(32);
