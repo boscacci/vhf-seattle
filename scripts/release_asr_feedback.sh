@@ -115,7 +115,7 @@ EOF
   systemctl --user daemon-reload
   systemctl --user restart talkingboats-api-dev.service talkingboats-live-radio-proxy.service
   curl --fail --silent --show-error --retry 20 --retry-delay 1 --retry-connrefused http://127.0.0.1:8035/healthz >/dev/null
-  TALKINGBOATS_BROWSER_DEPENDENCY_ROOT="${repo_root}" node "${release_root}/scripts/asr_browser_smoke.mjs"
+  TALKINGBOATS_ASR_SMOKE_FFMPEG="${HOME}/miniforge3/envs/dell/bin/ffmpeg" TALKINGBOATS_BROWSER_DEPENDENCY_ROOT="${repo_root}" node "${release_root}/scripts/asr_browser_smoke.mjs"
   printf '{"commit":"%s","artifact_sha256":"%s","dev_playwright_passed":true,"tested_at":"%s"}\n' \
     "${commit}" "${digest}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${candidate}/dev-smoke.json"
   trap - ERR

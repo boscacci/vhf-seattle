@@ -66,7 +66,7 @@ try {
   // Additional Pi channels activate only at the approved shared production cutover.
   // Isolate their browser streams while still reading the existing six real feeds.
   const addedChannels = channels.filter(channel => !["14", "13", "16", "66A", "78A", "71"].includes(channel));
-  const silence = execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "2", "-f", "mp3", "pipe:1"]);
+  const silence = execFileSync(process.env.TALKINGBOATS_ASR_SMOKE_FFMPEG || "ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "2", "-f", "mp3", "pipe:1"]);
   for (const channel of addedChannels) {
     const row = channelRows.find(row => row.channel === channel);
     await page.route(`**/api/live/${channel}/current.mp3*`, route => route.fulfill({ body: silence, contentType: "audio/mpeg" }));
