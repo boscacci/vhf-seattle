@@ -61,7 +61,7 @@ source=template.read_text()
 (record/'template.sha256').write_text(hashlib.sha256(source.encode()).hexdigest()+'\n')
 result=configure_channels(config.read_text(),source,LIVE_STREAM_CHANNELS,ACTIVE_CAPTURE_CHANNELS)
 pending=config.with_suffix('.pending');pending.write_text(result);pending.chmod(0o600);pending.replace(config)
-print('event=receiver_config_validated live=18 recorded=7')
+print('event=receiver_config_validated live=18 recorded=9')
 PY
 install -m 0644 "${stage}/src/talkingboats/"{channel_metadata,spool_uploader,recording_policy}.py "${module}/"
 install -m 0644 "${stage}/channel-activations.json" /etc/talkingboats/channel-activations.json
@@ -80,4 +80,4 @@ systemctl start talkingboats-pi-healthcheck.timer
 printf '%s\n' "${commit}" > "${record}/release-commit"
 date -u +%Y-%m-%dT%H:%M:%SZ > "${record}/deployed"
 trap - ERR
-printf 'event=asr_receiver_deployed commit=%s live_channels=18 recorded_channels=7 digest=%s\n' "${commit}" "${digest}"
+printf 'event=asr_receiver_deployed commit=%s live_channels=18 recorded_channels=9 digest=%s\n' "${commit}" "${digest}"

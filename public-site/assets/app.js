@@ -11,7 +11,7 @@ const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
 const privateAppHost = localAppHost || tailnetAppHost || devAppHost;
 const quarantineClipLaneEnabled = privateAppHost;
 const asrFeedbackEnabled = privateAppHost;
-const recordedRadioChannels = new Set(["14", "13", "16", "66A", "78A", "71", "22A"]);
+const recordedRadioChannels = new Set(["14", "13", "16", "66A", "78A", "71", "22A", "77", "65A"]);
 const activeRadioChannels = new Set(["05A", "06", "09", "10", "13", "14", "16", "22A", "65A", "66A", "67", "68", "69", "71", "72", "73", "77", "78A"]);
 const systemDashboardEnabled = devAppHost || localAppHost || tailnetAppHost;
 const privateApiBaseUrl = "";
@@ -3587,12 +3587,10 @@ function renderPerformanceDashboard(payload) {
   const backlogPanel = document.createElement("section");
   backlogPanel.className = "transcription-backlog performance-chart-grid";
   backlogPanel.append(
-    performanceCard("Transcription backlog", backlog.status === "ok" ? `${backlog.queued_clips} clips` : "Unavailable",
-      backlog.status === "ok" ? `Shared worker · oldest ${backlog.oldest_age_seconds == null ? "none" : Math.round(backlog.oldest_age_seconds / 60) + " min"} · retained channels` : "No complete queue measurement yet", "unknown"),
-    performanceMetricChart("Queued clips", backlog.history, "queuedClips", " clips", "backlog", {
-      label: backlog.status === "ok" ? `${backlog.queued_clips} clips` : "Unavailable",
+    performanceMetricChart("Transcription backlog", backlog.history, "queuedClips", " clips", "backlog", {
+      label: backlog.status === "ok" ? `${backlog.queued_clips} ${backlog.queued_clips === 1 ? "clip" : "clips"}` : "Unavailable",
       caption: backlog.status === "ok"
-        ? `Latest measurement · ${formatPerformanceDateTime(backlog.generatedAt)} · Five-minute samples`
+        ? `Shared worker · oldest ${backlog.oldest_age_seconds == null ? "none" : Math.round(backlog.oldest_age_seconds / 60) + " min"} · Latest measurement ${formatPerformanceDateTime(backlog.generatedAt)} · Five-minute samples`
         : "Current measurement unavailable · Historical samples shown when available",
     }),
   );

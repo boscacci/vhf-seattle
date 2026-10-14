@@ -2549,7 +2549,9 @@
     "66A",
     "78A",
     "71",
-    "22A"
+    "22A",
+    "77",
+    "65A"
   ],
   "turbo_capacity_passed": false,
   "serving_model": "large-v3-turbo",
@@ -2580,15 +2582,13 @@
     "06",
     "09",
     "10",
-    "65A",
     "67",
     "68",
     "69",
     "72",
-    "73",
-    "77"
+    "73"
   ],
-  "policy_note": "Operator requested eighteen live channels and seven recorded channels, adding new 22A recordings without historical bulk processing. Original six-channel capacity audit remains historical evidence.",
+  "policy_note": "Continuous six-thread Turbo: add 77 and 65A, the next two quality-ranked optional channels, alongside 22A. All three require persisted activation boundaries; historical backlog stays excluded.",
   "forecast_channels": [
     "14",
     "13",
@@ -2620,5 +2620,13 @@
       "115b4510bac07caccc7750e394011604fe2fcde898db44966403a4203617d5b9"
     ],
     "note": "Warmed full-audio diagnostic on shared host; no production transcript writes."
+  },
+  "additional_channel_audit": {
+    "channels": [
+      "77",
+      "65A"
+    ],
+    "measured_audio_minutes_per_day": 32.021,
+    "selection_basis": "Next two optional channels ranked by estimated usable speech in the seven-day audit; continuous worker allows quieter-period catch-up. Historical two-thread capacity forecast is not a new capacity claim."
   }
 }

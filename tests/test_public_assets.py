@@ -1654,3 +1654,17 @@ def test_public_site_keeps_quarantined_clip_quality_lane_out_of_production() -> 
 def test_performance_omits_the_most_used_filesystem_card():
     app_js = Path('public-site/assets/app.js').read_text(encoding='utf-8')
     assert 'Most used filesystem' not in app_js
+
+
+def test_backlog_uses_chart_without_duplicate_summary_card():
+    app = Path("public-site/assets/app.js").read_text()
+    assert 'performanceCard("Transcription backlog"' not in app
+    assert 'performanceMetricChart("Transcription backlog"' in app
+
+
+def test_about_acknowledges_docktalk_and_ais_catcher_community():
+    html = Path("public-site/index.html").read_text()
+    assert '<h3>DockTalk</h3>' in html
+    assert 'DockTalk node' in html
+    assert 'maintainers, contributors, and receiver operators' in html
+    assert 'CPU inference capped at two cores' not in html

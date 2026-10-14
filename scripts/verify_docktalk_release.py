@@ -71,7 +71,8 @@ def main():
         if (
             state["live_mounts"] != 18
             or state["fresh_relay_channels"] != 18
-            or state["receiver_recorded_channels"] != ["13", "14", "16", "22A", "66A", "71", "78A"]
+            or state["receiver_recorded_channels"]
+            != ["13", "14", "16", "22A", "65A", "66A", "71", "77", "78A"]
             or state["unexpected_live_only_files"]
         ):
             raise RuntimeError("channel isolation or relay health acceptance failed")

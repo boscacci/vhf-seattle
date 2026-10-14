@@ -36,7 +36,7 @@ CHANNEL_METADATA = {
     "77": ChannelMetadata("77", "Ship-to-ship", 156.875),
     "78A": ChannelMetadata("78A", "Non-commercial", 156.925),
 }
-VOICE_NET_BALANCED_CHANNELS = ("14", "13", "16", "66A", "78A", "71", "22A")
+VOICE_NET_BALANCED_CHANNELS = ("14", "13", "16", "66A", "78A", "71", "22A", "77", "65A")
 PUBLIC_EXCLUDED_CHANNELS = ("WX", "74")
 PUBLIC_MONITORED_CHANNELS = tuple(c for c in CHANNEL_METADATA if c not in PUBLIC_EXCLUDED_CHANNELS)
 # The measured profile is installed from a versioned selection artifact.

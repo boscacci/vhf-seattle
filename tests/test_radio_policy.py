@@ -2,8 +2,18 @@ from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS, LIVE_STREAM_C
 from talkingboats.receiver_config import configure_channels
 
 
-def test_eighteen_live_seven_recorded_without_74():
-    assert set(ACTIVE_CAPTURE_CHANNELS) == {"14", "13", "16", "66A", "78A", "71", "22A"}
+def test_eighteen_live_nine_recorded_without_74():
+    assert set(ACTIVE_CAPTURE_CHANNELS) == {
+        "14",
+        "13",
+        "16",
+        "66A",
+        "78A",
+        "71",
+        "22A",
+        "77",
+        "65A",
+    }
     assert len(LIVE_STREAM_CHANNELS) == 18 and "74" not in LIVE_STREAM_CHANNELS
 
 
@@ -75,3 +85,50 @@ def test_prior_queue_checkpoint_remains_unchanged(tmp_path, monkeypatch):
     (tmp_path / "activation.json").write_text('{"22A":"2026-10-14T01:00:00Z"}')
     assert not indexes_ready(tmp_path)
     assert old.read_bytes() == original
+
+
+def test_added_channels_require_independent_activation(tmp_path, monkeypatch):
+    from talkingboats.recording_policy import eligible
+
+    path = tmp_path / "activation.json"
+    monkeypatch.setenv("TALKINGBOATS_RECORDING_ACTIVATIONS_FILE", str(path))
+    path.write_text('{"22A":"2026-10-13T12:00:00Z"}')
+    for channel in ("77", "65A"):
+        assert not eligible(channel, "2026-10-14T00:00:00Z")
+    path.write_text(
+        '{"22A":"2026-10-13T12:00:00Z","77":"2026-10-14T01:00:00Z","65A":"2026-10-14T01:00:00Z"}'
+    )
+    for channel in ("77", "65A"):
+        assert not eligible(channel, "2026-10-14T00:59:59Z")
+        assert eligible(channel, "2026-10-14T01:00:00Z")
+
+
+def test_receiver_enables_recording_without_changing_existing_stream_settings():
+    stream = '{type="icecast";mountpoint="talkingboats-77.mp3";}'
+    file = '{type="file";directory="private";}'
+    current = (
+        'devices:({channels:({freq=156875000;label="vhf-77";squelch=-30;outputs:('
+        + stream
+        + ");});});"
+    )
+    template = current.replace("squelch=-30", "squelch=-35").replace(stream, file + "," + stream)
+    result = configure_channels(current, template, ["77"], ["77"])
+    assert "squelch=-30" in result
+    assert file in result and stream in result
+
+
+def test_activation_retry_preserves_existing_boundaries(tmp_path, monkeypatch):
+    import json
+    import runpy
+
+    path = tmp_path / "activation.json"
+    path.write_text('{"22A":"2026-10-13T12:00:00Z"}')
+    monkeypatch.setenv("TALKINGBOATS_RECORDING_ACTIVATIONS_FILE", str(path))
+    runpy.run_path("scripts/activate_recording_policy.py")
+    first = path.read_bytes()
+    values = json.loads(first)
+    assert values["22A"] == "2026-10-13T12:00:00Z"
+    assert values["77"] == values["65A"]
+    assert path.stat().st_mode & 0o777 == 0o600
+    runpy.run_path("scripts/activate_recording_policy.py")
+    assert path.read_bytes() == first

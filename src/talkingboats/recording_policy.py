@@ -10,6 +10,8 @@ from pathlib import Path
 
 from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
 
+NEW_RECORDING_CHANNELS = ("22A", "77", "65A")
+
 NOT_ACTIVATED = "9999-12-31T00:00:00Z"
 
 
@@ -25,13 +27,13 @@ def activation_path() -> Path:
 def activation_boundaries() -> dict[str, str]:
     path = activation_path()
     values = json.loads(path.read_text()) if path.exists() else {}
-    if not isinstance(values, dict) or set(values) - {"22A"}:
+    if not isinstance(values, dict) or set(values) - set(NEW_RECORDING_CHANNELS):
         raise ValueError("invalid recording activation policy")
     for value in values.values():
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             raise ValueError("recording activation requires a timezone")
-    return {"22A": values.get("22A", NOT_ACTIVATED)}
+    return {channel: values.get(channel, NOT_ACTIVATED) for channel in NEW_RECORDING_CHANNELS}
 
 
 def eligible(channel: str, started_at: str, boundaries=None) -> bool:
@@ -57,11 +59,11 @@ def indexes_ready(directory: Path) -> bool:
     if path.exists():
         p = json.loads(path.read_text())
         return p.get("status_index") == 3 and p.get("policy_identity") == queue_policy_identity()
-    if activation_boundaries()["22A"] == NOT_ACTIVATED:
+    if all(value == NOT_ACTIVATED for value in activation_boundaries().values()):
         legacy = directory / "queue-index-cutover.json"
         if legacy.exists():
             p = json.loads(legacy.read_text())
             return p.get("status_index") == 3 and set(p.get("channels", [])) == set(
                 ACTIVE_CAPTURE_CHANNELS
-            ) - {"22A"}
+            ) - set(NEW_RECORDING_CHANNELS)
     return False

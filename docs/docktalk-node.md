@@ -1,10 +1,10 @@
 # DockTalk alongside node
 
-The Pi receives eighteen live channels and records seven: **14, 13, 16, 66A,
-78A, 71, and 22A**. Channels 05A, 06, 09, 10, 65A, 67, 68, 69, 72, 73, and
-77 have Icecast outputs only. Channel 74 stays excluded. Each live channel is
+The Pi receives eighteen live channels and records nine: **14, 13, 16, 66A,
+78A, 71, 22A, 77, and 65A**. Channels 05A, 06, 09, 10, 67, 68, 69, 72, and
+73 have Icecast outputs only. Channel 74 stays excluded. Each live channel is
 individually selectable in the app. **All recorded channels** and **Recorded
-except Traffic** use saved clips from the seven recorded channels; they are
+except Traffic** use saved clips from the nine recorded channels; they are
 not an eighteen-channel live mixer. Live-only channels do not display historical
 clip timestamps as current activity. Their existing archived clips stay readable.
 
@@ -16,10 +16,10 @@ live-only channels. Frequencies, gain, serial, sample rate, and squelch remain
 unchanged. Both receiver generation and deployment preserve the output split.
 The currently disabled cloud HLS relay stays disabled; the app uses direct MP3.
 
-The approved production release persists a UTC activation boundary for 22A
+The approved production release persists a UTC activation boundary for each newly recorded channel (22A, 77, and 65A)
 before enabling its recordings. It is stored in the existing private ASR state
 volume and copied to the Pi. Uploads, spool discovery/pruning, normal processing,
-and backlog counts exclude 22A recordings older than this boundary. Other pruned
+and backlog counts exclude recordings on each added channel older than its boundary. Other pruned
 channel backlogs remain excluded. Queue checkpoints include the channel policy
 and activation identity; the six-channel checkpoint is preserved for rollback.
 A retry keeps the original activation time and migration cursor.
@@ -76,7 +76,7 @@ After manual dev smoke, approve the release tag, exact artifact, and production
 target once. Promotion applies the queue boundary, receiver outputs, app routing,
 and node together. It verifies real eighteen-channel playback and observes the
 node for at least thirty minutes. Acceptance requires eighteen fresh relay
-channels, eighteen Icecast mounts, the correct seven recording outputs, fresh
+channels, eighteen Icecast mounts, the correct nine recording outputs, fresh
 server-confirmed reception, no new files on live-only channels, and Pi temperature
 below 80 C. Failures invoke the release rollback and produce diagnostic logs.
 
@@ -90,3 +90,11 @@ Rollback disables the DockTalk relay and timers, restores the prior receiver,
 spool modules, app sources and public shell, and restores worker startup settings.
 It preserves the private node identity and activation boundary for a safe retry.
 Historical raw audio, transcripts, corrections, and excluded backlog are retained.
+
+Channels 77 and 65A are the next two optional channels in the seven-day quality
+audit. Their combined measured recording volume was 32.02 audio minutes per day.
+The continuous six-thread worker may accumulate daytime backlog and catch up
+during quieter periods; this extension does not claim the old peak-capacity gate
+has passed. Retried activation preserves existing timestamps and adds only missing
+channel boundaries. The About page acknowledges DockTalk and the wider AIS-catcher
+community, and Performance presents queue status in a single backlog chart.

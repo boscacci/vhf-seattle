@@ -2639,3 +2639,7 @@ audio {
 .asr-experiments table { width: 100%; font-size: .85rem; }
 .asr-experiments td { padding: .5rem; }
 .asr-experiments article { margin-top: 1rem; overflow-x: auto; }
+
+.performance-chart-svg [hidden] {
+  display: none;
+}

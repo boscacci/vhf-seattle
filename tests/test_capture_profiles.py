@@ -51,7 +51,7 @@ def test_voice_net_airband_config_pins_device_serial_sample_rate_and_squelch() -
     assert "squelch_snr_threshold" not in config
     assert "freq = 156650000;" in config
     assert "freq = 156700000;" in config
-    assert "freq = 156875000;" not in config
+    assert "freq = 156875000;" in config
     assert "freq = 156925000;" in config
     assert 'label = "vhf-66a";' in config
     assert 'label = "vhf-78a";' in config
