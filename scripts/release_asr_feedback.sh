@@ -51,6 +51,8 @@ if [[ "${action}" == prod ]]; then
   }
   PYTHONPATH="${release_root}/src" "${HOME}/miniforge3/envs/dell/bin/python" -m talkingboats.docktalk \
     preflight --claim-file "${HOME}/.config/talkingboats/docktalk-claim"
+  "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/deploy_live_cdn.py" apply --source "${release_root}"
+  trap '"${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/deploy_live_cdn.py" rollback --source "${release_root}"' ERR
 fi
 state_root="${HOME}/.config/talkingboats"
 install -d -m 0700 "${state_root}"
@@ -62,6 +64,7 @@ TALKINGBOATS_ASR_STORAGE_ROOT="${TALKINGBOATS_ASR_STORAGE_ROOT:-}" \
 "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/configure_asr_runtime.py"
 unit_root="${HOME}/.config/systemd/user"
 if [[ "${action}" == dev ]]; then
+  "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/deploy_live_cdn.py" plan --source "${release_root}"
   analysis_site="$("${HOME}/miniforge3/envs/dell/bin/python" - <<'PY'
 from pathlib import Path
 values = dict(line.partition('=')[::2] for line in (Path.home()/'.config/talkingboats/asr.env').read_text().splitlines())
@@ -167,6 +170,9 @@ else
     "${release_root}/scripts/deploy_asr_receiver.sh" "${release_root}" "${commit}" "${digest}" rollback || true
     systemctl --user restart talkingboats-api.service talkingboats-public-live-radio-proxy.service || true
     "${release_root}/scripts/deploy_static_shell.sh" prod "${backup}/public-site" || true
+    if ! "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/deploy_live_cdn.py" rollback --source "${release_root}"; then
+      echo 'event=asr_cdn_rollback_failed require_operator=true' >&2
+    fi
     printf 'event=asr_release_rollback environment=prod commit=%s require_static_cache_check=true\n' "${commit}" >&2
   }
   trap rollback_prod ERR
