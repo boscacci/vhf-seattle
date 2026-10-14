@@ -846,9 +846,9 @@ def test_multichannel_capture_uses_ranked_busy_channels_and_buffered_boundaries(
     from talkingboats.capture_profiles import CAPTURE_PROFILES, render_rtlsdr_airband_config
 
     profile = CAPTURE_PROFILES["voice_net_balanced"]
-    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS, LIVE_STREAM_CHANNELS
 
-    assert [channel.channel for channel in profile.channels] == list(ACTIVE_CAPTURE_CHANNELS)
+    assert [channel.channel for channel in profile.channels] == list(LIVE_STREAM_CHANNELS)
     rendered = render_rtlsdr_airband_config(profile, output_root="/tmp/spool")
     assert rendered.count("pre_roll_seconds = 0.50;") == len(ACTIVE_CAPTURE_CHANNELS)
     assert rendered.count("post_roll_seconds = 0.75;") == len(ACTIVE_CAPTURE_CHANNELS)

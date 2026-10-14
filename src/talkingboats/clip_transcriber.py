@@ -207,6 +207,9 @@ class UploadedClipStore:
             if allowed_channels is None
             else (" AND channel IN (" + ",".join("?" for _ in allowed_channels) + ")")
         )
+        from talkingboats.recording_policy import activation_boundaries
+
+        boundary = activation_boundaries()["22A"]
         with sqlite3.connect(self.path) as connection:
             rows = []
             for waiting in (False, True):
@@ -228,10 +231,11 @@ class UploadedClipStore:
                 FROM uploaded_clips
                 WHERE status IN ({placeholders}) {channel_clause}
                   AND (status = 'waiting_upload') = ?
+                  AND (channel != '22A' OR julianday(started_at) >= julianday(?))
                 ORDER BY started_at ASC, id ASC
                 LIMIT ?
                 """,
-                        (*statuses, *(allowed_channels or ()), int(waiting), limit),
+                        (*statuses, *(allowed_channels or ()), int(waiting), boundary, limit),
                     ).fetchall()
                 )
         return _fair_pending_records([_row_to_record(row) for row in rows], limit)

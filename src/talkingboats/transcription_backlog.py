@@ -18,7 +18,9 @@ def backlog_history(store, channels, directory: Path, *, now=None, indexed_chann
         return {"status": "unavailable", "queued_clips": None, "history": []}
     channels = sorted(c for c in channels if c not in {"74", "WX"})
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    scope = ",".join(channels)
+    from talkingboats.recording_policy import queue_policy_identity
+
+    scope = ",".join(channels) + ";" + queue_policy_identity()
     with (directory / "backlog.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with sqlite3.connect(directory / "backlog.sqlite3") as db:

@@ -920,3 +920,29 @@ class FakeStat:
     def __init__(self, *, size: int, mtime: float) -> None:
         self.st_size = size
         self.st_mtime = mtime
+
+
+def test_old_22a_spool_remains_untouched_after_reactivation(tmp_path, monkeypatch):
+    from talkingboats.spool_uploader import prune_completed_audio_files
+
+    activation = tmp_path / "activation.json"
+    activation.write_text('{"22A":"2026-06-02T00:00:00Z"}')
+    monkeypatch.setenv("TALKINGBOATS_RECORDING_ACTIVATIONS_FILE", str(activation))
+    monkeypatch.setenv("TALKINGBOATS_ENFORCE_ACTIVE_CHANNELS", "true")
+    spool = tmp_path / "spool"
+    (spool / "22A").mkdir(parents=True)
+    old = spool / "22A" / "vhf-22a_20260601_120000.mp3"
+    old.write_bytes(b"old audio")
+    os.utime(old, (datetime(2026, 6, 1, 12, tzinfo=UTC).timestamp(),) * 2)
+    now = datetime(2026, 6, 3, tzinfo=UTC)
+    clips = discover_completed_audio_files(
+        spool_root=spool, now=now, min_age_seconds=1, duration_probe=lambda p: 2
+    )
+    assert clips == []
+    assert (
+        prune_completed_audio_files(
+            spool_root=spool, now=now, min_age_seconds=1, max_retained_files=0
+        )
+        == 0
+    )
+    assert old.exists()

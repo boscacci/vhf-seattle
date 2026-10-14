@@ -151,6 +151,7 @@ def test_proxy_lists_live_channels_without_upstream_urls() -> None:
         "channels": [
             {
                 "channel": "13",
+                "recorded": True,
                 "label": "Bridge-to-bridge",
                 "frequencyMhz": "156.650",
                 "streamPath": "/api/live/13/current.mp3",
@@ -158,6 +159,7 @@ def test_proxy_lists_live_channels_without_upstream_urls() -> None:
             },
             {
                 "channel": "14",
+                "recorded": True,
                 "label": "VTS / Seattle Traffic",
                 "frequencyMhz": "156.700",
                 "streamPath": "/api/live/14/current.mp3",
@@ -177,6 +179,7 @@ def test_proxy_default_live_channels_include_distress_calling_mount() -> None:
     channels = {channel["channel"]: channel for channel in response.json()["channels"]}
     assert channels["16"] == {
         "channel": "16",
+        "recorded": True,
         "label": "Distress / Calling",
         "frequencyMhz": "156.800",
         "streamPath": "/api/live/16/current.mp3",
@@ -192,9 +195,11 @@ def test_proxy_default_live_channels_match_balanced_voice_net_mounts() -> None:
 
     assert response.status_code == 200
     channels = {channel["channel"]: channel for channel in response.json()["channels"]}
-    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS, LIVE_STREAM_CHANNELS
 
-    assert set(channels) == set(ACTIVE_CAPTURE_CHANNELS)
+    assert set(channels) == set(LIVE_STREAM_CHANNELS)
+    assert {c for c, row in channels.items() if row["recorded"]} == set(ACTIVE_CAPTURE_CHANNELS)
+    assert not channels["06"]["recorded"]
     assert channels["14"]["streamPath"] == "/api/live/14/current.mp3"
     assert channels["66A"]["frequencyMhz"] == "156.325"
     assert channels["78A"]["statusPath"] == "/api/live/78A/status"
@@ -1726,20 +1731,32 @@ async def _wait_for_event(event: threading.Event, *, timeout: float) -> bool:
 def test_dev_analysis_cache_is_independent_of_production_generated_assets(tmp_path):
     import json
 
-    production = tmp_path / 'production'
-    dev = tmp_path / 'dev'
-    for root, channel in [(production, '74'), (dev, '14')]:
-        (root / 'analysis').mkdir(parents=True)
-        (root / 'analysis/lexical.json').write_text(json.dumps({
-            'status': 'ok', 'channels': {channel: 2}, 'source_clip_count': 2,
-        }))
+    production = tmp_path / "production"
+    dev = tmp_path / "dev"
+    for root, channel in [(production, "74"), (dev, "14")]:
+        (root / "analysis").mkdir(parents=True)
+        (root / "analysis/lexical.json").write_text(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "channels": {channel: 2},
+                    "source_clip_count": 2,
+                }
+            )
+        )
     app = create_app(ProxySettings(public_site_dir=str(production), analysis_site_dir=str(dev)))
-    response = _run(_asgi_get(app, '/api/analysis/lexical', follow_redirects=True))
-    assert response.json()['source_clip_count'] == 2
-    assert response.json()['channels'] == {'14': 2}
-    assert json.loads((production / 'analysis/lexical.json').read_text())['channels'] == {'74': 2}
-    (production / 'analysis/lexical.json').write_text(json.dumps({
-        'status': 'ok', 'channels': {'14': 5}, 'source_clip_count': 5,
-    }))
-    response = _run(_asgi_get(app, '/analysis/lexical.json'))
-    assert response.json()['source_clip_count'] == 5
+    response = _run(_asgi_get(app, "/api/analysis/lexical", follow_redirects=True))
+    assert response.json()["source_clip_count"] == 2
+    assert response.json()["channels"] == {"14": 2}
+    assert json.loads((production / "analysis/lexical.json").read_text())["channels"] == {"74": 2}
+    (production / "analysis/lexical.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "channels": {"14": 5},
+                "source_clip_count": 5,
+            }
+        )
+    )
+    response = _run(_asgi_get(app, "/analysis/lexical.json"))
+    assert response.json()["source_clip_count"] == 5

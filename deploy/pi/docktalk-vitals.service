@@ -1,0 +1,13 @@
+[Unit]
+Description=DockTalk basic node health report
+After=network-online.target
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/talkingboats/docktalk/current
+ExecStart=/usr/bin/python3 -u -m talkingboats.docktalk vitals
+TimeoutStartSec=60
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=128M

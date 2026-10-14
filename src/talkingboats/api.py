@@ -24,7 +24,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from talkingboats.asr_feedback import Correction, Corrections, DynamoCorrections, RevisionConflict
-from talkingboats.channel_metadata import channel_label, public_monitored_channel_labels
+from talkingboats.channel_metadata import (
+    ACTIVE_CAPTURE_CHANNELS,
+    channel_label,
+    public_monitored_channel_labels,
+)
 from talkingboats.clip_quality import (
     QualityFilter,
     is_quality_visible,
@@ -130,10 +134,16 @@ app = FastAPI(
 
 SHARED_UI_DIR = FilePath(__file__).resolve().parents[2] / "public-site"
 PUBLISHED_LEXICAL_PATH = (
-    FilePath(os.getenv("TALKINGBOATS_ANALYSIS_SITE_DIR", os.getenv(
-        "TALKINGBOATS_PUBLIC_SITE_DIR",
-        str(FilePath(__file__).resolve().parents[2] / "outputs/public-site"),
-    ))) / "analysis/lexical.json"
+    FilePath(
+        os.getenv(
+            "TALKINGBOATS_ANALYSIS_SITE_DIR",
+            os.getenv(
+                "TALKINGBOATS_PUBLIC_SITE_DIR",
+                str(FilePath(__file__).resolve().parents[2] / "outputs/public-site"),
+            ),
+        )
+    )
+    / "analysis/lexical.json"
 )
 PUBLISHED_SEARCH_INDEX_PATH = (
     FilePath(
@@ -254,6 +264,10 @@ async def presign_clip_upload(
 
     if request.channel not in ACTIVE_CAPTURE_CHANNELS:
         raise HTTPException(status_code=422, detail="channel is not actively monitored")
+    from talkingboats.recording_policy import eligible
+
+    if not eligible(request.channel, request.started_at.isoformat()):
+        raise HTTPException(status_code=422, detail="recording predates channel activation")
     try:
         key, upload_url = storage.presign_raw_upload(request)
     except RuntimeError as exc:
@@ -1071,6 +1085,7 @@ async def list_live_channels(
                 label=channel.label,
                 frequency_mhz=channel.frequency_mhz,
                 enabled=channel.enabled,
+                recorded=channel.channel in ACTIVE_CAPTURE_CHANNELS,
             )
             for channel in settings.live_channels.values()
         ]
@@ -1225,13 +1240,10 @@ def save_correction(
 def transcription_backlog(clip_store: Annotated[Any, Depends(get_clip_store)]):
     from talkingboats.asr_experiments import root
     from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+    from talkingboats.recording_policy import indexes_ready
     from talkingboats.transcription_backlog import backlog_history
 
-    checkpoint = root() / "queue-index-cutover.json"
-    progress = json.loads(checkpoint.read_text()) if checkpoint.is_file() else {}
-    ready = progress.get("status_index") == 3 and progress.get("channels") == list(
-        ACTIVE_CAPTURE_CHANNELS
-    )
+    ready = indexes_ready(root())
     return backlog_history(
         clip_store, ACTIVE_CAPTURE_CHANNELS, root().parent / "telemetry", indexed_channels=ready
     )

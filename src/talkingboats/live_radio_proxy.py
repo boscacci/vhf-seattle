@@ -29,7 +29,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from talkingboats.audio_dsp import build_ffmpeg_dsp_command, dsp_profile_for_name
-from talkingboats.channel_metadata import CHANNEL_METADATA, VOICE_NET_BALANCED_CHANNELS
+from talkingboats.channel_metadata import (
+    ACTIVE_CAPTURE_CHANNELS,
+    CHANNEL_METADATA,
+    LIVE_STREAM_CHANNELS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STATIC_SHELL_DIR = REPO_ROOT / "public-site"
@@ -378,7 +382,7 @@ DEFAULT_CHANNELS = tuple(
         frequency_hz=metadata.frequency_hz,
         description=_CHANNEL_DESCRIPTIONS[channel],
     )
-    for channel in VOICE_NET_BALANCED_CHANNELS
+    for channel in LIVE_STREAM_CHANNELS
     if (metadata := CHANNEL_METADATA.get(channel)) is not None
 )
 
@@ -386,7 +390,7 @@ DEFAULT_CHANNELS = tuple(
 def _default_channel_stream_urls() -> dict[str, tuple[str, ...]]:
     channels = {
         channel: (f"http://192.168.1.114:8000/talkingboats-{channel.lower()}.mp3",)
-        for channel in VOICE_NET_BALANCED_CHANNELS
+        for channel in LIVE_STREAM_CHANNELS
     }
     channels["14"] = (
         "http://192.168.1.114:8000/talkingboats-live.mp3",
@@ -1027,6 +1031,7 @@ def create_app(
             return {
                 "activeChannelId": preset.id,
                 "channel": preset.channel,
+                "recorded": preset.channel in ACTIVE_CAPTURE_CHANNELS,
                 "label": preset.label,
                 "frequencyMhz": preset.frequency_mhz,
                 "restartedTranscriber": result.restarted_transcriber,
@@ -1155,6 +1160,7 @@ def _public_live_channels(settings: ProxySettings) -> list[dict[str, str]]:
         channels.append(
             {
                 "channel": preset.channel,
+                "recorded": preset.channel in ACTIVE_CAPTURE_CHANNELS,
                 "label": preset.label,
                 "frequencyMhz": preset.frequency_mhz,
                 "streamPath": f"/api/live/{preset.channel}/current.mp3",

@@ -1,0 +1,14 @@
+[Unit]
+Description=DockTalk reception watchdog
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/talkingboats/docktalk/current
+ExecStart=/usr/bin/python3 -u -m talkingboats.docktalk watchdog
+TimeoutStartSec=60
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=128M

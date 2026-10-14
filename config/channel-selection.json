@@ -2548,7 +2548,8 @@
     "16",
     "66A",
     "78A",
-    "71"
+    "71",
+    "22A"
   ],
   "turbo_capacity_passed": false,
   "serving_model": "large-v3-turbo",
@@ -2573,5 +2574,51 @@
       "2026-10-07T01:00:00+00:00"
     ],
     "caveat": "Sample-based forecast starts with an empty queue; excludes existing backlog, startup, other host load, and hourly invocation/clip-limit overhead."
+  },
+  "live_only_channels": [
+    "05A",
+    "06",
+    "09",
+    "10",
+    "65A",
+    "67",
+    "68",
+    "69",
+    "72",
+    "73",
+    "77"
+  ],
+  "policy_note": "Operator requested eighteen live channels and seven recorded channels, adding new 22A recordings without historical bulk processing. Original six-channel capacity audit remains historical evidence.",
+  "forecast_channels": [
+    "14",
+    "13",
+    "16",
+    "66A",
+    "78A",
+    "71"
+  ],
+  "recording_extension_benchmark": {
+    "channel": "22A",
+    "clips": 10,
+    "audio_seconds": 73.25824999999999,
+    "elapsed_seconds": 59.18603175404132,
+    "cpu_threads": 6,
+    "workers": 1,
+    "beam_size": 5,
+    "vad_filter": false,
+    "condition_on_previous_text": false,
+    "sample_hashes": [
+      "9c4afdc6dd36ec84ded679122313bcb87172d34cc27e8b6f7351f74686b5c722",
+      "e9720e6bdb9a57a9395373fc8d03ca56eb0e8455fcd406553ed58fdbdb544a61",
+      "99818ffe1fe85476235495e45575ac615849211adae25700eef2c08b30eaa982",
+      "39365bf4825887e1c49e1a67024689127622c421ed980b453fd2c73cef077877",
+      "26c1e9fa528b616d736ebe15fff845e6cbe22f56b943d4e62f81d051541b9597",
+      "fa25010dab87dc0df098cee25ada8fef82edb9c5f06a0c0b3215e78e372cd1f0",
+      "163f92b6b71c8d20120cb683ce63148419479f3241fbab8d6fdce3fdb2f4f302",
+      "c85a597066150b5905a3fa456275665c2c114287869f752a905a4f147e6dde56",
+      "b0cc5c33d989a1a2d5beabf836599e9034801e12bd6b337d3cf8f4892c97b218",
+      "115b4510bac07caccc7750e394011604fe2fcde898db44966403a4203617d5b9"
+    ],
+    "note": "Warmed full-audio diagnostic on shared host; no production transcript writes."
   }
 }

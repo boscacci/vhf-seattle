@@ -52,6 +52,7 @@ values = {
     "TALKINGBOATS_ASR_FEEDBACK_ENABLED": "true",
     "TALKINGBOATS_ASR_FEEDBACK_TABLE": api["TALKINGBOATS_DURABLE_EVENTS_TABLE"],
     "TALKINGBOATS_ASR_OUTPUT_DIR": str(root / "feedback"),
+    "TALKINGBOATS_RECORDING_ACTIVATIONS_FILE": str(root / "feedback/channel-activations.json"),
     "TALKINGBOATS_ASR_MODEL_CACHE": str(root / "models"),
     "HF_HOME": str(root / "models"),
     "TMPDIR": str(root / "tmp"),

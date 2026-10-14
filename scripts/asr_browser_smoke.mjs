@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { execFileSync } from "node:child_process";
 const { chromium } = createRequire(path.join(process.env.TALKINGBOATS_BROWSER_DEPENDENCY_ROOT || process.cwd(), "package.json"))("playwright");
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,10 +16,13 @@ page.on("pageerror", (error) => errors.push(error.message));
 try {
   const channelsResponse = await page.request.get(`${base}/api/live/channels`);
   assert.equal(channelsResponse.status(), 200);
-  const channels = (await channelsResponse.json()).channels.map((row) => row.channel);
+  const channelRows = (await channelsResponse.json()).channels;
+  const channels = channelRows.map((row) => row.channel);
+  const recorded = ["14", "13", "16", "66A", "78A", "71", "22A"];
+  assert.deepEqual(channelRows.filter(row => row.recorded).map(row => row.channel).sort(), [...recorded].sort());
   assert(channels.includes("14") && channels.includes("13") && channels.includes("16"));
   assert(!channels.includes("74"));
-  assert([6, 8].includes(channels.length));
+  assert.equal(channels.length, 18);
   const forbidden = await page.request.get(`${base}/api/clips/recent?channels=74&quality=all&include_playback_url=false`);
   assert.deepEqual((await forbidden.json()).clips, []);
   const analysisResponse = await page.request.get(`${base}/api/analysis/lexical`);
@@ -59,9 +63,21 @@ try {
     assert(!geometry.overflow, 'Performance charts must not overflow mobile width');
   }
 
+  // Additional Pi channels activate only at the approved shared production cutover.
+  // Isolate their browser streams while still reading the existing six real feeds.
+  const addedChannels = channels.filter(channel => !["14", "13", "16", "66A", "78A", "71"].includes(channel));
+  const silence = execFileSync(process.env.TALKINGBOATS_ASR_SMOKE_FFMPEG || "ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "2", "-f", "mp3", "pipe:1"]);
+  for (const channel of addedChannels) {
+    const row = channelRows.find(row => row.channel === channel);
+    await page.route(`**/api/live/${channel}/current.mp3*`, route => route.fulfill({ body: silence, contentType: "audio/mpeg" }));
+    await page.route(`**/api/live/${channel}/status*`, route => route.fulfill({ json: {
+      channel, activeChannelId: `vhf_${channel.toLowerCase()}`, label: row.label,
+      frequencyMhz: row.frequencyMhz, streamDelaySeconds: { minimum: 2, maximum: 10 },
+    } }));
+  }
   await Promise.all(channels.map(async (channel) => {
-    const response = await page.request.get(`${base}/api/live/${channel}/status`);
-    assert.equal(response.status(), 200);
+    const status = await page.evaluate(async channel => (await fetch(`/api/live/${channel}/status`)).status, channel);
+    assert.equal(status, 200);
     const live = await page.evaluate(async (channelNumber) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 10000);
@@ -76,6 +92,28 @@ try {
     assert.equal(live.status, 200);
     assert(live.bytes > 0, `Live feed ${channel} must deliver audio`);
   }));
+  await page.goto(`${base}/live/`, { waitUntil: "domcontentloaded" });
+  await page.locator(".live-advanced-channel-selector > summary").click();
+  await page.waitForFunction(() => document.querySelectorAll("#live-channel-picker .live-channel-option").length === 18);
+  assert.equal(await page.locator("#live-channel-picker .live-channel-option", { hasText: "Live only" }).count(), 11);
+  await page.locator('#live-channel-picker [data-channel="06"]').click();
+  await page.locator("#live-last-communication", { hasText: "Live only · no saved clips" }).waitFor();
+  const fixtureAudioResponse = page.waitForResponse(response => response.url().includes("/api/live/06/current.mp3") && response.status() === 200);
+  await page.locator("#play-live").click();
+  await fixtureAudioResponse;
+  await page.locator("#play-live").click();
+  let queuedChannels = [];
+  await page.route("**/api/clips/recent?*", route => {
+    queuedChannels = new URL(route.request().url()).searchParams.getAll("channels");
+    return route.fulfill({ json: { clips: [], next_cursor: null, clip_count: 0, counts_deferred: true } });
+  });
+  await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All recorded channels" }).click();
+  await page.waitForFunction(() => document.querySelector('#live-last-communication')?.textContent?.startsWith("Queue:"));
+  await page.locator("#play-live").click();
+  await page.waitForTimeout(300);
+  assert.deepEqual([...queuedChannels].sort(), [...recorded].sort());
+  await page.unroute("**/api/clips/recent?*");
+  await page.goto(`${base}/performance/`, { waitUntil: "domcontentloaded" });
   const actualPerformance = await (await page.request.get(`${base}/api/live/performance`)).json();
   await page.route("**/api/live/performance", async route => route.fulfill({ json: {
     ...actualPerformance, transcriptionBacklog: { status: "ok", queued_clips: 800,

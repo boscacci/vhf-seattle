@@ -853,11 +853,13 @@ class FakeDynamoTable:
         pk = values[":pk"]
         sk_prefix = values.get(":sk_prefix")
         sk_bound = values.get(":sk_bound")
+        sk_since = values.get(":sk_since")
         key_condition = kwargs["KeyConditionExpression"]
         rows = [
             item
             for (item_pk, item_sk), item in self.items.items()
             if item_pk == pk
+            and (sk_since is None or item_sk >= sk_since)
             and (sk_prefix is None or item_sk.startswith(sk_prefix))
             and (sk_bound is None or "sk <= :sk_bound" not in key_condition or item_sk <= sk_bound)
             and (sk_bound is None or "sk >= :sk_bound" not in key_condition or item_sk >= sk_bound)
@@ -981,3 +983,27 @@ def test_missing_uploads_do_not_block_ready_clips_and_keep_retry_slot():
     rows = store.pending_uploads(limit=5, allowed_channels=("14",))
     assert "raw/channel=14/5.mp3" in [row.key for row in rows]
     assert any(row.status == "waiting_upload" for row in rows)
+
+
+def test_22a_queue_does_not_read_old_backlog_after_activation(tmp_path, monkeypatch):
+    import json
+
+    path = tmp_path / "activation.json"
+    path.write_text(json.dumps({"22A": "2026-06-01T12:00:00Z"}))
+    monkeypatch.setenv("TALKINGBOATS_RECORDING_ACTIVATIONS_FILE", str(path))
+    table = FakeDynamoTable()
+    store = DynamoUploadedClipStore(
+        DynamoClipStoreConfig("events", "us-west-2"), table=table, event_store=CapturingEventStore()
+    )
+    for hour in [10, 11, 12, 13]:
+        store.record_presigned_upload(
+            key=f"raw/channel=22A/{hour}.mp3",
+            request=_request(channel="22A").model_copy(
+                update={"started_at": datetime(2026, 6, 1, hour, tzinfo=UTC)}
+            ),
+        )
+    rows = store.pending_uploads(limit=1, allowed_channels=("22A",))
+    assert rows[0].key.endswith("12.mp3")
+    assert table.query_calls[-1]["ExpressionAttributeValues"][":sk_since"] == "2026-06-01T12:00:00"
+    assert store.active_queue_oldest(("22A",)) == "2026-06-01T12:00:00Z"
+    assert store.get_clip("raw/channel=22A/10.mp3").status == "pending"

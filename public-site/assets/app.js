@@ -11,7 +11,8 @@ const tailnetAppHost = window.location.hostname.endsWith(tailnetHostSuffix);
 const privateAppHost = localAppHost || tailnetAppHost || devAppHost;
 const quarantineClipLaneEnabled = privateAppHost;
 const asrFeedbackEnabled = privateAppHost;
-const activeRadioChannels = new Set(["14", "13", "16", "66A", "78A", "71"]);
+const recordedRadioChannels = new Set(["14", "13", "16", "66A", "78A", "71", "22A"]);
+const activeRadioChannels = new Set(["05A", "06", "09", "10", "13", "14", "16", "22A", "65A", "66A", "67", "68", "69", "71", "72", "73", "77", "78A"]);
 const systemDashboardEnabled = devAppHost || localAppHost || tailnetAppHost;
 const privateApiBaseUrl = "";
 const publicLiveApiTimeoutMs = 8000;
@@ -1406,7 +1407,7 @@ function payloadWithRetainedClipStats(payload, previousPayload) {
 }
 
 function normalizeCachedRecentClipPayload(payload) {
-  const clips = (Array.isArray(payload.clips) ? payload.clips : []).filter((clip) => clip.channel !== "74");
+  const clips = (Array.isArray(payload.clips) ? payload.clips : []).filter((clip) => recordedRadioChannels.has(clip.channel));
   if (!clips.length) {
     return null;
   }
@@ -2901,6 +2902,7 @@ function normalizeLiveChannels(channels) {
       frequencyMhz: channel.frequencyMhz || "",
       streamPath: channel.streamPath || "",
       statusPath: channel.statusPath || "",
+      recorded: channel.recorded ?? recordedRadioChannels.has(String(channel.channel || "").toUpperCase()),
     }))
     .filter((channel) => activeRadioChannels.has(channel.channel) && channel.label);
 }
@@ -2922,7 +2924,7 @@ function renderLiveChannelPicker() {
 function everythingChannelOption() {
   return {
     channel: everythingLiveChannel,
-    label: "Everything",
+    label: "All recorded channels",
     frequencyMhz: "",
     streamPath: "",
     statusPath: "",
@@ -2932,7 +2934,7 @@ function everythingChannelOption() {
 function allButTrafficChannelOption() {
   return {
     channel: allButTrafficLiveChannel,
-    label: "All but Traffic",
+    label: "Recorded except Traffic",
     frequencyMhz: "",
     streamPath: "",
     statusPath: "",
@@ -2947,12 +2949,12 @@ function liveChannelOptionButton(channel, { primary = false } = {}) {
   button.classList.toggle("is-everything", channel.channel === everythingLiveChannel);
   button.classList.toggle("is-primary", primary);
   button.dataset.channel = channel.channel;
-  button.textContent = channelLabel(channel.channel);
+  button.textContent = channelLabel(channel.channel) + (channel.recorded === false ? " · Live only" : "");
   button.title =
     channel.channel === everythingLiveChannel
-      ? "Queue transmissions from all monitored live channels"
+      ? "Queue transmissions from all recorded channels"
       : channel.channel === allButTrafficLiveChannel
-        ? "Queue monitored live channels except Seattle Traffic on VHF 14"
+        ? "Queue recorded channels except Seattle Traffic on VHF 14"
       : channelLabel(channel.channel);
   button.setAttribute("aria-pressed", String(channel.channel === selectedLiveChannel));
   button.addEventListener("click", () => selectLiveChannel(channel.channel));
@@ -5480,7 +5482,7 @@ async function connectEverythingLive() {
       await playNextEverythingQueueClip({ queueGeneration, queueChannel });
     }
   } catch {
-    liveStatus.textContent = "Everything queue waiting";
+    liveStatus.textContent = "Recorded queue waiting";
   } finally {
     renderEverythingQueuePanel();
     updateLiveMediaSession(everythingQueueEnabled ? "playing" : "paused");
@@ -5616,6 +5618,10 @@ async function pollLiveActivity() {
       await pollEverythingQueue({ signal: liveActivityAbortController.signal });
       return;
     }
+    if (findLiveChannel(selectedLiveChannel).recorded === false) {
+      delete lastCommunicationByChannel[selectedLiveChannel];
+      return;
+    }
     const response = await fetch(lastCommunicationUrl(), {
       cache: "no-store",
       signal: liveActivityAbortController.signal,
@@ -5717,7 +5723,7 @@ function liveQueueRequestUrl() {
 }
 
 function queueChannelsForMode() {
-  return [];
+  return [...recordedRadioChannels];
 }
 
 function excludedQueueChannelsForMode() {
@@ -6003,6 +6009,11 @@ function renderLiveTelemetry() {
           : "Queue: ready";
     liveLatency.textContent = formatEverythingQueueDelay(activeClip);
     renderEverythingQueuePanel();
+    return;
+  }
+  if (findLiveChannel(selectedLiveChannel).recorded === false) {
+    liveLastCommunication.textContent = "Live only · no saved clips";
+    liveLatency.textContent = formatLiveLatency(latestLiveStatus?.streamDelaySeconds);
     return;
   }
   const clip = lastCommunicationByChannel[selectedLiveChannel];
@@ -6421,10 +6432,10 @@ function titleForClip(clip) {
 
 function channelLabel(channel) {
   if (String(channel || "").toLowerCase() === everythingLiveChannel) {
-    return "Everything";
+    return "All recorded channels";
   }
   if (String(channel || "").toLowerCase() === allButTrafficLiveChannel) {
-    return "All but Traffic";
+    return "Recorded except Traffic";
   }
   const channelText = `VHF ${channel || "?"}`;
   const label = currentChannelLabels[channel] || "";

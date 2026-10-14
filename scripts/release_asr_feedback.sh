@@ -22,7 +22,7 @@ if [[ "${action}" == build ]]; then
   [[ -f "${repo_root}/config/channel-selection.json" ]] || exit 2
   install -d -m 0755 "${candidate}"
   if [[ ! -f "${artifact}" ]]; then
-    git -C "${repo_root}" archive --format=tar "${commit}" | gzip -n > "${artifact}.pending"
+    "${HOME}/miniforge3/envs/dell/bin/python" "${repo_root}/scripts/build_docktalk_artifact.py" "${repo_root}" "${commit}" "${artifact}.pending"
     mv "${artifact}.pending" "${artifact}"
     sha256sum "${artifact}" | awk '{print $1}' > "${candidate}/artifact.sha256"
     printf '%s\n' "${commit}" > "${candidate}/release-commit"
@@ -44,6 +44,7 @@ fi
 if [[ "${action}" == prod ]]; then
   "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/verify_asr_approval.py" \
     "${approval_file}" "${release_tag}" "${commit}" "${digest}" "${candidate}/dev-smoke.json"
+  [[ -f "${HOME}/.config/talkingboats/docktalk-claim" && $(stat -c '%a' "${HOME}/.config/talkingboats/docktalk-claim") == 600 ]] || { echo 'Private DockTalk enrollment file is required.' >&2; exit 2; }
   [[ $(getconf _NPROCESSORS_ONLN) == 8 ]] || { echo 'Continuous six-thread policy requires the eight-core OptiPlex.' >&2; exit 2; }
   git -C "${repo_root}" merge-base --is-ancestor "${commit}" origin/main || {
     echo 'Production tag must select an accepted, dev-tested default-branch commit.' >&2; exit 2;
@@ -114,7 +115,7 @@ EOF
   systemctl --user daemon-reload
   systemctl --user restart talkingboats-api-dev.service talkingboats-live-radio-proxy.service
   curl --fail --silent --show-error --retry 20 --retry-delay 1 --retry-connrefused http://127.0.0.1:8035/healthz >/dev/null
-  TALKINGBOATS_BROWSER_DEPENDENCY_ROOT="${repo_root}" node "${release_root}/scripts/asr_browser_smoke.mjs"
+  TALKINGBOATS_ASR_SMOKE_FFMPEG="${HOME}/miniforge3/envs/dell/bin/ffmpeg" TALKINGBOATS_BROWSER_DEPENDENCY_ROOT="${repo_root}" node "${release_root}/scripts/asr_browser_smoke.mjs"
   printf '{"commit":"%s","artifact_sha256":"%s","dev_playwright_passed":true,"tested_at":"%s"}\n' \
     "${commit}" "${digest}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${candidate}/dev-smoke.json"
   trap - ERR
@@ -163,10 +164,18 @@ else
     [[ "${timer_was_active}" != active ]] || systemctl --user start talkingboats-uploaded-clip-transcriber.timer
     "${release_root}/scripts/deploy_asr_receiver.sh" "${release_root}" "${commit}" "${digest}" rollback || true
     systemctl --user restart talkingboats-api.service talkingboats-public-live-radio-proxy.service || true
+    "${release_root}/scripts/deploy_static_shell.sh" prod "${backup}/public-site" || true
     printf 'event=asr_release_rollback environment=prod commit=%s require_static_cache_check=true\n' "${commit}" >&2
   }
   trap rollback_prod ERR
   systemctl --user stop talkingboats-uploaded-clip-transcriber.timer talkingboats-uploaded-clip-transcriber.service
+  TALKINGBOATS_ASR_RELEASE_ROOT="${release_root}" PYTHONPATH="${release_root}/src" "${HOME}/miniforge3/envs/dell/bin/python" - <<'PYCODE'
+import os,runpy
+from pathlib import Path
+values=dict(line.partition('=')[::2] for line in (Path.home()/'.config/talkingboats/asr.env').read_text().splitlines())
+os.environ.update(values)
+runpy.run_path(str(Path(os.environ['TALKINGBOATS_ASR_RELEASE_ROOT'])/'scripts/activate_recording_policy.py'),run_name='__main__')
+PYCODE
   for part in src scripts config public-site; do
     install -d -m 0755 "${runtime}/${part}"
     cp -a "${release_root}/${part}/." "${runtime}/${part}/"
@@ -187,7 +196,8 @@ values = dict(line.partition("=")[::2] for line in (Path.home()/".config/talking
 os.environ.update(values)
 import boto3
 from talkingboats.queue_channel_indexes import seed_indexes
-result = seed_indexes(boto3.resource("dynamodb", region_name="us-west-2").Table(values["TALKINGBOATS_ASR_FEEDBACK_TABLE"]), Path(values["TALKINGBOATS_ASR_OUTPUT_DIR"])/"queue-index-cutover.json")
+from talkingboats.recording_policy import queue_checkpoint
+result = seed_indexes(boto3.resource("dynamodb", region_name="us-west-2").Table(values["TALKINGBOATS_ASR_FEEDBACK_TABLE"]), queue_checkpoint(Path(values["TALKINGBOATS_ASR_OUTPUT_DIR"])))
 print("event=asr_queue_index_cutover complete=" + str(result["complete"]).lower())
 if not result["complete"]:
     raise SystemExit("bounded cutover paused; retry the same approved artifact to resume")
@@ -221,6 +231,8 @@ path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps({"commit": values["TALKINGBOATS_ASR_RELEASE_COMMIT"], "serving_model": values["TALKINGBOATS_ACTIVE_ASR_MODEL"]}))
 path.chmod(0o600)
 PYCODE
+  TALKINGBOATS_BROWSER_DEPENDENCY_ROOT="${repo_root}" node "${release_root}/scripts/docktalk_browser_smoke.mjs"
+  "${HOME}/miniforge3/envs/dell/bin/python" "${release_root}/scripts/verify_docktalk_release.py" --output "${release_root}/docktalk-soak.json"
   trap - ERR
 fi
 printf 'event=asr_release_deployed environment=%s commit=%s digest=%s\n' "${action}" "${commit}" "${digest}"

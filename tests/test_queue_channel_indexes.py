@@ -13,7 +13,12 @@ class Table:
         status = kwargs["ExpressionAttributeValues"][":pk"].split("#")[1]
         return {
             "Items": [
-                {"pk": "clip_status#" + status, "sk": channel, "channel": channel}
+                {
+                    "pk": "clip_status#" + status,
+                    "sk": channel,
+                    "channel": channel,
+                    "started_at": "2026-06-01T00:00:00Z",
+                }
                 for channel in ["14", "74", "68"]
             ],
             "ConsumedCapacity": {"CapacityUnits": 256},
@@ -37,7 +42,14 @@ def test_index_cutover_preserves_retained_pending_work_without_mutating_excluded
     checkpoint = tmp_path / "progress.json"
     first = seed_indexes(table, checkpoint, max_units=256)
     assert not first["complete"]
-    assert table.writes == [{"pk": "clip_status#pending#channel#14", "sk": "14", "channel": "14"}]
+    assert table.writes == [
+        {
+            "pk": "clip_status#pending#channel#14",
+            "sk": "14",
+            "channel": "14",
+            "started_at": "2026-06-01T00:00:00Z",
+        }
+    ]
     resumed = seed_indexes(table, checkpoint)
     assert resumed["complete"]
     assert len(table.writes) == 3
