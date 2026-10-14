@@ -405,8 +405,11 @@
             <section class="about-card">
               <h3>Radio Edge</h3>
               <p>
-                An RTL-SDR monitors marine VHF voice traffic around Elliott Bay, with VHF 14 as the
-                default Seattle Traffic feed.
+                An RTL-SDR monitors marine VHF voice traffic around Elliott Bay using
+                <a href="https://github.com/rtl-airband/RTLSDR-Airband" target="_blank" rel="noopener">RTLSDR-Airband</a>.
+                Channel 14 is the default Seattle Traffic feed; see the
+                <a href="https://www.navcen.uscg.gov/us-vhf-channel-information" target="_blank" rel="noopener">U.S. Coast Guard VHF channel guide</a>
+                for channel uses.
               </p>
             </section>
             <section class="about-card">
@@ -419,28 +422,41 @@
                 who generously mailed one over for this project. Thank you to the wider
                 <a href="https://www.aiscatcher.org/" target="_blank" rel="noopener">AIS-catcher community</a>: its
                 maintainers, contributors, and receiver operators make this open-source vessel map possible.
+                Learn more about the
+                <a href="https://www.aiscatcher.org/about" target="_blank" rel="noopener">AIS-catcher project</a>
+                or follow its
+                <a href="https://www.aiscatcher.org/quickstart" target="_blank" rel="noopener">station setup guide</a>.
               </p>
             </section>
             <section class="about-card">
               <h3>DockTalk</h3>
               <p>
-                Our Elliott Bay receiver serves as a DockTalk node, sharing eighteen live maritime VHF
-                channels with the network. Thanks to Michael Donovan and the DockTalk community for
-                connecting local receivers and making more coastal radio traffic available.
+                Our Elliott Bay receiver serves as a
+                <a href="https://www.docktalk.app/" target="_blank" rel="noopener">DockTalk node</a>,
+                sharing eighteen live maritime VHF channels with the network. Thanks to Michael Donovan
+                and the DockTalk community for connecting local receivers and making more coastal radio
+                traffic available.
               </p>
             </section>
             <section class="about-card">
               <h3>Processing</h3>
               <p>
                 The Ubuntu micro-computer private API handles uploads, transcription, and public exports for maritime
-                radio audio. This release selects Whisper Large V3 Turbo (large-v3-turbo) through CTranslate2/faster-whisper, with one shared six-thread worker for both deployments. Nine channels are recorded and transcribed continuously as clips arrive; nine more are live only. Temporary peak-hour delays can catch up during quieter periods.
+                radio audio. Transcription uses
+                <a href="https://huggingface.co/openai/whisper-large-v3-turbo" target="_blank" rel="noopener">Whisper Large V3 Turbo</a>
+                with the
+                <a href="https://github.com/SYSTRAN/faster-whisper" target="_blank" rel="noopener">CTranslate2/faster-whisper</a>
+                engine and one shared six-thread worker for both deployments. Nine channels are recorded
+                and transcribed continuously as clips arrive; nine more are live only. Temporary peak-hour
+                delays can catch up during quieter periods.
               </p>
             </section>
             <section class="about-card">
               <h3>Public App</h3>
               <p>
-                The browser experience focuses on clip review, semantic search, AIS maps, public system performance,
-                and analysis views that make receiver traffic easier to explore.
+                Explore recent <a href="/clips/">clips</a>, use <a href="/search/">transcript search</a>, view the
+                <a href="/ais/">AIS map</a>, check <a href="/performance/">system performance</a>,
+                or browse <a href="/analysis/">radio traffic analysis</a>.
               </p>
             </section>
           </div>
