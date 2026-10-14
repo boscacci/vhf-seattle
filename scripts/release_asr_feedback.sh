@@ -49,6 +49,8 @@ if [[ "${action}" == prod ]]; then
   git -C "${repo_root}" merge-base --is-ancestor "${commit}" origin/main || {
     echo 'Production tag must select an accepted, dev-tested default-branch commit.' >&2; exit 2;
   }
+  PYTHONPATH="${release_root}/src" "${HOME}/miniforge3/envs/dell/bin/python" -m talkingboats.docktalk \
+    preflight --claim-file "${HOME}/.config/talkingboats/docktalk-claim"
 fi
 state_root="${HOME}/.config/talkingboats"
 install -d -m 0700 "${state_root}"

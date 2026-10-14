@@ -98,3 +98,17 @@ during quieter periods; this extension does not claim the old peak-capacity gate
 has passed. Retried activation preserves existing timestamps and adds only missing
 channel boundaries. The About page acknowledges DockTalk and the wider AIS-catcher
 community, and Performance presents queue status in a single backlog chart.
+
+## Registration recovery and deployment preflight
+
+The alongside claim response may include a literal `PORT_ID`. It is validated as
+an identifier alongside the required node, label, token, and mode fields; unknown
+fields and executable shell remain rejected. The cached claim response stays
+private and is reused after interrupted provisioning, without a second claim.
+
+Before pausing shared services, production deployment reads DockTalk's channel
+plan and requires coverage for all eighteen approved frequencies. A six-channel
+server plan blocks deployment with the missing channel names in the operator log.
+The DockTalk operator must expand the server-side plan; client registration does
+not update that plan. Existing receiver and transcriber services remain running
+when preflight fails.
