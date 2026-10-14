@@ -1,0 +1,35 @@
+[Unit]
+Description=DockTalk outbound alongside audio relay
+After=network-online.target talkingboats-profile-capture.service icecast2.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=docktalk
+Group=docktalk
+Environment=PYTHONPATH=/opt/talkingboats/docktalk/current
+ExecStart=/usr/bin/python3 -u -m talkingboats.docktalk run
+Restart=always
+RestartSec=5
+KillMode=control-group
+RuntimeDirectory=docktalk
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
+CPUQuota=25%
+MemoryMax=512M
+Nice=10
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/docktalk
+InaccessiblePaths=/etc/talkingboats /opt/talkingboats/spool
+SocketBindDeny=any
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

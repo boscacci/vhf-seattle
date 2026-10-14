@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS, CHANNEL_METADATA
+from talkingboats.channel_metadata import CHANNEL_METADATA, LIVE_STREAM_CHANNELS
 
 DEFAULT_PUBLIC_AUDIO_EXPORT_LIMIT = 3000
 DEFAULT_PUBLIC_CLIP_EXPORT_LIMIT = 2500
@@ -75,7 +75,7 @@ class Settings:
                 channel: _live_channel_from_metadata(
                     channel, os.getenv(f"TALKINGBOATS_LIVE_{channel}_URL")
                 )
-                for channel in ACTIVE_CAPTURE_CHANNELS
+                for channel in LIVE_STREAM_CHANNELS
             },
         )
 

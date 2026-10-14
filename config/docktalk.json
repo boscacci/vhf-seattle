@@ -1,0 +1,9 @@
+{
+  "mode": "alongside",
+  "version": "2",
+  "installer_url": "https://docktalk-edge.fly.dev/install",
+  "installer_sha256": "e2cb3e0ab6f17aa6cd1b4c0bc12632e4d3ff28a1672116879efe6139d988e203",
+  "health_reports": true,
+  "cpu_quota_percent": 25,
+  "memory_max_mib": 512
+}

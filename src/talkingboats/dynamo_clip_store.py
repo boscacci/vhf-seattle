@@ -41,6 +41,7 @@ from talkingboats.durable_events import (
     stable_event_id,
     to_dynamodb_item,
 )
+from talkingboats.recording_policy import activation_boundaries, eligible
 from talkingboats.schemas import ClipPresignRequest
 
 CLIP_STATE_SK = "state"
@@ -223,13 +224,19 @@ class DynamoUploadedClipStore:
                 for channel in allowed_channels
             ]
         )
+        boundaries = activation_boundaries()
         for partition in partitions:
-            for item in self._query_items(partition, scan_forward=True, limit=limit):
+            channel = partition.rsplit("#channel#", 1)[-1]
+            since = boundaries.get(channel)
+            for item in self._query_items(
+                partition, scan_forward=True, limit=limit, sk_since=since
+            ):
                 state = self._state_item(str(item["key"]))
                 if (
                     state
                     and state.get("status") in statuses
                     and (allowed_channels is None or state.get("channel") in allowed_channels)
+                    and eligible(state["channel"], state["started_at"], boundaries)
                 ):
                     records.append(_record_from_state(state))
         return _fair_pending_records(records, limit)
@@ -241,10 +248,17 @@ class DynamoUploadedClipStore:
             for channel in channels
             for status in ("pending", "waiting_upload", "processing")
             for row in self._query_items(
-                f"clip_status#{status}#channel#{channel}", scan_forward=True, limit=1
+                f"clip_status#{status}#channel#{channel}",
+                scan_forward=True,
+                limit=1,
+                sk_since=activation_boundaries().get(channel),
             )
         ]
-        times = [str(row["started_at"]) for row in rows if row.get("started_at")]
+        times = [
+            str(row["started_at"])
+            for row in rows
+            if row.get("started_at") and eligible(row["channel"], row["started_at"])
+        ]
         return min(times) if times else None
 
     def active_queue_snapshot(self, channels, *, max_pages=30, indexed_channels=False):
@@ -263,13 +277,18 @@ class DynamoUploadedClipStore:
             if indexed_channels
             else [f"clip_status#{state}" for state in ("pending", "waiting_upload", "processing")]
         )
+        boundaries = activation_boundaries()
         for partition in partitions:
             cursor = None
+            channel = partition.rsplit("#channel#", 1)[-1]
+            expression = Key("pk").eq(partition)
+            if indexed_channels and channel in boundaries:
+                expression &= Key("sk").gte(boundaries[channel].rstrip("Z"))
             while True:
                 if pages >= max_pages or reads >= 200:
                     return {"complete": False, "queued_clips": count, "oldest_started_at": oldest}
                 args = {
-                    "KeyConditionExpression": Key("pk").eq(partition),
+                    "KeyConditionExpression": expression,
                     "FilterExpression": Attr("channel").is_in(list(channels)),
                     "ProjectionExpression": "channel, started_at",
                     "ConsistentRead": True,
@@ -281,7 +300,12 @@ class DynamoUploadedClipStore:
                 response = self.table.query(**args)
                 pages += 1
                 reads += float(response.get("ConsumedCapacity", {}).get("CapacityUnits", 0))
-                items = [r for r in response.get("Items", []) if r.get("channel") in channels]
+                items = [
+                    r
+                    for r in response.get("Items", [])
+                    if r.get("channel") in channels
+                    and eligible(r["channel"], r["started_at"], boundaries)
+                ]
                 count += len(items)
                 times = [str(r["started_at"]) for r in items if r.get("started_at")]
                 if times:
@@ -934,12 +958,16 @@ class DynamoUploadedClipStore:
         sk_prefix: str | None = None,
         scan_forward: bool = True,
         limit: int | None = None,
+        sk_since: str | None = None,
     ) -> list[dict[str, Any]]:
         expression = "pk = :pk"
         values: dict[str, Any] = {":pk": pk}
         if sk_prefix is not None:
             expression += " AND begins_with(sk, :sk_prefix)"
             values[":sk_prefix"] = sk_prefix
+        if sk_since is not None:
+            expression += " AND sk >= :sk_since"
+            values[":sk_since"] = sk_since.rstrip("Z")
         kwargs: dict[str, Any] = {
             "KeyConditionExpression": expression,
             "ExpressionAttributeValues": values,

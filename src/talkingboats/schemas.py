@@ -108,6 +108,7 @@ class ClipFeatureResponse(BaseModel):
 
 
 class LiveChannelResponse(BaseModel):
+    recorded: bool = True
     channel: str
     label: str
     frequency_mhz: float

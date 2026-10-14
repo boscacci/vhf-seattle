@@ -26,7 +26,7 @@ def recovery_forecast(selection: dict) -> dict:
     """Replay complete UTC hours at real-time capacity, grouped into Pacific days."""
     hourly = Counter()
     for row in selection["channels"]:
-        if row["channel"] not in selection["active_channels"]:
+        if row["channel"] not in selection.get("forecast_channels", selection["active_channels"]):
             continue
         sample = selection["benchmark"]["samples"][row["channel"]]
         rate = sample["elapsed_seconds"] / sample["audio_seconds"]

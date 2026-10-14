@@ -21,6 +21,7 @@ from typing import Literal, Protocol
 
 from talkingboats.audio_processing import process_canonical_clip_audio
 from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+from talkingboats.recording_policy import eligible
 
 ALLOWED_CHANNELS = {
     "05A",
@@ -177,9 +178,11 @@ def discover_completed_audio_files(
             channel = infer_spool_channel(audio_path)
         except ValueError:
             continue
-        if (
-            os.getenv("TALKINGBOATS_ENFORCE_ACTIVE_CHANNELS", "false").lower() == "true"
-            and channel not in ACTIVE_CAPTURE_CHANNELS
+        if os.getenv("TALKINGBOATS_ENFORCE_ACTIVE_CHANNELS", "false").lower() == "true" and (
+            channel not in ACTIVE_CAPTURE_CHANNELS
+            or not eligible(
+                channel, (_started_at_from_filename(audio_path) or modified_at).isoformat()
+            )
         ):
             continue
         candidates.append(
@@ -351,7 +354,13 @@ def prune_completed_audio_files(
     for audio_path in spool_root.rglob("*"):
         if os.getenv("TALKINGBOATS_ENFORCE_ACTIVE_CHANNELS", "false").lower() == "true":
             try:
-                if infer_spool_channel(audio_path) not in ACTIVE_CAPTURE_CHANNELS:
+                channel = infer_spool_channel(audio_path)
+                started = _started_at_from_filename(audio_path) or datetime.fromtimestamp(
+                    stat_func(audio_path).st_mtime, UTC
+                )
+                if channel not in ACTIVE_CAPTURE_CHANNELS or not eligible(
+                    channel, started.isoformat()
+                ):
                     continue
             except ValueError:
                 continue
@@ -638,6 +647,10 @@ def quarantine_stale_empty_audio_files(
         except ValueError:
             continue
         started_at = _started_at_from_filename(audio_path) or modified_at
+        if os.getenv("TALKINGBOATS_ENFORCE_ACTIVE_CHANNELS", "false").lower() == "true" and (
+            channel not in ACTIVE_CAPTURE_CHANNELS or not eligible(channel, started_at.isoformat())
+        ):
+            continue
         clip = SpooledAudioClip(
             channel=channel,
             audio_path=audio_path,

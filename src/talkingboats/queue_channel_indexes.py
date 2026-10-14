@@ -11,6 +11,7 @@ import boto3
 
 from talkingboats.asr_experiments import atomic_json
 from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+from talkingboats.recording_policy import eligible, queue_policy_identity
 
 STATUSES = ("pending", "waiting_upload", "processing")
 
@@ -20,6 +21,7 @@ def seed_indexes(table, checkpoint: Path, *, max_units=20000, max_seconds=90):
         json.loads(checkpoint.read_text())
         if checkpoint.exists()
         else {
+            "policy_identity": queue_policy_identity(),
             "status_index": 0,
             "cursor": None,
             "indexed": 0,
@@ -27,6 +29,8 @@ def seed_indexes(table, checkpoint: Path, *, max_units=20000, max_seconds=90):
             "table_name": getattr(table, "name", None),
         }
     )
+    if progress.get("policy_identity") != queue_policy_identity():
+        raise ValueError("queue activation identity changed")
     if progress["channels"] != list(ACTIVE_CAPTURE_CHANNELS) or progress.get(
         "table_name"
     ) != getattr(table, "name", None):
@@ -50,7 +54,9 @@ def seed_indexes(table, checkpoint: Path, *, max_units=20000, max_seconds=90):
         units += float(response.get("ConsumedCapacity", {}).get("CapacityUnits", 0))
         with table.batch_writer(overwrite_by_pkeys=["pk", "sk"]) as batch:
             for item in response.get("Items", []):
-                if item.get("channel") in ACTIVE_CAPTURE_CHANNELS:
+                if item.get("channel") in ACTIVE_CAPTURE_CHANNELS and eligible(
+                    item["channel"], item["started_at"]
+                ):
                     # Only a derived index is added. The legacy index and source state stay intact.
                     batch.put_item(
                         Item={**item, "pk": f"clip_status#{status}#channel#{item['channel']}"}

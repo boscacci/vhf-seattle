@@ -28,9 +28,10 @@ def test_voice_net_balanced_profile_prioritizes_busy_voice_channels() -> None:
     assert profile.mode == "multichannel"
     assert profile.center_frequency_hz == 156_675_000
     assert profile.sample_rate_hz == 2_560_000
-    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS
+    from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS, LIVE_STREAM_CHANNELS
 
-    assert [channel.channel for channel in profile.channels] == list(ACTIVE_CAPTURE_CHANNELS)
+    assert [channel.channel for channel in profile.channels] == list(LIVE_STREAM_CHANNELS)
+    assert profile.recorded_channels == ACTIVE_CAPTURE_CHANNELS
 
 
 def test_voice_net_airband_config_pins_device_serial_sample_rate_and_squelch() -> None:
