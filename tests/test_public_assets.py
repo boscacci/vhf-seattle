@@ -1475,7 +1475,7 @@ def test_public_site_live_audio_uses_compact_primary_channel_selector() -> None:
     assert "exclude_channels=${encodeURIComponent(channel)}" in app_js
     assert 'params.append("exclude_channels", channel);' in app_js
     assert "trafficChannelIds.has(channel.channel)" not in app_js
-    assert "Recorded except Traffic" in app_js
+    assert "All but traffic" in app_js
     assert ".live-primary-channel-picker" in styles_css
     assert ".live-advanced-channel-selector" in styles_css
     assert ".live-channel-picker" in styles_css

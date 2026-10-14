@@ -2,7 +2,7 @@ from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS, LIVE_STREAM_C
 from talkingboats.receiver_config import configure_channels
 
 
-def test_eighteen_live_nine_recorded_without_74():
+def test_eighteen_live_thirteen_recorded_without_74():
     assert set(ACTIVE_CAPTURE_CHANNELS) == {
         "14",
         "13",
@@ -13,6 +13,10 @@ def test_eighteen_live_nine_recorded_without_74():
         "22A",
         "77",
         "65A",
+        "09",
+        "67",
+        "69",
+        "72",
     }
     assert len(LIVE_STREAM_CHANNELS) == 18 and "74" not in LIVE_STREAM_CHANNELS
 

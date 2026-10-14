@@ -363,12 +363,12 @@ def test_uploaded_clip_transcriber_marks_subtitle_credit_hallucinations_empty(
 ) -> None:
     db_path = tmp_path / "radio.sqlite3"
     store = UploadedClipStore(db_path)
-    key = "raw/channel=09/date=2026-06-02/20260602T141900Z-static.mp3"
-    store.record_presigned_upload(key=key, request=_clip_request(channel="09"))
+    key = "raw/channel=16/date=2026-06-02/20260602T141900Z-static.mp3"
+    store.record_presigned_upload(key=key, request=_clip_request(channel="16"))
 
     summary = process_pending_uploads_once(
         store=store,
-        clip_reader=WritingClipReader(expected_channel="09"),
+        clip_reader=WritingClipReader(expected_channel="16"),
         model=SubtitleCreditHallucinationSpeechModel(),
         limit=10,
         audio_filter=None,

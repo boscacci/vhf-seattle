@@ -18,7 +18,7 @@ try {
   assert.equal(channelsResponse.status(), 200);
   const channelRows = (await channelsResponse.json()).channels;
   const channels = channelRows.map((row) => row.channel);
-  const recorded = ["14", "13", "16", "66A", "78A", "71", "22A", "77", "65A"];
+  const recorded = ["14", "13", "16", "66A", "78A", "71", "22A", "77", "65A", "09", "67", "69", "72"];
   assert.deepEqual(channelRows.filter(row => row.recorded).map(row => row.channel).sort(), [...recorded].sort());
   assert(channels.includes("14") && channels.includes("13") && channels.includes("16"));
   assert(!channels.includes("74"));
@@ -95,23 +95,45 @@ try {
   await page.goto(`${base}/live/`, { waitUntil: "domcontentloaded" });
   await page.locator(".live-advanced-channel-selector > summary").click();
   await page.waitForFunction(() => document.querySelectorAll("#live-channel-picker .live-channel-option").length === 18);
-  assert.equal(await page.locator("#live-channel-picker .live-channel-option", { hasText: "Live only" }).count(), 9);
+  assert.equal(await page.locator("#live-channel-picker .live-channel-option", { hasText: "Live only" }).count(), 0);
   await page.locator('#live-channel-picker [data-channel="06"]').click();
-  await page.locator("#live-last-communication", { hasText: "Live only · no saved clips" }).waitFor();
+  await page.locator("#live-last-communication", { hasText: "Live stream" }).waitFor();
   const fixtureAudioResponse = page.waitForResponse(response => response.url().includes("/api/live/06/current.mp3") && response.status() === 200);
   await page.locator("#play-live").click();
   await fixtureAudioResponse;
   await page.locator("#play-live").click();
   let queuedChannels = [];
+  let excludedChannels = [];
   await page.route("**/api/clips/recent?*", route => {
-    queuedChannels = new URL(route.request().url()).searchParams.getAll("channels");
+    const params = new URL(route.request().url()).searchParams;
+    queuedChannels = params.getAll("channels");
+    excludedChannels = params.getAll("exclude_channels");
     return route.fulfill({ json: { clips: [], next_cursor: null, clip_count: 0, counts_deferred: true } });
   });
-  await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All recorded channels" }).click();
+  await page.locator("#live-primary-channel-picker").getByRole("button", { name: "All channels" }).click();
   await page.waitForFunction(() => document.querySelector('#live-last-communication')?.textContent?.startsWith("Queue:"));
   await page.locator("#play-live").click();
   await page.waitForTimeout(300);
   assert.deepEqual([...queuedChannels].sort(), [...recorded].sort());
+  for (const [name, expected, excluded] of [
+    ["All but traffic", recorded, ["05A", "14"]],
+    ["Coast Guard / emergency", ["16", "22A"], []],
+  ]) {
+    const request = page.waitForRequest(req => req.url().includes("/api/clips/recent?"));
+    await page.locator("#live-primary-channel-picker").getByRole("button", { name, exact: true }).click();
+    await request;
+    await page.waitForTimeout(100);
+    assert.deepEqual([...queuedChannels].sort(), [...expected].sort());
+    assert.deepEqual([...excludedChannels].sort(), [...excluded].sort());
+    assert.equal(await page.locator("#live-channel").textContent(), name);
+  }
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+    await page.setViewportSize(viewport);
+    assert.equal(await page.locator("#live-primary-channel-picker button").count(), 3);
+    assert.equal(await page.locator(".live-channel-group-heading").count(), 5);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    assert(!(await page.locator(".live-channel-selector").innerText()).match(/recorded|live only/i));
+  }
   await page.unroute("**/api/clips/recent?*");
   await page.goto(`${base}/performance/`, { waitUntil: "domcontentloaded" });
   const actualPerformance = await (await page.request.get(`${base}/api/live/performance`)).json();
@@ -253,7 +275,7 @@ try {
   await publicPage.getByRole("tab", { name: "Listen live", exact: true }).click();
   await publicPage.locator(".live-advanced-channel-selector > summary").click();
   await publicPage.waitForFunction(() => document.querySelectorAll("#live-channel-picker .live-channel-option").length === 18);
-  assert.equal(await publicPage.locator("#live-channel-picker .live-channel-option", { hasText: "Live only" }).count(), 9);
+  assert.equal(await publicPage.locator("#live-channel-picker .live-channel-option", { hasText: "Live only" }).count(), 0);
   assert.equal(await publicPage.locator(".asr-experiments").count(), 0);
   assert.equal(await publicPage.locator(".correction-editor").count(), 0);
   assert.deepEqual(errors, []);
