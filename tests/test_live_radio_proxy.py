@@ -1177,7 +1177,7 @@ def test_proxy_performance_lifespan_starts_server_side_sampler(tmp_path: Path) -
     assert response.json()["hosts"][0]["history"][0]["cpuUtilizationPercent"] == 12.0
 
 
-def test_proxy_performance_static_shell_hooks_are_public_and_live_tab_is_private() -> None:
+def test_proxy_performance_static_shell_hooks_and_live_tab_are_public() -> None:
     response = _run(_asgi_get(create_app(ProxySettings()), "/assets/app.js"))
     index_response = _run(_asgi_get(create_app(ProxySettings()), "/"))
 
@@ -1188,7 +1188,7 @@ def test_proxy_performance_static_shell_hooks_are_public_and_live_tab_is_private
     assert 'const privateApiBaseUrl = "";' in response.text
     assert "optiplex.tailbea63b.ts.net" not in response.text
     assert "const performanceDashboardEnabled = true;" in response.text
-    assert "const liveDashboardEnabled = systemDashboardEnabled;" in response.text
+    assert "const liveDashboardEnabled = systemDashboardEnabled || publicAppHost;" in response.text
     assert "renderPerformanceDashboard" in response.text
     assert re.search(
         r'<button[^>]*id="tab-performance"[^>]*type="button"[^>]*data-tab="performance"[^>]*hidden',
