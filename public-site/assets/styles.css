@@ -1615,6 +1615,18 @@ audio {
   line-height: 1.65;
 }
 
+.about-panel a {
+  color: var(--teal);
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
+
+.about-panel a:hover,
+.about-panel a:focus-visible {
+  color: var(--ink);
+}
+
 .about-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
