@@ -121,3 +121,24 @@ channel, eighteen local Icecast mounts, and nine recording outputs. The relay
 refreshes the server plan every ten minutes and restarts with expanded coverage
 when the plan changes. Registration credentials are reused; adding server
 channels needs no application deployment or new claim.
+
+## Public live delivery
+
+Listen live is available on production as well as dev. The proxy streams approved
+channels publicly and still rejects channel 74. CloudFront routes only
+`/api/live/current.mp3`, `/api/live/*/current.mp3`, `/api/live/status`, and
+`/api/live/*/status` to the existing read-only origin. Audio caching and additional
+compression are disabled; private correction and training routes stay outside
+the public CDN routing.
+
+The versioned `scripts/deploy_live_cdn.py` plans against the shared encrypted
+OpenTofu state. Dev performs a read-only plan check. Production applies only the
+reviewed CloudFront route additions before pausing shared services. The helper
+rejects unrelated resource changes, private paths, write methods, changed origins,
+and changes to existing routing. Existing AIS authentication uses the hash already
+in protected state; the raw token is not read or logged. Provider caches, plans,
+and operation records use the data SSD with private permissions.
+
+Rollback removes only routes introduced by that release through OpenTofu and
+preserves existing routes and shared state. Browser acceptance fetches real audio
+through the production CDN for all eighteen local channels, including 22A.

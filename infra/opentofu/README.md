@@ -174,3 +174,18 @@ The deploy helper enforces branch hygiene:
 - prod deploys: clean `main` worktree only
 
 See `docs/deployment-hygiene.md` for the full branch/resource policy.
+
+## Public live audio routes
+
+The production distribution includes narrowly scoped read-only live MP3 and
+channel-status routes, with the managed CachingDisabled policy. The generic
+`/api/live/*` prefix and private operator paths remain unrouted. Live MP3 responses
+are not recompressed by CloudFront.
+
+Use the immutable release's `scripts/deploy_live_cdn.py plan --source RELEASE`
+for review. Production release delivery applies that checked plan through the
+shared S3 state and records the introduced routes for rollback. Its guard rejects
+unrelated changes or altered origins, existing routing, write methods, and cache
+policies. The required AIS token hash is reused from state without reading or
+changing the raw Secrets Manager token. Operational plans and provider caches
+remain private on the data SSD.

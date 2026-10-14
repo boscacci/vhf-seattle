@@ -49,7 +49,6 @@ SHELL_ASSET_TYPES = {
     "recent_clips.json": "application/json",
     "operations.json": "application/json",
 }
-PUBLIC_SITE_HOSTS = {"seattleboatradio.com", "www.seattleboatradio.com"}
 PERFORMANCE_DISK_PATHS = (
     ("system", Path("/")),
     ("home", Path("/home/rob")),
@@ -955,7 +954,6 @@ def create_app(
 
     @app.get("/api/live/current.mp3")
     async def current_live_stream(request: Request, dsp: str | None = None) -> StreamingResponse:
-        _reject_public_live_audio(request)
         stream_url = await _select_live_stream(settings.stream_urls, client_factory)
         return StreamingResponse(
             _audio_iterator_for_stream(stream_url, dsp, settings, client_factory),
@@ -979,7 +977,6 @@ def create_app(
     async def channel_live_stream(
         request: Request, channel: str, dsp: str | None = None
     ) -> StreamingResponse:
-        _reject_public_live_audio(request)
         stream_urls = _stream_urls_for_channel(settings, channel)
         stream_url = await _select_live_stream(stream_urls, client_factory)
         return StreamingResponse(
@@ -1186,14 +1183,6 @@ def _live_status_payload(preset: ChannelPreset) -> dict[str, object]:
         "frequencyMhz": preset.frequency_mhz,
         "streamDelaySeconds": {"minimum": 1, "maximum": 5},
     }
-
-
-def _reject_public_live_audio(request: Request) -> None:
-    host = request.headers.get("host", "")
-    hostname = host.rsplit("@", 1)[-1].split(":", 1)[0].lower()
-    environment = request.headers.get("x-talkingboats-environment", "").lower()
-    if hostname in PUBLIC_SITE_HOSTS or environment == "prod":
-        raise HTTPException(status_code=404, detail="public live audio is disabled")
 
 
 def _performance_host_allowed(request: Request, settings: ProxySettings) -> bool:

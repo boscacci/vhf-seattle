@@ -254,6 +254,11 @@ def test_cloudfront_routes_prod_read_only_live_api_to_live_origin() -> None:
     assert 'path_pattern             = "/api/live/*"' not in main_tf
     assert 'path_pattern             = "/api/live/performance"' in main_tf
     assert 'path_pattern             = "/api/live/channels"' in main_tf
+    for path in (
+        "/api/live/current.mp3", "/api/live/*/current.mp3",
+        "/api/live/status", "/api/live/*/status",
+    ):
+        assert f'path_pattern             = "{path}"' in main_tf
     assert 'path_pattern             = "/api/clips/recent"' in main_tf
     assert 'path_pattern             = "/api/clips/search"' in main_tf
     assert 'path_pattern             = "/api/clips/playback"' in main_tf
@@ -269,7 +274,7 @@ def test_cloudfront_routes_prod_read_only_live_api_to_live_origin() -> None:
     dev_aaaa_record = _resource_block(main_tf, "aws_route53_record", "dev_site_aaaa")
     assert 'path_pattern             = "/ais-catcher/*"' in prod_distribution
     assert 'path_pattern             = "/ais-catcher/*"' not in dev_distribution
-    assert main_tf.count("target_origin_id         = local.live_origin_id") == 8
+    assert main_tf.count("target_origin_id         = local.live_origin_id") == 12
     assert 'path_pattern             = "/api/clips/corrections*"' not in prod_distribution
     assert 'path_pattern             = "/api/clips/features*"' not in prod_distribution
     assert 'path_pattern             = "/api/operator/session*"' not in prod_distribution

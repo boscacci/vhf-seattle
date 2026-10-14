@@ -1202,31 +1202,44 @@ def test_proxy_performance_static_shell_hooks_and_live_tab_are_public() -> None:
     )
 
 
-def test_public_hostname_cannot_open_live_audio_stream() -> None:
-    response = _run(
-        _asgi_get(
-            create_app(ProxySettings()),
-            "/api/live/current.mp3",
-            headers={"Host": "seattleboatradio.com"},
-        )
+def test_public_hostname_can_open_live_audio_without_exposing_excluded_channels() -> None:
+    app = create_app(
+        ProxySettings(stream_urls=("http://pi.test/live.mp3",)),
+        client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"live-mp3"))
+        ),
     )
+    response = _run(
+        _asgi_get(app, "/api/live/current.mp3", headers={"Host": "seattleboatradio.com"})
+    )
+    assert response.status_code == 200
+    assert response.content == b"live-mp3"
+    assert response.headers["cache-control"] == "no-store"
+    excluded = _run(
+        _asgi_get(app, "/api/live/74/current.mp3", headers={"Host": "seattleboatradio.com"})
+    )
+    assert excluded.status_code == 404
 
-    assert response.status_code == 404
 
-
-def test_prod_cloudfront_origin_cannot_open_live_audio_stream() -> None:
+def test_prod_cloudfront_origin_can_open_live_audio_stream() -> None:
+    app = create_app(
+        ProxySettings(channel_stream_urls={"14": ("http://pi.test/live.mp3",)}),
+        client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"live-mp3"))
+        ),
+    )
     response = _run(
         _asgi_get(
-            create_app(ProxySettings()),
-            "/api/live/current.mp3",
+            app,
+            "/api/live/14/current.mp3",
             headers={
                 "Host": "optiplex.tailbea63b.ts.net",
                 "X-TalkingBoats-Environment": "prod",
             },
         )
     )
-
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.content == b"live-mp3"
 
 
 def test_proxy_static_shell_routes_include_search_tab() -> None:
