@@ -56,8 +56,9 @@ It receives no receiver password, USB permission, home-directory access, or
 write access to system configuration. The relay is bounded to 25% CPU and
 512 MiB RAM, with independent stream retries and structured per-channel errors.
 The map is generated from the accepted receiver configuration and matched to
-DockTalk by frequency within 2 kHz. All eighteen channels must be covered by the
-server plan; missing coverage fails installation without guessing mounts.
+DockTalk by frequency within 2 kHz. Only approved channels covered by the
+server plan are forwarded. Unconfigured channels are reported without blocking
+the available relay; mount names are never guessed.
 
 The root watchdog can restart only `docktalk-push.service` when DockTalk reports
 stale reception after the startup grace period. It does not restart the receiver
@@ -75,8 +76,8 @@ It does not change the shared Pi or redeem the enrollment code.
 After manual dev smoke, approve the release tag, exact artifact, and production
 target once. Promotion applies the queue boundary, receiver outputs, app routing,
 and node together. It verifies real eighteen-channel playback and observes the
-node for at least thirty minutes. Acceptance requires eighteen fresh relay
-channels, eighteen Icecast mounts, the correct nine recording outputs, fresh
+node for at least thirty minutes. Acceptance requires fresh audio on every configured relay
+channel, eighteen Icecast mounts, the correct nine recording outputs, fresh
 server-confirmed reception, no new files on live-only channels, and Pi temperature
 below 80 C. Failures invoke the release rollback and produce diagnostic logs.
 
@@ -107,8 +108,15 @@ fields and executable shell remain rejected. The cached claim response stays
 private and is reused after interrupted provisioning, without a second claim.
 
 Before pausing shared services, production deployment reads DockTalk's channel
-plan and requires coverage for all eighteen approved frequencies. A six-channel
-server plan blocks deployment with the missing channel names in the operator log.
-The DockTalk operator must expand the server-side plan; client registration does
-not update that plan. Existing receiver and transcriber services remain running
-when preflight fails.
+plan and requires at least one approved frequency with an unambiguous mapping.
+A partial server plan is accepted: only the matching approved channels are relayed,
+and the other channel names are reported as unconfigured in operator logs. The
+local receiver continues to provide all eighteen live channels and record nine.
+Empty, unsafe, or ambiguous plans fail before shared services are paused.
+
+The operator explicitly authorized partial DockTalk coverage while its server plan
+is expanded. Acceptance checks require fresh audio on every configured relay
+channel, eighteen local Icecast mounts, and nine recording outputs. The relay
+refreshes the server plan every ten minutes and restarts with expanded coverage
+when the plan changes. Registration credentials are reused; adding server
+channels needs no application deployment or new claim.

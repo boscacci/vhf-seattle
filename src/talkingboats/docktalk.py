@@ -152,15 +152,23 @@ def preflight(claim_path: Path):
             "GET", "/v1/nodes/conf?" + urllib.parse.urlencode({"code": code, "format": "alongside"})
         )
     )
-    missing = [
-        channel
+    matches = {
+        channel: [hz for hz in plan if abs(hz - CHANNEL_METADATA[channel].frequency_hz) <= 2000]
         for channel in LIVE_STREAM_CHANNELS
-        if sum(abs(hz - CHANNEL_METADATA[channel].frequency_hz) <= 2000 for hz in plan) != 1
-    ]
-    if missing:
+    }
+    if any(len(values) > 1 for values in matches.values()):
+        raise ValueError("DockTalk plan has ambiguous frequencies")
+    available = [channel for channel, values in matches.items() if values]
+    missing = sorted(set(LIVE_STREAM_CHANNELS) - set(available))
+    if not available:
         emit("docktalk_preflight_blocked", missing_channels=missing)
-        raise ValueError("DockTalk server must configure all approved channels")
-    emit("docktalk_preflight_passed", channels=len(LIVE_STREAM_CHANNELS), mode="alongside")
+        raise ValueError("DockTalk plan has no approved relay channels")
+    emit(
+        "docktalk_preflight_passed",
+        channels=len(available),
+        unconfigured_channels=missing,
+        mode="alongside",
+    )
 
 
 def provision(directory: Path, claim_path: Path):
@@ -249,9 +257,12 @@ def match_streams(streams, plan):
         ):
             raise ValueError("relay source is not an approved loopback mount")
         matches = [mount for hz, mount in plan.items() if abs(hz - expected) <= 2000]
-        if len(matches) != 1:
-            raise ValueError("DockTalk plan does not cover all approved channels")
-        mapped.append({**stream, "mount": matches[0]})
+        if len(matches) > 1:
+            raise ValueError("DockTalk plan has ambiguous frequencies")
+        if matches:
+            mapped.append({**stream, "mount": matches[0]})
+    if not mapped:
+        raise ValueError("DockTalk plan has no approved relay channels")
     return mapped
 
 
@@ -314,7 +325,15 @@ def run(directory: Path):
     ]
     for thread in threads:
         thread.start()
-    emit("docktalk_started", channels=len(mappings), mode="alongside")
+    emit(
+        "docktalk_started",
+        channels=len(mappings),
+        mode="alongside",
+        unconfigured_channels=sorted(
+            {s["channel"] for s in json.loads((directory / "streams.json").read_text())}
+            - {m["channel"] for m in mappings}
+        ),
+    )
     last_plan_check = time.monotonic()
     while not stop.wait(30):
         with lock:

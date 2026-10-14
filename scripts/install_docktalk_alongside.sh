@@ -44,4 +44,4 @@ systemctl restart docktalk-push.service
 systemctl start docktalk-pushdog.timer docktalk-vitals.timer
 systemctl is-active --quiet docktalk-push.service
 printf '%s\n' "${digest}" > "${record}/artifact.sha256"
-printf 'event=docktalk_alongside_installed commit=%s channels=18 credentials=private\n' "${commit}"
+printf 'event=docktalk_alongside_installed commit=%s local_channels=18 relay_coverage=available_server_plan credentials=private\n' "${commit}"
