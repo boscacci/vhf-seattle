@@ -222,7 +222,7 @@ def test_claim_parser_rejects_unsafe_port_id(port_id):
         )
 
 
-def test_docktalk_preflight_checks_full_plan_without_claiming(tmp_path, monkeypatch):
+def test_docktalk_preflight_accepts_available_channels_without_claiming(tmp_path, monkeypatch):
     import talkingboats.docktalk as module
     from talkingboats.channel_metadata import CHANNEL_METADATA, LIVE_STREAM_CHANNELS
 
@@ -242,10 +242,61 @@ def test_docktalk_preflight_checks_full_plan_without_claiming(tmp_path, monkeypa
     module.preflight(claim)
     assert requests == ["GET"]
     plan = "\n".join(plan.splitlines()[:6])
-    with pytest.raises(ValueError):
-        module.preflight(claim)
+    module.preflight(claim)
     assert requests == ["GET", "GET"]
     claim.chmod(0o644)
     with pytest.raises(ValueError):
         module.preflight(claim)
     assert requests == ["GET", "GET"]
+
+
+def test_relay_matches_available_plan_but_never_uses_unapproved_channels():
+    import talkingboats.docktalk as module
+    from talkingboats.channel_metadata import CHANNEL_METADATA, LIVE_STREAM_CHANNELS
+
+    streams = [
+        {
+            "channel": c,
+            "hz": CHANNEL_METADATA[c].frequency_hz,
+            "url": f"http://127.0.0.1:8000/talkingboats-{c.lower()}.mp3",
+        }
+        for c in LIVE_STREAM_CHANNELS
+    ]
+    plan = {
+        CHANNEL_METADATA[c].frequency_hz: f"harbor-{c.lower()}.mp3"
+        for c in ["13", "14", "16", "66A", "71", "78A"]
+    }
+    plan[CHANNEL_METADATA["74"].frequency_hz] = "harbor-74.mp3"
+    mapped = module.match_streams(streams, plan)
+    assert {m["channel"] for m in mapped} == {"13", "14", "16", "66A", "71", "78A"}
+    with pytest.raises(ValueError):
+        module.match_streams(streams, {CHANNEL_METADATA["74"].frequency_hz: "harbor-74.mp3"})
+    plan[CHANNEL_METADATA["13"].frequency_hz + 1000] = "ambiguous.mp3"
+    with pytest.raises(ValueError):
+        module.match_streams(streams, plan)
+
+
+def test_partial_relay_acceptance_still_requires_local_coverage_and_fresh_audio():
+    import runpy
+
+    validate = runpy.run_path("scripts/verify_docktalk_release.py")["validate_observation"]
+    state = {
+        "live_mounts": 18,
+        "configured_relay_channels": 6,
+        "missing_relay_channels": [],
+        "fresh_relay_channels": 6,
+        "receiver_recorded_channels": ["13", "14", "16", "22A", "65A", "66A", "71", "77", "78A"],
+        "unexpected_live_only_files": 0,
+        "docktalk_age_seconds": 1,
+        "temp_c": 42,
+    }
+    validate(state)
+    for change in (
+        {"missing_relay_channels": ["13"]},
+        {"live_mounts": 17},
+        {"configured_relay_channels": 0},
+        {"unexpected_live_only_files": 1},
+        {"docktalk_age_seconds": 61},
+    ):
+        with pytest.raises(RuntimeError):
+            validate({**state, **change})

@@ -11,7 +11,7 @@ import json,sys,time,os,subprocess,urllib.request
 sys.path.insert(0,'/opt/talkingboats/docktalk/current')
 from talkingboats.channel_metadata import ACTIVE_CAPTURE_CHANNELS,LIVE_STREAM_CHANNELS
 from talkingboats.receiver_config import channel_blocks,object_blocks
-from talkingboats.docktalk import api,load_identity
+from talkingboats.docktalk import api,load_identity,parse_plan,match_streams
 from pathlib import Path
 config=Path('/etc/talkingboats/rtl_airband-voice-net-balanced.conf').read_text()
 blocks=channel_blocks(config)
@@ -26,6 +26,12 @@ identity=load_identity(Path('/etc/docktalk'))
 report=json.loads(api('GET',f"/v1/nodes/{identity['NODE_ID']}/pushage",token=identity['PUSH_TOKEN']))
 health=json.loads(Path('/run/docktalk/health.json').read_text())
 fresh={c for c,h in health.items() if time.time()-h['last_sent_epoch']<60}
+plan_path=Path('/run/docktalk/plan.txt')
+if not plan_path.exists():plan_path=Path('/etc/docktalk/plan.txt')
+streams=json.loads(Path('/etc/docktalk/streams.json').read_text())
+expected={m['channel'] for m in match_streams(streams,parse_plan(plan_path.read_text()))}
+missing=expected-fresh
+
 unit=subprocess.check_output(['systemctl','show','docktalk-push.service','-p','NRestarts','-p','MemoryCurrent'],text=True)
 peak_temp=int(Path('/sys/class/thermal/thermal_zone0/temp').read_text())/1000
 # Watch for unexpected new files in the channels whose history must remain untouched.
@@ -34,8 +40,31 @@ spool=Path('/opt/talkingboats/spool/airband')
 for channel in set(LIVE_STREAM_CHANNELS)-set(ACTIVE_CAPTURE_CHANNELS):
     for file in (spool/channel).glob('*'):
         if file.is_file() and file.stat().st_mtime>=float(sys.argv[1]):unexpected+=1
-print(json.dumps({'live_mounts':len(mounts),'fresh_relay_channels':len(fresh),'receiver_recorded_channels':sorted(recorded),'docktalk_age_seconds':report.get('age_s'),'temp_c':peak_temp,'relay_unit':unit,'unexpected_live_only_files':unexpected}))
+print(json.dumps({
+ 'live_mounts':len(mounts),'fresh_relay_channels':len(expected & fresh),
+ 'configured_relay_channels':len(expected),'missing_relay_channels':sorted(missing),
+ 'unconfigured_channels':sorted(set(LIVE_STREAM_CHANNELS)-expected),
+ 'receiver_recorded_channels':sorted(recorded),'docktalk_age_seconds':report.get('age_s'),
+ 'temp_c':peak_temp,'relay_unit':unit,'unexpected_live_only_files':unexpected}))
 """
+
+
+def validate_observation(state):
+    if (
+        state["live_mounts"] != 18
+        or state["configured_relay_channels"] <= 0
+        or state["missing_relay_channels"]
+        or state["receiver_recorded_channels"]
+        != ["13", "14", "16", "22A", "65A", "66A", "71", "77", "78A"]
+        or state["unexpected_live_only_files"]
+    ):
+        raise RuntimeError("channel isolation or relay health acceptance failed")
+    if (
+        state["docktalk_age_seconds"] is None
+        or float(state["docktalk_age_seconds"]) > 60
+        or state["temp_c"] >= 80
+    ):
+        raise RuntimeError("DockTalk reception or Pi temperature acceptance failed")
 
 
 def main():
@@ -68,20 +97,7 @@ def main():
             check=True,
         )
         state = json.loads(process.stdout)
-        if (
-            state["live_mounts"] != 18
-            or state["fresh_relay_channels"] != 18
-            or state["receiver_recorded_channels"]
-            != ["13", "14", "16", "22A", "65A", "66A", "71", "77", "78A"]
-            or state["unexpected_live_only_files"]
-        ):
-            raise RuntimeError("channel isolation or relay health acceptance failed")
-        if (
-            state["docktalk_age_seconds"] is None
-            or float(state["docktalk_age_seconds"]) > 60
-            or state["temp_c"] >= 80
-        ):
-            raise RuntimeError("DockTalk reception or Pi temperature acceptance failed")
+        validate_observation(state)
         observations.append({"at_epoch": time.time(), **state})
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
@@ -96,6 +112,7 @@ def main():
                     "event": "docktalk_soak_progress",
                     "elapsed_seconds": round(time.time() - started),
                     "fresh_channels": state["fresh_relay_channels"],
+                    "configured_channels": state["configured_relay_channels"],
                     "server_age_seconds": state["docktalk_age_seconds"],
                 }
             ),
