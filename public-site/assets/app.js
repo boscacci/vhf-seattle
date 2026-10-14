@@ -114,7 +114,7 @@ const languageDashboardEnabled = [
 ].includes(
   window.location.hostname,
 );
-const liveDashboardEnabled = systemDashboardEnabled;
+const liveDashboardEnabled = systemDashboardEnabled || publicAppHost;
 const performanceDashboardEnabled = true;
 const aisDashboardEnabled = true;
 const featureClipWriteEnabled = privateAppHost;
