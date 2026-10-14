@@ -11,7 +11,8 @@ def test_optiplex_ci_runs_only_trusted_repository_code() -> None:
     assert "vhf-seattle" in workflow
     assert "github.event.pull_request.head.repo.full_name == github.repository" in workflow
     assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow
-    assert "conda run --no-capture-output -n dell pytest -q" in workflow
+    assert "run: scripts/test_repository.sh" in workflow
+    assert "pytest -q" in Path("scripts/test_repository.sh").read_text()
     assert "conda run --no-capture-output -n dell ruff check ." in workflow
     assert "deploy-dev:" in workflow
     assert "needs: validate" in workflow

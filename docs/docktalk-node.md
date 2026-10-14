@@ -142,3 +142,9 @@ and operation records use the data SSD with private permissions.
 Rollback removes only routes introduced by that release through OpenTofu and
 preserves existing routes and shared state. Browser acceptance fetches real audio
 through the production CDN for all eighteen local channels, including 22A.
+
+The repository test wrapper uses private memory-backed scratch storage for
+disposable fixtures and caches, then removes it. This avoids journal contention
+on the capture host without skipping tests or increasing CI's timeout. A
+sixty-second faulthandler dump helps diagnose future stalled tests. Durable
+release data and provider caches remain on the data SSD.
