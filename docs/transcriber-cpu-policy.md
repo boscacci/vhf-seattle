@@ -57,7 +57,8 @@ the previous override. No historical bulk transcription is introduced.
 The October 16 adjustment halves the CPU ceiling from 600% to 300% and lowers
 CPUWeight from 25 to 10. A runtime systemd property change can apply these limits
 without restarting the shared worker or interrupting a clip. Such an adjustment
-lasts until reboot or an explicit operator change; the checked-in drop-ins carry
+uses a late runtime drop-in so daemon reloads retain the limit. It lasts until
+reboot or an explicit operator change; the checked-in release drop-ins carry
 the same defaults for subsequent approved releases. The existing model, six
 threads, one worker, five-second idle polling, SSD, and recording policy remain
 unchanged. CPU quota may lengthen individual transcriptions and allow a small
@@ -67,4 +68,7 @@ Observe queue age and volume alongside CPU use after tuning; near-zero queue
 samples alone do not prove peak-hour capacity. Record old and new limits and
 observations privately under the existing operator state directory. To undo a
 runtime adjustment, restore that record’s prior CPUQuota and CPUWeight through
-`systemctl --user set-property --runtime`; no receiver restart is needed.
+the checked-in `scripts/set_transcriber_cpu_runtime.sh release-default` command;
+no receiver restart is needed. Use its `gentle` action to apply the lower budget.
+A bare `systemctl set-property --runtime` creates early `50-*` drop-ins, which
+can be overridden by later installed release files during daemon reload.
