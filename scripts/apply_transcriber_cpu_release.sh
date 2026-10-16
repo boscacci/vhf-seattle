@@ -5,7 +5,7 @@ commit="${TALKINGBOATS_RELEASE_COMMIT:?commit required}"
 digest="${TALKINGBOATS_RELEASE_SHA256:?digest required}"
 [[ "$commit" =~ ^[0-9a-f]{40}$ && "$digest" =~ ^[0-9a-f]{64}$ ]] || exit 2
 [[ $(getconf _NPROCESSORS_ONLN) == 8 ]] || {
-  echo 'This reviewed six-core policy requires the eight-core OptiPlex' >&2; exit 2;
+  echo 'This reviewed three-core CPU budget requires the eight-core OptiPlex' >&2; exit 2;
 }
 unit=talkingboats-uploaded-clip-transcriber.service
 source_file="$root/deploy/systemd/overrides/$unit.d/zzz-cpu-budget.conf"
@@ -34,4 +34,4 @@ systemctl --user daemon-reload
 printf '%s\n' "$digest" > "$record/artifact-sha256"
 sha256sum "$target" > "$record/installed.sha256"
 trap - ERR
-printf 'event=transcriber_cpu_policy_installed commit=%s threads=6 cpu_quota_percent=600 effective=next_batch\n' "$commit"
+printf 'event=transcriber_cpu_policy_installed commit=%s threads=6 cpu_quota_percent=300 effective=next_batch\n' "$commit"

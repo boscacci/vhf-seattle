@@ -190,7 +190,7 @@ The fallback uses the [supported BERTopic cluster-model interface](https://maart
 The single shared Turbo worker stays loaded and drains retained channels oldest
 first. It processes five clips per poll without sleeping after progress; when
 idle or all selected uploads are unavailable, it waits five seconds. Serving uses
-six CPU threads, one worker, int8 and a 600% CPU quota on the eight-core OptiPlex.
+six CPU threads, one worker, int8 and a 300% CPU quota on the eight-core OptiPlex.
 The hourly transcription timer is disabled by the approved production release;
 the hourly public export is a separate task and remains scheduled. Dev delivery
 validates the candidate without starting an additional production-data worker.

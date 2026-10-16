@@ -2,7 +2,7 @@ import os
 import subprocess
 
 
-def test_cpu_release_leaves_two_cores_and_preserves_running_batch(tmp_path):
+def test_cpu_release_leaves_five_cores_capacity_and_preserves_running_worker(tmp_path):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     cpu_count = bindir / "getconf"
@@ -32,10 +32,10 @@ def test_cpu_release_leaves_two_cores_and_preserves_running_batch(tmp_path):
         "zzz-cpu-budget.conf"
     ).read_text()
     assert "--cpu-threads 6" in conf
-    assert "CPUQuota=600%" in conf
+    assert "CPUQuota=300%" in conf
     assert "--once --limit 1000" in conf
     assert "Nice=10" in conf
-    assert "CPUWeight=25" in conf
+    assert "CPUWeight=10" in conf
     assert "restart" not in calls.read_text()
     assert "stop" not in calls.read_text()
     # Safe retry preserves the original rollback snapshot.
