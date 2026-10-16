@@ -223,7 +223,9 @@ def test_asr_release_runs_one_resident_worker_and_restores_schedule_on_rollback(
     assert "Type=simple" in config
     assert "--poll-seconds 5 --limit 5 --cpu-threads 6 --workers 1" in config
     assert "--once" not in config
-    assert "CPUQuota=600%" in config
+    assert "CPUQuota=300%" in config
+    assert "CPUWeight=10" in config
+    assert "Nice=10" in config
     assert "Restart=on-failure" in config
     script = Path("scripts/release_asr_feedback.sh").read_text()
     production = script[script.index('  runtime="${HOME}/repos') :]

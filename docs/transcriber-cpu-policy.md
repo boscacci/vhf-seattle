@@ -1,9 +1,11 @@
 # OptiPlex transcription CPU policy
 
 The i7-9700 has eight physical cores without SMT. The reviewed policy allows
-six inference threads and 600% CPU quota: n-2 on this host. Nice=10 and
-CPUWeight=25 retain priority for interactive services. This is a ceiling on
-aggregate CPU time, not an exclusive reservation or a promise of six-core use.
+six inference threads with a **300% CPU quota**: at most three cores’ worth of
+aggregate CPU time on this host. Nice=10 and CPUWeight=10 favor competing
+interactive services. The thread count stays six to avoid changing model
+execution during the runtime adjustment; the aggregate quota bounds their total
+CPU use. This is a ceiling, not an exclusive reservation or CPU affinity rule.
 The installer rejects a different CPU count rather than silently overallocating.
 
 The shared ASR release now installs a continuous-worker override, after legacy
@@ -29,8 +31,8 @@ two threads took 72.93 and 76.47 seconds; four took 46.85; six took 41.95.
 Three concurrent clips with two threads each took 36.60 seconds, but require
 additional safe scheduling and are not enabled. These are small warmed-model
 speed probes, exclude database/download/preparation overhead, and do not prove
-accuracy equivalence or sustained peak capacity. Six threads are a CPU ceiling,
-not an exclusive reservation. Keep API responsiveness and thermal telemetry in
+accuracy equivalence or sustained peak capacity. Those historic six-thread timings used the higher CPU budget and do not
+establish performance under the new 300% quota. Keep API responsiveness and thermal telemetry in
 view during rollout.
 
 Use `scripts/release_asr_feedback.sh` to build and deploy the immutable candidate
@@ -49,3 +51,20 @@ slot when both exist, so absent objects cannot block the ready queue and retries
 still progress. Confirmed vocabulary is refreshed each batch rather than only at
 process startup. Production rollback records timer and worker enablement alongside
 the previous override. No historical bulk transcription is introduced.
+
+## Gentle operating budget
+
+The October 16 adjustment halves the CPU ceiling from 600% to 300% and lowers
+CPUWeight from 25 to 10. A runtime systemd property change can apply these limits
+without restarting the shared worker or interrupting a clip. Such an adjustment
+lasts until reboot or an explicit operator change; the checked-in drop-ins carry
+the same defaults for subsequent approved releases. The existing model, six
+threads, one worker, five-second idle polling, SSD, and recording policy remain
+unchanged. CPU quota may lengthen individual transcriptions and allow a small
+queue, which is acceptable while its age remains bounded and it drains again.
+
+Observe queue age and volume alongside CPU use after tuning; near-zero queue
+samples alone do not prove peak-hour capacity. Record old and new limits and
+observations privately under the existing operator state directory. To undo a
+runtime adjustment, restore that record’s prior CPUQuota and CPUWeight through
+`systemctl --user set-property --runtime`; no receiver restart is needed.
