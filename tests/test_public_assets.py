@@ -1194,7 +1194,7 @@ def test_public_site_stops_live_audio_when_navigation_leaves_listen_live() -> No
     assert "shouldPreserveLiveAudioSession" not in suspend_live_view
 
 
-def test_public_site_defaults_system_media_controls_on_android() -> None:
+def test_public_site_defaults_system_media_controls_on_all_devices() -> None:
     app_js = Path("public-site/assets/app.js").read_text(encoding="utf-8")
 
     assert "const systemMediaControlsDefault = defaultSystemMediaControlsEnabled();" in app_js
@@ -1204,9 +1204,8 @@ def test_public_site_defaults_system_media_controls_on_android() -> None:
     assert 'storedSystemMediaControls === "enabled"' in app_js
     assert 'storedSystemMediaControls === "disabled"' in app_js
     assert "function defaultSystemMediaControlsEnabled()" in app_js
-    assert "return isAndroidAudioEnvironment();" in app_js
-    assert "function isAndroidAudioEnvironment()" in app_js
-    assert 'return operatingSystemNameFromUserAgent(userAgent, platform) === "Android";' in app_js
+    assert "function defaultSystemMediaControlsEnabled() {\n  return true;" in app_js
+    assert "function preferNativeLiveAudio()" in app_js
 
 
 def test_public_site_uses_mashable_custom_clip_play_button_and_audio_metadata() -> None:
