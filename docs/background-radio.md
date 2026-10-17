@@ -4,6 +4,8 @@ Listen live defaults system media controls on for all devices, including iPhone
 and iPad. An explicitly saved off setting remains respected. Playback publishes
 the station and selected channel/group through Media Session; Play, Pause and
 Stop work independently so one unsupported action cannot erase other controls.
+Pause retains the native source and station metadata for system Resume; Stop
+releases the source.
 Pause disables queue processing before pausing audio, including native media
 pause events. Pending queue responses cannot restart a paused session.
 

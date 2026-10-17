@@ -75,7 +75,7 @@ export async function verifyBackgroundRadio(browser, base, failureDirectory = "/
       });
       await page.evaluate(() => window.__radioActions.pause());
       await page.waitForTimeout(5200);
-      assert(await page.locator("#live-audio").evaluate(audio => audio.paused && !audio.loop));
+      assert(await page.locator("#live-audio").evaluate(audio => audio.paused && !audio.loop && audio.hasAttribute("src")));
       assert.equal(await page.evaluate(() => navigator.mediaSession.playbackState), "paused");
       clip = null;
       await page.evaluate(() => window.__radioActions.play());

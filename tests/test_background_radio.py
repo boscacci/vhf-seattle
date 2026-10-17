@@ -3,6 +3,29 @@ import subprocess
 from pathlib import Path
 
 
+def test_hidden_radio_keeps_paused_source_for_system_resume_until_stop():
+    source = Path("public-site/assets/app.js").read_text()
+    function = re.search(
+        r"function shouldPreserveLiveAudioSession\(\) \{\n.*?\n\}", source, re.S
+    ).group()
+    script = (
+        r"""
+const assert = require('node:assert/strict');
+let systemMediaControlsEnabled=true, everythingQueueEnabled=false;
+const liveAudio={src:'blob:quiet',paused:true};
+function isQueuedLiveMode(){return true;}
+"""
+        + function
+        + r"""
+assert(shouldPreserveLiveAudioSession());
+systemMediaControlsEnabled=false;assert(!shouldPreserveLiveAudioSession());
+liveAudio.paused=false;assert(shouldPreserveLiveAudioSession());
+liveAudio.src='';assert(!shouldPreserveLiveAudioSession());
+"""
+    )
+    subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+
+
 def test_system_radio_session_defaults_on_and_survives_unsupported_stop_action():
     source = Path("public-site/assets/app.js").read_text()
     names = ["defaultSystemMediaControlsEnabled", "preferNativeLiveAudio", "updateLiveMediaSession"]

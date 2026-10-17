@@ -4851,7 +4851,7 @@ function shouldPreserveLiveAudioSession() {
   if (isQueuedLiveMode() && everythingQueueEnabled) {
     return true;
   }
-  return Boolean(liveAudio.src && !liveAudio.paused);
+  return Boolean(liveAudio.src && (!liveAudio.paused || systemMediaControlsEnabled));
 }
 
 function stopCurrentClipPlayback() {
@@ -5445,7 +5445,8 @@ function setLivePlayButton(mode) {
 function pauseLivePlayback() {
   if (isQueuedLiveMode()) {
     stopEverythingQueue({ clearQueue: true });
-    clearLiveQueueAudioSource();
+    liveAudio.loop = false;
+    liveAudio.pause();
     liveStatus.textContent = `${channelLabel(selectedLiveChannel)} queue paused`;
     renderEverythingQueuePanel();
   } else {
