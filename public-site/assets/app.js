@@ -430,6 +430,7 @@ let clipStatsAbortController = null;
 let globalClipStats = null;
 let lastRenderedClipTotal = null;
 let selectedLiveChannel = everythingLiveChannel;
+let quietAudioUrl = null;
 let activeTab = initialRouteState.tab;
 let mapPayloadLoaded = false;
 let languagePayloadLoaded = false;
@@ -739,7 +740,7 @@ liveAudio.addEventListener("playing", () => {
   liveStatus.textContent = isQueuedLiveMode()
     ? currentLiveQueueClip?.catch_up
       ? "Catching up on recent transmission"
-      : "Playing queued transmission"
+      : currentLiveQueueClip ? "Playing queued transmission" : "Waiting for queued transmission"
     : "Streaming";
   setLivePlayButton("pause");
   updateLiveMediaSession("playing");
@@ -751,7 +752,11 @@ liveAudio.addEventListener("waiting", () => {
 
 liveAudio.addEventListener("pause", () => {
   if (isQueuedLiveMode() && everythingQueueEnabled) {
-    renderEverythingQueuePanel();
+    if (liveAudio.paused && !liveAudio.ended && !liveAudio.error) {
+      pauseLivePlayback();
+    } else {
+      renderEverythingQueuePanel();
+    }
     return;
   }
   setLivePlayButton("play");
@@ -4846,7 +4851,7 @@ function shouldPreserveLiveAudioSession() {
   if (isQueuedLiveMode() && everythingQueueEnabled) {
     return true;
   }
-  return Boolean(liveAudio.src && !liveAudio.paused);
+  return Boolean(liveAudio.src && (!liveAudio.paused || systemMediaControlsEnabled));
 }
 
 function stopCurrentClipPlayback() {
@@ -5199,6 +5204,7 @@ function setSystemMediaControlsEnabled(enabled) {
   }
   if (!systemMediaControlsEnabled) {
     clearBrowserMediaSession();
+    if (everythingQueueEnabled && liveAudio.loop) clearLiveQueueAudioSource();
   } else if (!liveAudio.paused) {
     updateLiveMediaSession("playing");
   } else {
@@ -5240,14 +5246,20 @@ function initialSystemMediaControlsEnabled() {
 }
 
 function defaultSystemMediaControlsEnabled() {
-  return isAndroidAudioEnvironment();
+  return true;
 }
 
-function isAndroidAudioEnvironment() {
-  const userAgentData = navigator.userAgentData;
-  const userAgent = navigator.userAgent || "";
-  const platform = `${userAgentData?.platform || ""} ${navigator.platform || ""}`;
-  return operatingSystemNameFromUserAgent(userAgent, platform) === "Android";
+function preferNativeLiveAudio() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function configurePlaybackAudioSession() {
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = "playback";
+  } catch {
+    // Older engines can expose a read-only or partial Audio Session API.
+  }
 }
 
 function systemMediaEnvironmentLabel() {
@@ -5352,18 +5364,25 @@ function updateLiveMediaSession(playbackState = liveAudio.paused ? "paused" : "p
         album: isQueuedLiveMode() ? `${channelLabel(selectedLiveChannel)} queue` : "Live radio",
       });
     }
-    navigator.mediaSession.playbackState = playbackState;
-    navigator.mediaSession.setActionHandler("play", () => {
-      connectLive();
-    });
-    navigator.mediaSession.setActionHandler("pause", () => {
-      liveAudio.pause();
-    });
-    navigator.mediaSession.setActionHandler("stop", () => {
-      closeLiveAudioStream();
-    });
   } catch {
-    clearBrowserMediaSession();
+    // Metadata support varies; retain any successfully published metadata.
+  }
+  try {
+    navigator.mediaSession.playbackState = playbackState;
+  } catch {
+    // State support must not prevent registering the transport controls.
+  }
+  const handlers = {
+    play: () => connectLive(),
+    pause: () => pauseLivePlayback(),
+    stop: () => closeLiveAudioStream(),
+  };
+  for (const [action, handler] of Object.entries(handlers)) {
+    try {
+      navigator.mediaSession.setActionHandler(action, handler);
+    } catch {
+      // One unsupported action must not remove the other lock-screen controls.
+    }
   }
 }
 
@@ -5397,6 +5416,7 @@ function closeLiveAudioStream() {
   stopEverythingQueue({ clearQueue: true });
   liveAudio.pause();
   liveAudio.muted = true;
+  liveAudio.loop = false;
   liveAudio.removeAttribute("src");
   liveAudio.load();
   setLivePlayButton("play");
@@ -5422,30 +5442,32 @@ function setLivePlayButton(mode) {
   liveSignalDot.classList.toggle("is-connecting", isConnecting);
 }
 
-function toggleLivePlayback() {
+function pauseLivePlayback() {
   if (isQueuedLiveMode()) {
-    if (everythingQueueEnabled) {
-      stopEverythingQueue({ clearQueue: true });
-      liveAudio.pause();
-      liveAudio.removeAttribute("src");
-      liveAudio.load();
-      setLivePlayButton("play");
-      liveStatus.textContent = `${channelLabel(selectedLiveChannel)} queue paused`;
-      renderEverythingQueuePanel();
-      updateLiveMediaSession("paused");
-      return;
-    }
-    connectEverythingLive();
-    return;
-  }
-  if (!liveAudio.paused) {
+    stopEverythingQueue({ clearQueue: true });
+    liveAudio.loop = false;
     liveAudio.pause();
+    liveStatus.textContent = `${channelLabel(selectedLiveChannel)} queue paused`;
+    renderEverythingQueuePanel();
+  } else {
+    liveAudio.pause();
+    liveStatus.textContent = "Paused";
+  }
+  setLivePlayButton("play");
+  updateLiveMediaSession("paused");
+}
+
+function toggleLivePlayback() {
+  if (everythingQueueEnabled || !liveAudio.paused) {
+    pauseLivePlayback();
     return;
   }
   connectLive();
 }
 
 async function connectLive() {
+  configurePlaybackAudioSession();
+  liveAudio.loop = false;
   if (isQueuedLiveMode()) {
     return connectEverythingLive();
   }
@@ -5488,6 +5510,8 @@ async function connectEverythingLive() {
   renderLiveStatus(findLiveChannel(selectedLiveChannel));
   try {
     stopOtherAudio(liveAudio);
+    await playRadioQuietAudio({ queueGeneration, queueChannel });
+    if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) return;
     await pollEverythingQueue({
       playIfIdle: false,
       seedRecent: true,
@@ -5513,6 +5537,10 @@ async function connectEverythingLive() {
 }
 
 async function startLiveWaveformForPlayback() {
+  if (preferNativeLiveAudio()) {
+    drawWaitingFrame({ showWaiting: false });
+    return;
+  }
   try {
     ensureAudioAnalyser();
     if (audioContext?.state === "suspended") {
@@ -5703,7 +5731,7 @@ async function pollEverythingQueue({
   }
   renderLiveTelemetry();
   renderEverythingQueuePanel();
-  if (playIfIdle && isCurrentLiveQueueSession(queueGeneration, queueChannel) && !currentLiveQueueClip && liveAudio.paused) {
+  if (playIfIdle && isCurrentLiveQueueSession(queueGeneration, queueChannel) && !currentLiveQueueClip && (liveAudio.paused || liveAudio.loop)) {
     await playNextEverythingQueueClip({ queueGeneration, queueChannel });
   }
 }
@@ -5901,7 +5929,8 @@ async function playNextEverythingQueueClip({
     everythingCatchUpHandoffPending = false;
   }
   if (!currentLiveQueueClip) {
-    clearLiveQueueAudioSource();
+    await playRadioQuietAudio({ queueGeneration, queueChannel });
+    if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) return;
     liveStatus.textContent = "Waiting for queued transmission";
     setLivePlayButton("pause");
     drawWaitingFrame({ showWaiting: true });
@@ -5947,6 +5976,7 @@ async function playNextEverythingQueueClip({
 }
 
 function configureEverythingQueueAudioElement({ muted = false } = {}) {
+  liveAudio.loop = false;
   liveAudio.crossOrigin = "anonymous";
   liveAudio.preload = "auto";
   liveAudio.muted = muted;
@@ -5985,7 +6015,50 @@ function shouldFinishEverythingCatchUpAfterClip(completedClip) {
   return !liveQueue.some((clip) => clip.catch_up);
 }
 
+function radioQuietAudioUrl() {
+  if (quietAudioUrl) return quietAudioUrl;
+  // Ten seconds of PCM silence represent the radio's quiet intervals. Reuse one
+  // native media element so an empty clip queue does not tear down its session.
+  const buffer = new ArrayBuffer(44 + 160000);
+  const view = new DataView(buffer);
+  const text = (offset, value) => {
+    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+  text(0, "RIFF"); view.setUint32(4, buffer.byteLength - 8, true);
+  text(8, "WAVE"); text(12, "fmt "); view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, 8000, true); view.setUint32(28, 16000, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  text(36, "data"); view.setUint32(40, 160000, true);
+  quietAudioUrl = URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+  return quietAudioUrl;
+}
+
+async function playRadioQuietAudio({ queueGeneration, queueChannel }) {
+  if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) return;
+  if (!systemMediaControlsEnabled) {
+    clearLiveQueueAudioSource();
+    return;
+  }
+  configurePlaybackAudioSession();
+  configureEverythingQueueAudioElement();
+  const url = radioQuietAudioUrl();
+  liveAudio.loop = true;
+  if (liveAudio.getAttribute("src") !== url) {
+    liveAudio.src = url;
+    liveAudio.load();
+  }
+  try {
+    await liveAudio.play();
+  } catch {
+    if (!isCurrentLiveQueueSession(queueGeneration, queueChannel)) return;
+    pauseLivePlayback();
+    liveStatus.textContent = "Press Play to resume radio";
+  }
+}
+
 function clearLiveQueueAudioSource() {
+  liveAudio.loop = false;
   liveAudio.pause();
   liveAudio.removeAttribute("src");
   liveAudio.load();

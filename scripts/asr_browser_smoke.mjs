@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
+import { verifyBackgroundRadio } from "./background_radio_browser_smoke.mjs";
 const { chromium } = createRequire(path.join(process.env.TALKINGBOATS_BROWSER_DEPENDENCY_ROOT || process.cwd(), "package.json"))("playwright");
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -280,6 +281,7 @@ try {
   assert.equal(await publicPage.locator(".correction-editor").count(), 0);
   assert.deepEqual(errors, []);
   await publicContext.close();
+  await verifyBackgroundRadio(browser, base, path.join(root, "outputs/asr-smoke/background-radio"));
   console.log("event=asr_dev_playwright_passed real_dev_reads=true isolated_editor_and_public_overlay=true");
 } catch (error) {
   const directory = path.join(root, "outputs/asr-smoke");
