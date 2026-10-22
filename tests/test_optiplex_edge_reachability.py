@@ -17,12 +17,14 @@ def test_optiplex_healthcheck_fails_when_the_pi_receiver_is_unreachable() -> Non
     assert "failures=$((failures + 1))" in script
 
 
+@pytest.mark.parametrize("launch_method", ["bash", "systemd"])
 @pytest.mark.parametrize(
     "journal_event", ["uploaded_clip_transcriber_poll", "uploaded_clip_transcriber_progress"]
 )
 def test_optiplex_healthcheck_reports_degraded_when_only_the_pi_probe_fails(
     tmp_path: Path,
     journal_event: str,
+    launch_method: str,
 ) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -55,8 +57,24 @@ exit 0
         executable.write_text(contents, encoding="utf-8")
         executable.chmod(0o755)
 
+    command = ["bash", "scripts/talkingboats_optiplex_healthcheck.sh"]
+    if launch_method == "systemd":
+        import shlex
+
+        service = Path(
+            "deploy/systemd/talkingboats-optiplex-healthcheck.service.example"
+        ).read_text(encoding="utf-8")
+        exec_start = next(
+            line.removeprefix("ExecStart=")
+            for line in service.splitlines()
+            if line.startswith("ExecStart=")
+        )
+        command = shlex.split(
+            exec_start.replace("%h/repos/elliott-bay-vhf/.runtime/live-ais-deploy", str(Path.cwd()))
+        )
+
     result = subprocess.run(
-        ["bash", "scripts/talkingboats_optiplex_healthcheck.sh"],
+        command,
         cwd=Path(__file__).resolve().parents[1],
         env={
             **os.environ,
@@ -102,3 +120,16 @@ def test_pi_capture_services_are_bounded_against_memory_exhaustion() -> None:
         assert "MemoryHigh=" in service, service_name
         assert "MemoryMax=" in service, service_name
         assert "OOMPolicy=stop" in service, service_name
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    [
+        "talkingboats_optiplex_boot_recovery.sh",
+        "talkingboats_optiplex_healthcheck.sh",
+    ],
+)
+def test_optiplex_systemd_entrypoints_have_execute_permission(script_name: str) -> None:
+    assert os.access(Path("scripts") / script_name, os.X_OK), (
+        f"systemd cannot directly execute {script_name} without execute permission"
+    )
