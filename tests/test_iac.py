@@ -425,6 +425,14 @@ def test_opentofu_defines_cost_budget_and_anomaly_alerts() -> None:
     assert 'identifiers = ["costalerts.amazonaws.com"]' in monitoring_tf
 
 
+def test_monthly_cost_budget_excludes_other_projects_and_domain_renewals() -> None:
+    monitoring_tf = Path("infra/opentofu/monitoring.tf").read_text(encoding="utf-8")
+    budget = _resource_block(monitoring_tf, "aws_budgets_budget", "monthly_cost")
+
+    assert 'name   = "TagKeyValue"' in budget
+    assert 'values = [format("user:BillingProject$%s", var.project_name)]' in budget
+
+
 def test_paused_native_mobile_auth_resources_are_not_managed() -> None:
     main_tf = Path("infra/opentofu/main.tf").read_text(encoding="utf-8")
     variables_tf = Path("infra/opentofu/variables.tf").read_text(encoding="utf-8")

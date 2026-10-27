@@ -285,6 +285,11 @@ resource "aws_budgets_budget" "monthly_cost" {
   time_unit         = "MONTHLY"
   time_period_start = "2026-10-01_00:00"
 
+  cost_filter {
+    name   = "TagKeyValue"
+    values = [format("user:BillingProject$%s", var.project_name)]
+  }
+
   cost_types {
     include_tax = true
   }

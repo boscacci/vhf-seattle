@@ -91,6 +91,41 @@ state. Do not commit `terraform.tfstate`, `terraform.tfstate.*`, or `.terraform/
 contents. Those local files are ignored and can be deleted after the migration
 has been verified with `tofu state pull`.
 
+## Project cost budget
+
+`talkingboats-monthly-cost` measures only resources with the active cost-allocation
+tag `BillingProject=talkingboats`. It includes both dev and prod. The monthly limit
+is $35, with actual-cost alerts above $25 and forecast alerts above $35 delivered
+through the existing operator SNS topic. Other projects and their domain renewals
+are excluded.
+
+Stack-managed resources inherit the tag from `local.common_tags`. The dedicated
+`seattleboatradio.com` hosted zone and remote-state bucket are bootstrap resources
+outside this stack; the scoped release script adds the same billing tags while
+preserving existing tags and refusing conflicting ownership. New project resources
+must carry `BillingProject`; untaggable account-level charges are not allocated to
+this project budget. Cost-allocation tags must be active before using the filter.
+
+From a clean, reviewed checkout, use the existing `dell` Conda environment:
+
+```bash
+conda run -n dell python scripts/scope_monthly_cost_budget.py
+conda run -n dell python scripts/scope_monthly_cost_budget.py --apply
+```
+
+The first command validates a saved OpenTofu plan without making cloud changes.
+The second adds missing bootstrap-resource tags and applies only the validated
+budget filter. It rejects changes to other resources, budget amounts, cost types,
+or notification settings. The script verifies the live filter, tags, and unchanged
+notifications after applying. Repeating it is safe; temporary plan files and logs
+are removed on success or failure. OpenTofu's shared state records the budget update.
+
+AWS recalculates budget spending after a filter change, so the budget can briefly
+show zero. Newly added tags can take up to 24 hours to appear in billing and do not
+automatically allocate historical untagged charges. To roll back the budget scope,
+revert its `cost_filter` block and inspect a targeted OpenTofu plan before applying;
+the bootstrap tags can remain because they improve project attribution.
+
 ## Production freshness alerts
 
 The production monitor reads `public_manifest.json` directly from the private
