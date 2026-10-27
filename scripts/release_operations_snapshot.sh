@@ -44,6 +44,8 @@ site="${runtime}/outputs/public-site"
 dropin="${HOME}/.config/systemd/user/talkingboats-live-radio-proxy.service.d/zzzzz-project-budget.conf"
 
 if [[ "${action}" == dev ]]; then
+  exec 9>"${runtime}/outputs/.public-export.lock"
+  flock -w 30 9
   # Hard links keep the existing public clips available without copying media.
   # The atomic snapshot writer replaces only the candidate operations.json link.
   install -d -m 0755 "${release}/generated-site"
@@ -53,6 +55,7 @@ if [[ "${action}" == dev ]]; then
   "${python_bin}" "${release}/src/talkingboats/aws_operations_snapshot.py" \
     --manifest "${site}/public_manifest.json" --cache "${release}/operations-cache.json" \
     --output "${release}/generated-site/operations.json"
+  flock -u 9
   [[ ! -f "${dropin}" ]] || cp -a "${dropin}" "${release}/previous-dropin.conf"
   rollback_dev() {
     if [[ -f "${release}/previous-dropin.conf" ]]; then
@@ -70,6 +73,8 @@ if [[ "${action}" == dev ]]; then
   mv "${dropin}.pending" "${dropin}"
   systemctl --user daemon-reload
   systemctl --user restart talkingboats-live-radio-proxy.service
+  curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-connrefused \
+    --retry-max-time 30 --max-time 10 http://172.20.0.1:8095/operations.json >/dev/null
   TALKINGBOATS_BROWSER_DEPENDENCY_ROOT="${root}" TALKINGBOATS_BUDGET_SMOKE_OUTPUT_DIR="${release}/smoke-failures" \
     node "${release}/scripts/budget_browser_smoke.mjs" \
     > "${release}/browser-smoke.json"
