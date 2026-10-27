@@ -86,6 +86,7 @@ def collect_operations_snapshot(
         TimePeriod={"Start": month_start.isoformat(), "End": cost_end.isoformat()},
         Granularity="MONTHLY",
         Metrics=["UnblendedCost"],
+        Filter={"Tags": {"Key": "BillingProject", "Values": ["talkingboats"]}},
     )
     cost_result = (cost_response.get("ResultsByTime") or [{}])[0]
     cost_total = cost_result.get("Total", {}).get("UnblendedCost", {})
@@ -100,6 +101,7 @@ def collect_operations_snapshot(
             "completeDays": 7,
         },
         "budget": {
+            "scope": "project",
             "month": month_start.isoformat(),
             "monthToDateUsd": month_to_date,
             "limitUsd": budget_limit,
@@ -136,8 +138,8 @@ def refresh_operations_snapshot(
     observed_at = _utc(now or datetime.now(UTC))
     if cache_path.is_file():
         cache_age = observed_at.timestamp() - cache_path.stat().st_mtime
-        if 0 <= cache_age < max_age_seconds:
-            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        payload = _read_project_cache(cache_path, observed_at)
+        if 0 <= cache_age < max_age_seconds and payload is not None:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             payload["transcription"] = _transcription_snapshot(manifest)
             _write_json_atomic(output_path, payload)
@@ -158,6 +160,23 @@ def refresh_operations_snapshot(
     )
     _write_json_atomic(cache_path, payload)
     _write_json_atomic(output_path, payload)
+    return payload
+
+
+def _read_project_cache(path: Path, observed_at: datetime) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    budget = payload.get("budget")
+    if (
+        not isinstance(budget, dict)
+        or budget.get("scope") != "project"
+        or budget.get("month") != observed_at.date().replace(day=1).isoformat()
+    ):
+        return None
     return payload
 
 
@@ -271,9 +290,9 @@ def main(argv: list[str] | None = None) -> int:
             max_age_seconds=args.max_age_seconds,
         )
     except Exception as exc:
-        if not args.cache.is_file():
+        cached_payload = _read_project_cache(args.cache, datetime.now(UTC))
+        if cached_payload is None:
             raise
-        cached_payload = json.loads(args.cache.read_text(encoding="utf-8"))
         _write_json_atomic(args.output, cached_payload)
         print(
             f"event=talkingboats_operations_snapshot_stale reason={type(exc).__name__}",

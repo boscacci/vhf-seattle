@@ -12,9 +12,39 @@ stream URLs, command lines, logs, tokens, cookies, or local filesystem paths.
 
 The daily operations snapshot adds seven complete UTC days of Lambda
 invocations and DynamoDB consumed read/write capacity, month-to-date AWS spend
-against the $35 budget, and materialized clip/transcription totals. The hourly
-publisher reuses the cached snapshot for 24 hours, limiting Cost Explorer API
+against the $35 budget, and materialized clip/transcription totals. Spending uses
+the same `BillingProject=talkingboats` cost-allocation filter as the AWS monthly
+budget and includes both dev and prod resources, excluding other account projects.
+The hourly publisher reuses the cached snapshot for 24 hours, limiting Cost Explorer API
 queries while keeping the public page current enough for budget monitoring.
+Snapshots identify their budget scope as `project`. Old account-wide caches and
+previous-month caches are refreshed even within that daily cache window. If AWS
+is unavailable, only a same-month project snapshot can be reused; incompatible
+cached totals are never published as project spending.
+
+Budget-only releases use `scripts/release_operations_snapshot.sh dev` from a clean,
+reviewed default-branch commit. This builds one immutable Git artifact, collects
+real production-backed metrics, and isolates the candidate generated assets on
+dev without changing production. Desktop/mobile Playwright checks verify that
+the displayed dollars, budget percentage, and $35 limit match the project snapshot.
+Failures retain screenshots and traces in the private release directory.
+
+After a human checks the dev Performance page, select the exact tested commit with
+an annotated patch tag and record one approval containing `release_tag`, `commit`,
+`artifact_sha256`, `environment: "prod"`, `approval_kind: "human"`, `approved_by`,
+`approved_at` with timezone, and `dev_manually_smoke_tested: true`. Run
+`scripts/release_operations_snapshot.sh prod <tag> <approval.json>` to promote that
+same artifact and snapshot. The scoped release updates only the hourly exporter,
+its cache, and `operations.json`, then checks the public budget card with Playwright.
+It preserves the audio, analysis, and app shell, serializes with the regular export
+lock, and restores prior files on failure. Successful production promotion removes
+the temporary dev data override so dev resumes following the shared live export.
+
+An approved rollback uses the previous release tag and artifact through the same
+one-approval procedure. Keep candidate artifacts, smoke records, prior files, and
+approval records under the established private release directories; do not commit
+them or runtime configuration to Git.
+
 The browser refreshes the Performance tab every 10 seconds while it is open, and
 the tab's Refresh button forces a new snapshot. The proxy also samples telemetry
 server-side every 5 seconds, so the chart history is available even if nobody has

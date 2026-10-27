@@ -42,6 +42,8 @@ jobs:
           bash -n scripts/set_transcriber_cpu_runtime.sh scripts/test_repository.sh scripts/release_asr_feedback.sh scripts/apply_transcriber_cpu_release.sh scripts/apply_pi_network_release.sh scripts/deploy_pi_network_release.sh deploy/pi/install_live_radio.sh deploy/pi/live-radio/talkingboats-pi-healthcheck deploy/pi/live-radio/talkingboats-reset-voice-sdr scripts/deploy_pi_capture_health.sh scripts/apply_pi_capture_health_release.sh scripts/apply_optiplex_performance_release.sh scripts/deploy_static_shell.sh
           node --check scripts/ais_browser_smoke.mjs
           node --check scripts/performance_browser_smoke.mjs
+          bash -n scripts/release_operations_snapshot.sh
+          node --check scripts/budget_browser_smoke.mjs
 
   deploy-dev:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
