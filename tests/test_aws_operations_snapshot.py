@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
+from talkingboats import aws_operations_snapshot as operations_module
 from talkingboats.aws_operations_snapshot import (
     OperationsSnapshotConfig,
     collect_operations_snapshot,
+    main,
     refresh_operations_snapshot,
 )
 
@@ -32,6 +37,7 @@ class FakeCloudWatch:
 class FakeCostExplorer:
     def get_cost_and_usage(self, **kwargs):  # noqa: ANN003
         assert kwargs["TimePeriod"] == {"Start": "2026-09-01", "End": "2026-09-08"}
+        assert kwargs["Filter"] == {"Tags": {"Key": "BillingProject", "Values": ["talkingboats"]}}
         return {
             "ResultsByTime": [
                 {
@@ -91,6 +97,7 @@ def test_operations_snapshot_summarizes_cloud_work_and_transcription() -> None:
     assert snapshot["budget"]["limitUsd"] == 35.0
     assert snapshot["budget"]["usedPercent"] == 65.23
     assert snapshot["budget"]["estimated"] is True
+    assert snapshot["budget"]["scope"] == "project"
     rendered = json.dumps(snapshot)
     assert "talkingboats-dev" not in rendered
     assert "arn:aws" not in rendered
@@ -103,8 +110,11 @@ def test_operations_snapshot_reuses_daily_cache(tmp_path: Path) -> None:
         "generatedAt": "2026-09-07T00:00:00Z",
         "lambda": {"invocations": 5},
         "transcription": {"pendingClips": 99},
+        "budget": {"scope": "project", "month": "2026-09-01", "monthToDateUsd": 8.65},
     }
     cache_path.write_text(json.dumps(cached), encoding="utf-8")
+    observed_at = datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
+    os.utime(cache_path, (observed_at.timestamp() - 60,) * 2)
     manifest_path = tmp_path / "public_manifest.json"
     manifest_path.write_text(
         json.dumps(
@@ -125,7 +135,7 @@ def test_operations_snapshot_reuses_daily_cache(tmp_path: Path) -> None:
         cache_path=cache_path,
         output_path=output_path,
         max_age_seconds=86_400,
-        now=datetime.fromtimestamp(cache_path.stat().st_mtime + 60, tz=UTC),
+        now=observed_at,
     )
 
     assert result["lambda"] == cached["lambda"]
@@ -137,3 +147,151 @@ def test_operations_snapshot_reuses_daily_cache(tmp_path: Path) -> None:
         "publishedClips": 1,
     }
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
+
+
+def test_operations_budget_excludes_unrelated_account_charges() -> None:
+    class AccountAndProjectCosts:
+        def get_cost_and_usage(self, **kwargs):
+            is_project = kwargs.get("Filter") == {
+                "Tags": {"Key": "BillingProject", "Values": ["talkingboats"]}
+            }
+            return {
+                "ResultsByTime": [
+                    {
+                        "Estimated": True,
+                        "Total": {
+                            "UnblendedCost": {
+                                "Amount": "8.65" if is_project else "67.91",
+                                "Unit": "USD",
+                            }
+                        },
+                    }
+                ]
+            }
+
+    snapshot = collect_operations_snapshot(
+        config=OperationsSnapshotConfig(),
+        manifest={},
+        cloudwatch=FakeCloudWatch(),
+        cost_explorer=AccountAndProjectCosts(),
+        now=datetime(2026, 9, 7, tzinfo=UTC),
+    )
+    assert snapshot["budget"]["monthToDateUsd"] == 8.65
+    assert snapshot["budget"]["remainingUsd"] == 26.35
+    assert snapshot["budget"]["usedPercent"] == 24.71
+    assert "BillingProject" not in json.dumps(snapshot)
+
+
+@pytest.mark.parametrize("contents", ["not json", "[]", '{"budget": null}'])
+def test_operations_snapshot_refreshes_invalid_cached_payloads(tmp_path, contents):
+    cache = tmp_path / "cache.json"
+    cache.write_text(contents)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"clips": []}')
+    now = datetime(2026, 9, 7, tzinfo=UTC)
+    os.utime(cache, (now.timestamp(),) * 2)
+    result = refresh_operations_snapshot(
+        manifest_path=manifest,
+        cache_path=cache,
+        output_path=tmp_path / "operations.json",
+        max_age_seconds=86400,
+        now=now,
+        cloudwatch=FakeCloudWatch(),
+        cost_explorer=FakeCostExplorer(),
+    )
+    assert result["budget"]["scope"] == "project"
+
+
+@pytest.mark.parametrize(
+    "budget",
+    [
+        {"month": "2026-09-01", "monthToDateUsd": 67.91},
+        {"scope": "account", "month": "2026-09-01", "monthToDateUsd": 67.91},
+        {"scope": "project", "month": "2026-08-01", "monthToDateUsd": 67.91},
+    ],
+)
+def test_operations_snapshot_refreshes_unscoped_or_previous_month_cache(tmp_path, budget):
+    cache = tmp_path / "cache.json"
+    cache.write_text(json.dumps({"budget": budget}))
+    now = datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
+    os.utime(cache, (now.timestamp() - 60,) * 2)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"clips": []}')
+    result = refresh_operations_snapshot(
+        manifest_path=manifest,
+        cache_path=cache,
+        output_path=tmp_path / "operations.json",
+        max_age_seconds=86400,
+        now=now,
+        cloudwatch=FakeCloudWatch(),
+        cost_explorer=FakeCostExplorer(),
+    )
+    assert result["budget"]["scope"] == "project"
+    assert result["budget"]["monthToDateUsd"] == 22.83
+    assert json.loads(cache.read_text()) == result
+
+
+@pytest.mark.parametrize(
+    "budget",
+    [
+        None,
+        {"scope": "account", "month": "2026-09-01"},
+        {"scope": "project", "month": "2026-08-01"},
+    ],
+)
+def test_operations_snapshot_never_falls_back_to_unscoped_or_previous_month_costs(
+    tmp_path,
+    monkeypatch,
+    budget,
+):
+    cache = tmp_path / "cache.json"
+    cache.write_text(json.dumps({"budget": budget}))
+    output = tmp_path / "operations.json"
+    _fail_refresh(monkeypatch)
+    with pytest.raises(RuntimeError, match="AWS unavailable"):
+        main(
+            [
+                "--manifest",
+                str(tmp_path / "manifest.json"),
+                "--cache",
+                str(cache),
+                "--output",
+                str(output),
+            ]
+        )
+    assert not output.exists()
+
+
+def test_operations_snapshot_can_fall_back_to_same_month_project_costs(tmp_path, monkeypatch):
+    cache = tmp_path / "cache.json"
+    payload = {"budget": {"scope": "project", "month": "2026-09-01", "monthToDateUsd": 8.65}}
+    cache.write_text(json.dumps(payload))
+    output = tmp_path / "operations.json"
+    _fail_refresh(monkeypatch)
+    assert (
+        main(
+            [
+                "--manifest",
+                str(tmp_path / "manifest.json"),
+                "--cache",
+                str(cache),
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(output.read_text()) == payload
+
+
+def _fail_refresh(monkeypatch):
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
+
+    def fail(**kwargs):
+        raise RuntimeError("AWS unavailable")
+
+    monkeypatch.setattr(operations_module, "datetime", FrozenDatetime)
+    monkeypatch.setattr(operations_module, "refresh_operations_snapshot", fail)
